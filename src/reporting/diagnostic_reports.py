@@ -1,0 +1,240 @@
+# src/reporting/diagnostic_reports.py
+import logging
+from decimal import Decimal
+from collections import defaultdict
+from typing import List, Dict, Any, Optional
+
+import src.config as config 
+from src.domain.assets import Asset, InvestmentFund 
+from src.domain.events import FinancialEvent, TradeEvent # Added TradeEvent for type hint
+from src.domain.enums import AssetCategory, InvestmentFundType, FinancialEventType, RealizationType 
+from src.identification.asset_resolver import AssetResolver 
+from src.domain.results import RealizedGainLoss, VorabpauschaleData 
+
+logger = logging.getLogger(__name__)
+
+def _get_asset_display_key(asset: Optional[Asset]) -> str:
+    """Generates a display key for an asset."""
+    if not asset:
+        return "UNKNOWN_ASSET"
+    try:
+        return asset.get_classification_key()
+    except ValueError: 
+        desc = asset.description or f"ID_{str(asset.internal_asset_id)[:8]}"
+        return f"UNKEYED_{desc}"
+
+def print_grouped_event_details(
+        events: List[FinancialEvent],
+        asset_resolver: AssetResolver
+    ):
+    """Prints detailed financial events grouped by asset."""
+    grouped_events: Dict[str, List[FinancialEvent]] = defaultdict(list)
+    for event in events:
+        asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
+        asset_key = _get_asset_display_key(asset) if asset else f"UNKNOWN_ASSET_ID_{event.asset_internal_id}"
+        grouped_events[asset_key].append(event)
+
+    print("\n--- Detailed Financial Events by Asset ---")
+    for asset_key in sorted(grouped_events.keys()):
+        asset_events = grouped_events[asset_key]
+        asset = None
+        if not asset_key.startswith("UNKEYED_") and not asset_key.startswith("UNKNOWN_ASSET"):
+             asset = asset_resolver.get_asset_by_alias(asset_key)
+        if not asset and asset_events: 
+            asset = asset_resolver.get_asset_by_id(asset_events[0].asset_internal_id)
+
+        asset_desc_print = asset.description if asset else asset_key
+        asset_cat_print = asset.asset_category.name if asset and asset.asset_category else 'N/A'
+        print(f"\n--- Asset: {asset_desc_print} ({asset_cat_print}) ---")
+
+        if asset and isinstance(asset, InvestmentFund) and asset.fund_type != InvestmentFundType.NONE:
+            print(f"    Fund Type: {asset.fund_type.name}")
+
+        for event in sorted(asset_events, key=lambda e: (e.event_date, e.event_id)): 
+            details = [f"  {event.event_date}", f"{event.event_type.name[:25]:<25}"]
+            display_precision = config.OUTPUT_PRECISION_AMOUNTS # Renamed
+            per_share_precision = config.OUTPUT_PRECISION_PER_SHARE # Renamed
+            qty_precision = config.PRECISION_QUANTITY
+
+            if event.gross_amount_foreign_currency is not None:
+                amt = event.gross_amount_foreign_currency
+                details.append(f"Amt: {amt.quantize(display_precision) if isinstance(amt, Decimal) else amt} {event.local_currency or ''}")
+            if event.gross_amount_eur is not None:
+                amt_eur = event.gross_amount_eur
+                details.append(f"EUR: {amt_eur.quantize(display_precision) if isinstance(amt_eur, Decimal) else amt_eur}")
+
+            if isinstance(event, TradeEvent): # Check if it's a TradeEvent
+                trade_event: TradeEvent = event 
+                qty_val = trade_event.quantity.quantize(qty_precision) if trade_event.quantity else Decimal(0)
+                price_val = trade_event.price_foreign_currency.quantize(per_share_precision) if trade_event.price_foreign_currency else Decimal(0)
+                
+                details.append(f"Qty: {qty_val!s:<15}")
+                details.append(f"Price: {price_val!s:<15}")
+                if trade_event.commission_foreign_currency is not None and trade_event.commission_foreign_currency != Decimal(0):
+                    comm = trade_event.commission_foreign_currency
+                    details.append(f"Comm: {(comm.quantize(display_precision) if isinstance(comm, Decimal) else comm)} {trade_event.commission_currency or ''}")
+                if trade_event.commission_eur is not None and trade_event.commission_eur != Decimal(0):
+                    comm_eur = trade_event.commission_eur
+                    details.append(f"CommEUR: {(comm_eur.quantize(display_precision) if isinstance(comm_eur, Decimal) else comm_eur)}")
+            print(" | ".join(details))
+            if event.ibkr_activity_description:
+                print(f"    Desc: {event.ibkr_activity_description[:80]}")
+
+def print_asset_positions_diagnostic(asset_resolver: AssetResolver):
+    """Prints SOY and EOY asset positions."""
+    print("\n--- Asset Positions (Start & End of Year) ---")
+    sorted_assets = sorted(asset_resolver.assets_by_internal_id.values(), key=_get_asset_display_key)
+    for asset in sorted_assets:
+        soy_info = "N/A"
+        if asset.soy_quantity is not None: # Renamed from initial_quantity_soy
+            qty_val = asset.soy_quantity.quantize(config.PRECISION_QUANTITY) # Renamed from initial_quantity_soy
+            cost_val_soy = asset.soy_cost_basis_amount # Renamed from initial_cost_basis_money_soy
+            cost_val = cost_val_soy.quantize(config.OUTPUT_PRECISION_AMOUNTS) if cost_val_soy else 'N/A' # Renamed
+            soy_info = f"Qty: {qty_val!s}, Cost: {cost_val!s} {asset.soy_cost_basis_currency or ''}" # Renamed from initial_cost_basis_currency_soy
+
+        eoy_info = "N/A"
+        if asset.eoy_quantity is not None:
+            qty_val_eoy = asset.eoy_quantity.quantize(config.PRECISION_QUANTITY)
+            price_val_eoy = asset.eoy_market_price # Renamed from eoy_mark_price
+            value_val_eoy = asset.eoy_position_value
+            
+            price_val = price_val_eoy.quantize(config.OUTPUT_PRECISION_PER_SHARE) if price_val_eoy else 'N/A' # Renamed
+            value_val = value_val_eoy.quantize(config.OUTPUT_PRECISION_AMOUNTS) if value_val_eoy else 'N/A' # Renamed
+            eoy_info = f"Qty: {qty_val_eoy!s}, MarkPrice: {price_val!s} {asset.eoy_mark_price_currency or ''}, Value: {value_val!s}"
+        
+        asset_display_key_val = _get_asset_display_key(asset)
+        asset_desc_print_val = asset.description or asset_display_key_val
+        print(f"  {asset_desc_print_val:<50} | "
+              f"Cat: {asset.asset_category.name if asset.asset_category else 'N/A':<20} | "
+              f"SOY: {soy_info:<50} | EOY: {eoy_info}")
+
+def print_assets_by_category_diagnostic(asset_resolver: AssetResolver):
+    """Prints assets grouped by their final classification."""
+    print("\n--- Assets by Final Category ---")
+    categorized_assets: Dict[Optional[AssetCategory], List[Asset]] = defaultdict(list) 
+    for asset in asset_resolver.assets_by_internal_id.values():
+        categorized_assets[asset.asset_category].append(asset)
+
+    sorted_categories = sorted(
+        [cat for cat in categorized_assets.keys() if cat is not None],
+        key=lambda c: c.name
+    )
+    if None in categorized_assets: 
+        sorted_categories.append(None)
+
+
+    for category in sorted_categories:
+        assets_in_cat = categorized_assets[category]
+        cat_name = category.name if category else "UNCLASSIFIED"
+        print(f"\n  Category: {cat_name}")
+        for asset_obj in sorted(assets_in_cat, key=_get_asset_display_key):
+            asset_display_key_val = _get_asset_display_key(asset_obj)
+            asset_desc_print_val = asset_obj.description or asset_display_key_val
+            details = [f"    - {asset_desc_print_val} (ID: {str(asset_obj.internal_asset_id)[:8]})"]
+            if asset_obj.ibkr_conid: details.append(f"ConID: {asset_obj.ibkr_conid}")
+            if asset_obj.ibkr_isin: details.append(f"ISIN: {asset_obj.ibkr_isin}")
+            if asset_obj.currency: details.append(f"Curr: {asset_obj.currency}")
+            if isinstance(asset_obj, InvestmentFund) and asset_obj.fund_type != InvestmentFundType.NONE:
+                details.append(f"FundType: {asset_obj.fund_type.name}")
+            print(" | ".join(details))
+            if asset_obj.user_notes:
+                print(f"      User Notes: {asset_obj.user_notes}")
+
+def print_object_counts_diagnostic(
+    asset_resolver: AssetResolver,
+    all_events: List[FinancialEvent],
+    rgl_items: List[RealizedGainLoss],
+    vp_items: List[VorabpauschaleData]
+):
+    """Prints counts of various object types."""
+    print("\n--- Object Counts ---")
+    asset_type_counts = defaultdict(int)
+    fund_type_counts = defaultdict(int)
+    total_assets = 0
+    for asset_obj in asset_resolver.assets_by_internal_id.values():
+        total_assets +=1
+        asset_type_name = type(asset_obj).__name__
+        asset_type_counts[asset_type_name] += 1
+        if isinstance(asset_obj, InvestmentFund):
+            fund_name = asset_obj.fund_type.name if asset_obj.fund_type else InvestmentFundType.NONE.name
+            fund_type_counts[fund_name] += 1
+
+    print(f"\n  Total Unique Assets: {total_assets}")
+    print("  Asset Types Breakdown:")
+    for asset_type_name, count in sorted(asset_type_counts.items()):
+        print(f"    {asset_type_name:<30}: {count}")
+    if fund_type_counts:
+        print("  InvestmentFund Types Breakdown:")
+        for fund_type_name, count in sorted(fund_type_counts.items()):
+            print(f"    {fund_type_name:<30}: {count}")
+
+    event_type_counts = defaultdict(int)
+    total_events = 0
+    for event_obj in all_events:
+        total_events +=1
+        event_type_name = type(event_obj).__name__ 
+        event_type_counts[event_type_name] += 1
+
+    print(f"\n  Total Financial Events: {total_events}")
+    print("  Financial Event (Object Types) Breakdown:") 
+    for event_type_name, count in sorted(event_type_counts.items()):
+        print(f"    {event_type_name:<30}: {count}")
+
+    print("\n  Result Types:")
+    print(f"    RealizedGainLoss          : {len(rgl_items)}")
+    print(f"    VorabpauschaleData        : {len(vp_items)}")
+
+def print_realized_gains_losses_diagnostic(
+        realized_gains_losses: List[RealizedGainLoss],
+        asset_resolver: AssetResolver
+    ):
+    """Prints detailed Realized Gains/Losses."""
+    print("\n--- Realized Gains/Losses (Diagnostic) ---")
+    if not realized_gains_losses:
+        print("  No realized gains/losses generated.")
+        return
+
+    display_precision_total = config.OUTPUT_PRECISION_AMOUNTS # Renamed
+    display_precision_unit = config.OUTPUT_PRECISION_PER_SHARE # Renamed
+    display_precision_qty = config.PRECISION_QUANTITY
+
+    def get_rgl_sort_key(rgl_item):
+        asset = asset_resolver.get_asset_by_id(rgl_item.asset_internal_id)
+        asset_key = _get_asset_display_key(asset) if asset else f"UNKNOWN_ASSET_RGL_{rgl_item.asset_internal_id}"
+        return (rgl_item.realization_date, asset_key, rgl_item.originating_event_id) 
+
+    sorted_rgls = sorted(realized_gains_losses, key=get_rgl_sort_key)
+    for rgl_item_idx, rgl_item in enumerate(sorted_rgls):
+        asset_for_rgl = asset_resolver.get_asset_by_id(rgl_item.asset_internal_id)
+        asset_display_key_rgl = _get_asset_display_key(asset_for_rgl) if asset_for_rgl else "UNKNOWN_ASSET"
+        asset_desc_rgl = asset_for_rgl.description if asset_for_rgl else asset_display_key_rgl
+        
+        cost_basis_unit_disp = (rgl_item.unit_cost_basis_eur or Decimal(0)).quantize(display_precision_unit) # Renamed
+        realization_value_unit_disp = (rgl_item.unit_realization_value_eur or Decimal(0)).quantize(display_precision_unit) # Renamed
+        qty_realized_disp = (rgl_item.quantity_realized or Decimal(0)).quantize(display_precision_qty)
+        asset_cat_name = rgl_item.asset_category_at_realization.name if rgl_item.asset_category_at_realization else "N/A"
+        realization_type_name = rgl_item.realization_type.name if rgl_item.realization_type else "N/A"
+
+
+        print(f"  RGL {rgl_item_idx+1}: Asset: {asset_desc_rgl} ({asset_cat_name})")
+        print(f"    Originating Event ID: {str(rgl_item.originating_event_id)[:8] if rgl_item.originating_event_id else 'N/A'}")
+        print(f"    Acq. Date: {rgl_item.acquisition_date}, Real. Date: {rgl_item.realization_date}, Type: {realization_type_name}, Holding: {rgl_item.holding_period_days or 'N/A'} days")
+        print(f"    Qty Realized: {qty_realized_disp!s}, Cost/Unit EUR: {cost_basis_unit_disp!s}, Realization Val/Unit EUR: {realization_value_unit_disp!s}")
+        print(f"    Total Cost EUR: {(rgl_item.total_cost_basis_eur or Decimal(0)).quantize(display_precision_total)!s}, Total Realization Val EUR: {(rgl_item.total_realization_value_eur or Decimal(0)).quantize(display_precision_total)!s}") # Renamed total_cost_basis_eur
+        print(f"    Gross G/L EUR: {(rgl_item.gross_gain_loss_eur or Decimal(0)).quantize(display_precision_total)!s}")
+        if rgl_item.tax_reporting_category:
+            print(f"    Tax Category: {rgl_item.tax_reporting_category.name}")
+        if rgl_item.net_gain_loss_after_teilfreistellung_eur is not None and \
+           rgl_item.net_gain_loss_after_teilfreistellung_eur.compare(rgl_item.gross_gain_loss_eur) != Decimal(0): 
+            net_gl_tf = rgl_item.net_gain_loss_after_teilfreistellung_eur
+            print(f"    Net G/L (after TF if any) EUR: {net_gl_tf.quantize(display_precision_total)!s}")
+
+def print_vorabpauschale_diagnostic(vorabpauschale_items: List[VorabpauschaleData]):
+    """Prints detailed Vorabpauschale data."""
+    print("\n--- Vorabpauschale Data (Diagnostic) ---")
+    if not vorabpauschale_items:
+        print("  No Vorabpauschale data generated.")
+        return
+    
+    for vp_item_idx, vp_item in enumerate(vorabpauschale_items):
+            print(f"  VP Item {vp_item_idx+1}: {vp_item}")
