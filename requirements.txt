@@ -1,0 +1,6 @@
+# requirements.txt
+python-dateutil >= 2.8.0
+pytest
+requests >= 2.25.0 # For ECB API calls (and potentially other HTTP needs)
+pydantic>=1.8,<2.0
+reportlab >= 3.5.0 # For PDF generation
