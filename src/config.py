@@ -16,7 +16,7 @@ CLASSIFICATION_CACHE_FILE_PATH = "cache/user_classifications.json" # Renamed fro
 ECB_RATES_CACHE_FILE_PATH = "cache/ecb_exchange_rates.json" # Renamed from ECB_RATES_CACHE_FILE
 
 # Tax year being processed
-TAX_YEAR = 2023
+TAX_YEAR = 2024
 
 # Taxpayer Information (NEW)
 TAXPAYER_NAME = "Warren Buffet"  # Placeholder - Please update
