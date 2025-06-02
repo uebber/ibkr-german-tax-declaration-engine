@@ -332,13 +332,74 @@ class ParsingOrchestrator:
         logger.info(f"Total financial domain events generated and sorted: {len(self.domain_financial_events)}")
         return self.domain_financial_events
 
+    def _filter_raw_data_by_tax_year(self, tax_year: int):
+        """
+        Filters raw data to include only records relevant to the specified tax year and historical events.
+        For trades: includes tax year events + historical events needed for FIFO reconstruction
+        For cash transactions and corporate actions: includes only tax year events
+        This prevents assets discovered from future years from causing EOY mismatches.
+        """
+        logger.info(f"Filtering raw data to include records for tax year {tax_year} and necessary historical events...")
+        
+        # Define tax year boundaries
+        tax_year_start = date(tax_year, 1, 1)
+        tax_year_end = date(tax_year, 12, 31)
+        
+        # Filter trades: keep tax year events AND historical events needed for FIFO
+        original_trades_count = len(self.raw_trades)
+        filtered_trades = []
+        for trade in self.raw_trades:
+            trade_date_obj = parse_ibkr_date(trade.trade_date)
+            if trade_date_obj:
+                # Keep if it's in the tax year OR if it's historical (before tax year)
+                if trade_date_obj <= tax_year_end:
+                    filtered_trades.append(trade)
+        self.raw_trades = filtered_trades
+        logger.info(f"Filtered trades: {original_trades_count} -> {len(self.raw_trades)} records (including historical)")
+        
+        # Filter cash transactions: only tax year events
+        original_cash_count = len(self.raw_cash_transactions)
+        filtered_cash = []
+        for ct in self.raw_cash_transactions:
+            # Check settle_date first, then date_time, then report_date
+            ct_date_obj = None
+            if ct.settle_date:
+                ct_date_obj = parse_ibkr_date(ct.settle_date)
+            elif ct.date_time:
+                ct_date_obj = parse_ibkr_date(ct.date_time) or (parse_ibkr_datetime(ct.date_time).date() if parse_ibkr_datetime(ct.date_time) else None)
+            elif ct.report_date:
+                ct_date_obj = parse_ibkr_date(ct.report_date)
+            
+            if ct_date_obj and tax_year_start <= ct_date_obj <= tax_year_end:
+                filtered_cash.append(ct)
+        self.raw_cash_transactions = filtered_cash
+        logger.info(f"Filtered cash transactions: {original_cash_count} -> {len(self.raw_cash_transactions)} records")
+        
+        # Filter corporate actions: only tax year events
+        original_ca_count = len(self.raw_corporate_actions)
+        filtered_ca = []
+        for ca in self.raw_corporate_actions:
+            # Check pay_date first, then report_date, then ex_date
+            ca_date_obj = None
+            if ca.pay_date:
+                ca_date_obj = parse_ibkr_date(ca.pay_date)
+            elif ca.report_date:
+                ca_date_obj = parse_ibkr_date(ca.report_date)
+            elif ca.ex_date:
+                ca_date_obj = parse_ibkr_date(ca.ex_date)
+            
+            if ca_date_obj and tax_year_start <= ca_date_obj <= tax_year_end:
+                filtered_ca.append(ca)
+        self.raw_corporate_actions = filtered_ca
+        logger.info(f"Filtered corporate actions: {original_ca_count} -> {len(self.raw_corporate_actions)} records")
 
     def run_parsing_pipeline(self,
                              trades_file: Optional[str] = None,
                              cash_transactions_file: Optional[str] = None,
                              positions_start_file: Optional[str] = None,
                              positions_end_file: Optional[str] = None,
-                             corporate_actions_file: Optional[str] = None
+                             corporate_actions_file: Optional[str] = None,
+                             tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
         logger.info("Starting parsing pipeline...")
         try:
@@ -349,6 +410,10 @@ class ParsingOrchestrator:
                 positions_end_file=positions_end_file,
                 corporate_actions_file=corporate_actions_file
             )
+            
+            # Filter raw data by tax year if specified
+            if tax_year is not None:
+                self._filter_raw_data_by_tax_year(tax_year)
             self.process_positions()
             self.discover_assets_from_transactions()
             self.asset_resolver.link_derivatives()

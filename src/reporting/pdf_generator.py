@@ -344,7 +344,7 @@ class PdfReportGenerator:
             fund_dist_total_net_eur = Decimal(0)
 
             for dist_event in current_fund_dists:
-                tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type_enum, is_distribution=True)
+                tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type_enum)
                 gross_eur = dist_event.gross_amount_eur or Decimal(0)
                 tf_amount_eur = (gross_eur.copy_abs() * tf_rate).quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
                 net_taxable_eur = gross_eur - tf_amount_eur if gross_eur >= Decimal(0) else gross_eur + tf_amount_eur
@@ -712,7 +712,7 @@ class PdfReportGenerator:
         for dist_event in fund_distributions_for_kap:
             asset_id = dist_event.asset_internal_id
             asset_name, asset_isin_symbol, fund_type_enum = self._get_asset_details(asset_id)
-            tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type_enum, is_distribution=True)
+            tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type_enum)
             gross_eur = dist_event.gross_amount_eur or Decimal(0)
             tf_amount_eur = (gross_eur.copy_abs() * tf_rate).quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
             net_taxable_eur = gross_eur - tf_amount_eur if gross_eur >= Decimal(0) else gross_eur + tf_amount_eur

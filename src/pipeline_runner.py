@@ -75,7 +75,8 @@ def run_core_processing_pipeline(
             cash_transactions_file=cash_transactions_file_path,
             positions_start_file=positions_start_file_path,
             positions_end_file=positions_end_file_path,
-            corporate_actions_file=corporate_actions_file_path
+            corporate_actions_file=corporate_actions_file_path,
+            tax_year=tax_year_to_process
         )
     except ValueError as e:
         logger.critical(f"Parsing pipeline failed: {e}. Check input data and configuration.")

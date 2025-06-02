@@ -114,7 +114,7 @@ class LossOffsettingEngine:
                     kap_other_income_positive = self.ctx.add(kap_other_income_positive, event_gross_eur)
             elif event.event_type == FinancialEventType.INTEREST_RECEIVED:
                  if event_gross_eur > Decimal('0'):
-                    kap_other_income_positive = self.ctx.add(kap_other_income_positive, event_gross_eur)
+                    kap_other_income_positive = self.ctx.add(kap_other_income_positive, event_gross_eur)           
             elif event.event_type == FinancialEventType.INTEREST_PAID_STUECKZINSEN:
                  stueckzinsen_paid_sum = self.ctx.add(stueckzinsen_paid_sum, event_gross_eur.copy_abs())
                  # According to PRD Section 2.6, paid Stückzinsen reduce "Other Capital Income".
@@ -155,6 +155,7 @@ class LossOffsettingEngine:
         zeile_19_amount = self.ctx.subtract(zeile_19_amount, stock_losses_abs)
         # Note: derivative_losses_abs are NOT subtracted here for Z19 per PRD.
         zeile_19_amount = self.ctx.subtract(zeile_19_amount, kap_other_losses_abs)
+            
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT] = zeile_19_amount.quantize(self.TWO_PLACES, context=self.ctx)
 
 
