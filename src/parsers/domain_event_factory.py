@@ -356,7 +356,8 @@ class DomainEventFactory:
 
                 if isinstance(asset, Stock) and rt.notes_codes:
                     notes_codes_parts_stock = {part.strip() for part in (rt.notes_codes or "").upper().split(';') if part.strip()}
-                    if 'A' in notes_codes_parts_stock or 'EX' in notes_codes_parts_stock:
+                    # Exclude "IA" codes which are Internalized + Automatically Allocated (not option assignments)
+                    if ('A' in notes_codes_parts_stock or 'EX' in notes_codes_parts_stock) and 'IA' not in notes_codes_parts_stock:
                         candidate_stock_trades_for_linking.append(trade_event)
                         logger.debug(f"Collected stock trade {trade_event.ibkr_transaction_id} (Asset: {asset.get_classification_key()}) for later linking.")
 
@@ -543,6 +544,12 @@ class DomainEventFactory:
             )
             logger.debug(f"CA Record {idx+1}: Resolved/Created asset '{affected_asset.get_classification_key()}' (ID: {affected_asset.internal_asset_id}, Symbol on Asset: '{affected_asset.ibkr_symbol}')")
 
+            # Skip receivable assets entirely - they're just IBKR's internal tracking mechanism
+            # The actual economic substance is captured in the direct asset records
+            if ".REC" in (rca.symbol or "") or "RECEIVABLE" in (rca.description or "").upper():
+                logger.info(f"CA Record {idx+1}: Skipping receivable asset {rca.symbol} (ISIN: {rca.isin}) - economic substance captured in underlying asset records")
+                continue
+
             if not affected_asset.ibkr_symbol and affected_asset.asset_category != AssetCategory.CASH_BALANCE:
                 logger.error(f"CA Record {idx+1}: Corporate action (ActionID: {rca.action_id_ibkr}, Type: {rca.type_ca}, CSV Date: {rca.report_date or rca.pay_date or rca.ex_date}) affects asset {affected_asset.internal_asset_id} which lacks an 'ibkr_symbol'. Skipping event.")
                 continue
@@ -694,28 +701,28 @@ class DomainEventFactory:
                     elif not stock_ratio_match:
                          logger.warning(f"CA Record {idx+1} (TC): Could not determine if Merger CA {rca.action_id_ibkr} is cash or stock, or parse details from description '{ca_desc_from_file}'. Will fall through to generic.")
 
-            elif ca_type_from_file == "HI" or "STOCK DIVIDEND" in ca_type_from_file:
-                 logger.debug(f"CA Record {idx+1}: Identified as potential Stock Dividend (HI or 'STOCK DIVIDEND').")
+            elif ca_type_from_file == "HI" or ca_type_from_file == "SD" or "STOCK DIVIDEND" in ca_type_from_file:
+                 logger.debug(f"CA Record {idx+1}: Identified as potential Stock Dividend (HI, SD, or 'STOCK DIVIDEND').")
                  new_shares_qty = quantity_ca
                  total_fmv = gross_amount_ca
                  fmv_per_share = None
-                 logger.debug(f"CA Record {idx+1} (HI): new_shares_qty: {new_shares_qty}, total_fmv (from gross_amount_ca): {total_fmv}")
+                 logger.debug(f"CA Record {idx+1} (SD): new_shares_qty: {new_shares_qty}, total_fmv (from gross_amount_ca): {total_fmv}")
 
                  if new_shares_qty is not None and new_shares_qty > Decimal(0):
                      if total_fmv is not None and total_fmv >= Decimal(0):
                         fmv_per_share = total_fmv / new_shares_qty if new_shares_qty != Decimal(0) else Decimal(0)
                      else:
-                        logger.warning(f"CA Record {idx+1} (HI): Stock Dividend CA {rca.action_id_ibkr}: Missing or invalid total FMV ('Value'={rca.value}, Gross_amount_ca={gross_amount_ca}) for {new_shares_qty} shares. Assuming 0 FMV.")
+                        logger.warning(f"CA Record {idx+1} (SD): Stock Dividend CA {rca.action_id_ibkr}: Missing or invalid total FMV ('Value'={rca.value}, Gross_amount_ca={gross_amount_ca}) for {new_shares_qty} shares. Assuming 0 FMV.")
                         fmv_per_share = Decimal('0.0')
                         total_fmv = Decimal('0.0')
                  else:
-                     logger.warning(f"CA Record {idx+1} (HI): Stock Dividend CA {rca.action_id_ibkr}: Invalid or missing quantity ({new_shares_qty}). Cannot create event.")
-                 logger.debug(f"CA Record {idx+1} (HI): Calculated fmv_per_share: {fmv_per_share}")
+                     logger.warning(f"CA Record {idx+1} (SD): Stock Dividend CA {rca.action_id_ibkr}: Invalid or missing quantity ({new_shares_qty}). Cannot create event.")
+                 logger.debug(f"CA Record {idx+1} (SD): Calculated fmv_per_share: {fmv_per_share}")
 
                  if new_shares_qty is not None and new_shares_qty > 0 and fmv_per_share is not None:
                     common_ca_params_kw_base["gross_amount_foreign_currency"] = total_fmv
                     common_ca_params_kw = {k: v for k, v in common_ca_params_kw_base.items() if v is not None}
-                    logger.debug(f"CA Record {idx+1} (HI): Creating CorpActionStockDividend. New Shares: {new_shares_qty}, FMV/Share: {fmv_per_share}, Gross: {total_fmv}")
+                    logger.debug(f"CA Record {idx+1} (SD): Creating CorpActionStockDividend. New Shares: {new_shares_qty}, FMV/Share: {fmv_per_share}, Gross: {total_fmv}")
                     domain_ca_event_instance = CorpActionStockDividend(
                         asset_internal_id=affected_asset.internal_asset_id, event_date=event_date_str,
                         quantity_new_shares_received=new_shares_qty,
@@ -731,9 +738,9 @@ class DomainEventFactory:
                  common_ca_params_kw_base["gross_amount_foreign_currency"] = gross_amount_ca
                  common_ca_params_kw = {k: v for k, v in common_ca_params_kw_base.items() if v is not None}
 
-                 fallback_event_type = FinancialEventType.CORP_ACTION_STOCK_DIVIDEND
-                 if ca_type_from_file == "RS": fallback_event_type = FinancialEventType.CORP_ACTION_SPLIT_FORWARD
-                 elif ca_type_from_file == "TC": fallback_event_type = FinancialEventType.CORP_ACTION_MERGER_CASH
+                 fallback_event_type = FinancialEventType.CORP_STOCK_DIVIDEND
+                 if ca_type_from_file == "RS": fallback_event_type = FinancialEventType.CORP_SPLIT_FORWARD
+                 elif ca_type_from_file == "TC": fallback_event_type = FinancialEventType.CORP_MERGER_CASH
 
                  generic_event = CorporateActionEvent(
                      asset_internal_id=affected_asset.internal_asset_id,
