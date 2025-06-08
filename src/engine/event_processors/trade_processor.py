@@ -163,9 +163,11 @@ class TradeProcessor(EventProcessor):
                     logger.warning(f"Attempted to remove pending adjustment for option event {event.related_option_event_id}, but it was not found. Stock event: {event.event_id}.")
         
         # Log if a stock trade looks like it should be linked but isn't
+        # Note: Exclude "IA" codes which are Internalized + Automatically Allocated (not option assignments)
         elif event_asset_obj and event_asset_obj.asset_category == AssetCategory.STOCK and \
              event.related_option_event_id is None and \
              event.ibkr_notes_codes and \
+             'IA' not in (event.ibkr_notes_codes or "").upper() and \
              any(code in (event.ibkr_notes_codes or "").upper() for code in ['A', ';A', 'EX', ';EX']): # Ensure Notes/Codes is checked safely
              logger.error(
                  f"Stock trade {event.event_id} (Symbol: {asset_symbol}) appears to be from an option Exercise/Assignment "
