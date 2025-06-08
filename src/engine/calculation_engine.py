@@ -38,6 +38,14 @@ from .event_processors.option_processor import (
 
 logger = logging.getLogger(__name__)
 
+def _format_asset_info(asset_obj) -> str:
+    """Helper to format asset information for logging."""
+    if not asset_obj:
+        return "Unknown Asset"
+    desc = asset_obj.description or asset_obj.get_classification_key()
+    symbol = asset_obj.ibkr_symbol or "N/A"
+    return f"'{desc}' (Symbol: {symbol})"
+
 def run_main_calculations(
     financial_events: List[FinancialEvent],
     asset_resolver: AssetResolver,
@@ -68,12 +76,19 @@ def run_main_calculations(
     pending_option_adjustments: Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]] = {}
 
     tax_year_start_date_str = f"{tax_year}-01-01"
+    tax_year_end_date_str = f"{tax_year}-12-31"
     tax_year_start_date_obj = parse_ibkr_date(tax_year_start_date_str)
+    tax_year_end_date_obj = parse_ibkr_date(tax_year_end_date_str)
+    
     if not tax_year_start_date_obj:
         logger.error(f"Could not parse tax year start date: {tax_year_start_date_str}. Aborting calculations.")
         return [], [], financial_events, 0 
+    if not tax_year_end_date_obj:
+        logger.error(f"Could not parse tax year end date: {tax_year_end_date_str}. Aborting calculations.")
+        return [], [], financial_events, 0 
 
     logger.info("Separating historical and current year events...")
+    filtered_events_count = 0
     for event in financial_events:
         try:
             event_sort_key = get_event_sort_key(event, asset_resolver)
@@ -85,8 +100,14 @@ def run_main_calculations(
         if event_date_obj < tax_year_start_date_obj:
             if isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)): 
                 historical_events_by_asset[event.asset_internal_id].append(event)
-        else:
+        elif event_date_obj <= tax_year_end_date_obj:
             current_year_events.append(event)
+        else:
+            filtered_events_count += 1
+            logger.debug(f"Filtered out event {event.event_id} with date {event_date_obj} (after tax year {tax_year})")
+    
+    if filtered_events_count > 0:
+        logger.info(f"Filtered out {filtered_events_count} events occurring after tax year {tax_year}")
 
     logger.info(f"Separated events: {sum(len(v) for v in historical_events_by_asset.values())} relevant historical events for SOY FIFO reconstruction, "
                 f"{len(current_year_events)} current tax year events.")
@@ -174,7 +195,10 @@ def run_main_calculations(
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):
-            logger.warning(f"Event {event.event_id} is CorporateActionEvent type {event.event_type.name} but not in specific map. Using GenericCorporateActionProcessor.")
+            logger.warning(f"Event {event.event_id} is CorporateActionEvent type {event.event_type.name} for asset {_format_asset_info(asset_object)} but not in specific map. Using GenericCorporateActionProcessor.")
+            processor = generic_ca_processor
+        elif processor and isinstance(event, CorporateActionEvent) and not isinstance(event, (CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock)):
+            logger.warning(f"Event {event.event_id} is generic CorporateActionEvent with type {event.event_type.name} for asset {_format_asset_info(asset_object)} but specific processor expects subclass. Using GenericCorporateActionProcessor.")
             processor = generic_ca_processor
 
         if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS]):
