@@ -261,7 +261,6 @@ class ParsingOrchestrator:
         cash_events = event_factory.create_events_from_cash_transactions(self.raw_cash_transactions)
         ca_events = event_factory.create_events_from_corporate_actions(self.raw_corporate_actions)
 
-
         # Populate the main list of events
         self.domain_financial_events.clear() # Clear if run multiple times (though not typical)
         self.domain_financial_events.extend(all_trade_events)
