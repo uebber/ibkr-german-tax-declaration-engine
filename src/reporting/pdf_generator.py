@@ -933,7 +933,7 @@ class PdfReportGenerator:
     def _add_capital_repayments_summary(self):
         """Add section for tax-free capital repayments (Einlagenrückgewähr)"""
         self.story.append(Spacer(1, 0.5*cm))
-        self.story.append(Paragraph("Steuerfreie Kapitalrückgewähr (Einlagenrückgewähr)", self.styles['SectionTitle']))
+        self.story.append(Paragraph("Steuerfreie Kapitalrückgewähr (Einlagenrückgewähr)", self.styles['H2']))
         self.story.append(Paragraph(
             "Übersicht über erhaltene steuerfreie Kapitalrückgewähr und deren Auswirkung auf die Anschaffungskosten.",
             self.styles['BodyText']
@@ -947,7 +947,7 @@ class PdfReportGenerator:
         ]
 
         if capital_repayment_events:
-            self.story.append(Paragraph("Erhaltene steuerfreie Kapitalrückgewähr", self.styles['SubsectionTitle']))
+            self.story.append(Paragraph("Erhaltene steuerfreie Kapitalrückgewähr", self.styles['H3']))
             
             # Create table for received capital repayments
             headers = [
@@ -973,7 +973,7 @@ class PdfReportGenerator:
                     isin_symbol,
                     repayment_amount,
                     excess_amount,
-                    Paragraph(description[:100], self.styles['TableCellSmall']) if len(description) > 100 else description
+                    Paragraph(description[:100], self.styles['TableCell']) if len(description) > 100 else description
                 ])
 
             table = self._create_styled_table(data, col_widths=[2*cm, 3*cm, 2.5*cm, 2.5*cm, 2.5*cm, 4*cm])
@@ -981,7 +981,7 @@ class PdfReportGenerator:
             self.story.append(Spacer(1, 0.4*cm))
 
             # Table 2: Cost basis adjustments
-            self.story.append(Paragraph("Anpassung der Anschaffungskosten", self.styles['SubsectionTitle']))
+            self.story.append(Paragraph("Anpassung der Anschaffungskosten", self.styles['H3']))
             self.story.append(Paragraph(
                 "Die Rückgewähr reduziert die Anschaffungskosten der Wertpapiere nach dem FIFO-Prinzip (älteste Positionen zuerst). "
                 "Überschreitet die Rückgewähr die vorhandenen Anschaffungskosten, wird der Überschuss als steuerpflichtiger Dividendenertrag behandelt.",
