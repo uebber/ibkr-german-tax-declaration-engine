@@ -9,9 +9,9 @@ from src.domain.assets import Asset, Option, CashBalance, InvestmentFund, Deriva
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, WithholdingTaxEvent,
     CorporateActionEvent, CorpActionSplitForward, CorpActionMergerCash,
-    CorpActionMergerStock, CorpActionStockDividend, OptionLifecycleEvent,
-    OptionExerciseEvent, OptionAssignmentEvent, OptionExpirationWorthlessEvent,
-    CurrencyConversionEvent, FeeEvent
+    CorpActionMergerStock, CorpActionStockDividend, CorpActionExpireDividendRights,
+    OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent, 
+    OptionExpirationWorthlessEvent, CurrencyConversionEvent, FeeEvent
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
@@ -574,8 +574,9 @@ class DomainEventFactory:
             logger.debug(f"CA Record {idx+1}: Using event date: {event_date_str}")
 
             ca_type_from_file = (rca.type_ca or "").upper()
+            ca_code_from_file = (rca.code or "").upper()
             ca_desc_from_file = (rca.description or "").upper()
-            logger.debug(f"CA Record {idx+1}: Parsed CA Type from file: '{ca_type_from_file}', Parsed CA Desc from file (upper): '{ca_desc_from_file[:100]}...'")
+            logger.debug(f"CA Record {idx+1}: Parsed CA Type from file: '{ca_type_from_file}', Code: '{ca_code_from_file}', Parsed CA Desc from file (upper): '{ca_desc_from_file[:100]}...'")
 
             domain_ca_event_instance: Optional[CorporateActionEvent] = None
             quantity_ca = safe_decimal(rca.quantity)
@@ -606,7 +607,39 @@ class DomainEventFactory:
             }
             logger.debug(f"CA Record {idx+1}: common_ca_params_kw_base (pre-gross): {common_ca_params_kw_base}")
 
-            if ca_type_from_file == "FS" or "FORWARD SPLIT" in ca_type_from_file or \
+            # Handle DI (Dividend Issue) and ED (Expire Dividend) types first
+            if ca_type_from_file == "DI":
+                logger.debug(f"CA Record {idx+1}: Identified as DI (Dividend Issue) - creating stock dividend event.")
+                new_shares_qty = quantity_ca if quantity_ca and quantity_ca > Decimal(0) else Decimal(0)
+                total_fmv = gross_amount_ca
+                fmv_per_share = None
+                
+                if new_shares_qty > Decimal(0) and total_fmv is not None and total_fmv >= Decimal(0):
+                    fmv_per_share = total_fmv / new_shares_qty
+                else:
+                    fmv_per_share = Decimal('0.0')
+                    total_fmv = Decimal('0.0')
+                
+                common_ca_params_kw_base["gross_amount_foreign_currency"] = total_fmv
+                common_ca_params_kw = {k: v for k, v in common_ca_params_kw_base.items() if v is not None}
+                logger.debug(f"CA Record {idx+1} (DI): Creating CorpActionStockDividend. New Shares: {new_shares_qty}, FMV/Share: {fmv_per_share}, Gross: {total_fmv}")
+                domain_ca_event_instance = CorpActionStockDividend(
+                    asset_internal_id=affected_asset.internal_asset_id, event_date=event_date_str,
+                    quantity_new_shares_received=new_shares_qty,
+                    fmv_per_new_share_foreign_currency=fmv_per_share,
+                    **common_ca_params_kw
+                )
+
+            elif ca_type_from_file == "ED":
+                logger.debug(f"CA Record {idx+1}: Identified as ED (Expire Dividend Rights) - creating post-processing event.")
+                common_ca_params_kw_base["gross_amount_foreign_currency"] = Decimal('0.0')
+                common_ca_params_kw = {k: v for k, v in common_ca_params_kw_base.items() if v is not None}
+                domain_ca_event_instance = CorpActionExpireDividendRights(
+                    asset_internal_id=affected_asset.internal_asset_id, event_date=event_date_str,
+                    **common_ca_params_kw
+                )
+
+            elif ca_type_from_file == "FS" or "FORWARD SPLIT" in ca_type_from_file or \
                ("SPLIT" in ca_desc_from_file and "REVERSE" not in ca_desc_from_file):
                 logger.debug(f"CA Record {idx+1}: Identified as potential Forward Split.")
                 ratio_match = re.search(r"(\d+(?:\.\d+)?)\s*FOR\s*(\d+(?:\.\d+)?)", ca_desc_from_file)

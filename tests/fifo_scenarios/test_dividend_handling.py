@@ -72,12 +72,12 @@ class TestDividendHandling(FifoTestCaseBase):
             # Dividend rights issued (DI) - 100 rights issued 1 for 1
             [ACCOUNT_ID, leg_divir_symbol, 
              f"LEG({leg_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240524", "DI", "", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
+             leg_divir_isin, "20240524", "", "DI", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
             
             # Dividend rights expire (ED) - 100 rights expire
             [ACCOUNT_ID, leg_divir_symbol,
              f"{leg_divir_symbol}({leg_divir_isin}) EXPIRE DIVIDEND RIGHT ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240626", "ED", "", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
+             leg_divir_isin, "20240626", "", "ED", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
         ]
 
         # Cash transaction - tax-free dividend payment
