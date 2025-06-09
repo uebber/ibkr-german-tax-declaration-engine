@@ -782,8 +782,9 @@ class FifoLedger:
         if event.quantity_new_shares_received <= Decimal(0):
             logger.info(f"Stock dividend event {event.event_id} for asset {self.asset_internal_id} has zero or negative new shares ({event.quantity_new_shares_received}). No lot added.")
             return
-        # Note: FMV is tracked for informational purposes but not used in German tax calculation
-        # Stock dividends receive zero cost basis per German tax treatment
+        if event.fmv_per_new_share_eur is None:
+            logger.error(f"Stock dividend event {event.event_id} for asset {self.asset_internal_id} missing fmv_per_new_share_eur. Cannot create lot.")
+            return
 
         if self.asset_category == AssetCategory.OPTION:
             logger.warning(f"Stock dividend event {event.event_id} received for OPTION asset {self.asset_internal_id}. This is unusual. Treating quantity as contracts with FMV per contract if applicable, but verify CA terms.")
@@ -791,9 +792,8 @@ class FifoLedger:
             logger.warning(f"Stock dividend event {event.event_id} received for non-STOCK/non-FUND asset {self.asset_internal_id} (Category: {self.asset_category.name}). Adding lot based on shares/FMV, but verify asset classification and CA terms.")
 
         new_lot_quantity = event.quantity_new_shares_received.quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
-        # German tax treatment: Stock dividends have zero cost basis, no immediate tax impact
-        new_lot_cost_per_unit = Decimal('0.0')
-        new_lot_total_cost = Decimal('0.0')
+        new_lot_cost_per_unit = event.fmv_per_new_share_eur 
+        new_lot_total_cost = self.ctx.multiply(new_lot_quantity, new_lot_cost_per_unit)
 
         source_id = event.ca_action_id_ibkr or event.ibkr_transaction_id or f"STOCKDIV_{event.event_id}"
 
@@ -807,7 +807,7 @@ class FifoLedger:
         if any((parse_ibkr_date(lot.acquisition_date) is None) for lot in self.lots):
              raise ValueError(f"Unparseable acquisition date found after adding stock dividend lot for asset {self.asset_internal_id}.")
 
-        logger.info(f"Added new lot for stock dividend event {event.event_id} for asset {self.asset_internal_id}: Qty={new_lot.quantity}, Cost/Unit={new_lot.unit_cost_basis_eur} (German tax: zero cost basis)") # Renamed
+        logger.info(f"Added new lot for stock dividend event {event.event_id} for asset {self.asset_internal_id}: Qty={new_lot.quantity}, Cost/Unit={new_lot.unit_cost_basis_eur} (FMV)") # Renamed
 
 
     def consume_long_option_get_cost(self, quantity_contracts_to_consume: Decimal) -> List[ConsumedLotDetail]:
