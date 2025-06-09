@@ -34,6 +34,7 @@ class FinancialEventType(Enum):
     CORP_MERGER_CASH = auto() # Renamed from CORP_ACTION_MERGER_CASH
     CORP_MERGER_STOCK = auto() # Renamed from CORP_ACTION_MERGER_STOCK
     CORP_STOCK_DIVIDEND = auto() # Renamed from CORP_ACTION_STOCK_DIVIDEND
+    CORP_EXPIRE_DIVIDEND_RIGHTS = auto() # For ED corporate actions - used only for post-processing
     OPTION_EXERCISE = auto()
     OPTION_ASSIGNMENT = auto()
     OPTION_EXPIRATION_WORTHLESS = auto()
