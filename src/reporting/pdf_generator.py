@@ -930,6 +930,118 @@ class PdfReportGenerator:
         else:
             self.story.append(Paragraph("Keine relevanten Kapitalmaßnahmen in diesem Steuerjahr verarbeitet.", self.styles['BodyText']))
 
+    def _add_capital_repayments_summary(self):
+        """Add section for tax-free capital repayments (Einlagenrückgewähr)"""
+        self.story.append(Spacer(1, 0.5*cm))
+        self.story.append(Paragraph("Steuerfreie Kapitalrückgewähr (Einlagenrückgewähr)", self.styles['SectionTitle']))
+        self.story.append(Paragraph(
+            "Übersicht über erhaltene steuerfreie Kapitalrückgewähr und deren Auswirkung auf die Anschaffungskosten.",
+            self.styles['BodyText']
+        ))
+        self.story.append(Spacer(1, 0.3*cm))
+
+        # Table 1: Tax-free dividends received
+        capital_repayment_events = [
+            event for event in self.all_financial_events 
+            if event.event_type == FinancialEventType.CAPITAL_REPAYMENT
+        ]
+
+        if capital_repayment_events:
+            self.story.append(Paragraph("Erhaltene steuerfreie Kapitalrückgewähr", self.styles['SubsectionTitle']))
+            
+            # Create table for received capital repayments
+            headers = [
+                "Datum", "Wertpapier", "ISIN/Symbol", 
+                "Rückgewähr (EUR)", "Davon steuerpflichtig (EUR)", "Beschreibung"
+            ]
+            data = [headers]
+
+            for event in capital_repayment_events:
+                asset = self.assets_by_id.get(event.asset_internal_id)
+                asset_name, isin_symbol, _ = self._get_asset_details(event.asset_internal_id)
+                
+                repayment_amount = self._format_decimal(event.gross_amount_eur, "total")
+                excess_amount = "0,00"
+                if hasattr(event, '_excess_taxable_amount_eur') and event._excess_taxable_amount_eur:
+                    excess_amount = self._format_decimal(event._excess_taxable_amount_eur, "total")
+                
+                description = event.ibkr_activity_description or ""
+                
+                data.append([
+                    format_date_german(event.event_date),
+                    asset_name,
+                    isin_symbol,
+                    repayment_amount,
+                    excess_amount,
+                    Paragraph(description[:100], self.styles['TableCellSmall']) if len(description) > 100 else description
+                ])
+
+            table = self._create_styled_table(data, col_widths=[2*cm, 3*cm, 2.5*cm, 2.5*cm, 2.5*cm, 4*cm])
+            self.story.append(table)
+            self.story.append(Spacer(1, 0.4*cm))
+
+            # Table 2: Cost basis adjustments
+            self.story.append(Paragraph("Anpassung der Anschaffungskosten", self.styles['SubsectionTitle']))
+            self.story.append(Paragraph(
+                "Die Rückgewähr reduziert die Anschaffungskosten der Wertpapiere nach dem FIFO-Prinzip (älteste Positionen zuerst). "
+                "Überschreitet die Rückgewähr die vorhandenen Anschaffungskosten, wird der Überschuss als steuerpflichtiger Dividendenertrag behandelt.",
+                self.styles['BodyText']
+            ))
+            self.story.append(Spacer(1, 0.2*cm))
+
+            # Group by asset for cost basis adjustment summary
+            asset_adjustments = {}
+            for event in capital_repayment_events:
+                asset_id = event.asset_internal_id
+                if asset_id not in asset_adjustments:
+                    asset_adjustments[asset_id] = {
+                        'total_repayment': Decimal('0'),
+                        'total_excess': Decimal('0'),
+                        'asset_name': self._get_asset_details(asset_id)[0],
+                        'isin_symbol': self._get_asset_details(asset_id)[1]
+                    }
+                
+                if event.gross_amount_eur:
+                    asset_adjustments[asset_id]['total_repayment'] += event.gross_amount_eur
+                
+                if hasattr(event, '_excess_taxable_amount_eur') and event._excess_taxable_amount_eur:
+                    asset_adjustments[asset_id]['total_excess'] += event._excess_taxable_amount_eur
+
+            headers = [
+                "Wertpapier", "ISIN/Symbol", "Gesamte Rückgewähr (EUR)", 
+                "Kostenbasis-Reduktion (EUR)", "Überschuss als Dividende (EUR)"
+            ]
+            data = [headers]
+
+            for asset_id, adj in asset_adjustments.items():
+                cost_reduction = adj['total_repayment'] - adj['total_excess']
+                
+                data.append([
+                    adj['asset_name'],
+                    adj['isin_symbol'],
+                    self._format_decimal(adj['total_repayment'], "total"),
+                    self._format_decimal(cost_reduction, "total"),
+                    self._format_decimal(adj['total_excess'], "total")
+                ])
+
+            table = self._create_styled_table(data, col_widths=[3.5*cm, 2.5*cm, 3*cm, 3*cm, 3*cm])
+            self.story.append(table)
+
+            # Add summary note
+            total_repayments = sum(adj['total_repayment'] for adj in asset_adjustments.values())
+            total_excess = sum(adj['total_excess'] for adj in asset_adjustments.values())
+            total_cost_reduction = total_repayments - total_excess
+
+            self.story.append(Spacer(1, 0.3*cm))
+            summary_text = (
+                f"<b>Zusammenfassung:</b> Gesamte Kapitalrückgewähr: {self._format_decimal(total_repayments, 'total')} EUR, "
+                f"davon Kostenbasis-Reduktion: {self._format_decimal(total_cost_reduction, 'total')} EUR, "
+                f"als steuerpflichtige Dividende: {self._format_decimal(total_excess, 'total')} EUR."
+            )
+            self.story.append(Paragraph(summary_text, self.styles['BodyText']))
+
+        else:
+            self.story.append(Paragraph("Keine steuerfreien Kapitalrückgewähr in diesem Steuerjahr erhalten.", self.styles['BodyText']))
 
     def generate_report(self, output_file_path: str):
         logger.info(f"PDF-Bericht wird erstellt: {output_file_path}")
@@ -952,7 +1064,8 @@ class PdfReportGenerator:
         self._add_wht_summary()                   
         self._add_kap_inv_details()               
         self._add_so_details()                    
-        self._add_corporate_actions_summary()     
+        self._add_corporate_actions_summary()
+        self._add_capital_repayments_summary()     
         
         final_doc_story.extend(self.story)
         
