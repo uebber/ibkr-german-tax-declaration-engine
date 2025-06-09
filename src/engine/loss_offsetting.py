@@ -130,6 +130,11 @@ class LossOffsettingEngine:
             elif event.event_type == FinancialEventType.CORP_STOCK_DIVIDEND:
                  if isinstance(asset_resolved, Asset) and asset_resolved.asset_category == AssetCategory.STOCK and event_gross_eur > Decimal('0'):
                     kap_other_income_positive = self.ctx.add(kap_other_income_positive, event_gross_eur)
+            elif event.event_type == FinancialEventType.CAPITAL_REPAYMENT:
+                 # Handle excess amounts from capital repayments as taxable income
+                 if hasattr(event, '_excess_taxable_amount_eur') and event._excess_taxable_amount_eur > Decimal('0'):
+                    logger.info(f"Adding capital repayment excess {event._excess_taxable_amount_eur} EUR as taxable dividend income")
+                    kap_other_income_positive = self.ctx.add(kap_other_income_positive, event._excess_taxable_amount_eur)
 
         for vp_item in self.vorabpauschale_items:
             if vp_item.tax_year == self.tax_year:
