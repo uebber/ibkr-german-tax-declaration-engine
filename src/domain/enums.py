@@ -25,6 +25,7 @@ class FinancialEventType(Enum):
     TRADE_SELL_SHORT_OPEN = auto()
     TRADE_BUY_SHORT_COVER = auto()
     DIVIDEND_CASH = auto() # For stocks
+    CAPITAL_REPAYMENT = auto() # For tax-free capital repayments (Einlagenrückgewähr)
     DISTRIBUTION_FUND = auto() # For investment funds
     INTEREST_RECEIVED = auto()
     INTEREST_PAID_STUECKZINSEN = auto()
