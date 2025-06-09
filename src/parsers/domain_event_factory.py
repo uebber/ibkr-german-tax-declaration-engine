@@ -444,8 +444,11 @@ class DomainEventFactory:
 
             if "DIVIDEND" in event_type_str_upper or \
                (code_upper == "DI" and asset_for_event.asset_category != AssetCategory.CASH_BALANCE and "INTEREST" not in desc_upper):
-                # Check for tax-free capital repayment
-                if "EXEMPT FROM WITHHOLDING" in desc_upper:
+                # Check for dividend rights expiration - always treat as dividend income
+                if "EXPIRE DIVIDEND RIGHT" in desc_upper or "DIVIR" in (rct.symbol or ""):
+                    evt_type = FinancialEventType.DIVIDEND_CASH
+                # Check for tax-free capital repayment (but not for dividend rights)
+                elif "EXEMPT FROM WITHHOLDING" in desc_upper and "EXPIRE DIVIDEND RIGHT" not in desc_upper:
                     evt_type = FinancialEventType.CAPITAL_REPAYMENT
                 elif isinstance(asset_for_event, InvestmentFund):
                     evt_type = FinancialEventType.DISTRIBUTION_FUND
@@ -528,13 +531,57 @@ class DomainEventFactory:
                 logger.debug(f"Cash transaction type '{rct.type}' (Desc: '{rct.description}') for asset {asset_for_event.get_classification_key()} did not map to a specific domain event. Skipping.")
         return domain_events
 
+    def _find_matching_dividend_rights_pairs(self, raw_corporate_actions: List[RawCorporateActionRecord]) -> Set[str]:
+        """Find dividend rights DI/ED pairs that cancel each other out and should be skipped."""
+        from src.config import PRECISION_QUANTITY
+        pairs_to_skip = set()
+        
+        # Group by (conid, isin) to find matching instruments
+        di_actions = []
+        ed_actions = []
+        
+        for rca in raw_corporate_actions:
+            if rca.code == "DI":
+                di_actions.append(rca)
+            elif rca.code == "ED":
+                ed_actions.append(rca)
+        
+        # Find matching pairs: same identifiers and quantities that cancel out
+        for di_action in di_actions:
+            for ed_action in ed_actions:
+                if (di_action.conid == ed_action.conid and 
+                    di_action.isin == ed_action.isin):
+                    
+                    # Check if quantities cancel out (sum should be zero within tolerance)
+                    di_qty = safe_decimal(di_action.quantity, default=Decimal(0))
+                    ed_qty = safe_decimal(ed_action.quantity, default=Decimal(0))
+                    
+                    if di_qty != Decimal(0) or ed_qty != Decimal(0):
+                        # Sum should be zero within PRECISION_QUANTITY tolerance
+                        qty_sum = di_qty + ed_qty
+                        tolerance = Decimal(10) ** (-PRECISION_QUANTITY)
+                        
+                        if abs(qty_sum) <= tolerance:
+                            pairs_to_skip.add(di_action.action_id_ibkr)
+                            pairs_to_skip.add(ed_action.action_id_ibkr)
+                            logger.info(f"Found matching dividend rights pair for {di_action.symbol} (CONID: {di_action.conid}): DI qty {di_qty}, ED qty {ed_qty}, sum {qty_sum} - skipping both corporate actions")
+        
+        return pairs_to_skip
 
     def create_events_from_corporate_actions(self, raw_corporate_actions: List[RawCorporateActionRecord]) -> List[CorporateActionEvent]:
         logger.info(f"Processing {len(raw_corporate_actions)} raw corporate action records into domain events...")
         domain_ca_events: List[CorporateActionEvent] = []
 
+        # Find and match dividend rights DI/ED pairs to skip them
+        dividend_rights_to_skip = self._find_matching_dividend_rights_pairs(raw_corporate_actions)
+
         for idx, rca in enumerate(raw_corporate_actions):
             logger.debug(f"CA Record {idx+1}/{len(raw_corporate_actions)}: Data: Symbol='{rca.symbol}', Desc='{rca.description}', Type='{rca.type_ca}', ActionID='{rca.action_id_ibkr}'")
+
+            # Skip dividend rights corporate actions that have matching pairs
+            if rca.action_id_ibkr in dividend_rights_to_skip:
+                logger.debug(f"CA Record {idx+1}: Skipping dividend rights action {rca.action_id_ibkr} - part of matched DI/ED pair")
+                continue
 
             if not rca.symbol or not rca.description or not rca.type_ca:
                 logger.warning(f"CA Record {idx+1}: Skipping due to missing Symbol, Description, or Type. Data: {rca}")
