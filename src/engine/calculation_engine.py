@@ -9,8 +9,9 @@ from datetime import datetime, date
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,
-    OptionExerciseEvent, OptionAssignmentEvent, OptionExpirationWorthlessEvent,
-    OptionLifecycleEvent, CashFlowEvent, FeeEvent, WithholdingTaxEvent, CurrencyConversionEvent
+    CorpActionExpireDividendRights, OptionExerciseEvent, OptionAssignmentEvent, 
+    OptionExpirationWorthlessEvent, OptionLifecycleEvent, CashFlowEvent, FeeEvent, 
+    WithholdingTaxEvent, CurrencyConversionEvent
 )
 from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund
 from src.identification.asset_resolver import AssetResolver
@@ -29,7 +30,7 @@ from .event_processors.base_processor import EventProcessor
 from .event_processors.trade_processor import TradeProcessor
 from .event_processors.corporate_action_processor import (
     SplitProcessor, MergerCashProcessor, StockDividendProcessor, MergerStockProcessor,
-    GenericCorporateActionProcessor
+    GenericCorporateActionProcessor, ExpireDividendRightsProcessor
 )
 from .event_processors.option_processor import (
     OptionExerciseProcessor, OptionAssignmentProcessor, OptionExpirationWorthlessProcessor
@@ -166,6 +167,7 @@ def run_main_calculations(
     stock_dividend_processor = StockDividendProcessor()
     merger_stock_processor = MergerStockProcessor()
     generic_ca_processor = GenericCorporateActionProcessor()
+    expire_dividend_rights_processor = ExpireDividendRightsProcessor()
     option_exercise_processor = OptionExerciseProcessor()
     option_assignment_processor = OptionAssignmentProcessor()
     option_expiration_processor = OptionExpirationWorthlessProcessor()
@@ -179,6 +181,7 @@ def run_main_calculations(
         FinancialEventType.CORP_MERGER_CASH: merger_cash_processor, # Renamed
         FinancialEventType.CORP_STOCK_DIVIDEND: stock_dividend_processor, # Renamed
         FinancialEventType.CORP_MERGER_STOCK: merger_stock_processor, # Renamed
+        FinancialEventType.CORP_EXPIRE_DIVIDEND_RIGHTS: expire_dividend_rights_processor,
         FinancialEventType.OPTION_EXERCISE: option_exercise_processor,
         FinancialEventType.OPTION_ASSIGNMENT: option_assignment_processor,
         FinancialEventType.OPTION_EXPIRATION_WORTHLESS: option_expiration_processor,
@@ -197,7 +200,7 @@ def run_main_calculations(
         if not processor and isinstance(event, CorporateActionEvent):
             logger.warning(f"Event {event.event_id} is CorporateActionEvent type {event.event_type.name} for asset {_format_asset_info(asset_object)} but not in specific map. Using GenericCorporateActionProcessor.")
             processor = generic_ca_processor
-        elif processor and isinstance(event, CorporateActionEvent) and not isinstance(event, (CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock)):
+        elif processor and isinstance(event, CorporateActionEvent) and not isinstance(event, (CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, CorpActionExpireDividendRights)):
             logger.warning(f"Event {event.event_id} is generic CorporateActionEvent with type {event.event_type.name} for asset {_format_asset_info(asset_object)} but specific processor expects subclass. Using GenericCorporateActionProcessor.")
             processor = generic_ca_processor
 

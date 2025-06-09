@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 from src.domain.events import (
     CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock,
-    CorporateActionEvent, FinancialEvent 
+    CorporateActionEvent, FinancialEvent, CorpActionExpireDividendRights
 )
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger
@@ -102,6 +102,15 @@ class MergerStockProcessor(EventProcessor):
             return []
 
         logger.warning(f"Processing {event.event_type.name} for asset {ledger.asset_internal_id} on {event.event_date} (ID: {event.event_id}) - FIFO Lot Adjustment LOGIC NOT IMPLEMENTED YET as per PRD.")
+        return []
+
+class ExpireDividendRightsProcessor(EventProcessor):
+    def process(self, event: FinancialEvent, ledger: FifoLedger, context: Dict[str, Any]) -> List[RealizedGainLoss]:
+        if not isinstance(event, CorpActionExpireDividendRights):
+            logger.error(f"ExpireDividendRightsProcessor received incorrect event type: {type(event).__name__} (ID: {event.event_id}).")
+            return []
+        
+        # These events are used only for post-processing DI/ED consolidation, no FIFO ledger processing needed
         return []
 
 class GenericCorporateActionProcessor(EventProcessor):
