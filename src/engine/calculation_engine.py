@@ -236,9 +236,23 @@ def run_main_calculations(
         elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:
             logger.warning(f"Event {event.event_id} ({event.event_type.name}) for non-cash asset {asset_object.get_classification_key()} occurred, but no FIFO ledger exists. Skipping processing for this event.")
 
+        # Handle capital repayments directly
+        elif event.event_type == FinancialEventType.CAPITAL_REPAYMENT and ledger:
+            try:
+                repayment_amount_eur = event.gross_amount_eur or Decimal('0')
+                logger.info(f"Processing capital repayment for {asset_object.get_classification_key()}: {repayment_amount_eur} EUR")
+                excess = ledger.reduce_cost_basis_for_capital_repayment(repayment_amount_eur)
+                if excess > Decimal('0'):
+                    logger.info(f"Capital repayment excess {excess} EUR becomes taxable dividend income")
+                    # Store excess for later aggregation - we'll handle this in loss offsetting
+                    if not hasattr(event, '_excess_taxable_amount_eur'):
+                        event._excess_taxable_amount_eur = excess
+            except Exception as e:
+                logger.error(f"Error processing capital repayment {event.event_id}: {e}", exc_info=True)
+
         elif not processor:
             if event.event_type not in [
-                FinancialEventType.DIVIDEND_CASH, FinancialEventType.DISTRIBUTION_FUND,
+                FinancialEventType.DIVIDEND_CASH, FinancialEventType.CAPITAL_REPAYMENT, FinancialEventType.DISTRIBUTION_FUND,
                 FinancialEventType.INTEREST_RECEIVED, FinancialEventType.INTEREST_PAID_STUECKZINSEN,
                 FinancialEventType.PAYMENT_IN_LIEU_DIVIDEND, FinancialEventType.WITHHOLDING_TAX,
                 FinancialEventType.FEE_TRANSACTION, FinancialEventType.CURRENCY_CONVERSION
