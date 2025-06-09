@@ -585,9 +585,9 @@ class DomainEventFactory:
             if ca_type_from_file == "TC" and "CASH" in ca_desc_from_file: # Merger for cash
                 gross_amount_ca_raw = rca.proceeds # total cash received
                 logger.debug(f"CA Record {idx+1} (TC-Cash): Using 'Proceeds' ({rca.proceeds}) for gross amount.")
-            elif ca_type_from_file == "HI": # Stock dividend
+            elif ca_type_from_file == "HI" or ca_type_from_file == "SD": # Stock dividend
                 gross_amount_ca_raw = rca.value # Fair market value of shares received
-                logger.debug(f"CA Record {idx+1} (HI): Using 'Value' ({rca.value}) for gross amount.")
+                logger.debug(f"CA Record {idx+1} ({ca_type_from_file}): Using 'Value' ({rca.value}) for gross amount.")
             elif rca.proceeds is not None:
                 gross_amount_ca_raw = rca.proceeds
                 logger.debug(f"CA Record {idx+1}: Fallback to 'Proceeds' ({rca.proceeds}) for gross amount.")
