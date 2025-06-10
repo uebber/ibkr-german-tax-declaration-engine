@@ -247,9 +247,15 @@ def run_main_calculations(
                 excess = ledger.reduce_cost_basis_for_capital_repayment(repayment_amount_eur)
                 if excess > Decimal('0'):
                     logger.info(f"Capital repayment excess {excess} EUR becomes taxable dividend income")
-                    # Store excess for later aggregation - we'll handle this in loss offsetting
-                    if not hasattr(event, '_excess_taxable_amount_eur'):
-                        event._excess_taxable_amount_eur = excess
+                    
+                    # Create new DIVIDEND_CASH event for excess amount
+                    _create_excess_dividend_event(event, excess, asset_object, current_year_events)
+                    
+                    # Reduce original capital repayment event to only the cost basis portion
+                    cost_basis_portion = repayment_amount_eur - excess
+                    event.gross_amount_eur = cost_basis_portion
+                    event.gross_amount_foreign_currency = cost_basis_portion
+                    logger.info(f"Reduced capital repayment event to cost basis portion: {cost_basis_portion} EUR")
             except Exception as e:
                 logger.error(f"Error processing capital repayment {event.event_id}: {e}", exc_info=True)
 
@@ -267,6 +273,7 @@ def run_main_calculations(
 
     logger.info("Finished processing current year events.")
     logger.info(f"Pending option adjustments stored: {len(pending_option_adjustments)}")
+
 
     logger.info("Performing End-of-Year (EOY) quantity validation...")
     eoy_mismatch_errors = 0 
@@ -320,3 +327,40 @@ def run_main_calculations(
     logger.info(f"Calculation engine produced {len(vorabpauschale_data_items)} VorabpauschaleData records (expected 0 for 2023).")
 
     return realized_gains_losses, vorabpauschale_data_items, processed_income_events_for_output, eoy_mismatch_errors
+
+
+def _create_excess_dividend_event(original_event, excess_amount, asset_object, current_year_events):
+    """Create a new DIVIDEND_CASH event for excess capital repayment amount.
+    
+    Args:
+        original_event: The original CAPITAL_REPAYMENT event
+        excess_amount: The excess amount that becomes taxable dividend
+        asset_object: The asset for which the dividend is being created
+        current_year_events: The current year events list to add the new event to
+    """
+    from src.domain.events import CashFlowEvent
+    from src.domain.enums import FinancialEventType
+    
+    # Create new DIVIDEND_CASH event for excess amount
+    excess_dividend_event = CashFlowEvent(
+        asset_internal_id=asset_object.internal_asset_id,
+        event_date=original_event.event_date,
+        event_type=FinancialEventType.DIVIDEND_CASH,
+        gross_amount_foreign_currency=excess_amount,
+        local_currency=original_event.local_currency,
+        source_country_code=getattr(original_event, 'source_country_code', None),
+        ibkr_transaction_id=f"{original_event.ibkr_transaction_id}_EXCESS",
+        ibkr_activity_description=f"{original_event.ibkr_activity_description} [EXCESS TAXABLE DIVIDEND]",
+        ibkr_notes_codes=getattr(original_event, 'ibkr_notes_codes', None)
+    )
+    
+    # Set the EUR amount 
+    excess_dividend_event.gross_amount_eur = excess_amount
+    excess_dividend_event.event_id = uuid.uuid4()
+    
+    # Add to the current year events list for processing
+    current_year_events.append(excess_dividend_event)
+    
+    logger.info(f"Created excess dividend event {excess_dividend_event.event_id} for {excess_amount} EUR from capital repayment excess")
+    
+    return excess_dividend_event
