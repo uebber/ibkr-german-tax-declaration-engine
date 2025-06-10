@@ -19,6 +19,70 @@ class TestDividendHandling(FifoTestCaseBase):
     2. Taxable stock dividends: New FIFO lot creation with tax impact
     """
 
+    def _assert_dividend_income_events(self, processing_output, expected_count, expected_amount=None, tax_year="2024"):
+        """
+        Helper method to validate dividend income events consistently across tests.
+        
+        Args:
+            processing_output: The processing output to check
+            expected_count: Expected number of dividend income events with positive amounts
+            expected_amount: Expected total dividend amount (optional)
+            tax_year: Tax year to filter events (default: "2024")
+        """
+        dividend_income_events = [
+            event for event in processing_output.processed_income_events
+            if hasattr(event, 'event_type') and (
+                event.event_type == FinancialEventType.DIVIDEND_CASH or
+                event.event_type == FinancialEventType.CORP_STOCK_DIVIDEND
+            ) and event.event_date.startswith(tax_year) and 
+            hasattr(event, 'gross_amount_eur') and event.gross_amount_eur > 0
+        ]
+        
+        assert len(dividend_income_events) == expected_count, \
+            f"Expected {expected_count} dividend income events with positive amounts, but found {len(dividend_income_events)}: " \
+            f"{[(e.event_type, e.event_date, e.gross_amount_eur) for e in dividend_income_events]}"
+        
+        if expected_amount is not None:
+            total_dividend_amount = sum(e.gross_amount_eur for e in dividend_income_events)
+            assert total_dividend_amount == expected_amount, \
+                f"Expected total dividend amount {expected_amount}, but got {total_dividend_amount}"
+    
+    def _assert_tax_impact(self, processing_output, expected_kap_other_income=None, 
+                          expected_kap_foreign_income=None, expected_conceptual_other_income=None):
+        """
+        Helper method to validate tax impact consistently across tests.
+        
+        Args:
+            processing_output: The processing output to check
+            expected_kap_other_income: Expected value for ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+            expected_kap_foreign_income: Expected value for ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT
+            expected_conceptual_other_income: Expected value for conceptual_net_other_income
+        """
+        import src.config as config
+        loss_engine = LossOffsettingEngine(
+            realized_gains_losses=processing_output.realized_gains_losses,
+            vorabpauschale_items=processing_output.vorabpauschale_items,
+            current_year_financial_events=processing_output.processed_income_events,
+            asset_resolver=processing_output.asset_resolver,
+            tax_year=DEFAULT_TAX_YEAR,
+            apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
+        )
+        tax_results = loss_engine.calculate_reporting_figures()
+        
+        if expected_kap_other_income is not None:
+            kap_other_income = tax_results.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE, Decimal("0"))
+            assert kap_other_income == expected_kap_other_income, \
+                f"Expected kap_other_income {expected_kap_other_income}, but got {kap_other_income}"
+        
+        if expected_kap_foreign_income is not None:
+            kap_foreign_income = tax_results.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, Decimal("0"))
+            assert kap_foreign_income == expected_kap_foreign_income, \
+                f"Expected kap_foreign_income {expected_kap_foreign_income}, but got {kap_foreign_income}"
+        
+        if expected_conceptual_other_income is not None:
+            assert tax_results.conceptual_net_other_income == expected_conceptual_other_income, \
+                f"Expected conceptual_net_other_income {expected_conceptual_other_income}, but got {tax_results.conceptual_net_other_income}"
+
     def test_dividend_rights_fifo_adjustment_via_sale_gains(self, mock_config_paths):
         """
         Test Case: Dividend rights handling - verify FIFO adjustment via realized gains from stock sale.
@@ -152,56 +216,13 @@ class TestDividendHandling(FifoTestCaseBase):
         # Assert basic FIFO and EOY results
         self.assert_results(actual_processing_output, expected_outcome)
         
-        # Additional verification: Check that no meaningful dividend income is recorded for tax year 2024
-        # since this is a tax-free dividend that only adjusts cost basis
-        dividend_income_events = [
-            event for event in actual_processing_output.processed_income_events
-            if hasattr(event, 'event_type') and (
-                event.event_type == FinancialEventType.DIVIDEND_CASH or
-                event.event_type == FinancialEventType.CORP_STOCK_DIVIDEND
-            ) and event.event_date.startswith("2024") and 
-            hasattr(event, 'gross_amount_eur') and event.gross_amount_eur > 0
-        ]
+        # Verify no dividend income events for tax-free dividend
+        self._assert_dividend_income_events(actual_processing_output, expected_count=0)
         
-        # For tax-free dividend (Exempt From Withholding), there should be no taxable income events with positive amounts
-        assert len(dividend_income_events) == 0, \
-            f"Expected no dividend income events with positive amounts for tax-free dividend, but found: " \
-            f"{[(e.event_type, e.event_date, e.gross_amount_eur) for e in dividend_income_events]}"
-        
-        # Verify final tax impact using LossOffsettingEngine - should be zero for tax-free dividend
-        try:
-            import src.config as config
-            loss_engine = LossOffsettingEngine(
-                realized_gains_losses=actual_processing_output.realized_gains_losses,
-                vorabpauschale_items=actual_processing_output.vorabpauschale_items,
-                current_year_financial_events=actual_processing_output.processed_income_events,
-                asset_resolver=actual_processing_output.asset_resolver,
-                tax_year=DEFAULT_TAX_YEAR,
-                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
-            )
-            tax_results = loss_engine.calculate_reporting_figures()
-            
-            # Verify that the tax-free dividend contributes zero to kap_other_income_positive
-            kap_other_income = tax_results.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE, Decimal("0"))
-            assert kap_other_income == Decimal("0.00"), \
-                f"Expected tax-free dividend to contribute €0 to kap_other_income_positive, but got {kap_other_income}"
-            
-            # Verify conceptual other income is zero from dividend (realized gains are separate)
-            # Note: conceptual_net_other_income may include other sources, so we check specifically for dividend income
-            dividend_contribution_to_other_income = Decimal("0")
-            for event in actual_processing_output.processed_income_events:
-                if (hasattr(event, 'event_type') and 
-                    event.event_type == FinancialEventType.DIVIDEND_CASH and
-                    hasattr(event, 'gross_amount_eur')):
-                    dividend_contribution_to_other_income += event.gross_amount_eur
-            
-            assert dividend_contribution_to_other_income == Decimal("0.00"), \
-                f"Expected tax-free dividend to contribute €0 to other income, but got {dividend_contribution_to_other_income}"
-                
-        except Exception as e:
-            # If loss offsetting fails, log but don't fail the test
-            # The main FIFO verification is still valid
-            print(f"Warning: Could not verify tax impact due to: {e}")
+        # Verify tax impact is zero for tax-free dividend
+        self._assert_tax_impact(actual_processing_output, 
+                               expected_kap_other_income=Decimal("0.00"),
+                               expected_conceptual_other_income=Decimal("0.00"))
 
     def test_dividend_rights_first_fifo_lot_to_zero_second_reduced(self, mock_config_paths):
         """
@@ -336,38 +357,12 @@ class TestDividendHandling(FifoTestCaseBase):
         self.assert_results(actual_processing_output, expected_outcome)
         
         # Verify no dividend income events for tax-free dividend
-        dividend_income_events = [
-            event for event in actual_processing_output.processed_income_events
-            if hasattr(event, 'event_type') and (
-                event.event_type == FinancialEventType.DIVIDEND_CASH or
-                event.event_type == FinancialEventType.CORP_STOCK_DIVIDEND
-            ) and event.event_date.startswith("2024") and 
-            hasattr(event, 'gross_amount_eur') and event.gross_amount_eur > 0
-        ]
-        
-        assert len(dividend_income_events) == 0, \
-            f"Expected no dividend income events with positive amounts for tax-free dividend, but found: " \
-            f"{[(e.event_type, e.event_date, e.gross_amount_eur) for e in dividend_income_events]}"
+        self._assert_dividend_income_events(actual_processing_output, expected_count=0)
         
         # Verify tax impact is zero for tax-free dividend
-        try:
-            import src.config as config
-            loss_engine = LossOffsettingEngine(
-                realized_gains_losses=actual_processing_output.realized_gains_losses,
-                vorabpauschale_items=actual_processing_output.vorabpauschale_items,
-                current_year_financial_events=actual_processing_output.processed_income_events,
-                asset_resolver=actual_processing_output.asset_resolver,
-                tax_year=DEFAULT_TAX_YEAR,
-                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
-            )
-            tax_results = loss_engine.calculate_reporting_figures()
-            
-            kap_other_income = tax_results.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE, Decimal("0"))
-            assert kap_other_income == Decimal("0.00"), \
-                f"Expected tax-free dividend to contribute €0 to kap_other_income_positive, but got {kap_other_income}"
-                
-        except Exception as e:
-            print(f"Warning: Could not verify tax impact due to: {e}")
+        self._assert_tax_impact(actual_processing_output, 
+                               expected_kap_other_income=Decimal("0.00"),
+                               expected_conceptual_other_income=Decimal("0.00"))
 
     def test_d05_stock_dividend_fifo_lot_creation_and_tax_impact(self, mock_config_paths):
         """
@@ -454,53 +449,12 @@ class TestDividendHandling(FifoTestCaseBase):
         # Assert basic FIFO and EOY results
         self.assert_results(actual_processing_output, expected_outcome)
         
-        # Additional verification: Check that stock dividend income is recorded
-        dividend_income_events = [
-            event for event in actual_processing_output.processed_income_events
-            if hasattr(event, 'event_type') and (
-                event.event_type == FinancialEventType.DIVIDEND_CASH or
-                event.event_type == FinancialEventType.CORP_STOCK_DIVIDEND
-            ) and event.event_date == "2024-04-30"
-        ]
+        # Verify stock dividend income is recorded with expected amount
+        self._assert_dividend_income_events(actual_processing_output, 
+                                           expected_count=1, 
+                                           expected_amount=Decimal("349"))
         
-        assert len(dividend_income_events) > 0, \
-            f"Expected to find dividend income event for 2024-04-30, but found none. " \
-            f"All processed events: {[f'{e.event_type}:{e.event_date}' for e in actual_processing_output.processed_income_events]}"
-        
-        # Find the stock dividend income event with EUR value 349
-        stock_dividend_event = None
-        for event in dividend_income_events:
-            if event.gross_amount_eur and event.gross_amount_eur == Decimal("349"):
-                stock_dividend_event = event
-                break
-        
-        assert stock_dividend_event is not None, \
-            f"Expected to find stock dividend income event with EUR amount 349, but found events: " \
-            f"{[(e.event_type, e.gross_amount_eur) for e in dividend_income_events]}"
-        
-        # Verify final tax impact using LossOffsettingEngine
-        try:
-            import src.config as config
-            loss_engine = LossOffsettingEngine(
-                realized_gains_losses=actual_processing_output.realized_gains_losses,
-                vorabpauschale_items=actual_processing_output.vorabpauschale_items,
-                current_year_financial_events=actual_processing_output.processed_income_events,
-                asset_resolver=actual_processing_output.asset_resolver,
-                tax_year=DEFAULT_TAX_YEAR,
-                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
-            )
-            tax_results = loss_engine.calculate_reporting_figures()
-            
-            # Verify that the stock dividend contributes to foreign capital income
-            kap_z19_value = tax_results.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, Decimal("0"))
-            assert kap_z19_value == Decimal("349.00"), \
-                f"Expected stock dividend to contribute EUR 349 to Anlage KAP Zeile 19, but got {kap_z19_value}"
-            
-            # Verify conceptual other income includes the dividend
-            assert tax_results.conceptual_net_other_income == Decimal("349.00"), \
-                f"Expected stock dividend to contribute EUR 349 to conceptual other income, but got {tax_results.conceptual_net_other_income}"
-                
-        except Exception as e:
-            # If loss offsetting fails, log but don't fail the test
-            # The main FIFO verification is still valid
-            print(f"Warning: Could not verify tax impact due to: {e}")
+        # Verify tax impact includes the stock dividend
+        self._assert_tax_impact(actual_processing_output,
+                               expected_kap_foreign_income=Decimal("349.00"),
+                               expected_conceptual_other_income=Decimal("349.00"))
