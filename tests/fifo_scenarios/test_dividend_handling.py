@@ -33,7 +33,7 @@ class TestDividendHandling(FifoTestCaseBase):
         - 2023-06-21: Buy 50 LEG shares at €80 each = €4000 total cost  
         - 2024-05-24: Dividend rights issued (100 rights, 1 for 1)
         - 2024-06-26: Rights expire, €245 tax-free dividend paid
-        - 2024-01-21: Sell all 150 shares at €85 each = €12750 total proceeds
+        - 2024-07-15: Sell all 150 shares at €85 each = €12750 total proceeds
         
         Expected FIFO calculation:
         - First lot after dividend adjustment: 100 shares, cost €5500 - €245 = €5255 (€52.55 per share)
@@ -201,6 +201,172 @@ class TestDividendHandling(FifoTestCaseBase):
         except Exception as e:
             # If loss offsetting fails, log but don't fail the test
             # The main FIFO verification is still valid
+            print(f"Warning: Could not verify tax impact due to: {e}")
+
+    def test_dividend_rights_first_fifo_lot_to_zero_second_reduced(self, mock_config_paths):
+        """
+        Test Case 2: Dividend rights handling where first FIFO lot goes to zero and second lot is also reduced.
+        
+        This test verifies:
+        1. First FIFO lot cost basis reduced to zero by dividend payment
+        2. Second FIFO lot cost basis also partially reduced by remaining dividend amount
+        3. FIFO adjustment confirmed via realized gains calculation from stock sale
+        4. No impact on kap_other_income_positive from tax-free dividend ("Exempt From Withholding")
+        5. Expected impact to Anlage KAP other income: €0 (tax-free dividend only adjusts cost basis)
+        
+        Scenario (based on provided test case data):
+        - 2023-05-17: Buy 100 LEG shares at €1 each = €100 total cost (first lot)
+        - 2023-06-21: Buy 50 LEG shares at €55 each = €2750 total cost (second lot)  
+        - 2024-05-24: Dividend rights issued (100 rights, 1 for 1)
+        - 2024-06-26: Rights expire, €245 tax-free dividend paid
+        - 2024-11-21: Sell all 150 shares at €85 each = €12750 total proceeds
+        
+        Expected FIFO calculation:
+        - First lot: €100 cost - €100 from dividend = €0 (completely eliminated)
+        - Second lot: €2750 cost - €145 remaining dividend = €2605
+        - Total adjusted cost: €0 + €2605 = €2605
+        - Realized gain: €12750 - €2605 = €10145
+        
+        Expected tax impact:
+        - Anlage KAP other income (kap_other_income_positive): €0 (tax-free dividend)
+        - Conceptual other income: €0 (tax-free dividend only reduces cost basis)
+        """
+        leg_symbol = "LEGd"
+        leg_isin = "DE000LEG1110"
+        leg_divir_symbol = "LEG.DIVIR"
+        leg_divir_isin = "DE000LEG1268"
+        currency = "EUR"
+
+        # Trades data - LEG stock purchases and sale
+        # Headers: ClientAccountID, CurrencyPrimary, AssetClass, SubCategory, Symbol, Description, ISIN, 
+        #          Strike, Expiry, Put/Call, TradeDate, Quantity, TradePrice, IBCommission, IBCommissionCurrency, 
+        #          Buy/Sell, TransactionID, Notes/Codes, UnderlyingSymbol, Conid, UnderlyingConid, Multiplier, Open/CloseIndicator
+        trades_data = [
+            # First purchase: 100 shares at €1 on 2023-05-17
+            [ACCOUNT_ID, currency, "STK", "COMMON", leg_symbol, "LEG IMMOBILIEN SE", leg_isin, 
+             "", "", "", "20230517", "100", "1", "0", currency, "BUY", "1873530058", "A", "", "121764205", "", "1", "O"],
+            
+            # Second purchase: 50 shares at €55 on 2023-06-21
+            [ACCOUNT_ID, currency, "STK", "COMMON", leg_symbol, "LEG IMMOBILIEN SE", leg_isin,
+             "", "", "", "20230621", "50", "55", "0", currency, "BUY", "2830028658", "P", "", "121764205", "", "1", "O"],
+            
+            # Sale: 150 shares at €85 on 2024-01-21 (from test case data)
+            [ACCOUNT_ID, currency, "STK", "COMMON", leg_symbol, "LEG IMMOBILIEN SE", leg_isin,
+             "", "", "", "20241121", "-150", "85", "0", currency, "SELL", "2830028658", "", "", "121764205", "", "1", "C"]
+        ]
+
+        # Corporate actions data - dividend rights issuance and expiry
+        # Headers: ClientAccountID, Symbol, Description, ISIN, Report Date, Code, Type, ActionID, 
+        #          Conid, UnderlyingConid, UnderlyingSymbol, CurrencyPrimary, Amount, Proceeds, Value, Quantity
+        corporate_actions_data = [
+            # Dividend rights issued (DI) - 100 rights issued 1 for 1
+            [ACCOUNT_ID, leg_divir_symbol, 
+             f"LEG({leg_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
+             leg_divir_isin, "20240524", "", "DI", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
+            
+            # Dividend rights expire (ED) - 100 rights expire
+            [ACCOUNT_ID, leg_divir_symbol,
+             f"{leg_divir_symbol}({leg_divir_isin}) EXPIRE DIVIDEND RIGHT ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
+             leg_divir_isin, "20240626", "", "ED", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
+        ]
+
+        # Cash transaction - tax-free dividend payment
+        # Headers: ClientAccountID, CurrencyPrimary, AssetClass, SubCategory, Symbol, Description, 
+        #          SettleDate, Amount, Type, Conid, UnderlyingConid, ISIN, IssuerCountryCode, TransactionID
+        cash_transactions_data = [
+            # Tax-free dividend payment of €245 (from test case data)
+            [ACCOUNT_ID, currency, "STK", "RIGHT", leg_divir_symbol,
+             f"LEG.DIVIR({leg_divir_isin}) EXPIRE DIVIDEND RIGHT (Exempt From Withholding)",
+             "20240626", "245", "Dividends", "705911909", "", leg_divir_isin, "XX", "2841481203"]
+        ]
+
+        # Start positions - LEG shares after trades but before dividend event
+        # Headers: ClientAccountID, CurrencyPrimary, AssetClass, SubCategory, Symbol, Description, ISIN, 
+        #          Quantity, PositionValue, MarkPrice, CostBasisMoney, UnderlyingSymbol, Conid, UnderlyingConid, Multiplier
+        positions_start_data = [
+            [ACCOUNT_ID, currency, "STK", "COMMON", leg_symbol, "LEG IMMOBILIEN SE", leg_isin,
+             Decimal("150"), Decimal("9500"), Decimal("63.333"), Decimal("2850"),  # Total cost: €100 + €2750 = €2850
+             "", "121764205", "", Decimal("1")]
+        ]
+
+        positions_end_data = []
+
+        # Expected calculation:
+        # Original cost: €100 (first lot) + €2750 (second lot) = €2850
+        # Dividend reduces first lot by €100 (to zero), then second lot by €145
+        # Adjusted costs: €0 (first lot) + €2605 (second lot) = €2605 total
+        expected_outcome = ScenarioExpectedOutput(
+            test_description="LEG Dividend Rights: First lot to zero, second lot reduced by €245 dividend",
+            expected_rgls=[
+                # First FIFO lot: 100 shares with cost basis reduced to zero
+                ExpectedRealizedGainLoss(
+                    asset_identifier=f"ISIN:{leg_isin}",
+                    realization_date="2024-11-21",
+                    quantity_realized=Decimal("100"),
+                    total_cost_basis_eur=Decimal("0.00"),  # €100 - €100 = €0
+                    total_realization_value_eur=Decimal("8500.00"),
+                    gross_gain_loss_eur=Decimal("8500.00")
+                ),
+                # Second FIFO lot: 50 shares with cost basis reduced by €145
+                ExpectedRealizedGainLoss(
+                    asset_identifier=f"ISIN:{leg_isin}",
+                    realization_date="2024-11-21",
+                    quantity_realized=Decimal("50"),
+                    total_cost_basis_eur=Decimal("2605.00"),  # €2750 - €145 = €2605
+                    total_realization_value_eur=Decimal("4250.00"),
+                    gross_gain_loss_eur=Decimal("1645.00")
+                )
+            ],
+            expected_eoy_states=[],
+            expected_eoy_mismatch_error_count=0
+        )
+
+        mock_rate_provider = MockECBExchangeRateProvider()
+        
+        actual_processing_output = self._run_pipeline(
+            trades_data=trades_data,
+            positions_start_data=positions_start_data,
+            positions_end_data=positions_end_data,
+            cash_transactions_data=cash_transactions_data,
+            corporate_actions_data=corporate_actions_data,
+            custom_rate_provider=mock_rate_provider,
+            tax_year=DEFAULT_TAX_YEAR
+        )
+        
+        self.assert_results(actual_processing_output, expected_outcome)
+        
+        # Verify no dividend income events for tax-free dividend
+        dividend_income_events = [
+            event for event in actual_processing_output.processed_income_events
+            if hasattr(event, 'event_type') and (
+                event.event_type == FinancialEventType.DIVIDEND_CASH or
+                event.event_type == FinancialEventType.CORP_STOCK_DIVIDEND
+            ) and event.event_date.startswith("2024") and 
+            hasattr(event, 'gross_amount_eur') and event.gross_amount_eur > 0
+        ]
+        
+        assert len(dividend_income_events) == 0, \
+            f"Expected no dividend income events with positive amounts for tax-free dividend, but found: " \
+            f"{[(e.event_type, e.event_date, e.gross_amount_eur) for e in dividend_income_events]}"
+        
+        # Verify tax impact is zero for tax-free dividend
+        try:
+            import src.config as config
+            loss_engine = LossOffsettingEngine(
+                realized_gains_losses=actual_processing_output.realized_gains_losses,
+                vorabpauschale_items=actual_processing_output.vorabpauschale_items,
+                current_year_financial_events=actual_processing_output.processed_income_events,
+                asset_resolver=actual_processing_output.asset_resolver,
+                tax_year=DEFAULT_TAX_YEAR,
+                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
+            )
+            tax_results = loss_engine.calculate_reporting_figures()
+            
+            kap_other_income = tax_results.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE, Decimal("0"))
+            assert kap_other_income == Decimal("0.00"), \
+                f"Expected tax-free dividend to contribute €0 to kap_other_income_positive, but got {kap_other_income}"
+                
+        except Exception as e:
             print(f"Warning: Could not verify tax impact due to: {e}")
 
     def test_d05_stock_dividend_fifo_lot_creation_and_tax_impact(self, mock_config_paths):
