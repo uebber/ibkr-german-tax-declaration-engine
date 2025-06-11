@@ -226,21 +226,28 @@ class PdfReportGenerator:
         }
         
         form_values = self.loss_offsetting_result.form_line_values
+        # Order by line numbers (KAP 19-24, then KAP 41, then KAP-INV 4-26, then SO 54)
         key_order = [
-            TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, 
-            TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN, TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST,
-            TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN, TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST,
-            TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, 
-            "TOTAL_ANRECHENBARE_AUSL_STEUERN", 
-            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_AUSSCHUETTUNG_GROSS, TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_AUSSCHUETTUNG_GROSS,
-            TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS, TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS,
-            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_AUSSCHUETTUNG_GROSS,
-            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS, TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_GEWINN_GROSS,
-            TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS, TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS,
-            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS,
-            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,
-            TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO,
-            "ANLAGE_SO_Z54_NET_GV"
+            TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT,  # Zeile 19
+            TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN,  # Zeile 20
+            TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN,  # Zeile 21
+            TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE,  # Zeile 22
+            TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST,  # Zeile 23
+            TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST,  # Zeile 24
+            "TOTAL_ANRECHENBARE_AUSL_STEUERN",  # Zeile 41
+            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 4
+            TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 5
+            TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 6
+            TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 7
+            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 8
+            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,  # KAP-INV Zeile 9
+            TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO,  # KAP-INV Zeile 10
+            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 14
+            TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_GEWINN_GROSS,  # KAP-INV Zeile 17
+            TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 20
+            TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 23
+            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS,  # KAP-INV Zeile 26
+            "ANLAGE_SO_Z54_NET_GV"  # SO Zeile 54
         ]
 
         for key_to_lookup in key_order:
@@ -250,16 +257,113 @@ class PdfReportGenerator:
                 continue
 
             value = form_values.get(key_to_lookup, Decimal('0.00'))
-            show_anyway = any(keyword in description.upper() for keyword in ["VORABPAUSCHALE", "AUSL. STEUERN", "VOP", "ANRECH."])
-
-            if value != Decimal('0.00') or show_anyway:
-                 data.append([description, self._format_decimal(value).replace('.',',')]) # German format for display
+            # Show all lines including zeros
+            data.append([description, self._format_decimal(value).replace('.',',')]) # German format for display
         
         if len(data) > 1:
             table = self._create_styled_table(data, col_widths=[12*cm, 4*cm])
             self.story.append(table)
+            
+            # Add explanations of how summary values are calculated
+            self._add_calculation_explanations()
         else:
             self.story.append(Paragraph("Keine Werte zu deklarieren.", self.styles['BodyText']))
+
+    def _add_calculation_explanations(self):
+        """Add explanations of how summary values are calculated based on detailed sections."""
+        logger.info("Adding calculation explanations to PDF")
+        self.story.append(Spacer(1, 0.5*cm))
+        self.story.append(Paragraph("Erläuterung der Berechnungen", self.styles['H3']))
+        
+        self.story.append(Paragraph(
+            "Die nachfolgenden Erläuterungen zeigen, wie die oben zusammengefassten Werte aus den "
+            "detaillierten Aufstellungen in den späteren Abschnitten berechnet werden:",
+            self.styles['BodyText']
+        ))
+        
+        # Explanation for Anlage KAP Zeile 19 (Foreign capital income)
+        form_values = self.loss_offsetting_result.form_line_values
+        kap_zeile_19_value = form_values.get(TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, Decimal('0.00'))
+        
+        if kap_zeile_19_value != Decimal('0.00'):
+            logger.info(f"Adding Anlage KAP Zeile 19 explanation for value: {kap_zeile_19_value}")
+            self.story.append(Paragraph(
+                f"<b>Anlage KAP Zeile 19 (Ausl. Kapitalerträge n. Sald.): {self._format_decimal(kap_zeile_19_value).replace('.', ',')} EUR</b>",
+                self.styles['BodyText']
+            ))
+            
+            self.story.append(Paragraph(
+                "Dieser Wert setzt sich zusammen aus:",
+                self.styles['BodyText']
+            ))
+            
+            # Create breakdown table with actual values from existing calculations
+            breakdown_data = [["Komponente", "Betrag (EUR)", "Verweis"]]
+            
+            # Get individual component values from form_line_values
+            stock_gains = form_values.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN, Decimal('0.00'))
+            derivative_gains = form_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN, Decimal('0.00'))
+            other_income_positive = form_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE, Decimal('0.00'))
+            stock_losses = form_values.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST, Decimal('0.00'))
+            other_losses = form_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, Decimal('0.00'))
+            
+            # Add positive components
+            if stock_gains != Decimal('0.00'):
+                breakdown_data.append([
+                    "Gewinne aus Aktienveräußerungen",
+                    self._format_decimal(stock_gains).replace('.', ','),
+                    "siehe Abschnitt 7.1"
+                ])
+            
+            if derivative_gains != Decimal('0.00'):
+                breakdown_data.append([
+                    "Gewinne aus Termingeschäften",
+                    self._format_decimal(derivative_gains).replace('.', ','),
+                    "siehe Abschnitt 7.2"
+                ])
+            
+            if other_income_positive != Decimal('0.00'):
+                breakdown_data.append([
+                    "Sonstige Kapitalerträge (Zinsen, Dividenden, etc.)",
+                    self._format_decimal(other_income_positive).replace('.', ','),
+                    "siehe Abschnitt 7.3"
+                ])
+            
+            # Add negative components (losses are subtracted)
+            if stock_losses != Decimal('0.00'):
+                breakdown_data.append([
+                    "Verluste aus Aktienveräußerungen (Abzug)",
+                    f"-{self._format_decimal(stock_losses).replace('.', ',')}",
+                    "siehe Abschnitt 7.1"
+                ])
+            
+            if other_losses != Decimal('0.00'):
+                breakdown_data.append([
+                    "Sonstige Verluste (Abzug)",
+                    f"-{self._format_decimal(other_losses).replace('.', ',')}",
+                    "siehe Abschnitt 7.3"
+                ])
+            
+            # Add total row
+            breakdown_data.append([
+                Paragraph("<b>Summe (Anlage KAP Zeile 19)</b>", self.styles['TableHeader']),
+                Paragraph(f"<b>{self._format_decimal(kap_zeile_19_value).replace('.', ',')}</b>", self.styles['TableCellRight']),
+                ""
+            ])
+            
+            # Create the table
+            if len(breakdown_data) > 2:  # More than just header and total
+                table = self._create_styled_table(breakdown_data, col_widths=[8*cm, 3*cm, 4*cm])
+                self.story.append(table)
+            
+            self.story.append(Paragraph(
+                "Die Berechnung erfolgt durch Summierung aller positiven ausländischen Kapitalerträge "
+                "abzüglich der negativen Komponenten (Verluste werden separat in anderen Zeilen ausgewiesen). "
+                "Detaillierte Einzelpositionen finden Sie in den entsprechenden Abschnitten weiter unten.",
+                self.styles['BodyText']
+            ))
+            
+            self.story.append(Spacer(1, 0.3*cm))
 
     def _add_data_sources_notes(self):
         self.story.append(Paragraph("Datenquellen und Verarbeitungshinweise", self.styles['H2']))
