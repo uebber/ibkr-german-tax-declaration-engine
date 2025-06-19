@@ -242,6 +242,24 @@ class CorpActionStockDividend(CorporateActionEvent):
 
 
 @dataclass
+class CorpActionExpireDividendRights(CorporateActionEvent):
+    """Event for ED (Expire Dividend Rights) corporate actions.
+    
+    This event is used only for post-processing to identify and modify
+    matching DI events and cash dividend events. It carries no tax implications itself.
+    """
+    _: KW_ONLY
+    
+    def __init__(self, asset_internal_id: uuid.UUID, event_date: str, **kwargs_for_parent_kw_only):
+        super().__init__(asset_internal_id, event_date,
+                         event_type=FinancialEventType.CORP_EXPIRE_DIVIDEND_RIGHTS,
+                         **kwargs_for_parent_kw_only)
+    
+    def __post_init__(self):
+        super().__post_init__()
+
+
+@dataclass
 class OptionLifecycleEvent(FinancialEvent):
     _: KW_ONLY
     quantity_contracts: Decimal # Number of option contracts involved
