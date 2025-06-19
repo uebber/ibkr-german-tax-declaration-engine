@@ -154,7 +154,7 @@ Corporate actions (specific subtypes of `CorporateActionEvent`) must be processe
 - **`FinancialEventType.CORP_SPLIT_FORWARD` (Forward Splits FS):** Adjust quantity and cost basis per share in existing FIFO lots. Not taxable.
 - **`FinancialEventType.CORP_MERGER_CASH` (Acquisition for Cash TC):** Treated as a sale of existing FIFO lots. Realized G/L reported in Anlage KAP (with `RealizationType.CASH_MERGER_PROCEEDS`).
 - **`FinancialEventType.CORP_MERGER_STOCK` (Stock-for-Stock Merger TC):** Assume tax-neutral. While a `MergerStockProcessor` class may exist, the detailed FIFO lot conversion logic within `FifoLedger` (i.e., transforming lots of an old asset into lots of a new asset while preserving original acquisition dates and pro-rated cost bases) for tax-neutral stock-for-stock mergers is NOT YET IMPLEMENTED.
-- **`FinancialEventType.CORP_STOCK_DIVIDEND` (Stock Dividends HI):** Taxable event by default for foreign stock dividends. FMV of new shares is dividend income (contributes to `kap_other_income_positive` described in Sec 2.7). New shares form a new FIFO lot with FMV as cost basis. (`new_shares_per_existing_share` attribute is initialized as a placeholder if not directly calculable from report).
+- **`FinancialEventType.CORP_STOCK_DIVIDEND` (Stock Dividends HI):** Must distinguish between taxable dividend distributions and tax-free capital repayments (Einlagenrückgewähr). The presence of `"Exempt From Withholding"` in the dividend event indicates a tax-free capital repayment. For taxable stock dividends: FMV of new shares is dividend income (contributes to `kap_other_income_positive` described in Sec 2.7) and new shares form a new FIFO lot with FMV as cost basis. For tax-free capital repayments: reduce the acquisition cost of existing FIFO lots as described in Section 2.6. (`new_shares_per_existing_share` attribute is initialized as a placeholder if not directly calculable from report).
 
 #### Option Exercise and Assignment Processing
 
@@ -238,7 +238,15 @@ Trades of instruments identified as FX trading pairs (e.g., 'EUR.USD' where IBKR
 
 **All income calculations in this section are strictly for events occurring within the 2023 tax year. Financial events with an `event_date` outside this period are excluded from these aggregations.** Calculations to use `INTERNAL_CALCULATION_PRECISION`.
 
-**Dividends (Non-Funds, `FinancialEventType.DIVIDEND_CASH`):** Identify and aggregate gross dividends from `AssetCategory.STOCK` (with `event_date` in 2023). These contribute to `kap_other_income_positive`.
+**Dividends (Non-Funds, `FinancialEventType.DIVIDEND_CASH`):** Must distinguish between taxable dividend distributions and tax-free capital repayments (Einlagenrückgewähr). The presence of `"Exempt From Withholding"` in the dividend event indicates a tax-free capital repayment.
+
+- **Taxable Dividends:** Aggregate gross dividends from `AssetCategory.STOCK` (with `event_date` in 2023) that are not tax-free capital repayments. These contribute to `kap_other_income_positive`.
+
+- **Tax-free Capital Repayments (Einlagenrückgewähr):** When a tax-free capital repayment occurs:
+  - Iterate through the asset's FIFO queue from oldest to newest
+  - Reduce the acquisition cost of each lot by the repayment amount until the repayment is fully applied
+  - If a lot's cost is reduced to zero, apply any remaining repayment amount to the next lot in the queue
+  - If all lots' costs are reduced to zero and repayment amount remains, treat the excess as taxable dividend income in the tax year it occurs (contributes to `kap_other_income_positive`)
 
 **Taxable Income from Corporate Actions:**
 - Cash received in `FinancialEventType.CORP_MERGER_CASH` (with `event_date` in 2023) is part of proceeds for G/L calculation (see `RealizationType.CASH_MERGER_PROCEEDS`). The G/L contributes to stock G/L pools.

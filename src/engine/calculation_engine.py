@@ -9,8 +9,9 @@ from datetime import datetime, date
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,
-    OptionExerciseEvent, OptionAssignmentEvent, OptionExpirationWorthlessEvent,
-    OptionLifecycleEvent, CashFlowEvent, FeeEvent, WithholdingTaxEvent, CurrencyConversionEvent
+    CorpActionExpireDividendRights, OptionExerciseEvent, OptionAssignmentEvent, 
+    OptionExpirationWorthlessEvent, OptionLifecycleEvent, CashFlowEvent, FeeEvent, 
+    WithholdingTaxEvent, CurrencyConversionEvent
 )
 from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund
 from src.identification.asset_resolver import AssetResolver
@@ -29,7 +30,7 @@ from .event_processors.base_processor import EventProcessor
 from .event_processors.trade_processor import TradeProcessor
 from .event_processors.corporate_action_processor import (
     SplitProcessor, MergerCashProcessor, StockDividendProcessor, MergerStockProcessor,
-    GenericCorporateActionProcessor
+    GenericCorporateActionProcessor, ExpireDividendRightsProcessor
 )
 from .event_processors.option_processor import (
     OptionExerciseProcessor, OptionAssignmentProcessor, OptionExpirationWorthlessProcessor
@@ -37,6 +38,14 @@ from .event_processors.option_processor import (
 
 
 logger = logging.getLogger(__name__)
+
+def _format_asset_info(asset_obj) -> str:
+    """Helper to format asset information for logging."""
+    if not asset_obj:
+        return "Unknown Asset"
+    desc = asset_obj.description or asset_obj.get_classification_key()
+    symbol = asset_obj.ibkr_symbol or "N/A"
+    return f"'{desc}' (Symbol: {symbol})"
 
 def run_main_calculations(
     financial_events: List[FinancialEvent],
@@ -68,12 +77,19 @@ def run_main_calculations(
     pending_option_adjustments: Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]] = {}
 
     tax_year_start_date_str = f"{tax_year}-01-01"
+    tax_year_end_date_str = f"{tax_year}-12-31"
     tax_year_start_date_obj = parse_ibkr_date(tax_year_start_date_str)
+    tax_year_end_date_obj = parse_ibkr_date(tax_year_end_date_str)
+    
     if not tax_year_start_date_obj:
         logger.error(f"Could not parse tax year start date: {tax_year_start_date_str}. Aborting calculations.")
         return [], [], financial_events, 0 
+    if not tax_year_end_date_obj:
+        logger.error(f"Could not parse tax year end date: {tax_year_end_date_str}. Aborting calculations.")
+        return [], [], financial_events, 0 
 
     logger.info("Separating historical and current year events...")
+    filtered_events_count = 0
     for event in financial_events:
         try:
             event_sort_key = get_event_sort_key(event, asset_resolver)
@@ -85,8 +101,14 @@ def run_main_calculations(
         if event_date_obj < tax_year_start_date_obj:
             if isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)): 
                 historical_events_by_asset[event.asset_internal_id].append(event)
-        else:
+        elif event_date_obj <= tax_year_end_date_obj:
             current_year_events.append(event)
+        else:
+            filtered_events_count += 1
+            logger.debug(f"Filtered out event {event.event_id} with date {event_date_obj} (after tax year {tax_year})")
+    
+    if filtered_events_count > 0:
+        logger.info(f"Filtered out {filtered_events_count} events occurring after tax year {tax_year}")
 
     logger.info(f"Separated events: {sum(len(v) for v in historical_events_by_asset.values())} relevant historical events for SOY FIFO reconstruction, "
                 f"{len(current_year_events)} current tax year events.")
@@ -145,6 +167,7 @@ def run_main_calculations(
     stock_dividend_processor = StockDividendProcessor()
     merger_stock_processor = MergerStockProcessor()
     generic_ca_processor = GenericCorporateActionProcessor()
+    expire_dividend_rights_processor = ExpireDividendRightsProcessor()
     option_exercise_processor = OptionExerciseProcessor()
     option_assignment_processor = OptionAssignmentProcessor()
     option_expiration_processor = OptionExpirationWorthlessProcessor()
@@ -158,6 +181,7 @@ def run_main_calculations(
         FinancialEventType.CORP_MERGER_CASH: merger_cash_processor, # Renamed
         FinancialEventType.CORP_STOCK_DIVIDEND: stock_dividend_processor, # Renamed
         FinancialEventType.CORP_MERGER_STOCK: merger_stock_processor, # Renamed
+        FinancialEventType.CORP_EXPIRE_DIVIDEND_RIGHTS: expire_dividend_rights_processor,
         FinancialEventType.OPTION_EXERCISE: option_exercise_processor,
         FinancialEventType.OPTION_ASSIGNMENT: option_assignment_processor,
         FinancialEventType.OPTION_EXPIRATION_WORTHLESS: option_expiration_processor,
@@ -174,7 +198,10 @@ def run_main_calculations(
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):
-            logger.warning(f"Event {event.event_id} is CorporateActionEvent type {event.event_type.name} but not in specific map. Using GenericCorporateActionProcessor.")
+            logger.warning(f"Event {event.event_id} is CorporateActionEvent type {event.event_type.name} for asset {_format_asset_info(asset_object)} but not in specific map. Using GenericCorporateActionProcessor.")
+            processor = generic_ca_processor
+        elif processor and isinstance(event, CorporateActionEvent) and not isinstance(event, (CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, CorpActionExpireDividendRights)):
+            logger.warning(f"Event {event.event_id} is generic CorporateActionEvent with type {event.event_type.name} for asset {_format_asset_info(asset_object)} but specific processor expects subclass. Using GenericCorporateActionProcessor.")
             processor = generic_ca_processor
 
         if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS]):
@@ -212,9 +239,29 @@ def run_main_calculations(
         elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:
             logger.warning(f"Event {event.event_id} ({event.event_type.name}) for non-cash asset {asset_object.get_classification_key()} occurred, but no FIFO ledger exists. Skipping processing for this event.")
 
+        # Handle capital repayments directly
+        elif event.event_type == FinancialEventType.CAPITAL_REPAYMENT and ledger:
+            try:
+                repayment_amount_eur = event.gross_amount_eur or Decimal('0')
+                logger.info(f"Processing capital repayment for {asset_object.get_classification_key()}: {repayment_amount_eur} EUR")
+                excess = ledger.reduce_cost_basis_for_capital_repayment(repayment_amount_eur)
+                if excess > Decimal('0'):
+                    logger.info(f"Capital repayment excess {excess} EUR becomes taxable dividend income")
+                    
+                    # Create new DIVIDEND_CASH event for excess amount
+                    _create_excess_dividend_event(event, excess, asset_object, current_year_events)
+                    
+                    # Reduce original capital repayment event to only the cost basis portion
+                    cost_basis_portion = repayment_amount_eur - excess
+                    event.gross_amount_eur = cost_basis_portion
+                    event.gross_amount_foreign_currency = cost_basis_portion
+                    logger.info(f"Reduced capital repayment event to cost basis portion: {cost_basis_portion} EUR")
+            except Exception as e:
+                logger.error(f"Error processing capital repayment {event.event_id}: {e}", exc_info=True)
+
         elif not processor:
             if event.event_type not in [
-                FinancialEventType.DIVIDEND_CASH, FinancialEventType.DISTRIBUTION_FUND,
+                FinancialEventType.DIVIDEND_CASH, FinancialEventType.CAPITAL_REPAYMENT, FinancialEventType.DISTRIBUTION_FUND,
                 FinancialEventType.INTEREST_RECEIVED, FinancialEventType.INTEREST_PAID_STUECKZINSEN,
                 FinancialEventType.PAYMENT_IN_LIEU_DIVIDEND, FinancialEventType.WITHHOLDING_TAX,
                 FinancialEventType.FEE_TRANSACTION, FinancialEventType.CURRENCY_CONVERSION
@@ -226,6 +273,7 @@ def run_main_calculations(
 
     logger.info("Finished processing current year events.")
     logger.info(f"Pending option adjustments stored: {len(pending_option_adjustments)}")
+
 
     logger.info("Performing End-of-Year (EOY) quantity validation...")
     eoy_mismatch_errors = 0 
@@ -279,3 +327,40 @@ def run_main_calculations(
     logger.info(f"Calculation engine produced {len(vorabpauschale_data_items)} VorabpauschaleData records (expected 0 for 2023).")
 
     return realized_gains_losses, vorabpauschale_data_items, processed_income_events_for_output, eoy_mismatch_errors
+
+
+def _create_excess_dividend_event(original_event, excess_amount, asset_object, current_year_events):
+    """Create a new DIVIDEND_CASH event for excess capital repayment amount.
+    
+    Args:
+        original_event: The original CAPITAL_REPAYMENT event
+        excess_amount: The excess amount that becomes taxable dividend
+        asset_object: The asset for which the dividend is being created
+        current_year_events: The current year events list to add the new event to
+    """
+    from src.domain.events import CashFlowEvent
+    from src.domain.enums import FinancialEventType
+    
+    # Create new DIVIDEND_CASH event for excess amount
+    excess_dividend_event = CashFlowEvent(
+        asset_internal_id=asset_object.internal_asset_id,
+        event_date=original_event.event_date,
+        event_type=FinancialEventType.DIVIDEND_CASH,
+        gross_amount_foreign_currency=excess_amount,
+        local_currency=original_event.local_currency,
+        source_country_code=getattr(original_event, 'source_country_code', None),
+        ibkr_transaction_id=f"{original_event.ibkr_transaction_id}_EXCESS",
+        ibkr_activity_description=f"{original_event.ibkr_activity_description} [EXCESS TAXABLE DIVIDEND]",
+        ibkr_notes_codes=getattr(original_event, 'ibkr_notes_codes', None)
+    )
+    
+    # Set the EUR amount 
+    excess_dividend_event.gross_amount_eur = excess_amount
+    excess_dividend_event.event_id = uuid.uuid4()
+    
+    # Add to the current year events list for processing
+    current_year_events.append(excess_dividend_event)
+    
+    logger.info(f"Created excess dividend event {excess_dividend_event.event_id} for {excess_amount} EUR from capital repayment excess")
+    
+    return excess_dividend_event

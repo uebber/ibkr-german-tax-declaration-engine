@@ -130,6 +130,10 @@ class LossOffsettingEngine:
             elif event.event_type == FinancialEventType.CORP_STOCK_DIVIDEND:
                  if isinstance(asset_resolved, Asset) and asset_resolved.asset_category == AssetCategory.STOCK and event_gross_eur > Decimal('0'):
                     kap_other_income_positive = self.ctx.add(kap_other_income_positive, event_gross_eur)
+            elif event.event_type == FinancialEventType.CAPITAL_REPAYMENT:
+                 # Capital repayments themselves don't create taxable income
+                 # Excess amounts are now handled as separate DIVIDEND_CASH events
+                 pass
 
         for vp_item in self.vorabpauschale_items:
             if vp_item.tax_year == self.tax_year:
@@ -147,6 +151,7 @@ class LossOffsettingEngine:
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST] = stock_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN] = derivative_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST] = derivative_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
+        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE] = kap_other_income_positive.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE] = kap_other_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
 
         # Zeile 19 Calculation
