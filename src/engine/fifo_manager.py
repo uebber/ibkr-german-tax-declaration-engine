@@ -926,3 +926,24 @@ class FifoLedger:
 
         net_quantity = self.ctx.subtract(current_long_qty, current_short_qty_abs)
         return net_quantity.quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
+
+    def reduce_cost_basis_for_capital_repayment(self, repayment_amount_eur: Decimal) -> Decimal:
+        """
+        Reduces cost basis of FIFO lots for tax-free capital repayments.
+        Returns excess amount that becomes taxable income.
+        """
+        if repayment_amount_eur <= Decimal('0') or not self.lots:
+            return repayment_amount_eur
+            
+        remaining_repayment = repayment_amount_eur
+        
+        for lot in self.lots:
+            if remaining_repayment <= Decimal('0'):
+                break
+                
+            reduction = min(remaining_repayment, lot.total_cost_basis_eur)
+            lot.total_cost_basis_eur = self.ctx.subtract(lot.total_cost_basis_eur, reduction)
+            lot.unit_cost_basis_eur = self.ctx.divide(lot.total_cost_basis_eur, lot.quantity) if lot.quantity > Decimal('0') else Decimal('0')
+            remaining_repayment = self.ctx.subtract(remaining_repayment, reduction)
+        
+        return remaining_repayment  # Excess that becomes taxable income
