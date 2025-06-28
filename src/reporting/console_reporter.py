@@ -62,11 +62,8 @@ def generate_console_tax_report(
     print(f"  Zeile 23 (Verluste aus Aktienveräußerungen): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST, Decimal(0)))}")
     print(f"  Zeile 24 (Verluste aus Termingeschäften): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))}")
 
-    # --- WHT (Aggregated directly) ---
-    wht_total_eur = Decimal('0')
-    for event in current_year_events: # Already filtered for tax year
-        if isinstance(event, WithholdingTaxEvent):
-            wht_total_eur += event.gross_amount_eur or Decimal(0)
+    # --- WHT (From centralized calculation) ---
+    wht_total_eur = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal(0))
     print(f"  Zeile 41 (Anrechenbare ausländische Steuern): {_q(wht_total_eur)}")
 
 

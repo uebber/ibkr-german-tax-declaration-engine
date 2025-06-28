@@ -1040,7 +1040,6 @@ class PdfReportGenerator:
     def _prepare_wht_data(self):
         wht_by_country_data: Dict[str, Dict[str, Decimal]] = {}
         withholding_tax_events = [evt for evt in self.all_financial_events if isinstance(evt, WithholdingTaxEvent)]
-        calculated_total_wht = Decimal(0)
 
         for wht_event in withholding_tax_events:
             if not wht_event.source_country_code or wht_event.gross_amount_eur is None:
@@ -1060,13 +1059,12 @@ class PdfReportGenerator:
             
             wht_by_country_data[country]["income"] += income_subject_to_wht
             wht_by_country_data[country]["tax"] += tax_amount
-            calculated_total_wht += tax_amount
         
         self.prepared_wht_details_for_table = wht_by_country_data
-        self.loss_offsetting_result.form_line_values["TOTAL_ANRECHENBARE_AUSL_STEUERN"] = calculated_total_wht.quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
         
-        if "TOTAL_ANRECHENBARE_AUSL_STEUERN" not in self.loss_offsetting_result.form_line_values:
-             self.loss_offsetting_result.form_line_values["TOTAL_ANRECHENBARE_AUSL_STEUERN"] = Decimal('0.00')
+        # Use centralized calculation instead of recalculating
+        centralized_total = self.loss_offsetting_result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal('0.00'))
+        self.loss_offsetting_result.form_line_values["TOTAL_ANRECHENBARE_AUSL_STEUERN"] = centralized_total
 
     def _add_wht_summary(self):
         self.story.append(Paragraph("Anrechenbare ausländische Quellensteuern (Anlage KAP Zeile 41)", self.styles['H2']))

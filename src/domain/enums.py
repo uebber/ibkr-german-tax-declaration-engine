@@ -63,6 +63,7 @@ class TaxReportingCategory(Enum):
     ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE = auto() # Interest, non-fund dividends, bond gains, stückzinsen
     ANLAGE_KAP_SONSTIGE_VERLUSTE = auto() # Bond losses, etc.
     ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT = auto() # Added for Zeile 19 as per PRD
+    ANLAGE_KAP_FOREIGN_TAX_PAID = auto() # Zeile 41 - Anrechenbare ausländische Steuern
 
     # KAP-INV Gross Amounts (as per PRD for form lines)
     ANLAGE_KAP_INV_AKTIENFONDS_AUSSCHUETTUNG_GROSS = auto()
