@@ -65,6 +65,24 @@ def generate_console_tax_report(
     # --- WHT (From centralized calculation) ---
     wht_total_eur = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal(0))
     print(f"  Zeile 41 (Anrechenbare ausländische Steuern): {_q(wht_total_eur)}")
+    
+    # Add linking statistics for withholding tax events
+    wht_events = [ev for ev in current_year_events if isinstance(ev, WithholdingTaxEvent)]
+    if wht_events:
+        linked_wht_events = [ev for ev in wht_events if getattr(ev, 'taxed_income_event_id', None) is not None]
+        unlinked_wht_events = [ev for ev in wht_events if getattr(ev, 'taxed_income_event_id', None) is None]
+        
+        print(f"    └─ Quellensteuer-Ereignisse: {len(wht_events)} gesamt, {len(linked_wht_events)} verknüpft, {len(unlinked_wht_events)} nicht verknüpft")
+        
+        if linked_wht_events:
+            # Show confidence distribution
+            high_confidence = len([ev for ev in linked_wht_events if getattr(ev, 'link_confidence_score', 0) >= 80])
+            medium_confidence = len([ev for ev in linked_wht_events if 60 <= getattr(ev, 'link_confidence_score', 0) < 80])
+            low_confidence = len([ev for ev in linked_wht_events if getattr(ev, 'link_confidence_score', 0) < 60])
+            print(f"    └─ Verknüpfungs-Konfidenz: {high_confidence} hoch (≥80%), {medium_confidence} mittel (60-79%), {low_confidence} niedrig (<60%)")
+        
+        if unlinked_wht_events:
+            print(f"    └─ WARNUNG: {len(unlinked_wht_events)} Quellensteuer-Ereignisse konnten nicht mit Erträgen verknüpft werden")
 
 
     # --- Detailed Stock G/L (Gross, for transparency) ---
