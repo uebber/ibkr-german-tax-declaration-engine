@@ -26,8 +26,9 @@ from .cash_transactions_parser import parse_cash_transactions_csv
 from .positions_parser import parse_positions_csv
 from .corporate_actions_parser import parse_corporate_actions_csv
 from .domain_event_factory import DomainEventFactory
-# NEW IMPORT
+# NEW IMPORTS
 from src.processing.option_trade_linker import perform_option_trade_linking
+from src.processing.withholding_tax_linker import WithholdingTaxLinker
 
 
 logger = logging.getLogger(__name__)
@@ -506,6 +507,18 @@ class ParsingOrchestrator:
                 candidate_stock_trades_for_linking=self.candidate_stock_trades_for_linking
             )
             # self.domain_financial_events now contains events with potentially updated related_option_event_id
+            
+            # NEW STEP: Perform withholding tax linking
+            logger.info("Performing withholding tax linking...")
+            wht_linker = WithholdingTaxLinker()
+            successful_links, unlinked_wht_events = wht_linker.link_withholding_tax_events(self.domain_financial_events)
+            
+            # Log linking statistics
+            logger.info(f"Withholding tax linking completed: {len(successful_links)} successful links, {len(unlinked_wht_events)} unlinked WHT events")
+            if unlinked_wht_events:
+                logger.warning(f"Unlinked withholding tax events:")
+                for wht_event in unlinked_wht_events:
+                    logger.warning(f"  - WHT Event {wht_event.event_id}: Date={wht_event.event_date}, Amount={wht_event.gross_amount_foreign_currency} {wht_event.local_currency}, Desc='{wht_event.ibkr_activity_description}'")
             
             # Post-process DI/ED dividend rights matching
             self._process_dividend_rights_matching()

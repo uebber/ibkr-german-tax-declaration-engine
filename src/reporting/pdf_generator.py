@@ -67,6 +67,53 @@ class PdfReportGenerator:
         
         return styles
 
+    def _format_taxed_transaction_description(self, income_event: FinancialEvent, wht_date: str) -> str:
+        """Format a description of the taxed transaction for the PDF report."""
+        from src.reporting.reporting_utils import format_date_german
+        
+        # Get transaction type description
+        type_descriptions = {
+            FinancialEventType.DIVIDEND_CASH: "Dividende",
+            FinancialEventType.DISTRIBUTION_FUND: "Fondsausschüttung", 
+            FinancialEventType.INTEREST_RECEIVED: "Zinszahlung",
+            FinancialEventType.PAYMENT_IN_LIEU_DIVIDEND: "Dividendenersatz",
+            FinancialEventType.CAPITAL_REPAYMENT: "Kapitalrückzahlung"
+        }
+        
+        transaction_type = type_descriptions.get(income_event.event_type, income_event.event_type.name)
+        
+        # Get asset information
+        asset = self.assets_by_id.get(income_event.asset_internal_id)
+        asset_symbol = ""
+        if asset:
+            if hasattr(asset, 'ibkr_symbol') and asset.ibkr_symbol:
+                asset_symbol = asset.ibkr_symbol
+            elif hasattr(asset, 'description') and asset.description:
+                # Extract symbol from description if available
+                desc = asset.description
+                if '(' in desc and ')' in desc:
+                    # Try to extract symbol from description like "Apple Inc (AAPL)"
+                    import re
+                    symbol_match = re.search(r'\(([A-Z]{1,5})\)', desc)
+                    if symbol_match:
+                        asset_symbol = symbol_match.group(1)
+                    else:
+                        asset_symbol = desc[:10]  # First 10 chars as fallback
+                else:
+                    asset_symbol = desc[:10]  # First 10 chars as fallback
+        
+        # Format the transaction date
+        transaction_date = format_date_german(income_event.event_date)
+        
+        # Combine into description
+        parts = [transaction_type]
+        if asset_symbol:
+            parts.append(f"({asset_symbol})")
+        if income_event.event_date != wht_date:  # Only show date if different from WHT date
+            parts.append(f"vom {transaction_date}")
+        
+        return " ".join(parts)
+
     def _format_decimal(self, value: Optional[Decimal | float | int | str], precision_type: str = "total") -> str:
         if value is None:
             return ""
@@ -1039,8 +1086,8 @@ class PdfReportGenerator:
 
     def _prepare_wht_data(self):
         wht_by_country_data: Dict[str, Dict[str, Decimal]] = {}
+        wht_individual_transactions = []
         withholding_tax_events = [evt for evt in self.all_financial_events if isinstance(evt, WithholdingTaxEvent)]
-        calculated_total_wht = Decimal(0)
 
         for wht_event in withholding_tax_events:
             if not wht_event.source_country_code or wht_event.gross_amount_eur is None:
@@ -1055,23 +1102,49 @@ class PdfReportGenerator:
                 if income_event and isinstance(income_event, CashFlowEvent) and income_event.gross_amount_eur is not None:
                     income_subject_to_wht = income_event.gross_amount_eur
             
+            # Store individual transaction details including linking information
+            linking_confidence = wht_event.link_confidence_score if hasattr(wht_event, 'link_confidence_score') else None
+            effective_tax_rate = wht_event.effective_tax_rate if hasattr(wht_event, 'effective_tax_rate') else None
+            
+            # Generate description of the taxed transaction
+            taxed_transaction_desc = ""
+            if wht_event.taxed_income_event_id:
+                income_event = next((evt for evt in self.all_financial_events if evt.event_id == wht_event.taxed_income_event_id), None)
+                if income_event:
+                    taxed_transaction_desc = self._format_taxed_transaction_description(income_event, wht_event.event_date)
+                else:
+                    taxed_transaction_desc = "Verknüpft (Event nicht gefunden)"
+            else:
+                taxed_transaction_desc = "Nicht verknüpft"
+            
+            wht_individual_transactions.append({
+                'date': wht_event.event_date,
+                'country': country,
+                'income': income_subject_to_wht,
+                'tax': tax_amount,
+                'taxed_transaction': taxed_transaction_desc,
+                'confidence': linking_confidence,
+                'tax_rate': effective_tax_rate
+            })
+            
             if country not in wht_by_country_data:
                 wht_by_country_data[country] = {"income": Decimal(0), "tax": Decimal(0)}
             
             wht_by_country_data[country]["income"] += income_subject_to_wht
             wht_by_country_data[country]["tax"] += tax_amount
-            calculated_total_wht += tax_amount
         
         self.prepared_wht_details_for_table = wht_by_country_data
-        self.loss_offsetting_result.form_line_values["TOTAL_ANRECHENBARE_AUSL_STEUERN"] = calculated_total_wht.quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
+        self.prepared_wht_individual_transactions = sorted(wht_individual_transactions, key=lambda x: x['date'])
         
-        if "TOTAL_ANRECHENBARE_AUSL_STEUERN" not in self.loss_offsetting_result.form_line_values:
-             self.loss_offsetting_result.form_line_values["TOTAL_ANRECHENBARE_AUSL_STEUERN"] = Decimal('0.00')
+        # Use centralized calculation instead of recalculating
+        centralized_total = self.loss_offsetting_result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal('0.00'))
+        self.loss_offsetting_result.form_line_values["TOTAL_ANRECHENBARE_AUSL_STEUERN"] = centralized_total
 
     def _add_wht_summary(self):
         self.story.append(Paragraph("Anrechenbare ausländische Quellensteuern (Anlage KAP Zeile 41)", self.styles['H2']))
 
         wht_data_for_table = self.prepared_wht_details_for_table
+        wht_transactions = getattr(self, 'prepared_wht_individual_transactions', [])
         total_anrechenbare_ausl_steuern = self.loss_offsetting_result.form_line_values.get("TOTAL_ANRECHENBARE_AUSL_STEUERN", Decimal('0.00'))
         
         has_data_to_display = False
@@ -1082,6 +1155,47 @@ class PdfReportGenerator:
                     break
             
         if has_data_to_display:
+            # Add individual transactions table first
+            if wht_transactions:
+                self.story.append(Paragraph("Einzelne Transaktionen:", self.styles['H3']))
+                transaction_data = [["Datum", "Land", "Bruttoeinkünfte (EUR)", "Gezahlte QSt (EUR)", "Besteuerte Transaktion", "Steuersatz", "Konfidenz"]]
+                
+                for transaction in wht_transactions:
+                    if transaction['income'] != Decimal('0.00') or transaction['tax'] != Decimal('0.00'):
+                        # Format tax rate
+                        tax_rate_str = ""
+                        if transaction['tax_rate'] is not None:
+                            tax_rate_pct = transaction['tax_rate'] * 100
+                            # Format to 1 decimal place
+                            tax_rate_str = f"{tax_rate_pct.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)}%"
+                        
+                        # Format confidence
+                        confidence_str = ""
+                        if transaction['confidence'] is not None:
+                            confidence_str = f"{transaction['confidence']}%"
+                        
+                        transaction_data.append([
+                            format_date_german(transaction['date']),
+                            transaction['country'],
+                            self._format_decimal(transaction['income']).replace('.',','),
+                            self._format_decimal(transaction['tax']).replace('.',','),
+                            transaction['taxed_transaction'],
+                            tax_rate_str,
+                            confidence_str
+                        ])
+                
+                if len(transaction_data) > 1:  # More than just header
+                    transaction_table = self._create_styled_table(transaction_data, col_widths=[2.2*cm, 1.2*cm, 2.5*cm, 2.2*cm, 3.5*cm, 1.3*cm, 1.3*cm])
+                    self.story.append(transaction_table)
+                    self.story.append(Paragraph("", self.styles['BodyText']))  # Add spacing
+                    
+                    # Add legend for linking information
+                    legend_text = "Besteuerte Transaktion: Art und Details der zugrunde liegenden Einkommenstransaktion | Konfidenz: Sicherheit der Verknüpfung (0-100%)"
+                    self.story.append(Paragraph(legend_text, self.styles['SmallText']))
+                    self.story.append(Paragraph("", self.styles['BodyText']))  # Add spacing
+            
+            # Add country summary table
+            self.story.append(Paragraph("Zusammenfassung nach Ländern:", self.styles['H3']))
             data = [["Quellenland", "Gesamte Bruttoeinkünfte unter QSt (EUR)", "Gezahlte QSt (EUR)"]]
             for country_code, amounts in sorted(wht_data_for_table.items()):
                  if amounts["income"] != Decimal('0.00') or amounts["tax"] != Decimal('0.00'):

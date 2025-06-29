@@ -123,17 +123,23 @@ class WithholdingTaxEvent(FinancialEvent):
     _: KW_ONLY
     taxed_income_event_id: Optional[uuid.UUID] = None # ID of the CashFlowEvent this tax relates to (optional)
     source_country_code: Optional[str] = None # ISO country code of the taxing authority
+    link_confidence_score: Optional[int] = None # Confidence score (0-100) of the linking to income event
+    effective_tax_rate: Optional[Decimal] = None # Calculated effective tax rate (WHT amount / income amount)
     # event_type is FinancialEventType.WITHHOLDING_TAX
     # gross_amount_foreign_currency in FinancialEvent holds the tax amount (should be positive).
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
                  taxed_income_event_id: Optional[uuid.UUID] = None,
                  source_country_code: Optional[str] = None,
+                 link_confidence_score: Optional[int] = None,
+                 effective_tax_rate: Optional[Decimal] = None,
                  **kwargs_for_parent_kw_only): # Catches event_id etc.
         super().__init__(asset_internal_id, event_date,
                          event_type=FinancialEventType.WITHHOLDING_TAX,
                          **kwargs_for_parent_kw_only)
         self.taxed_income_event_id = taxed_income_event_id
         self.source_country_code = source_country_code
+        self.link_confidence_score = link_confidence_score
+        self.effective_tax_rate = effective_tax_rate
 
     def __post_init__(self):
         super().__post_init__()

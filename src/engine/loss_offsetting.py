@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import List, Dict, Optional
 
 from src.domain.results import RealizedGainLoss, VorabpauschaleData, LossOffsettingResult
-from src.domain.events import FinancialEvent, CashFlowEvent
+from src.domain.events import FinancialEvent, CashFlowEvent, WithholdingTaxEvent
 from src.domain.enums import AssetCategory, FinancialEventType, InvestmentFundType, TaxReportingCategory
 from src.domain.assets import Asset, InvestmentFund
 from src.identification.asset_resolver import AssetResolver
@@ -146,6 +146,13 @@ class LossOffsettingEngine:
 
         result.conceptual_fund_income_net_taxable = fund_income_net_taxable.quantize(self.TWO_PLACES, context=self.ctx)
 
+        # Calculate foreign tax paid (Zeile 41)
+        foreign_tax_total = self.ctx.create_decimal(Decimal('0'))
+        for event in self.current_year_financial_events:
+            if isinstance(event, WithholdingTaxEvent):
+                tax_amount = event.gross_amount_eur if event.gross_amount_eur is not None else self.ctx.create_decimal(Decimal('0'))
+                foreign_tax_total = self.ctx.add(foreign_tax_total, tax_amount)
+
         # Anlage KAP Line Calculations (as per PRD Sec 2.7)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN] = stock_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST] = stock_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
@@ -153,6 +160,7 @@ class LossOffsettingEngine:
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST] = derivative_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE] = kap_other_income_positive.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE] = kap_other_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
+        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID] = foreign_tax_total.quantize(self.TWO_PLACES, context=self.ctx)
 
         # Zeile 19 Calculation
         zeile_19_amount = self.ctx.add(stock_gains_gross, derivative_gains_gross)
