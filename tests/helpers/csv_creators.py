@@ -54,7 +54,7 @@ def create_positions_csv_string(data_rows: List[List[Any]]) -> str:
 CASH_TRANSACTIONS_HEADERS = [
     "ClientAccountID", "CurrencyPrimary", "AssetClass", "SubCategory", "Symbol",
     "Description", "SettleDate", "Amount", "Type", "Conid", "UnderlyingConid",
-    "ISIN", "IssuerCountryCode"
+    "ISIN", "IssuerCountryCode", "TransactionID"
 ]
 def create_cash_transactions_csv_string(data_rows: List[List[Any]]) -> str:
     return create_csv_string(CASH_TRANSACTIONS_HEADERS, data_rows)

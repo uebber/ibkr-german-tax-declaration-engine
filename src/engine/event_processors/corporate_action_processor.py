@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 from src.domain.events import (
     CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock,
-    CorporateActionEvent, FinancialEvent 
+    CorporateActionEvent, FinancialEvent, CorpActionExpireDividendRights
 )
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger
@@ -12,6 +12,14 @@ from .base_processor import EventProcessor
 from src.domain.enums import FinancialEventType # Added for checking event type
 
 logger = logging.getLogger(__name__)
+
+def _format_asset_info(asset_obj) -> str:
+    """Helper to format asset information for logging."""
+    if not asset_obj:
+        return "Unknown Asset"
+    desc = asset_obj.description or asset_obj.get_classification_key()
+    symbol = asset_obj.ibkr_symbol or "N/A"
+    return f"'{desc}' (Symbol: {symbol})"
 
 class SplitProcessor(EventProcessor):
     def process(self, event: FinancialEvent, ledger: FifoLedger, context: Dict[str, Any]) -> List[RealizedGainLoss]:
@@ -71,10 +79,8 @@ class StockDividendProcessor(EventProcessor):
             logger.error(f"StockDividendProcessor received event with type {event.event_type} but expected CORP_STOCK_DIVIDEND. ID: {event.event_id}")
             return []
         try:
-             logger.info(f"Processing {event.event_type.name} for asset {ledger.asset_internal_id} on {event.event_date} (ID: {event.event_id}). New Shares: {event.quantity_new_shares_received}, FMV/Share: {event.fmv_per_new_share_eur} EUR")
-             if event.fmv_per_new_share_eur is None:
-                 logger.error(f"Stock Dividend event {event.event_id} is missing fmv_per_new_share_eur. Cannot add lot.")
-                 return []
+             logger.info(f"Processing {event.event_type.name} for asset {ledger.asset_internal_id} on {event.event_date} (ID: {event.event_id}). New Shares: {event.quantity_new_shares_received} (German tax: zero cost basis)")
+             # FMV no longer required - German tax treatment uses zero cost basis
              ledger.add_lot_for_stock_dividend(event)
         except ValueError as e:
              logger.critical(f"Critical error processing Stock Dividend {event.event_id} in ledger for asset {ledger.asset_internal_id}: {e}", exc_info=True)
@@ -98,11 +104,25 @@ class MergerStockProcessor(EventProcessor):
         logger.warning(f"Processing {event.event_type.name} for asset {ledger.asset_internal_id} on {event.event_date} (ID: {event.event_id}) - FIFO Lot Adjustment LOGIC NOT IMPLEMENTED YET as per PRD.")
         return []
 
+class ExpireDividendRightsProcessor(EventProcessor):
+    def process(self, event: FinancialEvent, ledger: FifoLedger, context: Dict[str, Any]) -> List[RealizedGainLoss]:
+        if not isinstance(event, CorpActionExpireDividendRights):
+            logger.error(f"ExpireDividendRightsProcessor received incorrect event type: {type(event).__name__} (ID: {event.event_id}).")
+            return []
+        
+        # These events are used only for post-processing DI/ED consolidation, no FIFO ledger processing needed
+        return []
+
 class GenericCorporateActionProcessor(EventProcessor):
      def process(self, event: FinancialEvent, ledger: FifoLedger, context: Dict[str, Any]) -> List[RealizedGainLoss]:
         if not isinstance(event, CorporateActionEvent):
             logger.error(f"GenericCorporateActionProcessor received non-CorporateActionEvent type: {type(event).__name__} (ID: {event.event_id}).")
             return []
+        
+        # Get asset information for better logging
+        asset_resolver = context.get('asset_resolver')
+        asset_obj = asset_resolver.get_asset_by_id(event.asset_internal_id) if asset_resolver else None
+        
         ledger_id_str = f"ledger for asset {ledger.asset_internal_id}" if ledger else "no ledger provided"
-        logger.warning(f"No specific processor found for Corporate Action type {event.event_type.name} (Code: {getattr(event, 'ca_code', 'N/A')}, ID: {event.event_id}) with {ledger_id_str}. No ledger modifications performed.")
+        logger.warning(f"No specific processor found for Corporate Action type {event.event_type.name} for asset {_format_asset_info(asset_obj)} (IBKR Action ID: {getattr(event, 'ca_action_id_ibkr', 'N/A')}, Event ID: {event.event_id}) with {ledger_id_str}. No ledger modifications performed.")
         return []

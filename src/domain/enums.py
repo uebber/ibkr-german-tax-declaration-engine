@@ -25,6 +25,7 @@ class FinancialEventType(Enum):
     TRADE_SELL_SHORT_OPEN = auto()
     TRADE_BUY_SHORT_COVER = auto()
     DIVIDEND_CASH = auto() # For stocks
+    CAPITAL_REPAYMENT = auto() # For tax-free capital repayments (Einlagenrückgewähr)
     DISTRIBUTION_FUND = auto() # For investment funds
     INTEREST_RECEIVED = auto()
     INTEREST_PAID_STUECKZINSEN = auto()
@@ -33,6 +34,7 @@ class FinancialEventType(Enum):
     CORP_MERGER_CASH = auto() # Renamed from CORP_ACTION_MERGER_CASH
     CORP_MERGER_STOCK = auto() # Renamed from CORP_ACTION_MERGER_STOCK
     CORP_STOCK_DIVIDEND = auto() # Renamed from CORP_ACTION_STOCK_DIVIDEND
+    CORP_EXPIRE_DIVIDEND_RIGHTS = auto() # For ED corporate actions - used only for post-processing
     OPTION_EXERCISE = auto()
     OPTION_ASSIGNMENT = auto()
     OPTION_EXPIRATION_WORTHLESS = auto()
@@ -61,6 +63,7 @@ class TaxReportingCategory(Enum):
     ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE = auto() # Interest, non-fund dividends, bond gains, stückzinsen
     ANLAGE_KAP_SONSTIGE_VERLUSTE = auto() # Bond losses, etc.
     ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT = auto() # Added for Zeile 19 as per PRD
+    ANLAGE_KAP_FOREIGN_TAX_PAID = auto() # Zeile 41 - Anrechenbare ausländische Steuern
 
     # KAP-INV Gross Amounts (as per PRD for form lines)
     ANLAGE_KAP_INV_AKTIENFONDS_AUSSCHUETTUNG_GROSS = auto()

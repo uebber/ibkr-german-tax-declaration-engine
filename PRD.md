@@ -1,7 +1,8 @@
 # Product Requirements Document (PRD): IBKR German Tax Declaration Engine (v3.2.3)
 
-**Revision Note (May 2025):**
-- v3.2.3: Explicitly clarified that all financial events processed for income aggregation and reporting (including simple income like dividends and interest) must have an `event_date` within the specified tax year (2023). This applies to both internal calculations and the detailed PDF report.
+**Revision Note (June 2025):**
+- v3.3.0: Added comprehensive capital repayments (Einlagenrückgewähr) and dividend rights processing. Updated system to support configurable tax years. Enhanced PDF reporting with detailed component breakdowns.
+- v3.2.3: Explicitly clarified that all financial events processed for income aggregation and reporting (including simple income like dividends and interest) must have an `event_date` within the specified tax year. This applies to both internal calculations and the detailed PDF report.
 - v3.2.2: Complete revision of variable naming conventions for clarity and semantic accuracy. Corrected the description of Anlage KAP Zeile 19 to accurately reflect that it represents foreign capital income after netting (excluding fund-related items and derivative losses).
 - v3.2.1: The definition of figures for *Anlage KAP Zeile 19* has been aligned with the official form instructions.
 
@@ -21,7 +22,7 @@ German tax residents using Interactive Brokers (IBKR) face considerable difficul
 - Ensuring data consistency across various input files and providing clear documentation to support declared figures.
 
 ### Solution
-This tool will automate the generation of figures required for German tax declaration forms (Anlage KAP, Anlage KAP-INV, and Anlage SO for the tax year 2023). It will achieve this by:
+This tool will automate the generation of figures required for German tax declaration forms (Anlage KAP, Anlage KAP-INV, and Anlage SO for the current tax year). The system supports configurable tax years via the TAX_YEAR setting in config.py. It will achieve this by:
 
 - Parsing IBKR financial data (including corporate actions)
 - Consolidating asset identification using a robust alias-based system
@@ -36,10 +37,10 @@ This tool will automate the generation of figures required for German tax declar
 The system will output clearly structured summaries directly corresponding to the line items on the German tax forms, along with detailed PDF reports for record-keeping and submission to tax authorities if required. This version specifically excludes handling for "Alt-Anteile" (investment fund shares acquired before 01.01.2018).
 
 ### Goal
-To provide an automated, rule-based system that generates accurate and directly usable figures for German tax residents to complete their Anlage KAP, Anlage KAP-INV, and Anlage SO forms for the 2023 tax year, focusing on shares acquired from 01.01.2018 onwards for investment funds. The tool aims to significantly reduce the manual effort and complexity involved in preparing these tax declarations based on IBKR data, ensuring compliance with German tax regulations concerning capital gains, investment fund income, other capital income, and the tax implications of corporate actions, by providing correctly aggregated figures as required by the respective form lines. All financial calculations will use `Decimal` for precision, adhering to specified internal working precisions.
+To provide an automated, rule-based system that generates accurate and directly usable figures for German tax residents to complete their Anlage KAP, Anlage KAP-INV, and Anlage SO forms for the current tax year, focusing on shares acquired from 01.01.2018 onwards for investment funds. The tool aims to significantly reduce the manual effort and complexity involved in preparing these tax declarations based on IBKR data, ensuring compliance with German tax regulations concerning capital gains, investment fund income, other capital income, and the tax implications of corporate actions, by providing correctly aggregated figures as required by the respective form lines. All financial calculations will use `Decimal` for precision, adhering to specified internal working precisions.
 
 ### Target Audience
-German tax residents using Interactive Brokers who need automated assistance in preparing figures for their annual tax declaration (Anlage KAP, Anlage KAP-INV, and Anlage SO for 2023) and **do not hold investment fund shares acquired before January 1, 2018 ("Alt-Anteile")**. Suitable for self-preparation or for providing structured data and supporting documentation to a tax advisor.
+German tax residents using Interactive Brokers who need automated assistance in preparing figures for their annual tax declaration (Anlage KAP, Anlage KAP-INV, and Anlage SO for the current tax year) and **do not hold investment fund shares acquired before January 1, 2018 ("Alt-Anteile")**. Suitable for self-preparation or for providing structured data and supporting documentation to a tax advisor.
 
 ## 2. Key Requirements & Functionality
 
@@ -154,7 +155,25 @@ Corporate actions (specific subtypes of `CorporateActionEvent`) must be processe
 - **`FinancialEventType.CORP_SPLIT_FORWARD` (Forward Splits FS):** Adjust quantity and cost basis per share in existing FIFO lots. Not taxable.
 - **`FinancialEventType.CORP_MERGER_CASH` (Acquisition for Cash TC):** Treated as a sale of existing FIFO lots. Realized G/L reported in Anlage KAP (with `RealizationType.CASH_MERGER_PROCEEDS`).
 - **`FinancialEventType.CORP_MERGER_STOCK` (Stock-for-Stock Merger TC):** Assume tax-neutral. While a `MergerStockProcessor` class may exist, the detailed FIFO lot conversion logic within `FifoLedger` (i.e., transforming lots of an old asset into lots of a new asset while preserving original acquisition dates and pro-rated cost bases) for tax-neutral stock-for-stock mergers is NOT YET IMPLEMENTED.
-- **`FinancialEventType.CORP_STOCK_DIVIDEND` (Stock Dividends HI):** Taxable event by default for foreign stock dividends. FMV of new shares is dividend income (contributes to `kap_other_income_positive` described in Sec 2.7). New shares form a new FIFO lot with FMV as cost basis. (`new_shares_per_existing_share` attribute is initialized as a placeholder if not directly calculable from report).
+- **`FinancialEventType.CORP_STOCK_DIVIDEND` (Stock Dividends HI/SD):** Support both HI and SD corporate action types. German tax treatment: new shares receive zero cost basis. For taxable stock dividends: FMV of new shares is dividend income (contributes to `kap_other_income_positive` described in Sec 2.7) and new shares form a new FIFO lot with zero cost basis. Skip IBKR receivable assets (.REC) to avoid duplication. (`new_shares_per_existing_share` attribute is initialized as a placeholder if not directly calculable from report).
+
+#### Dividend Rights (DI/ED) Processing
+
+For dividend rights scenarios where rights are issued (DI) and expire (ED) with cash payments:
+
+**Event Processing:**
+- DI events: Parsed as `CorpActionStockDividend` with `quantity_new_shares_received = 0`
+- ED events: Parsed as `FinancialEventType.CORP_EXPIRE_DIVIDEND_RIGHTS`
+
+**Post-Processing Pipeline (`_process_dividend_rights_matching`):**
+1. Match DI/ED pairs by asset identifiers (CONID/ISIN/Symbol)
+2. Extract underlying stock ISIN from DI event description
+3. Re-link associated cash events to underlying stock (not dividend rights)
+4. Prevent creation of phantom dividend shares
+
+**Tax Impact:**
+- Cash payments process as capital repayments against underlying stock FIFO ledger
+- No taxable income from rights expiry itself
 
 #### Option Exercise and Assignment Processing
 
@@ -169,6 +188,7 @@ It must reliably process option exercises (`FinancialEventType.OPTION_EXERCISE`)
 1. **Candidate Selection:**
    - `OptionExerciseEvent` and `OptionAssignmentEvent` objects created from option trades are collected as candidates for linking.
    - Stock `TradeEvent` objects are pre-filtered as candidates for linking if their `ibkr_notes_codes` field contains 'A' (Assignment/Auto-Exercise) or 'EX' (Exercise) indicators.
+   - Exclude "IA" (Internalized + Automatically Allocated) codes from option assignment detection to prevent false positives.
 
 2. **Option Event Lookup Map Construction:** A lookup map is built for the candidate option lifecycle events. The key for this map is a tuple:
    - `(event_date_str, option_asset.underlying_ibkr_conid, abs_expected_stock_qty_str)`
@@ -236,22 +256,39 @@ Trades of instruments identified as FX trading pairs (e.g., 'EUR.USD' where IBKR
 
 ### 2.6. Other Income Calculation (Components for Anlage KAP)
 
-**All income calculations in this section are strictly for events occurring within the 2023 tax year. Financial events with an `event_date` outside this period are excluded from these aggregations.** Calculations to use `INTERNAL_CALCULATION_PRECISION`.
+**All income calculations in this section are strictly for events occurring within the current tax year. Financial events with an `event_date` outside this period are excluded from these aggregations.** Calculations to use `INTERNAL_CALCULATION_PRECISION`.
 
-**Dividends (Non-Funds, `FinancialEventType.DIVIDEND_CASH`):** Identify and aggregate gross dividends from `AssetCategory.STOCK` (with `event_date` in 2023). These contribute to `kap_other_income_positive`.
+### 2.6. Capital Repayments (Einlagenrückgewähr)
+
+The system must distinguish between taxable dividends and tax-free capital repayments based on IBKR's "Exempt From Withholding" indicator.
+
+**Detection & Classification:**
+- Cash events with "Exempt From Withholding" → `FinancialEventType.CAPITAL_REPAYMENT`
+- Regular dividend events → `FinancialEventType.DIVIDEND_CASH`
+
+**FIFO Cost Basis Reduction:**
+- Apply repayment amount to reduce acquisition cost of existing FIFO lots (oldest first)
+- If repayment exceeds total cost basis, excess becomes taxable dividend income
+- Method: `FifoLedger.reduce_cost_basis_for_capital_repayment()`
+
+**Tax Treatment:**
+- Cost basis reduction: No taxable income
+- Excess amounts: Create separate `DIVIDEND_CASH` events, contribute to `kap_other_income_positive`
+
+**Dividends (Non-Funds, `FinancialEventType.DIVIDEND_CASH`):** Taxable dividend distributions from `AssetCategory.STOCK` assets (with `event_date` in current tax year). These contribute to `kap_other_income_positive`.
 
 **Taxable Income from Corporate Actions:**
 - Cash received in `FinancialEventType.CORP_MERGER_CASH` (with `event_date` in 2023) is part of proceeds for G/L calculation (see `RealizationType.CASH_MERGER_PROCEEDS`). The G/L contributes to stock G/L pools.
-- The FMV of shares from taxable `FinancialEventType.CORP_STOCK_DIVIDEND` (with `event_date` in 2023) is dividend income, contributing to `kap_other_income_positive`.
+- The FMV of shares from taxable `FinancialEventType.CORP_STOCK_DIVIDEND` (with `event_date` in current tax year) is dividend income, contributing to `kap_other_income_positive`.
 
-**Interest (`FinancialEventType.INTEREST_RECEIVED`):** Identify and aggregate gross interest income from `AssetCategory.BOND` or `AssetCategory.CASH_BALANCE` (with `event_date` in 2023). These contribute to `kap_other_income_positive`.
+**Interest (`FinancialEventType.INTEREST_RECEIVED`):** Identify and aggregate gross interest income from `AssetCategory.BOND` or `AssetCategory.CASH_BALANCE` (with `event_date` in current tax year). These contribute to `kap_other_income_positive`.
 
 **Stückzinsen (Accrued Interest on Bonds):**
-- Stückzinsen *received* (from `FinancialEventType.INTEREST_RECEIVED` events marked as Stückzinsen, with `event_date` in 2023) are positive income.
-- Stückzinsen *paid* (`FinancialEventType.INTEREST_PAID_STUECKZINSEN`, with `event_date` in 2023) are negative income.
-- The net sum of Stückzinsen (`stueckzinsen_net = stueckzinsen_received - stueckzinsen_paid`, considering only 2023 events) is calculated. If `stueckzinsen_net > 0`, it contributes to `kap_other_income_positive`. If `stueckzinsen_net < 0`, its absolute value contributes to `kap_other_losses_abs`.
+- Stückzinsen *received* (from `FinancialEventType.INTEREST_RECEIVED` events marked as Stückzinsen, with `event_date` in current tax year) are positive income.
+- Stückzinsen *paid* (`FinancialEventType.INTEREST_PAID_STUECKZINSEN`, with `event_date` in current tax year) are negative income.
+- The net sum of Stückzinsen (`stueckzinsen_net = stueckzinsen_received - stueckzinsen_paid`, considering only current tax year events) is calculated. If `stueckzinsen_net > 0`, it contributes to `kap_other_income_positive`. If `stueckzinsen_net < 0`, its absolute value contributes to `kap_other_losses_abs`.
 
-**Option Premiums:** Realized premiums from short option positions (e.g., from `FinancialEventType.OPTION_EXPIRATION_WORTHLESS` resulting in `RealizationType.OPTION_EXPIRED_SHORT`, or closing short option trades resulting in `RealizationType.OPTION_TRADE_CLOSE_SHORT`, all with `event_date` in 2023) are gains from Termingeschäfte. Stored in `RealizedGainLoss` with the `is_stillhalter_income` flag set to `True`. These contribute to `derivative_gains_gross`. Losses from closing long option positions or worthless long expirations (with `event_date` in 2023) contribute to `derivative_losses_abs`.
+**Option Premiums:** Realized premiums from short option positions (e.g., from `FinancialEventType.OPTION_EXPIRATION_WORTHLESS` resulting in `RealizationType.OPTION_EXPIRED_SHORT`, or closing short option trades resulting in `RealizationType.OPTION_TRADE_CLOSE_SHORT`, all with `event_date` in current tax year) are gains from Termingeschäfte. Stored in `RealizedGainLoss` with the `is_stillhalter_income` flag set to `True`. These contribute to `derivative_gains_gross`. Losses from closing long option positions or worthless long expirations (with `event_date` in current tax year) contribute to `derivative_losses_abs`.
 
 ### 2.7. Aggregation into Declaration-Specific Categories (Tax Form Line Items for 2023 - NO ALT-ANTEILE)
 
@@ -373,13 +410,15 @@ All calculations to use `INTERNAL_CALCULATION_PRECISION` until final net amounts
 
 ### 2.9. Foreign Withholding Tax (WHT) Aggregation
 
-Aggregate total gross income subject to WHT and total WHT paid (from `WithholdingTaxEvent.gross_amount_eur` where `event_date` is in 2023) per source country for Anlage KAP Zeile 41.
+Foreign withholding tax is calculated centrally in `LossOffsettingEngine` with proper tax year filtering. Uses `TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID` for consistent reporting across console and PDF outputs. This single-source-of-truth approach eliminates discrepancies between different report formats.
+
+Aggregate total gross income subject to WHT and total WHT paid (from `WithholdingTaxEvent.gross_amount_eur` where `event_date` is in current tax year) per source country for Anlage KAP Zeile 41.
 Does not calculate *creditable* WHT.
 
 ### 2.10. Reporting & Output
 
 #### Console Tax Declaration Summary
-Figures for **direct entry onto 2023 tax forms**.
+Figures for **direct entry onto current tax year forms**.
 - Anlage KAP: Values for Zeile 19, 20, 21, 22, 23, 24 as calculated per Section 2.7.
 - Anlage KAP-INV: GROSS amounts for Zeilen 4-8 and 14, 17, 20, 23, 26.
 - Anlage SO: Net G/L for Zeile 54.
@@ -407,12 +446,18 @@ Warnings/inconsistencies.
 - **Critical Error Report: EOY Quantity Mismatch:** Any discrepancies found during EOY Quantity Validation (Section 2.4) must be clearly reported, indicating the affected `Asset` and the differing quantities (calculated vs. reported).
 
 #### Detailed PDF Report
-- Lists individual `FinancialEvent` records *from the 2023 tax year* leading to taxable outcomes and `RealizedGainLoss` records (from realizations in 2023). All monetary values to be appropriately quantized.
-- Details **Gross Amounts, Teilfreistellung calculations, and Net Taxable Amounts** (esp. for Investment Funds from 2023 events/realizations).
-- Details impact of `CorporateActionEvent` types (from 2023 events).
-- For `AssetCategory.PRIVATE_SALE_ASSET` transactions (from 2023 realizations), lists details mapping to Anlage SO structure, including non-taxable ones due to holding period.
+- Lists individual `FinancialEvent` records *from the current tax year* leading to taxable outcomes and `RealizedGainLoss` records (from realizations in current tax year). All monetary values to be appropriately quantized.
+- Details **Gross Amounts, Teilfreistellung calculations, and Net Taxable Amounts** (esp. for Investment Funds from current tax year events/realizations).
+- Details impact of `CorporateActionEvent` types (from current tax year events).
+- For `AssetCategory.PRIVATE_SALE_ASSET` transactions (from current tax year realizations), lists details mapping to Anlage SO structure, including non-taxable ones due to holding period.
 - German headers, formatted for clarity.
 - Include a section detailing any EOY quantity mismatches if detected.
+
+#### Enhanced PDF Features
+- **Component Breakdowns:** Detailed income component analysis with section references
+- **Zeile 19 Transparency:** Always show calculation breakdown with all five components (even when 0 EUR)
+- **Capital Repayments:** Comprehensive tables showing received repayments, cost basis adjustments, and excess amounts
+- **Calculation Consistency:** Uses pre-calculated values from calculation engine for accuracy
 
 #### Diagnostic Reports
 - `main.py` currently includes functions (`_print_grouped_event_details`, `print_asset_positions`, `print_assets_by_category`) for diagnostic output of parsed and enriched data when run with `--group-by-type`.
@@ -526,7 +571,9 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
    - The classification of standard trade direction **must not** rely on parsing the 'Notes/Codes' column of the Trades CSV, except for identifying specific event types like option exercises/assignments.
    - If the 'Open/CloseIndicator' is missing or contains an unexpected value for a transaction identified as a financial instrument trade (and not an exercise/assignment), this should be treated as a data inconsistency, logged prominently, and potentially flagged as an error requiring user attention.
 
-8. Sort all `FinancialEvent` objects chronologically (`ParsingOrchestrator.get_all_financial_events`). **Only events whose `event_date` falls within the 2023 tax year (January 1, 2023, to December 31, 2023, inclusive) are considered for further processing and reporting.** This filtering should ideally occur when events are first created or retrieved by `get_all_financial_events`, before enrichment and FIFO processing.
+8. **Process dividend rights matching** (`_process_dividend_rights_matching`): Match DI/ED pairs and re-link associated cash events to underlying stocks.
+
+9. Sort all `FinancialEvent` objects chronologically (`ParsingOrchestrator.get_all_financial_events`). **Only events whose `event_date` falls within the current tax year are considered for further processing and reporting.** Enhanced tax year end date filtering excludes events after tax year. This filtering should ideally occur when events are first created or retrieved by `get_all_financial_events`, before enrichment and FIFO processing.
    - **Deterministic Sorting Requirement:** Event sorting must be stable and deterministic to ensure correct FIFO processing and calculation results. Each `FinancialEvent` object is unique due to its `event_id` (UUID). Parsers ensure one event object per logical entry from IBKR reports, even if identifiers like `ibkr_transaction_id` are shared across entries.
    - **Primary Sort Key Component: `event_date`** (parsed to `datetime.date` object). Events with unparseable dates are flagged as errors.
    - **Secondary Sort Key Components (for Tie-breaking on the same `event_date`):** A tuple of subsequent keys is used, constructed based on the `FinancialEventType`. The `event.event_id` (UUID) is always the last element in this tuple to guarantee uniqueness and deterministic order.
@@ -549,15 +596,16 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
    - **Null/None Handling:** Placeholders for missing optional key components (like `ibkr_transaction_id` or `ca_action_id_ibkr`) must be handled consistently to ensure correct sort order (e.g., `None` typically sorts before strings/numbers, or a specific sentinel value can be used).
    - **Ensuring Determinism:** The inclusion of `event.event_id` as the final component in each sort key tuple guarantees that the overall sorting order is strictly deterministic, as each `FinancialEvent` object has a unique `event_id`.
 
-9. Enrich data (`enrich_financial_events`): Convert all financial amounts in the filtered (2023 tax year) `FinancialEvent` objects to EUR using `Decimal` arithmetic (with `INTERNAL_CALCULATION_PRECISION`) and ECB rates, storing results in EUR-specific fields (e.g., `gross_amount_eur`, `commission_eur`).
+10. Enrich data (`enrich_financial_events`): Convert all financial amounts in the filtered (current tax year) `FinancialEvent` objects to EUR using `Decimal` arithmetic (with `INTERNAL_CALCULATION_PRECISION`) and ECB rates, storing results in EUR-specific fields (e.g., `gross_amount_eur`, `commission_eur`). Enhanced asset information formatting in log messages.
 
-10. Perform Option-to-Stock Trade Linking (`perform_option_trade_linking`): Link `OptionExerciseEvent`/`OptionAssignmentEvent` objects (from the 2023 tax year) to their corresponding stock `TradeEvent` objects by populating `TradeEvent.related_option_event_id`, as detailed in Section 2.4.
+11. Perform Option-to-Stock Trade Linking (`perform_option_trade_linking`): Link `OptionExerciseEvent`/`OptionAssignmentEvent` objects (from the current tax year) to their corresponding stock `TradeEvent` objects by populating `TradeEvent.related_option_event_id`, as detailed in Section 2.4.
 
-11. Initialize FIFO Ledgers for each `Asset`:
+12. Initialize FIFO Ledgers for each `Asset`:
     - **Set initial quantities based on `Asset.soy_quantity` (as determined per Section 2.1).**
     - **Determine initial cost basis for these SOY lots according to the detailed logic in Section 2.4 (SOY Cost Basis Determination), using `INTERNAL_CALCULATION_PRECISION` for any calculations.**
 
-12. Process sorted `FinancialEvent` objects (all confirmed to be within the 2023 tax year) chronologically, updating FIFO ledgers (all calculations using `INTERNAL_CALCULATION_PRECISION`):
+13. Process sorted `FinancialEvent` objects (all confirmed to be within the current tax year) chronologically, updating FIFO ledgers (all calculations using `INTERNAL_CALCULATION_PRECISION`):
+    - **`CAPITAL_REPAYMENT` events:** Process directly in calculation engine main loop to reduce cost basis using FifoLedger method and store excess amounts on events.
     - **`CorporateActionEvent` subtypes:** Adjust FIFO lots for the affected `Asset` or trigger taxable events (e.g., taxable stock dividend income contributes to `kap_other_income_positive`).
     - **`TradeEvent` (Sell/Cover types):** Calculate gross G/L (FIFO) for the relevant `Asset`. Generate `RealizedGainLoss` record with the appropriate `RealizationType`.
       - For `STOCK` sales/covers, G/L contributes to `stock_gains_gross` or `stock_losses_abs`.
@@ -575,21 +623,21 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
         3. Storing this premium in a temporary context (e.g., `pending_option_adjustments`) associated with the option event's ID, for later use by the linked stock `TradeEvent`.
         4. The linked stock `TradeEvent` (processed separately via `TradeProcessor`) will then retrieve this premium to adjust its own economic basis/proceeds (as detailed in Section 2.4).
       - For expirations or closing option trades not resulting in stock delivery, generate `RealizedGainLoss` for option premiums with the correct `RealizationType`. These G/L contribute to `derivative_gains_gross` or `derivative_losses_abs`.
-    - Calculate gross and net Vorabpauschale (€0 for 2023), creating `VorabpauschaleData`. The net Vorabpauschale contributes to `fund_income_net_taxable` (as €0).
+    - Calculate gross and net Vorabpauschale (€0 for current tax year), creating `VorabpauschaleData`. The net Vorabpauschale contributes to `fund_income_net_taxable` (as €0).
 
-13. Perform EOY Quantity Validation (as per Section 2.4): Compare calculated EOY quantities in FIFO ledgers against `Asset.eoy_quantity` (from `POSITIONS_END_FILE_PATH`) using a small numerical tolerance. Report any errors.
+14. Perform EOY Quantity Validation (as per Section 2.4): Compare calculated EOY quantities in FIFO ledgers against `Asset.eoy_quantity` (from `POSITIONS_END_FILE_PATH`) using a small numerical tolerance. Report any errors.
 
-14. Aggregate figures into the internal components (`stock_gains_gross`, `stock_losses_abs`, `derivative_gains_gross`, `derivative_losses_abs`, `kap_other_income_positive`, `kap_other_losses_abs`) and then calculate the final values for each tax form line (Anlage KAP Zeilen 19-24, KAP-INV, SO) as per Section 2.7, maintaining `INTERNAL_CALCULATION_PRECISION`. This is handled by the `LossOffsettingEngine`. All aggregations are based on the 2023 tax year events and realizations.
+15. Aggregate figures into the internal components (`stock_gains_gross`, `stock_losses_abs`, `derivative_gains_gross`, `derivative_losses_abs`, `kap_other_income_positive`, `kap_other_losses_abs`) and then calculate the final values for each tax form line (Anlage KAP Zeilen 19-24, KAP-INV, SO) as per Section 2.7, maintaining `INTERNAL_CALCULATION_PRECISION`. This is handled by the `LossOffsettingEngine`. All aggregations are based on the current tax year events and realizations.
 
-15. The `LossOffsettingEngine` will also calculate conceptual net figures for each tax pot (Stocks, Derivatives, Other Capital Income, Fund Income, §23 EStG) for internal summaries or user information, applying Finanzamt-style offsetting logic to these net figures, based on 2023 data.
+16. The `LossOffsettingEngine` will also calculate conceptual net figures for each tax pot (Stocks, Derivatives, Other Capital Income, Fund Income, §23 EStG) for internal summaries or user information, applying Finanzamt-style offsetting logic to these net figures, based on current tax year data.
 
-16. Generate console and PDF reports, quantizing final figures to appropriate reporting precisions (e.g., `OUTPUT_PRECISION_AMOUNTS`) and **including any critical EOY quantity mismatch errors.**
+17. Generate console and PDF reports, quantizing final figures to appropriate reporting precisions (e.g., `OUTPUT_PRECISION_AMOUNTS`) and **including any critical EOY quantity mismatch errors.**
 
 ## 6. Output Requirements
 
 ### Primary Output (Console Summary)
 
-Figures for **direct entry onto 2023 tax forms**.
+Figures for **direct entry onto current tax year forms**.
 - Anlage KAP: Values for Zeile 19 (Ausländische Kapitalerträge nach Saldierung), Zeile 20 (Gewinne Aktien), Zeile 21 (Gewinne Termingeschäfte), Zeile 22 (Sonstige Verluste), Zeile 23 (Verluste Aktien), Zeile 24 (Verluste Termingeschäfte) as calculated per Section 2.7.
 - Anlage KAP-INV: GROSS amounts for lines 4-8 (Distributions) and 14, 17, 20, 23, 26 (Gains/Losses).
 - Anlage SO: Net G/L for Zeile 54.
@@ -611,12 +659,12 @@ Separate summary of **conceptual net taxable income per category** (e.g., Stocks
 
 ### Supporting Output (PDF Details)
 
-- Detailed transaction lists (`FinancialEvent` *from the 2023 tax year* leading to taxable income/loss) and summaries (`RealizedGainLoss` from 2023 realizations, `VorabpauschaleData`). Values appropriately quantized. `RealizedGainLoss` details will reflect the updated field names and include `realization_type`.
-- For investment funds (from 2023 events/realizations): Gross Amount, Fund Type, Teilfreistellung (Rate, Amount), Net Taxable Amount (all `Decimal`, quantized).
-- For `AssetCategory.PRIVATE_SALE_ASSET` (from 2023 realizations): Individual transactions mapping to Anlage SO, including holding period and taxability status.
-- Details of processed corporate actions (from 2023 events) and their impact.
+- Detailed transaction lists (`FinancialEvent` *from the current tax year* leading to taxable income/loss) and summaries (`RealizedGainLoss` from current tax year realizations, `VorabpauschaleData`). Values appropriately quantized. `RealizedGainLoss` details will reflect the updated field names and include `realization_type`.
+- For investment funds (from current tax year events/realizations): Gross Amount, Fund Type, Teilfreistellung (Rate, Amount), Net Taxable Amount (all `Decimal`, quantized).
+- For `AssetCategory.PRIVATE_SALE_ASSET` (from current tax year realizations): Individual transactions mapping to Anlage SO, including holding period and taxability status.
+- Details of processed corporate actions (from current tax year events) and their impact.
 
-Aggregated foreign WHT (from 2023 events) for Anlage KAP Zeile 41 (`Decimal` formatted and quantized).
+Aggregated foreign WHT (from current tax year events) for Anlage KAP Zeile 41 (`Decimal` formatted and quantized).
 
 Diagnostic messages (current implementation provides detailed event/asset printing via `--group-by-type` in `main.py`). Critical errors like EOY quantity mismatches must be prominent.
 
@@ -638,7 +686,7 @@ Diagnostic messages (current implementation provides detailed event/asset printi
 - **Currency Conversion:** FX trading pair instruments (e.g., IBKR asset class "CASH", symbol "EUR.USD") are identified, and their trades directly generate `CurrencyConversionEvent` objects.
 - **Fees:** Trade commissions are part of cost basis/proceeds. `FinancialEventType.FEE_TRANSACTION` can capture other fees, but their direct mapping to specific lines on Anlage KAP/KAP-INV (beyond potential Werbungskosten for Anlage SO if applicable) is not in scope for tax form line item generation.
 - **Numerical Precision:** All financial calculations and storage of monetary values and quantities use the `Decimal` type with a high internal calculation precision as specified in Section 2.0. EUR values are quantized to specific output precisions (e.g., `OUTPUT_PRECISION_AMOUNTS`) only for final reporting.
-- **Tax Year Scope:** The tool is designed for the 2023 tax year. All financial events considered for calculations and reporting (e.g., dividends, interest, sales, corporate actions) must have an `event_date` or `realization_date` within January 1, 2023, to December 31, 2023, inclusive.
+- **Tax Year Scope:** The tool supports configurable tax years via TAX_YEAR setting in config.py. All financial events considered for calculations and reporting (e.g., dividends, interest, sales, corporate actions) must have an `event_date` or `realization_date` within the configured tax year period, inclusive.
 
 ## 8. Future Considerations
 

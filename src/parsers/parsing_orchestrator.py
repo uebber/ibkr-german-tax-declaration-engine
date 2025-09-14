@@ -26,8 +26,9 @@ from .cash_transactions_parser import parse_cash_transactions_csv
 from .positions_parser import parse_positions_csv
 from .corporate_actions_parser import parse_corporate_actions_csv
 from .domain_event_factory import DomainEventFactory
-# NEW IMPORT
+# NEW IMPORTS
 from src.processing.option_trade_linker import perform_option_trade_linking
+from src.processing.withholding_tax_linker import WithholdingTaxLinker
 
 
 logger = logging.getLogger(__name__)
@@ -215,6 +216,145 @@ class ParsingOrchestrator:
         self.asset_classifier.save_classifications()
         logger.info("Asset classifications finalized and cache saved.")
 
+    def _process_dividend_rights_matching(self):
+        """Post-processing step to handle DI/ED dividend rights matching.
+        
+        For each ED (Expire Dividend Rights) event:
+        1. Find matching DI (Dividend Issue) event and set its shares to 0
+        2. Find matching cash dividend event and update its asset ISIN to underlying asset
+        """
+        from src.domain.events import CorpActionExpireDividendRights, CorpActionStockDividend, CashFlowEvent, CorporateActionEvent
+        from src.domain.enums import FinancialEventType
+        import re
+        
+        logger.info("Processing dividend rights matching (DI/ED events)...")
+        
+        # Debug: Log all corporate action events
+        ca_events = [event for event in self.domain_financial_events if isinstance(event, CorporateActionEvent)]
+        logger.debug(f"Found {len(ca_events)} corporate action events total:")
+        for ca_event in ca_events:
+            logger.debug(f"  CA Event: {type(ca_event).__name__}, Type: {ca_event.event_type.name}, Desc: {ca_event.ibkr_activity_description}")
+        
+        # Debug: Log all cash flow events
+        cash_events = [event for event in self.domain_financial_events if isinstance(event, CashFlowEvent)]
+        logger.debug(f"Found {len(cash_events)} cash flow events total:")
+        for cash_event in cash_events:
+            logger.debug(f"  Cash Event: Type: {cash_event.event_type.name}, Desc: {cash_event.ibkr_activity_description}")
+        
+        # Find all ED events for processing
+        ed_events = [
+            event for event in self.domain_financial_events 
+            if isinstance(event, CorpActionExpireDividendRights)
+        ]
+        
+        if not ed_events:
+            logger.info("No ED (Expire Dividend Rights) events found. Skipping dividend rights processing.")
+            return
+        
+        logger.info(f"Found {len(ed_events)} ED events to process.")
+        
+        for ed_event in ed_events:
+            ed_asset = self.asset_resolver.get_asset_by_id(ed_event.asset_internal_id)
+            if not ed_asset:
+                logger.warning(f"ED Event {ed_event.event_id}: Could not find asset for ED event. Skipping.")
+                continue
+                
+            logger.debug(f"Processing ED event for asset {ed_asset.get_classification_key()} (CONID: {ed_asset.ibkr_conid}, ISIN: {ed_asset.ibkr_isin})")
+            
+            # 1. Find matching DI event
+            matching_di_event = None
+            for event in self.domain_financial_events:
+                if (isinstance(event, CorpActionStockDividend) and 
+                    event.ibkr_activity_description and
+                    "DIVIDEND RIGHTS ISSUE" in event.ibkr_activity_description.upper()):
+                    
+                    di_asset = self.asset_resolver.get_asset_by_id(event.asset_internal_id)
+                    if (di_asset and 
+                        di_asset.ibkr_conid == ed_asset.ibkr_conid and 
+                        di_asset.ibkr_isin == ed_asset.ibkr_isin and
+                        di_asset.ibkr_symbol == ed_asset.ibkr_symbol):
+                        matching_di_event = event
+                        logger.debug(f"Found matching DI event {event.event_id} for ED event {ed_event.event_id}")
+                        break
+            
+            if matching_di_event:
+                # Set DI event shares to 0 (rights expired without receiving shares)
+                logger.info(f"ED Event {ed_event.event_id}: Setting matching DI event {matching_di_event.event_id} shares from {matching_di_event.quantity_new_shares_received} to 0")
+                matching_di_event.quantity_new_shares_received = Decimal('0')
+            else:
+                logger.warning(f"ED Event {ed_event.event_id}: Could not find matching DI event for asset {ed_asset.get_classification_key()}")
+            
+            # 2. Find matching cash dividend event and update its asset ISIN
+            # Extract underlying ISIN from the matching DI event description (not ED event)
+            underlying_isin = None
+            if matching_di_event:
+                underlying_isin = self._extract_underlying_isin_from_description(matching_di_event.ibkr_activity_description)
+            
+            if not underlying_isin:
+                logger.warning(f"ED Event {ed_event.event_id}: Could not extract underlying ISIN from matching DI event description: {matching_di_event.ibkr_activity_description if matching_di_event else 'No DI event found'}")
+                continue
+                
+            logger.debug(f"ED Event {ed_event.event_id}: Extracted underlying ISIN from DI event: {underlying_isin}")
+            
+            # Debug: Log what we're looking for in cash events
+            logger.debug(f"ED Event {ed_event.event_id}: Looking for cash event with CONID={ed_asset.ibkr_conid}, ISIN={ed_asset.ibkr_isin}")
+            
+            matching_cash_event = None
+            cash_events_checked = 0
+            for event in self.domain_financial_events:
+                if isinstance(event, CashFlowEvent):
+                    cash_events_checked += 1
+                    cash_asset = self.asset_resolver.get_asset_by_id(event.asset_internal_id)
+                    logger.debug(f"  Checking cash event {event.event_id}: Type={event.event_type.name}, Desc='{event.ibkr_activity_description}', Asset CONID={cash_asset.ibkr_conid if cash_asset else 'None'}, ISIN={cash_asset.ibkr_isin if cash_asset else 'None'}")
+                    
+                    if ((event.event_type == FinancialEventType.DIVIDEND_CASH or event.event_type == FinancialEventType.CAPITAL_REPAYMENT) and
+                        event.ibkr_activity_description and
+                        "EXPIRE DIVIDEND RIGHT" in event.ibkr_activity_description.upper()):
+                        
+                        logger.debug(f"    Cash event matches description pattern")
+                        if (cash_asset and 
+                            cash_asset.ibkr_conid == ed_asset.ibkr_conid and 
+                            cash_asset.ibkr_isin == ed_asset.ibkr_isin):
+                            matching_cash_event = event
+                            logger.debug(f"Found matching cash dividend event {event.event_id} for ED event {ed_event.event_id}")
+                            break
+                        else:
+                            logger.debug(f"    Asset identifiers don't match: Expected CONID={ed_asset.ibkr_conid}/ISIN={ed_asset.ibkr_isin}, Got CONID={cash_asset.ibkr_conid if cash_asset else 'None'}/ISIN={cash_asset.ibkr_isin if cash_asset else 'None'}")
+            
+            logger.debug(f"ED Event {ed_event.event_id}: Checked {cash_events_checked} cash events, found match: {matching_cash_event is not None}")
+            
+            if matching_cash_event:
+                # Find the LEG stock asset to link the cash event to
+                leg_stock_asset = None
+                for asset_id, asset in self.asset_resolver.assets_by_internal_id.items():
+                    if asset.ibkr_isin == underlying_isin:
+                        leg_stock_asset = asset
+                        break
+                
+                if leg_stock_asset:
+                    logger.info(f"ED Event {ed_event.event_id}: Updating cash dividend event to point to LEG stock asset {leg_stock_asset.get_classification_key()}")
+                    # Update the cash event to point to the LEG stock asset instead of dividend rights asset
+                    matching_cash_event.asset_internal_id = leg_stock_asset.internal_asset_id
+                else:
+                    logger.warning(f"ED Event {ed_event.event_id}: Could not find LEG stock asset with ISIN {underlying_isin}")
+            else:
+                logger.warning(f"ED Event {ed_event.event_id}: Could not find matching cash dividend event for asset {ed_asset.get_classification_key()}")
+        
+        logger.info("Dividend rights matching processing completed.")
+
+    def _extract_underlying_isin_from_description(self, description: str) -> Optional[str]:
+        """Extract the underlying asset ISIN from corporate action description.
+        
+        Example: 'LEG(DE000LEG1110) DIVIDEND RIGHTS ISSUE...' -> 'DE000LEG1110'
+        """
+        if not description:
+            return None
+        
+        # Look for ISIN pattern in parentheses: (DE000LEG1110)
+        import re
+        isin_match = re.search(r'\(([A-Z]{2}[A-Z0-9]{10})\)', description)
+        return isin_match.group(1) if isin_match else None
+
     def _ensure_soy_quantities_are_set(self):
         # ... (implementation is the same)
         logger.info("Ensuring all non-cash assets have Start-of-Year (SOY) quantities initialized...")
@@ -367,6 +507,21 @@ class ParsingOrchestrator:
                 candidate_stock_trades_for_linking=self.candidate_stock_trades_for_linking
             )
             # self.domain_financial_events now contains events with potentially updated related_option_event_id
+            
+            # NEW STEP: Perform withholding tax linking
+            logger.info("Performing withholding tax linking...")
+            wht_linker = WithholdingTaxLinker()
+            successful_links, unlinked_wht_events = wht_linker.link_withholding_tax_events(self.domain_financial_events)
+            
+            # Log linking statistics
+            logger.info(f"Withholding tax linking completed: {len(successful_links)} successful links, {len(unlinked_wht_events)} unlinked WHT events")
+            if unlinked_wht_events:
+                logger.warning(f"Unlinked withholding tax events:")
+                for wht_event in unlinked_wht_events:
+                    logger.warning(f"  - WHT Event {wht_event.event_id}: Date={wht_event.event_date}, Amount={wht_event.gross_amount_foreign_currency} {wht_event.local_currency}, Desc='{wht_event.ibkr_activity_description}'")
+            
+            # Post-process DI/ED dividend rights matching
+            self._process_dividend_rights_matching()
             
             logger.info("Parsing pipeline (including linking) completed.")
             return self.get_all_financial_events() # This will sort all events
