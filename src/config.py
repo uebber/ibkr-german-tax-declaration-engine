@@ -19,11 +19,11 @@ CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_2024.csv" # e.g. corpact*.
 # Tax year being processed
 TAX_YEAR = 2024 """
 
-TRADES_FILE_PATH = "data/trades_uebber.csv"
-CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions_uebber.csv"
-POSITIONS_START_FILE_PATH = "data/positions_start_of_year_uebber.csv"
-POSITIONS_END_FILE_PATH = "data/positions_end_of_year_uebber.csv"
-CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_uebber.csv" # e.g. corpact*.csv
+TRADES_FILE_PATH = "data/trades.csv"
+CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions.csv"
+POSITIONS_START_FILE_PATH = "data/positions_start_of_year.csv"
+POSITIONS_END_FILE_PATH = "data/positions_end_of_year.csv"
+CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions.csv" # e.g. corpact*.csv
 # Tax year being processed
 TAX_YEAR = 2023
 
