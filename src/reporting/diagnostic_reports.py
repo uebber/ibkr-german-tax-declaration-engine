@@ -238,3 +238,91 @@ def print_vorabpauschale_diagnostic(vorabpauschale_items: List[VorabpauschaleDat
     
     for vp_item_idx, vp_item in enumerate(vorabpauschale_items):
             print(f"  VP Item {vp_item_idx+1}: {vp_item}")
+
+
+def print_withholding_tax_linking_diagnostic(events: List[FinancialEvent], asset_resolver: AssetResolver):
+    """Prints diagnostic information about withholding tax linking."""
+    from src.domain.events import WithholdingTaxEvent, CashFlowEvent
+    
+    print("\n--- Withholding Tax Linking Diagnostic ---")
+    
+    wht_events = [ev for ev in events if isinstance(ev, WithholdingTaxEvent)]
+    
+    if not wht_events:
+        print("  No withholding tax events found.")
+        return
+    
+    print(f"  Total withholding tax events: {len(wht_events)}")
+    
+    # Count linked vs unlinked events
+    linked_events = [ev for ev in wht_events if getattr(ev, 'taxed_income_event_id', None) is not None]
+    unlinked_events = [ev for ev in wht_events if getattr(ev, 'taxed_income_event_id', None) is None]
+    
+    print(f"  Linked events: {len(linked_events)}")
+    print(f"  Unlinked events: {len(unlinked_events)}")
+    
+    if linked_events:
+        # Show confidence distribution
+        confidence_counts = {'high': 0, 'medium': 0, 'low': 0, 'unknown': 0}
+        total_confidence = 0
+        count_with_confidence = 0
+        
+        for wht_event in linked_events:
+            confidence = getattr(wht_event, 'link_confidence_score', None)
+            if confidence is not None:
+                total_confidence += confidence
+                count_with_confidence += 1
+                if confidence >= 80:
+                    confidence_counts['high'] += 1
+                elif confidence >= 60:
+                    confidence_counts['medium'] += 1
+                else:
+                    confidence_counts['low'] += 1
+            else:
+                confidence_counts['unknown'] += 1
+        
+        print(f"  Confidence distribution: High (≥80%): {confidence_counts['high']}, Medium (60-79%): {confidence_counts['medium']}, Low (<60%): {confidence_counts['low']}, Unknown: {confidence_counts['unknown']}")
+        
+        if count_with_confidence > 0:
+            avg_confidence = total_confidence / count_with_confidence
+            print(f"  Average confidence: {avg_confidence:.1f}%")
+    
+    if unlinked_events:
+        print(f"\n  Unlinked withholding tax events ({len(unlinked_events)}):")
+        for wht_event in unlinked_events:
+            asset = asset_resolver.get_asset_by_id(wht_event.asset_internal_id)
+            asset_desc = _get_asset_display_key(asset)
+            amount_str = f"{wht_event.gross_amount_foreign_currency or 'N/A'} {wht_event.local_currency or 'N/A'}"
+            print(f"    - Date: {wht_event.event_date}, Asset: {asset_desc}, Amount: {amount_str}")
+            if wht_event.ibkr_activity_description:
+                print(f"      Description: {wht_event.ibkr_activity_description}")
+    
+    # Show linking examples for linked events
+    if linked_events:
+        print(f"\n  Sample linked events (first 3):")
+        for i, wht_event in enumerate(linked_events[:3]):
+            asset = asset_resolver.get_asset_by_id(wht_event.asset_internal_id)
+            asset_desc = _get_asset_display_key(asset)
+            
+            # Find the linked income event
+            income_event = None
+            if wht_event.taxed_income_event_id:
+                income_event = next((ev for ev in events if ev.event_id == wht_event.taxed_income_event_id), None)
+            
+            confidence = getattr(wht_event, 'link_confidence_score', 'N/A')
+            tax_rate = getattr(wht_event, 'effective_tax_rate', None)
+            tax_rate_str = f"{(tax_rate * 100):.1f}%" if tax_rate else "N/A"
+            
+            print(f"    {i+1}. WHT Event: {wht_event.event_date}, {asset_desc}")
+            print(f"       Amount: {wht_event.gross_amount_foreign_currency} {wht_event.local_currency}")
+            print(f"       Confidence: {confidence}%, Tax Rate: {tax_rate_str}")
+            
+            if income_event:
+                income_asset = asset_resolver.get_asset_by_id(income_event.asset_internal_id)
+                income_asset_desc = _get_asset_display_key(income_asset)
+                print(f"       Linked to: {income_event.event_type.name}, {income_asset_desc}")
+                print(f"       Income Amount: {income_event.gross_amount_foreign_currency} {income_event.local_currency}")
+            else:
+                print(f"       Linked to: Event not found (ID: {wht_event.taxed_income_event_id})")
+    
+    print("--- End Withholding Tax Linking Diagnostic ---")
