@@ -102,39 +102,39 @@ Navigate to the project's root directory in your terminal (where `src/` is locat
 
 **Basic run (using defaults from `config.py`):**
 ```bash
-python src/main.py
+python -m src.main
 ```
 
 **Common options:**
 
 *   **Enable interactive classification (overrides config):**
     ```bash
-    python src/main.py --interactive
+    python -m src.main --interactive
     ```
 *   **Disable interactive classification (overrides config):**
     ```bash
-    python src/main.py --no-interactive
+    python -m src.main --no-interactive
     ```
 *   **Generate console tax summary and PDF report:**
     ```bash
-    python src/main.py --report-tax-declaration
+    python -m src.main --report-tax-declaration
     ```
     (This will also create `tax_report_<TAX_YEAR>.pdf` by default, e.g., `tax_report_2023.pdf` if `TAX_YEAR` is 2023)
 
 *   **Specify a custom PDF output file name:**
     ```bash
-    python src/main.py --report-tax-declaration --pdf-output-file my_tax_details_<TAX_YEAR>.pdf
+    python -m src.main --report-tax-declaration --pdf-output-file my_tax_details_<TAX_YEAR>.pdf
     ```
 
 *   **Specify input file paths (example for trades file):**
     ```bash
-    python src/main.py --trades path/to/your/trades_report.csv
+    python -m src.main --trades path/to/your/trades_report.csv
     ```
     (Similar arguments exist for `--cash`, `--pos_start`, `--pos_end`, `--corp_actions`)
 
 *   **View all available options:**
     ```bash
-    python src/main.py --help
+    python -m src.main --help
     ```
 
 ## Output
