@@ -97,8 +97,12 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.event_id
         )
     
-    # The final secondary key tuple: (intra_day_order_integer, then PRD elements)
+    # For events on the same date, prioritize transaction ID over event type
+    # This ensures chronological order is preserved (IBKR assigns transaction IDs sequentially)
+    transaction_id_for_sort = event.ibkr_transaction_id or ""
+
+    # The final secondary key tuple: (transaction_id, intra_day_order_integer, then PRD elements)
     # The PRD elements ALREADY end with event.event_id.
-    secondary_key_tuple = (intra_day_order,) + specific_secondary_elements
-    
+    secondary_key_tuple = (transaction_id_for_sort, intra_day_order) + specific_secondary_elements
+
     return (parsed_date, secondary_key_tuple)
