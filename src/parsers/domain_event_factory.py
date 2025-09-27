@@ -117,7 +117,8 @@ class DomainEventFactory:
         notes_codes_parts = {part.strip() for part in (raw_trade.notes_codes or "").upper().split(';') if part.strip()}
         option_event_type: Optional[FinancialEventType] = None
 
-        if 'A' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_ASSIGNMENT
+        open_close_ind = (raw_trade.open_close_indicator or "").upper()
+        if 'A' in notes_codes_parts and open_close_ind != 'C': option_event_type = FinancialEventType.OPTION_ASSIGNMENT
         elif 'EX' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_EXERCISE
         elif 'EP' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_EXPIRATION_WORTHLESS
 
