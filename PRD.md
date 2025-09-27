@@ -1,6 +1,7 @@
-# Product Requirements Document (PRD): IBKR German Tax Declaration Engine (v3.2.3)
+# Product Requirements Document (PRD): IBKR German Tax Declaration Engine (v3.3.1)
 
-**Revision Note (June 2025):**
+**Revision Note (September 2025):**
+- v3.3.1: Enhanced error handling and event processing reliability. Improved FIFO processing validation with comprehensive error logging. Fixed option assignment classification for closing transactions. Enhanced chronological event ordering using transaction IDs for accurate FIFO calculations.
 - v3.3.0: Added comprehensive capital repayments (Einlagenrückgewähr) and dividend rights processing. Updated system to support configurable tax years. Enhanced PDF reporting with detailed component breakdowns.
 - v3.2.3: Explicitly clarified that all financial events processed for income aggregation and reporting (including simple income like dividends and interest) must have an `event_date` within the specified tax year. This applies to both internal calculations and the detailed PDF report.
 - v3.2.2: Complete revision of variable naming conventions for clarity and semantic accuracy. Corrected the description of Anlage KAP Zeile 19 to accurately reflect that it represents foreign capital income after netting (excluding fund-related items and derivative losses).
@@ -108,6 +109,25 @@ It must calculate cost basis and proceeds in EUR (as `Decimal`) for all transact
 For `CurrencyConversionEvent`, the parent `FinancialEvent`'s `gross_amount_foreign_currency` and `local_currency` fields are populated with the `to_amount` and `to_currency` of the conversion, respectively.
 
 It must identify the source country for withholding tax purposes based on available data (e.g., ISIN, descriptions from cash transaction reports, `issuer_country_code` from IBKR data). For broker interest, the source country may be heuristically set (e.g., to "IE"). A regex (`wht_on_interest_pattern`) aids in identifying WHT on interest from event descriptions.
+
+#### Enhanced Data Validation & Error Handling (v3.3.1)
+
+The system includes comprehensive validation and error handling mechanisms to ensure data integrity throughout the processing pipeline:
+
+**FIFO Processing Validation:**
+- Before FIFO lot creation, the system validates that all required fields are properly enriched, particularly `net_proceeds_or_cost_basis_eur` for `TradeEvent` objects.
+- Missing enrichment data triggers explicit error logging with detailed information about the failing transaction, including the `ibkr_transaction_id` and specific missing field.
+- Prevents silent failures during FIFO processing that could lead to incorrect gain/loss calculations.
+
+**Option Trade Classification:**
+- Enhanced classification logic for option assignments distinguishes between opening and closing transactions using the `Open/CloseIndicator` field.
+- Only trades marked with 'A' (Assignment) notes codes **and** not flagged as closing transactions (`open_close_indicator != 'C'`) are classified as new option assignments.
+- Prevents misclassification of option assignment events when closing existing positions, avoiding double-processing of option premiums.
+
+**Chronological Event Ordering:**
+- Event sorting algorithm enhanced to use IBKR transaction IDs as the primary secondary sort key for same-date events.
+- Ensures chronological processing order is maintained, leveraging IBKR's sequential transaction ID assignment.
+- Critical for accurate FIFO calculations, particularly in high-frequency trading scenarios or complex option strategies involving multiple same-date transactions.
 
 ### 2.3. Asset Classification for Tax Declaration
 
@@ -575,6 +595,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
 
 9. Sort all `FinancialEvent` objects chronologically (`ParsingOrchestrator.get_all_financial_events`). **Only events whose `event_date` falls within the current tax year are considered for further processing and reporting.** Enhanced tax year end date filtering excludes events after tax year. This filtering should ideally occur when events are first created or retrieved by `get_all_financial_events`, before enrichment and FIFO processing.
    - **Deterministic Sorting Requirement:** Event sorting must be stable and deterministic to ensure correct FIFO processing and calculation results. Each `FinancialEvent` object is unique due to its `event_id` (UUID). Parsers ensure one event object per logical entry from IBKR reports, even if identifiers like `ibkr_transaction_id` are shared across entries.
+   - **Enhanced Chronological Ordering (v3.3.1):** The sorting algorithm prioritizes IBKR transaction IDs as the primary secondary sort key for same-date events, leveraging IBKR's sequential transaction ID assignment to maintain accurate chronological order critical for FIFO calculations.
    - **Primary Sort Key Component: `event_date`** (parsed to `datetime.date` object). Events with unparseable dates are flagged as errors.
    - **Secondary Sort Key Components (for Tie-breaking on the same `event_date`):** A tuple of subsequent keys is used, constructed based on the `FinancialEventType`. The `event.event_id` (UUID) is always the last element in this tuple to guarantee uniqueness and deterministic order.
      - **For `TradeEvent`, `OptionLifecycleEvent` subtypes (e.g., `OptionExerciseEvent`, `OptionAssignmentEvent`), and `CurrencyConversionEvent`:**
