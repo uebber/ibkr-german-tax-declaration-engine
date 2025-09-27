@@ -367,8 +367,10 @@ class FifoLedger:
 
     def add_short_lot(self, trade_event: TradeEvent):
         if trade_event.event_type != FinancialEventType.TRADE_SELL_SHORT_OPEN: return
-        if trade_event.quantity is None or trade_event.quantity >= Decimal(0): return 
-        if trade_event.net_proceeds_or_cost_basis_eur is None: return
+        if trade_event.quantity is None or trade_event.quantity >= Decimal(0): return
+        if trade_event.net_proceeds_or_cost_basis_eur is None:
+            logger.error(f"Cannot add short lot for trade {trade_event.ibkr_transaction_id} - net_proceeds_or_cost_basis_eur is None. Event must be enriched before FIFO processing.")
+            return
         if not trade_event.ibkr_transaction_id:
             raise ValueError(f"Missing ibkr_transaction_id for trade {trade_event.event_id} needed for Short FIFO lot creation.")
 
@@ -381,7 +383,7 @@ class FifoLedger:
         sale_proceeds_eur_per_unit = self.ctx.divide(total_sale_proceeds_eur, lot_qty_shorted_contracts_or_units)
 
         new_short_lot = ShortFifoLot(
-            opening_date=trade_event.event_date, quantity_shorted=lot_qty_shorted_contracts_or_units, 
+            opening_date=trade_event.event_date, quantity_shorted=lot_qty_shorted_contracts_or_units,
             unit_sale_proceeds_eur=sale_proceeds_eur_per_unit, # Renamed
             total_sale_proceeds_eur=total_sale_proceeds_eur,
             source_transaction_id=trade_event.ibkr_transaction_id
