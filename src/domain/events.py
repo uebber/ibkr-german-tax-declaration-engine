@@ -106,7 +106,7 @@ class CashFlowEvent(FinancialEvent): # For dividends, distributions, interest
     _: KW_ONLY
     source_country_code: Optional[str] = None # ISO country code, if applicable (e.g., for WHT context)
     # event_type will be one of:
-    # DIVIDEND_CASH, DISTRIBUTION_FUND, INTEREST_RECEIVED, PAYMENT_IN_LIEU_DIVIDEND
+    # DIVIDEND_CASH, DISTRIBUTION_FUND, INTEREST_RECEIVED
     # gross_amount_foreign_currency in FinancialEvent holds the income amount.
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
                  event_type: FinancialEventType, # Ensure event_type is passed correctly

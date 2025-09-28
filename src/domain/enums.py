@@ -29,7 +29,6 @@ class FinancialEventType(Enum):
     DISTRIBUTION_FUND = auto() # For investment funds
     INTEREST_RECEIVED = auto()
     INTEREST_PAID_STUECKZINSEN = auto()
-    PAYMENT_IN_LIEU_DIVIDEND = auto()
     CORP_SPLIT_FORWARD = auto() # Renamed from CORP_ACTION_SPLIT_FORWARD
     CORP_MERGER_CASH = auto() # Renamed from CORP_ACTION_MERGER_CASH
     CORP_MERGER_STOCK = auto() # Renamed from CORP_ACTION_MERGER_STOCK
