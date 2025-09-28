@@ -309,7 +309,7 @@ class ParsingOrchestrator:
                     
                     if ((event.event_type == FinancialEventType.DIVIDEND_CASH or event.event_type == FinancialEventType.CAPITAL_REPAYMENT) and
                         event.ibkr_activity_description and
-                        "EXPIRE DIVIDEND RIGHT" in event.ibkr_activity_description.upper()):
+                        "EXEMPT FROM WITHHOLDING" in event.ibkr_activity_description.upper()):
                         
                         logger.debug(f"    Cash event matches description pattern")
                         if (cash_asset and 
