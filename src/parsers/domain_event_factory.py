@@ -512,10 +512,6 @@ class DomainEventFactory:
                     source_country_code=source_country_for_wht, **event_params_kw
                 )
 
-            elif "PAYMENT IN LIEU" in event_type_str_upper or code_upper == "PO":
-                # PIL typically positive income
-                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                domain_event_instance = CashFlowEvent(asset_for_event.internal_asset_id, event_date_str, event_type=FinancialEventType.PAYMENT_IN_LIEU_DIVIDEND, source_country_code=rct.issuer_country_code, **event_params_kw)
 
             elif "FEE" in event_type_str_upper or code_upper == "FE" or "FEES" in event_type_str_upper:
                 # Fees are costs, raw_amount typically negative. Store as positive cost.
