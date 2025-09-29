@@ -1,4 +1,4 @@
-# IBKR German Tax Declaration Engine (v3.2.3) 🇩🇪💰
+# IBKR German Tax Declaration Engine (v3.3.1) 🇩🇪💰
 
 **Automate the generation of figures for your German tax declaration (Anlage KAP, KAP-INV, SO) based on Interactive Brokers (IBKR) Flex Query reports.**
 
@@ -26,7 +26,7 @@ The goal is to provide accurate, directly usable figures to significantly reduce
     *   **Anlage KAP-INV** (Gross figures for distributions and G/L from funds)
     *   **Anlage SO** (for §23 EStG private sales)
 *   **FIFO Calculations:** Implements First-In, First-Out accounting for gains/losses in EUR, properly initialized with Start-of-Year data.
-*   **Corporate Action Handling:** Processes forward splits, cash mergers, and taxable foreign stock dividends, adjusting FIFO lots.
+*   **Corporate Action Handling:** Processes forward splits, cash mergers, taxable foreign stock dividends, cash dividends (incl. Payment In Lieu dividend and dividends that are exempt from witholding), adjusting FIFO lots.
 *   **Option Processing:** Handles option exercises, assignments, and worthless expirations, including adjusting stock trade economics for premiums.
 *   **Investment Fund Taxation:**
     *   Classifies funds (Aktienfonds, Mischfonds, etc.).
@@ -38,8 +38,10 @@ The goal is to provide accurate, directly usable figures to significantly reduce
 *   **EOY Validation:** Compares calculated end-of-year positions against your EOY IBKR report for the configured `TAX_YEAR`.
 *   **Detailed Reporting:**
     *   Console summary for quick overview and direct form entry.
-    *   PDF report with detailed transactions (from the `TAX_YEAR`), G/L, income, and Teilfreistellung calculations.
+    *   PDF report with hierarchical section numbering and detailed transactions (from the `TAX_YEAR`), G/L, income, and Teilfreistellung calculations.
 *   **Numerical Precision:** All financial calculations use Python's `Decimal` type with high internal precision (`INTERNAL_CALCULATION_PRECISION`) to minimize rounding errors.
+*   **Enhanced Error Handling:** Comprehensive error logging and validation for FIFO processing, option trade classification, and event ordering.
+*   **Robust Event Processing:** Improved chronological ordering and accurate option assignment detection for complex trading scenarios.
 
 ## Prerequisites
 
@@ -177,6 +179,24 @@ The engine produces:
 *   **No "Alt-Anteile":** It **DOES NOT** handle "Alt-Anteile" (investment fund shares acquired before January 1, 2018).
 *   **Not Tax Advice:** It provides figures for declaration; **it is NOT tax advice.** Always verify results and consult a tax advisor if unsure.
 
+
+## Recent Improvements (v3.3.1)
+
+This version includes several key improvements to enhance reliability and accuracy:
+
+### Enhanced Error Handling
+- **FIFO Processing Validation:** Added comprehensive error logging when trade events are not properly enriched before FIFO processing, preventing silent failures and providing clear debugging information.
+- **Missing Data Detection:** Explicit error messages when required fields like `net_proceeds_or_cost_basis_eur` are missing from trade events.
+
+### Improved Option Processing
+- **Option Assignment Classification:** Fixed misclassification of option assignments for closing transactions by properly checking the `Open/CloseIndicator` field.
+- **Accurate Trade Type Detection:** Only treats 'A' (Assignment) notes codes as new assignments when not closing existing positions, preventing double-processing of option events.
+
+### Enhanced Event Ordering
+- **Chronological Accuracy:** Improved event sorting using IBKR transaction IDs to maintain proper chronological sequence for same-date events.
+- **FIFO Calculation Precision:** Ensures events are processed in the correct order for accurate First-In-First-Out calculations, particularly important for complex trading scenarios.
+
+These improvements enhance the system's robustness when processing complex trading scenarios involving options, short positions, and high-frequency trading activities.
 
 ## Understanding the PRD
 

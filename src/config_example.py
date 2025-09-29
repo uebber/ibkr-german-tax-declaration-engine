@@ -3,43 +3,20 @@
 from decimal import Decimal # Added for Decimal type hint
 
 # File paths for IBKR Flex Query reports
-""" TRADES_FILE_PATH = "data/trades_2023.csv"
-CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions_2023.csv"
-POSITIONS_START_FILE_PATH = "data/positions_start_of_year_2023.csv"
-POSITIONS_END_FILE_PATH = "data/positions_end_of_year_2023.csv"
-CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_2023.csv" # e.g. corpact*.csv
-# Tax year being processed
-TAX_YEAR = 2023 """
-
-# TRADES_FILE_PATH = "data/Gemini_Trades.csv"
-# CASH_TRANSACTIONS_FILE_PATH = "data/Gemini_Cash_Transactions.csv"
-# POSITIONS_START_FILE_PATH = "data/Gemini_Positions_2024_Start.csv"
-# POSITIONS_END_FILE_PATH = "data/Gemini_Positions_2024_End.csv"
-# CORPORATE_ACTIONS_FILE_PATH = "data/Gemini_Corporate_Actions.csv" # e.g. corpact*.csv
-# # Tax year being processed
-# TAX_YEAR = 2024
-
-TRADES_FILE_PATH = "data/trades_2024.csv"
-CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions_2024.csv"
-POSITIONS_START_FILE_PATH = "data/positions_start_of_year_2024.csv"
-POSITIONS_END_FILE_PATH = "data/positions_end_of_year_2024.csv"
-CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_2024.csv" # e.g. corpact*.csv
-# Tax year being processed
-TAX_YEAR = 2024
-
-# TRADES_FILE_PATH = "data/trades_uebber.csv"
-# CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions_uebber.csv"
-# POSITIONS_START_FILE_PATH = "data/positions_start_of_year_uebber.csv"
-# POSITIONS_END_FILE_PATH = "data/positions_end_of_year_uebber.csv"
-# CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_uebber.csv" # e.g. corpact*.csv
-# # Tax year being processed
-# TAX_YEAR = 2023
+TRADES_FILE_PATH = "data/trades.csv"
+CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions.csv"
+POSITIONS_START_FILE_PATH = "data/positions_start_of_year.csv"
+POSITIONS_END_FILE_PATH = "data/positions_end_of_year.csv"
+CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions.csv" # e.g. corpact*.csv
 
 # Cache file for user classifications
 CLASSIFICATION_CACHE_FILE_PATH = "cache/user_classifications.json" # Renamed from CLASSIFICATION_CACHE_FILE
 
 # Cache file for ECB exchange rates
 ECB_RATES_CACHE_FILE_PATH = "cache/ecb_exchange_rates.json" # Renamed from ECB_RATES_CACHE_FILE
+
+# Tax year being processed
+TAX_YEAR = 2023
 
 # Taxpayer Information (NEW)
 TAXPAYER_NAME = "Warren Buffet"  # Placeholder - Please update

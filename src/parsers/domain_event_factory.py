@@ -117,7 +117,8 @@ class DomainEventFactory:
         notes_codes_parts = {part.strip() for part in (raw_trade.notes_codes or "").upper().split(';') if part.strip()}
         option_event_type: Optional[FinancialEventType] = None
 
-        if 'A' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_ASSIGNMENT
+        open_close_ind = (raw_trade.open_close_indicator or "").upper()
+        if 'A' in notes_codes_parts and open_close_ind != 'C': option_event_type = FinancialEventType.OPTION_ASSIGNMENT
         elif 'EX' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_EXERCISE
         elif 'EP' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_EXPIRATION_WORTHLESS
 
@@ -511,10 +512,6 @@ class DomainEventFactory:
                     source_country_code=source_country_for_wht, **event_params_kw
                 )
 
-            elif "PAYMENT IN LIEU" in event_type_str_upper or code_upper == "PO":
-                # PIL typically positive income
-                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                domain_event_instance = CashFlowEvent(asset_for_event.internal_asset_id, event_date_str, event_type=FinancialEventType.PAYMENT_IN_LIEU_DIVIDEND, source_country_code=rct.issuer_country_code, **event_params_kw)
 
             elif "FEE" in event_type_str_upper or code_upper == "FE" or "FEES" in event_type_str_upper:
                 # Fees are costs, raw_amount typically negative. Store as positive cost.

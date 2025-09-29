@@ -263,8 +263,7 @@ def run_main_calculations(
             if event.event_type not in [
                 FinancialEventType.DIVIDEND_CASH, FinancialEventType.CAPITAL_REPAYMENT, FinancialEventType.DISTRIBUTION_FUND,
                 FinancialEventType.INTEREST_RECEIVED, FinancialEventType.INTEREST_PAID_STUECKZINSEN,
-                FinancialEventType.PAYMENT_IN_LIEU_DIVIDEND, FinancialEventType.WITHHOLDING_TAX,
-                FinancialEventType.FEE_TRANSACTION, FinancialEventType.CURRENCY_CONVERSION
+                FinancialEventType.WITHHOLDING_TAX, FinancialEventType.FEE_TRANSACTION, FinancialEventType.CURRENCY_CONVERSION
             ]:
                 logger.warning(f"No processor mapped and no ledger interaction expected for event type: {event.event_type.name} (ID: {event.event_id}).")
             else:

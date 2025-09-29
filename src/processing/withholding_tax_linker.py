@@ -105,7 +105,6 @@ class WithholdingTaxLinker:
             FinancialEventType.DIVIDEND_CASH,
             FinancialEventType.DISTRIBUTION_FUND,
             FinancialEventType.INTEREST_RECEIVED,
-            FinancialEventType.PAYMENT_IN_LIEU_DIVIDEND,
             FinancialEventType.CAPITAL_REPAYMENT
         }
         
