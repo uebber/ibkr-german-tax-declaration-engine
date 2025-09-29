@@ -1,7 +1,7 @@
 # Product Requirements Document (PRD): IBKR German Tax Declaration Engine (v3.3.1)
 
 **Revision Note (September 2025):**
-- v3.3.1: Enhanced error handling and event processing reliability. Improved FIFO processing validation with comprehensive error logging. Fixed option assignment classification for closing transactions. Enhanced chronological event ordering using transaction IDs for accurate FIFO calculations.
+- v3.3.1: Enhanced error handling and event processing reliability. Improved FIFO processing validation with comprehensive error logging. Fixed option assignment classification for closing transactions. Enhanced chronological event ordering using transaction IDs for accurate FIFO calculations. Payment In Lieu dividend processing as cash dividend processing and PDF report structure with hierarchical section numbering.
 - v3.3.0: Added comprehensive capital repayments (Einlagenrückgewähr) and dividend rights processing. Updated system to support configurable tax years. Enhanced PDF reporting with detailed component breakdowns.
 - v3.2.3: Explicitly clarified that all financial events processed for income aggregation and reporting (including simple income like dividends and interest) must have an `event_date` within the specified tax year. This applies to both internal calculations and the detailed PDF report.
 - v3.2.2: Complete revision of variable naming conventions for clarity and semantic accuracy. Corrected the description of Anlage KAP Zeile 19 to accurately reflect that it represents foreign capital income after netting (excluding fund-related items and derivative losses).

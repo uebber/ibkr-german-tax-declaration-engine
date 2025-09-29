@@ -26,7 +26,7 @@ The goal is to provide accurate, directly usable figures to significantly reduce
     *   **Anlage KAP-INV** (Gross figures for distributions and G/L from funds)
     *   **Anlage SO** (for §23 EStG private sales)
 *   **FIFO Calculations:** Implements First-In, First-Out accounting for gains/losses in EUR, properly initialized with Start-of-Year data.
-*   **Corporate Action Handling:** Processes forward splits, cash mergers, and taxable foreign stock dividends, adjusting FIFO lots.
+*   **Corporate Action Handling:** Processes forward splits, cash mergers, taxable foreign stock dividends, cash dividends (incl. Payment In Lieu dividend and dividends that are exempt from witholding), adjusting FIFO lots.
 *   **Option Processing:** Handles option exercises, assignments, and worthless expirations, including adjusting stock trade economics for premiums.
 *   **Investment Fund Taxation:**
     *   Classifies funds (Aktienfonds, Mischfonds, etc.).
@@ -38,7 +38,7 @@ The goal is to provide accurate, directly usable figures to significantly reduce
 *   **EOY Validation:** Compares calculated end-of-year positions against your EOY IBKR report for the configured `TAX_YEAR`.
 *   **Detailed Reporting:**
     *   Console summary for quick overview and direct form entry.
-    *   PDF report with detailed transactions (from the `TAX_YEAR`), G/L, income, and Teilfreistellung calculations.
+    *   PDF report with hierarchical section numbering and detailed transactions (from the `TAX_YEAR`), G/L, income, and Teilfreistellung calculations.
 *   **Numerical Precision:** All financial calculations use Python's `Decimal` type with high internal precision (`INTERNAL_CALCULATION_PRECISION`) to minimize rounding errors.
 *   **Enhanced Error Handling:** Comprehensive error logging and validation for FIFO processing, option trade classification, and event ordering.
 *   **Robust Event Processing:** Improved chronological ordering and accurate option assignment detection for complex trading scenarios.
