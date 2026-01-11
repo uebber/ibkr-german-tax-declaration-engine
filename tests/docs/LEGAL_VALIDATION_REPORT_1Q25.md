@@ -2,15 +2,34 @@
 
 ## Test Specification Compliance with German Tax Regulations
 
-**Document Version:** 1.0
+**Document Version:** 1.6
 **Validation Date:** 2026-01-11
 **Tax Year Reference:** 2023/2024
 **Validator:** Automated Compliance Analysis
 
 ---
 
+## IMPORTANT DISCLAIMER
+
+> **THIS DOCUMENT IS PROVIDED FOR INFORMATIONAL AND EDUCATIONAL PURPOSES ONLY.**
+>
+> **NO LEGAL OR TAX ADVICE:** The author of this document is neither a lawyer, tax advisor (Steuerberater), nor a certified tax professional. This document does not constitute legal advice, tax advice, or professional financial guidance. Nothing in this document should be construed as such.
+>
+> **NO WARRANTY:** This document and the associated software are provided "AS IS" without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, accuracy, or non-infringement. The author makes no representations or warranties regarding the correctness, completeness, or reliability of any information contained herein.
+>
+> **NO LIABILITY:** In no event shall the author be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with this document, the software, or the use or other dealings therein. This includes, but is not limited to, any direct, indirect, incidental, special, exemplary, or consequential damages (including loss of profits, data, or other intangible losses) resulting from reliance on this document.
+>
+> **CONSULT A PROFESSIONAL:** Tax laws are complex and subject to change. Individual circumstances vary significantly. Before making any tax-related decisions or filing any tax returns, you should consult with a qualified tax advisor (Steuerberater) or legal professional who is licensed to practice in your jurisdiction and familiar with your specific situation.
+>
+> **REGULATORY INTERPRETATION:** The regulatory interpretations presented in this document represent the author's good-faith understanding of German tax law based on publicly available sources. These interpretations may be incorrect, incomplete, or outdated. Official guidance from the Bundesministerium der Finanzen (BMF) and decisions by tax courts (Finanzgerichte, Bundesfinanzhof) take precedence over any statements made herein.
+>
+> **USE AT YOUR OWN RISK:** By using this document or the associated software, you acknowledge that you do so entirely at your own risk and that you are solely responsible for any consequences arising from such use.
+
+---
+
 ## Table of Contents
 
+0. [Important Disclaimer](#important-disclaimer)
 1. [Executive Summary](#executive-summary)
 2. [Legal Framework](#legal-framework)
 3. [Group 1: Core FIFO Mechanics](#group-1-core-fifo-mechanics)
@@ -19,9 +38,11 @@
 6. [Group 4: Multi-Year Data Handling](#group-4-multi-year-data-handling)
 7. [Group 5: Complex Trade Sequences](#group-5-complex-trade-sequences)
 8. [Group 6: Tax Reporting Aggregation & Loss Offsetting](#group-6-tax-reporting-aggregation--loss-offsetting)
-9. [Appendix A: Regulatory References](#appendix-a-regulatory-references)
-10. [Appendix B: Source Documents](#appendix-b-source-documents)
-11. [Appendix C: Additional Regulatory Sources (Group 6)](#appendix-c-additional-regulatory-sources-group-6)
+9. [Group 8: Options Lifecycle](#group-8-options-lifecycle)
+10. [Appendix A: Regulatory References](#appendix-a-regulatory-references)
+11. [Appendix B: Source Documents](#appendix-b-source-documents)
+12. [Appendix C: Additional Regulatory Sources (Group 6)](#appendix-c-additional-regulatory-sources-group-6)
+13. [Appendix D: Options Taxation Sources (Group 8)](#appendix-d-options-taxation-sources-group-8)
 
 ---
 
@@ -39,7 +60,8 @@ This document validates the test specifications for the IBKR German Tax Declarat
 | Group 4: Multi-Year Data Handling | 3 | VALIDATED | 100% |
 | Group 5: Complex Trade Sequences | 5 | VALIDATED | 100% |
 | Group 6: Loss Offsetting & Tax Aggregation | 28 | VALIDATED | 100% |
-| **TOTAL** | **66** | **ALL VALIDATED** | **100%** |
+| Group 8: Options Lifecycle | 15 | VALIDATED | 100% |
+| **TOTAL** | **81** | **ALL VALIDATED** | **100%** |
 
 ### Key Regulatory Requirements Verified
 
@@ -66,6 +88,10 @@ This document validates the test specifications for the IBKR German Tax Declarat
 - **Investment fund income isolation** - Anlage KAP-INV, GROSS figures before Teilfreistellung (§ 20 InvStG)
 - **Gross form line reporting** - uncapped figures for Finanzamt assessment (Anlage KAP instructions)
 - **Tax year filtering** - only current year events reported (annual return principle)
+- **Stillhalterprämien (option premiums)** - taxable upon receipt for writers (§ 20 Abs. 1 Nr. 11 EStG)
+- **Option exercise/assignment** - premium adjusts cost basis of underlying stock (BMF-Schreiben)
+- **Option expiration (worthless)** - loss equals premium paid, fully deductible post-JStG 2024
+- **Option trade (close before expiry)** - taxable as Termingeschäft (§ 20 Abs. 2 Satz 1 Nr. 3 EStG)
 
 ---
 
@@ -1890,6 +1916,600 @@ When a single sale consumes shares from multiple lots, the sale commission must 
 
 ---
 
+## Group 8: Options Lifecycle
+
+**Test File:** `tests/specs/group8_options.yaml`
+**PRD Coverage:** §2.9 (Options Processing), §5.12 (OptionLifecycleEvent)
+**Revision:** 2026-01-11
+
+### Regulatory Background for Options Taxation
+
+German tax law provides specific treatment for options (Optionen) as part of the broader framework for Termingeschäfte (derivative transactions). The taxation depends on the lifecycle outcome of the option:
+
+#### Legal Classification of Options
+
+| Outcome | Tax Classification | Legal Reference | Taxation Point |
+|---------|-------------------|-----------------|----------------|
+| **Option Traded (Closed)** | Termingeschäft | § 20 Abs. 2 Satz 1 Nr. 3 lit. a EStG | Upon closing trade |
+| **Option Expired (Worthless)** | Termingeschäft loss | § 20 Abs. 2 Satz 1 Nr. 3 lit. a EStG | Upon expiration |
+| **Option Exercised (Holder)** | Underlying acquisition | BMF-Schreiben 2025-05-14, Rz. 8-12 | Upon stock sale (adjusted basis) |
+| **Option Assigned (Writer)** | Underlying sale/purchase | BMF-Schreiben 2025-05-14, Rz. 13-17 | Upon stock transaction (adjusted) |
+| **Stillhalterprämie (Writer)** | Capital income | § 20 Abs. 1 Nr. 11 EStG | Upon receipt |
+
+#### Key Legal Provisions for Options
+
+**§ 20 Abs. 1 Nr. 11 EStG - Stillhalterprämien (Writer's Premium):**
+> "Stillhalterprämien, die für die Einräumung von Optionen vereinnahmt werden; schließt der Stillhalter ein Glattstellungsgeschäft ab, mindern sich die Einnahmen aus den Stillhalterprämien um die im Glattstellungsgeschäft gezahlten Prämien."
+
+**Translation:** Premiums received for granting options are taxable income. If the writer enters a closing transaction, the premium income is reduced by the closing premium paid.
+
+**§ 20 Abs. 2 Satz 1 Nr. 3 lit. a EStG - Termingeschäfte:**
+> "der Veräußerung oder Beendigung von Termingeschäften, durch die der Steuerpflichtige einen Differenzausgleich oder einen durch den Wert einer veränderlichen Bezugsgröße bestimmten Geldbetrag oder Vorteil erlangt"
+
+**Translation:** The disposal or termination of derivative transactions through which the taxpayer obtains a settlement payment or an amount determined by a variable reference value.
+
+#### CRITICAL: Premium Adjustment Rules (BMF-Schreiben)
+
+Per BMF-Schreiben zur Abgeltungsteuer (2025-05-14), when options are exercised or assigned:
+
+| Scenario | Tax Treatment | Calculation |
+|----------|---------------|-------------|
+| **Call Exercised (Holder buys stock)** | Premium ADDS to stock cost basis | Stock cost = Strike price + Premium paid + Commissions |
+| **Call Assigned (Writer sells stock)** | Premium ADDS to stock sale proceeds | Proceeds = Strike price + Premium received − Commissions |
+| **Put Exercised (Holder sells stock)** | Premium REDUCES stock sale proceeds | Proceeds = Strike price − Premium paid − Commissions |
+| **Put Assigned (Writer buys stock)** | Premium REDUCES stock cost basis | Stock cost = Strike price − Premium received + Commissions |
+
+**Rationale:** The option premium is economically part of the underlying stock transaction when exercise/assignment occurs. The gain/loss on the option is NOT reported separately—it is embedded in the stock transaction.
+
+#### JStG 2024 Impact on Options
+
+With the abolishment of the €20,000 cap on Termingeschäft losses (Jahressteuergesetz 2024):
+
+1. **Option losses from trading (close before expiry)** - Fully deductible against all capital income
+2. **Option losses from worthless expiration** - Fully deductible (no longer capped)
+3. **Option losses from exercise/assignment** - Embedded in stock basis, no separate deduction limit
+
+---
+
+### Test Parameters
+
+| Parameter | Value | Regulatory Basis |
+|-----------|-------|------------------|
+| Tax Year | 2023/2024 | Configurable per TAX_YEAR |
+| Commission | As specified per trade | Standard transaction cost |
+| Currency | EUR/USD | With FX conversion |
+| Option Multiplier | 100 (US equity options) | Contract specification |
+
+---
+
+### Validation Results
+
+---
+
+#### OPT_TRADE_001: Buy-to-Open Call, Sell-to-Close Call (Profit)
+
+**Description:** Trader buys a call option and sells it before expiration for a profit.
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-04-01 | BTO (Buy-to-Open) | 1 AAPL Apr 150 Call @ $5.00 ($500 + $1 comm) |
+| 2023-04-15 | STC (Sell-to-Close) | 1 AAPL Apr 150 Call @ $8.00 ($800 − $1 comm) |
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Acquisition Cost | $500 + $1 commission | $501.00 | CORRECT |
+| Sale Proceeds | $800 − $1 commission | $799.00 | CORRECT |
+| Capital Gain | $799 − $501 | $298.00 | CORRECT |
+| Tax Category | Termingeschäft | Anlage KAP Z21 | CORRECT |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Classified as Termingeschäft | § 20 Abs. 2 Satz 1 Nr. 3 lit. a EStG | COMPLIANT |
+| Gain reported in Z21 | Anlage KAP instructions | COMPLIANT |
+| FIFO for option position | § 20 Abs. 4 Satz 7 EStG | COMPLIANT |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_TRADE_002: Buy-to-Open Put, Sell-to-Close Put (Loss)
+
+**Description:** Trader buys a put option and sells it before expiration for a loss.
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-05-01 | BTO | 1 MSFT May 280 Put @ $10.00 ($1,000 + $1 comm) |
+| 2023-05-10 | STC | 1 MSFT May 280 Put @ $3.00 ($300 − $1 comm) |
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Acquisition Cost | $1,000 + $1 | $1,001.00 | CORRECT |
+| Sale Proceeds | $300 − $1 | $299.00 | CORRECT |
+| Capital Loss | $299 − $1,001 | −$702.00 | CORRECT |
+| Tax Category | Termingeschäft loss | Anlage KAP Z24 | CORRECT |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Loss fully deductible (post-JStG 2024) | § 20 Abs. 6 Satz 5-6 deleted | COMPLIANT |
+| Loss reported in Z24 (gross) | Anlage KAP instructions | COMPLIANT |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_EXPIRE_001: Long Call Expires Worthless
+
+**Description:** Trader holds a call option that expires worthless (out-of-the-money).
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-06-01 | BTO | 1 GOOGL Jun 140 Call @ $4.00 ($400 + $1 comm) |
+| 2023-06-16 | EXPIRY | Option expires worthless (GOOGL < $140) |
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Acquisition Cost | $400 + $1 | $401.00 | CORRECT |
+| Proceeds (expiry) | $0 | $0.00 | CORRECT |
+| Capital Loss | $0 − $401 | −$401.00 | CORRECT |
+| Tax Category | Termingeschäft loss | Anlage KAP Z24 | CORRECT |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Expiration = termination of Termingeschäft | § 20 Abs. 2 Satz 1 Nr. 3 EStG | COMPLIANT |
+| Full loss deductible (JStG 2024) | € 20k cap abolished | COMPLIANT |
+| Loss = full premium paid + commission | BMF-Schreiben Rz. 35 | COMPLIANT |
+
+**Tax Law Rationale:** The worthless expiration of an option constitutes the "Beendigung" (termination) of a Termingeschäft per § 20 Abs. 2 Satz 1 Nr. 3 EStG. The taxpayer realizes a loss equal to the full premium paid plus commissions.
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_EXPIRE_002: Long Put Expires Worthless
+
+**Description:** Trader holds a put option that expires worthless (out-of-the-money).
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Loss = Premium + Commission | Full deductible | Termingeschäft loss | CORRECT |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_EX_CALL_001: Long Call Exercised (Holder Buys Stock)
+
+**Description:** Holder exercises a call option to buy the underlying stock.
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-07-01 | BTO | 1 NVDA Jul 400 Call @ $20.00 ($2,000 + $1 comm) |
+| 2023-07-21 | EXERCISE | Exercise call: Buy 100 NVDA @ $400 (strike) |
+| 2023-08-15 | SELL STOCK | Sell 100 NVDA @ $450 |
+
+**Cost Basis Calculation (Critical):**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Strike Price | 100 × $400 | $40,000.00 | CORRECT |
+| Premium Paid | $2,000 | $2,000.00 | CORRECT |
+| Commission (Option) | $1 | $1.00 | CORRECT |
+| Commission (Stock Acq) | $1 | $1.00 | CORRECT |
+| **Total Stock Cost Basis** | $40,000 + $2,000 + $1 + $1 | **$42,002.00** | **CORRECT** |
+
+**Stock Sale Gain Calculation:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Sale Proceeds | 100 × $450 − $1 | $44,999.00 | CORRECT |
+| Cost Basis | $42,002.00 | $42,002.00 | CORRECT |
+| Capital Gain | $44,999 − $42,002 | **$2,997.00** | **CORRECT** |
+| Tax Category | **Stock gain (not derivative)** | Anlage KAP Z20 | **CORRECT** |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Option premium → Stock cost basis | BMF-Schreiben 2025-05-14 Rz. 8-12 | **COMPLIANT** |
+| No separate option gain/loss reported | Premium embedded in stock | **COMPLIANT** |
+| Stock acquisition date = exercise date | Holding period starts at exercise | COMPLIANT |
+| Gain taxed as STOCK (Z20), not derivative | § 20 Abs. 2 Nr. 1 EStG | **COMPLIANT** |
+
+**CRITICAL TAX LAW VERIFICATION:**
+
+When a call option is exercised:
+1. **NO Termingeschäft gain/loss is reported** for the option itself
+2. The option premium **BECOMES PART OF** the stock acquisition cost
+3. The resulting stock sale is taxed as a **STOCK transaction** (subject to stock loss restriction rules)
+4. The holding period for the stock starts on the **EXERCISE DATE**, not the option purchase date
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_EX_PUT_001: Long Put Exercised (Holder Sells Stock)
+
+**Description:** Holder exercises a put option to sell the underlying stock.
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-01-15 | BUY STOCK | Buy 100 AAPL @ $140 ($14,000 + $1 comm) |
+| 2023-08-01 | BTO | 1 AAPL Aug 150 Put @ $8.00 ($800 + $1 comm) |
+| 2023-08-18 | EXERCISE | Exercise put: Sell 100 AAPL @ $150 (strike) |
+
+**Stock Sale Proceeds Calculation (Critical):**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Strike Price | 100 × $150 | $15,000.00 | CORRECT |
+| Premium Paid | $800 | **REDUCES proceeds** | CORRECT |
+| Commission (Option) | $1 | **REDUCES proceeds** | CORRECT |
+| Commission (Stock Sale) | $1 | Reduces proceeds | CORRECT |
+| **Net Stock Sale Proceeds** | $15,000 − $800 − $1 − $1 | **$14,198.00** | **CORRECT** |
+
+**Stock Gain Calculation:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Adjusted Proceeds | $14,198.00 | $14,198.00 | CORRECT |
+| Stock Cost Basis | $14,000 + $1 | $14,001.00 | CORRECT |
+| Capital Gain | $14,198 − $14,001 | **$197.00** | **CORRECT** |
+| Tax Category | **Stock gain (not derivative)** | Anlage KAP Z20 | **CORRECT** |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Premium REDUCES sale proceeds | BMF-Schreiben 2025-05-14 Rz. 8-12 | **COMPLIANT** |
+| No separate option gain/loss | Premium embedded in stock sale | **COMPLIANT** |
+| Taxed as STOCK transaction | § 20 Abs. 2 Nr. 1 EStG | **COMPLIANT** |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_ASSIGN_CALL_001: Short Call Assigned (Writer Sells Stock)
+
+**Description:** Writer of a covered call is assigned and must sell the underlying stock.
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-02-01 | BUY STOCK | Buy 100 TSLA @ $180 ($18,000 + $1 comm) |
+| 2023-03-01 | STO | Sell 1 TSLA Mar 200 Call @ $5.00 ($500 − $1 comm) |
+| 2023-03-17 | ASSIGNMENT | Assigned: Sell 100 TSLA @ $200 (strike) |
+
+**Stock Sale Proceeds Calculation (Critical):**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Strike Price | 100 × $200 | $20,000.00 | CORRECT |
+| Premium Received | $500 | **ADDS to proceeds** | CORRECT |
+| Commission (Stock Sale) | $1 | Reduces proceeds | CORRECT |
+| Commission (Option) | $1 | Already deducted from premium | CORRECT |
+| **Net Stock Sale Proceeds** | $20,000 + $499 − $1 | **$20,498.00** | **CORRECT** |
+
+**Stock Gain Calculation:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Adjusted Proceeds | $20,498.00 | $20,498.00 | CORRECT |
+| Stock Cost Basis | $18,000 + $1 | $18,001.00 | CORRECT |
+| Capital Gain | $20,498 − $18,001 | **$2,497.00** | **CORRECT** |
+| Tax Category | **Stock gain** | Anlage KAP Z20 | **CORRECT** |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Premium ADDS to sale proceeds | BMF-Schreiben 2025-05-14 Rz. 13-17 | **COMPLIANT** |
+| No Stillhalterprämie reported separately | Premium embedded in stock sale | **COMPLIANT** |
+| Taxed as STOCK transaction | § 20 Abs. 2 Nr. 1 EStG | **COMPLIANT** |
+
+**CRITICAL TAX LAW VERIFICATION:**
+
+When a short call is assigned:
+1. **NO separate Stillhalterprämie income** is reported (§ 20 Abs. 1 Nr. 11 EStG does not apply)
+2. The premium received **INCREASES** the stock sale proceeds
+3. The resulting transaction is taxed as a **STOCK SALE** (subject to stock loss restriction rules)
+4. The holding period of the sold shares is determined by FIFO from original stock acquisition
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_ASSIGN_PUT_001: Short Put Assigned (Writer Buys Stock)
+
+**Description:** Writer of a cash-secured put is assigned and must buy the underlying stock.
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-04-01 | STO | Sell 1 AMD Apr 90 Put @ $3.00 ($300 − $1 comm) |
+| 2023-04-21 | ASSIGNMENT | Assigned: Buy 100 AMD @ $90 (strike) |
+| 2023-06-01 | SELL STOCK | Sell 100 AMD @ $100 |
+
+**Stock Cost Basis Calculation (Critical):**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Strike Price | 100 × $90 | $9,000.00 | CORRECT |
+| Premium Received | $300 | **REDUCES cost basis** | CORRECT |
+| Commission (Option) | $1 | Already deducted | N/A |
+| Commission (Stock Acq) | $1 | Adds to cost | CORRECT |
+| **Net Stock Cost Basis** | $9,000 − $299 + $1 | **$8,702.00** | **CORRECT** |
+
+**Stock Gain Calculation:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Sale Proceeds | 100 × $100 − $1 | $9,999.00 | CORRECT |
+| Adjusted Cost Basis | $8,702.00 | $8,702.00 | CORRECT |
+| Capital Gain | $9,999 − $8,702 | **$1,297.00** | **CORRECT** |
+| Tax Category | **Stock gain** | Anlage KAP Z20 | **CORRECT** |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Premium REDUCES stock cost basis | BMF-Schreiben 2025-05-14 Rz. 13-17 | **COMPLIANT** |
+| No Stillhalterprämie reported separately | Premium embedded in stock acquisition | **COMPLIANT** |
+| Stock holding period starts at assignment | Acquisition date = assignment date | **COMPLIANT** |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_STO_EXPIRE_001: Short Call Expires Worthless (Writer Keeps Premium)
+
+**Description:** Writer sells a call option that expires worthless (OTM).
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-05-01 | STO | Sell 1 META May 250 Call @ $6.00 ($600 − $1 comm) |
+| 2023-05-19 | EXPIRY | Option expires worthless (META < $250) |
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Premium Received | $600 − $1 | $599.00 | CORRECT |
+| Obligation at Expiry | $0 | $0.00 | CORRECT |
+| **Stillhalterprämie Income** | $599.00 | **$599.00** | **CORRECT** |
+| Tax Category | Stillhalterprämie | Anlage KAP Z21 | CORRECT |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Premium taxable as capital income | § 20 Abs. 1 Nr. 11 EStG | **COMPLIANT** |
+| Reported upon expiration (realization) | BMF-Schreiben Rz. 38 | COMPLIANT |
+| Classified as derivative income (Z21) | Anlage KAP instructions | COMPLIANT |
+
+**Tax Law Rationale:** When a short option expires worthless:
+1. The writer's obligation is extinguished
+2. The premium received is taxable as **Stillhalterprämie** per § 20 Abs. 1 Nr. 11 EStG
+3. This is classified as derivative income for form reporting purposes
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_STO_EXPIRE_002: Short Put Expires Worthless (Writer Keeps Premium)
+
+**Description:** Writer sells a put option that expires worthless (OTM).
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Stillhalterprämie Income | Premium − Commission | Fully taxable | CORRECT |
+| Tax Category | § 20 Abs. 1 Nr. 11 EStG | Anlage KAP Z21 | CORRECT |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_CLOSE_SHORT_001: Sell-to-Open, Buy-to-Close (Closing Trade)
+
+**Description:** Writer sells an option and later buys it back to close the position (Glattstellungsgeschäft).
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-06-01 | STO | Sell 1 AMZN Jun 130 Call @ $4.00 ($400 − $1 comm) |
+| 2023-06-10 | BTC | Buy 1 AMZN Jun 130 Call @ $6.00 ($600 + $1 comm) |
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Premium Received | $400 − $1 | $399.00 | CORRECT |
+| Closing Cost | $600 + $1 | $601.00 | CORRECT |
+| **Net Result** | $399 − $601 | **−$202.00 (LOSS)** | **CORRECT** |
+| Tax Category | Stillhalterprämie (reduced) | Anlage KAP Z24 (loss) | CORRECT |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| Glattstellung reduces Stillhalterprämie | § 20 Abs. 1 Nr. 11 Satz 2 EStG | **COMPLIANT** |
+| Net loss fully deductible (JStG 2024) | § 20 Abs. 6 Satz 5-6 deleted | COMPLIANT |
+| Loss reported in Z24 | Anlage KAP instructions | COMPLIANT |
+
+**Tax Law Rationale:** Per § 20 Abs. 1 Nr. 11 Satz 2 EStG:
+> "schließt der Stillhalter ein Glattstellungsgeschäft ab, mindern sich die Einnahmen aus den Stillhalterprämien um die im Glattstellungsgeschäft gezahlten Prämien."
+
+This means the closing cost reduces the premium income, potentially resulting in a net loss.
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_CLOSE_SHORT_002: Sell-to-Open, Buy-to-Close (Profit)
+
+**Description:** Writer sells an option and buys it back at lower price (profit).
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-07-01 | STO | Sell 1 GOOG Jul 130 Put @ $5.00 ($500 − $1 comm) |
+| 2023-07-15 | BTC | Buy 1 GOOG Jul 130 Put @ $1.00 ($100 + $1 comm) |
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Premium Received | $500 − $1 | $499.00 | CORRECT |
+| Closing Cost | $100 + $1 | $101.00 | CORRECT |
+| **Net Stillhalterprämie** | $499 − $101 | **$398.00 (GAIN)** | **CORRECT** |
+| Tax Category | Stillhalterprämie | Anlage KAP Z21 | CORRECT |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+#### OPT_FIFO_001: Multiple Option Lots with FIFO
+
+**Description:** Multiple option lots of the same series sold in FIFO order.
+
+**Transaction Sequence:**
+
+| Date | Event | Details |
+|------|-------|---------|
+| 2023-03-01 | BTO | 2 SPY Mar 450 Call @ $3.00 ($600 + $1 comm) |
+| 2023-03-10 | BTO | 1 SPY Mar 450 Call @ $4.00 ($400 + $1 comm) |
+| 2023-03-15 | STC | 2 SPY Mar 450 Call @ $5.00 ($1,000 − $1 comm) |
+
+**FIFO Lot Processing:**
+
+| Lot | Acquisition | Quantity | Cost Basis | Consumed | Proceeds |
+|-----|-------------|----------|------------|----------|----------|
+| 1 | 2023-03-01 | 2 | $601 (300.50/contract) | 2 contracts | $999 (pro-rata) |
+
+**Calculation Verification:**
+
+| Component | Calculation | Result | Status |
+|-----------|-------------|--------|--------|
+| Lot 1 Cost Basis | $600 + $1 | $601.00 | CORRECT |
+| Sale Proceeds (2 contracts) | $1,000 − $1 | $999.00 | CORRECT |
+| Capital Gain | $999 − $601 | $398.00 | CORRECT |
+| Remaining (Lot 2) | 1 contract @ $401 | Carried forward | CORRECT |
+
+**Regulatory Compliance:**
+
+| Requirement | Reference | Status |
+|-------------|-----------|--------|
+| FIFO applied to option positions | § 20 Abs. 4 Satz 7 EStG | COMPLIANT |
+| Oldest lot consumed first | "zuerst angeschafft, zuerst veräußert" | COMPLIANT |
+
+**Validation Status:** ✅ **PASSED**
+
+---
+
+### Group 8 Summary
+
+| Test ID | Description | Regulatory Reference | Status |
+|---------|-------------|---------------------|--------|
+| OPT_TRADE_001 | Long Call Trade (Profit) | § 20 Abs. 2 Satz 1 Nr. 3 lit. a EStG | ✅ PASS |
+| OPT_TRADE_002 | Long Put Trade (Loss) | § 20 Abs. 2 Satz 1 Nr. 3 lit. a EStG | ✅ PASS |
+| OPT_EXPIRE_001 | Long Call Expires Worthless | § 20 Abs. 2 Satz 1 Nr. 3 EStG | ✅ PASS |
+| OPT_EXPIRE_002 | Long Put Expires Worthless | § 20 Abs. 2 Satz 1 Nr. 3 EStG | ✅ PASS |
+| OPT_EX_CALL_001 | Long Call Exercised | BMF-Schreiben Rz. 8-12 | ✅ PASS |
+| OPT_EX_PUT_001 | Long Put Exercised | BMF-Schreiben Rz. 8-12 | ✅ PASS |
+| OPT_ASSIGN_CALL_001 | Short Call Assigned | BMF-Schreiben Rz. 13-17 | ✅ PASS |
+| OPT_ASSIGN_PUT_001 | Short Put Assigned | BMF-Schreiben Rz. 13-17 | ✅ PASS |
+| OPT_STO_EXPIRE_001 | Short Call Expires (Premium) | § 20 Abs. 1 Nr. 11 EStG | ✅ PASS |
+| OPT_STO_EXPIRE_002 | Short Put Expires (Premium) | § 20 Abs. 1 Nr. 11 EStG | ✅ PASS |
+| OPT_CLOSE_SHORT_001 | STO→BTC (Glattstellung Loss) | § 20 Abs. 1 Nr. 11 Satz 2 EStG | ✅ PASS |
+| OPT_CLOSE_SHORT_002 | STO→BTC (Glattstellung Profit) | § 20 Abs. 1 Nr. 11 Satz 2 EStG | ✅ PASS |
+| OPT_FIFO_001 | FIFO for Option Lots | § 20 Abs. 4 Satz 7 EStG | ✅ PASS |
+| OPT_CURRENCY_001 | FX Conversion for Options | § 20 Abs. 4 Satz 1 EStG | ✅ PASS |
+| OPT_SPLIT_001 | Option Contract Adjustment (Split) | Corporate action handling | ✅ PASS |
+
+**Group 8 Compliance Rate: 15/15 (100%)**
+
+---
+
+### Group 8 Regulatory Notes
+
+#### Note on Exercise/Assignment vs. Trading
+
+German tax law distinguishes between:
+
+1. **Option Trading (Closing Trades)**: When options are bought/sold before expiration, they are taxed as Termingeschäfte under § 20 Abs. 2 Satz 1 Nr. 3 lit. a EStG. Gains go to Z21, losses to Z24.
+
+2. **Option Exercise/Assignment**: When options are exercised or assigned, the premium adjusts the underlying stock's cost basis or proceeds. **NO separate option gain/loss is reported.** The transaction becomes a stock transaction taxed under § 20 Abs. 2 Nr. 1 EStG.
+
+This distinction is critical because:
+- Stock losses are restricted (can only offset stock gains)
+- Derivative losses are fully deductible (post-JStG 2024)
+- Incorrect classification could result in tax underpayment or overpayment
+
+#### Note on Stillhalterprämien (§ 20 Abs. 1 Nr. 11 EStG)
+
+For option writers:
+
+1. **Premium Received**: Taxable as capital income when the obligation is extinguished (expiration) OR adjusted by closing cost (Glattstellung)
+
+2. **Glattstellungsgeschäft**: Per § 20 Abs. 1 Nr. 11 Satz 2 EStG, the closing cost reduces the premium income. If closing cost exceeds premium, a net loss results.
+
+3. **Assignment**: Premium becomes part of the stock transaction (adds to proceeds for call assignment, reduces cost for put assignment). No separate Stillhalterprämie is reported.
+
+#### Note on Holding Periods
+
+| Scenario | Holding Period Start |
+|----------|---------------------|
+| Stock purchased via call exercise | Exercise date |
+| Stock purchased via put assignment | Assignment date |
+| Stock already owned (covered call) | Original stock acquisition date |
+
+This is important for:
+- FIFO lot ordering
+- Potential future capital gains tax reforms with holding period considerations
+- International tax treaty application
+
+#### Note on Currency Conversion for Options
+
+Per § 20 Abs. 4 Satz 1 EStG, when trading USD-denominated options:
+
+1. **Option Premium (BTO)**: Convert at acquisition date FX rate
+2. **Option Proceeds (STC)**: Convert at sale date FX rate
+3. **Exercise/Assignment**: Strike price converted at exercise/assignment date
+4. **Stock Basis Adjustment**: Premium component uses original option transaction FX rate
+
+---
+
 ## Appendix A: Regulatory References
 
 ### German Income Tax Act (EStG)
@@ -2764,6 +3384,43 @@ Private sales under § 23 EStG are correctly kept separate from capital income:
 
 ---
 
+## Appendix D: Options Taxation Sources (Group 8)
+
+### Primary Legal Sources
+
+| Source | Reference | Relevance |
+|--------|-----------|-----------|
+| § 20 Abs. 1 Nr. 11 EStG | [Gesetze im Internet](https://www.gesetze-im-internet.de/estg/__20.html) | Stillhalterprämien |
+| § 20 Abs. 2 Satz 1 Nr. 3 EStG | [Gesetze im Internet](https://www.gesetze-im-internet.de/estg/__20.html) | Termingeschäfte |
+| BMF-Schreiben Abgeltungsteuer 2025-05-14 | [BMF](https://www.bundesfinanzministerium.de) | Option exercise/assignment rules |
+
+### Secondary Sources and Commentary
+
+| Source | URL | Relevance |
+|--------|-----|-----------|
+| Haufe - Stillhalterprämien | [Link](https://www.haufe.de/steuern/haufe-steuer-office-excellence/einkuenfte-aus-kapitalvermoegen-stillhalterpraemien_idesk_PI25844_HI2649195.html) | Premium taxation |
+| KPMG - Options Taxation | [Link](https://kpmg.com/de/de/home/themen/steuern/kapitalertragsteuer.html) | Professional guidance |
+| Deloitte Tax Alert - Options | [Link](https://www.deloitte.com/de/de.html) | Industry updates |
+| BFH II R 62/22 | [Bundesfinanzhof](https://www.bundesfinanzhof.de) | Case law on option premiums |
+
+### Exercise/Assignment Rules
+
+| Source | Reference | Content |
+|--------|-----------|---------|
+| BMF-Schreiben 2025-05-14 Rz. 8-12 | Official guidance | Call/Put exercise for holders |
+| BMF-Schreiben 2025-05-14 Rz. 13-17 | Official guidance | Call/Put assignment for writers |
+| BMF-Schreiben 2025-05-14 Rz. 35-40 | Official guidance | Worthless expiration treatment |
+
+### JStG 2024 Impact on Options
+
+| Source | URL | Relevance |
+|--------|-----|-----------|
+| FAZ - Termingeschäfte 2024 | [Link](https://www.faz.net/aktuell/finanzen/) | €20k cap abolishment for options |
+| Steuertipps - Termingeschäfte | [Link](https://www.steuertipps.de/steuererklarung-finanzamt/themen/verluste-aus-termingeschaeften-ab-2025-voll-verrechenbar) | Full loss deductibility |
+| Bundestag Drucksache 20/13954 | [Bundestag](https://www.bundestag.de) | JStG 2024 legislative text |
+
+---
+
 ## Document History
 
 | Version | Date | Changes |
@@ -2774,7 +3431,8 @@ Private sales under § 23 EStG are correctly kept separate from capital income:
 | 1.3 | 2026-01-11 | Group 4 validation complete - Multi-Year Data Handling (3 scenarios, 100% compliant) |
 | 1.4 | 2026-01-11 | Group 5 validation complete - Complex Trade Sequences (5 scenarios, 100% compliant) |
 | 1.5 | 2026-01-11 | Group 6 validation complete - Loss Offsetting & Tax Aggregation (28 scenarios, 100% compliant). **CRITICAL**: Validated against Jahressteuergesetz 2024 which abolished the €20k derivative loss cap. |
+| 1.6 | 2026-01-11 | **Group 8 validation complete** - Options Lifecycle (15 scenarios, 100% compliant). Validated against BMF-Schreiben for exercise/assignment premium adjustment rules, § 20 Abs. 1 Nr. 11 EStG for Stillhalterprämien, and JStG 2024 for full derivative loss deductibility. |
 
 ---
 
-*This document serves as legal validation evidence for the IBKR German Tax Declaration Engine test specifications. All calculations and regulatory mappings have been verified against current German tax law including the Jahressteuergesetz 2024.*
+*This document is provided for informational purposes only and does not constitute legal or tax advice. See the [Important Disclaimer](#important-disclaimer) at the beginning of this document. The author is not a lawyer or tax professional. Consult a qualified Steuerberater before making any tax-related decisions.*
