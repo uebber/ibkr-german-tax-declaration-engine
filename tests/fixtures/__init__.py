@@ -62,6 +62,67 @@ class ExpectedRGLSpec:
     gain_loss_eur: Optional[Decimal] = None
     tax_category: Optional[str] = None
     asset: Optional[str] = None
+    is_stillhalter_income: Optional[bool] = None
+
+
+# =============================================================================
+# Option-specific dataclasses
+# =============================================================================
+
+@dataclass
+class OptionTradeSpec:
+    """Parsed option trade from YAML spec."""
+    type: str  # BL, SL, SSO, BSC
+    qty: Decimal  # Number of contracts
+    price: Decimal  # Price per share
+    date: str
+    currency: str = "EUR"
+    notes_codes: str = ""
+
+
+@dataclass
+class StockTradeSpec:
+    """Parsed stock trade from YAML spec (for linked trades)."""
+    type: str  # BL, SL, SSO, BSC
+    qty: Decimal  # Number of shares
+    price: Decimal
+    date: str
+    currency: str = "EUR"
+    notes_codes: str = ""
+
+
+@dataclass
+class OptionSpec:
+    """Option contract specification."""
+    type: str  # C or P
+    strike: Decimal
+    expiry: str
+    multiplier: Decimal = Decimal("100")
+
+
+@dataclass
+class UnderlyingSpec:
+    """Underlying asset specification."""
+    symbol: str
+    isin: str
+    conid: str
+
+
+@dataclass
+class OptionTestSpec:
+    """A single option test case parsed from YAML."""
+    id: str
+    description: str
+    underlying: UnderlyingSpec
+    option: OptionSpec
+    option_trades: List[OptionTradeSpec]
+    expected_rgls: List[ExpectedRGLSpec]
+    option_eoy_quantity: Decimal
+    stock_eoy_quantity: Decimal
+    expected_errors: int
+    notes: Optional[str] = None
+    stock_trades: Optional[List[StockTradeSpec]] = None
+    positions_soy: Optional[PositionSpec] = None  # For underlying stock
 
 
 @dataclass
@@ -249,3 +310,132 @@ def get_group5_complex_sequences_tests() -> List[FifoTestSpec]:
     """Load and parse Group 5: Complex Sequences test specifications."""
     spec_data = load_yaml_spec("group5_complex_sequences.yaml")
     return parse_fifo_tests(spec_data)
+
+
+# =============================================================================
+# Option test parsing functions
+# =============================================================================
+
+def _parse_option_trade(trade_dict: Dict) -> OptionTradeSpec:
+    """Parse an option trade dictionary into OptionTradeSpec."""
+    return OptionTradeSpec(
+        type=trade_dict["type"],
+        qty=Decimal(str(trade_dict["qty"])),
+        price=Decimal(str(trade_dict["price"])),
+        date=trade_dict.get("date", ""),
+        currency=trade_dict.get("currency", "EUR"),
+        notes_codes=trade_dict.get("notes_codes", ""),
+    )
+
+
+def _parse_stock_trade(trade_dict: Dict) -> StockTradeSpec:
+    """Parse a stock trade dictionary into StockTradeSpec."""
+    return StockTradeSpec(
+        type=trade_dict["type"],
+        qty=Decimal(str(trade_dict["qty"])),
+        price=Decimal(str(trade_dict["price"])),
+        date=trade_dict.get("date", ""),
+        currency=trade_dict.get("currency", "EUR"),
+        notes_codes=trade_dict.get("notes_codes", ""),
+    )
+
+
+def _parse_option_spec(option_dict: Dict) -> OptionSpec:
+    """Parse an option specification dictionary."""
+    return OptionSpec(
+        type=option_dict["type"],
+        strike=Decimal(str(option_dict["strike"])),
+        expiry=option_dict["expiry"],
+        multiplier=Decimal(str(option_dict.get("multiplier", "100"))),
+    )
+
+
+def _parse_underlying_spec(underlying_dict: Dict) -> UnderlyingSpec:
+    """Parse an underlying asset specification dictionary."""
+    return UnderlyingSpec(
+        symbol=underlying_dict["symbol"],
+        isin=underlying_dict["isin"],
+        conid=str(underlying_dict["conid"]),
+    )
+
+
+def _parse_option_expected_rgl(rgl_dict: Dict) -> ExpectedRGLSpec:
+    """Parse an expected RGL dictionary for options."""
+    return ExpectedRGLSpec(
+        realization_type=rgl_dict["realization_type"],
+        quantity=Decimal(str(rgl_dict["quantity"])) if "quantity" in rgl_dict else None,
+        acquisition_date=rgl_dict.get("acquisition_date"),
+        realization_date=rgl_dict.get("realization_date"),
+        total_cost_basis_eur=Decimal(str(rgl_dict["total_cost_basis_eur"])) if "total_cost_basis_eur" in rgl_dict else None,
+        total_proceeds_eur=Decimal(str(rgl_dict["total_proceeds_eur"])) if "total_proceeds_eur" in rgl_dict else None,
+        gain_loss_eur=Decimal(str(rgl_dict["gain_loss_eur"])) if "gain_loss_eur" in rgl_dict else None,
+        tax_category=rgl_dict.get("tax_category"),
+        asset=rgl_dict.get("asset"),
+        is_stillhalter_income=rgl_dict.get("is_stillhalter_income"),
+    )
+
+
+def parse_option_tests(spec_data: Dict[str, Any]) -> List[OptionTestSpec]:
+    """
+    Parse option test specifications from loaded YAML.
+
+    Args:
+        spec_data: Loaded YAML dictionary
+
+    Returns:
+        List of OptionTestSpec objects
+    """
+    tests = []
+
+    for test_dict in spec_data.get("tests", []):
+        inputs = test_dict.get("inputs", {})
+        expected = test_dict.get("expected", {})
+
+        # Parse underlying and option specs
+        underlying = _parse_underlying_spec(inputs.get("underlying", {}))
+        option = _parse_option_spec(inputs.get("option", {}))
+
+        # Parse option trades
+        option_trades = []
+        for trade in inputs.get("option_trades", []):
+            option_trades.append(_parse_option_trade(trade))
+
+        # Parse stock trades (for exercise/assignment)
+        stock_trades = None
+        if inputs.get("stock_trades"):
+            stock_trades = [_parse_stock_trade(t) for t in inputs["stock_trades"]]
+
+        # Parse SOY position (for underlying stock)
+        soy_pos = _parse_position(inputs.get("positions_soy"))
+
+        # Parse expected RGLs
+        rgls = []
+        for rgl in expected.get("rgls", []):
+            rgls.append(_parse_option_expected_rgl(rgl))
+
+        # Get EOY quantities
+        option_eoy_qty = expected.get("option_eoy_quantity", 0)
+        stock_eoy_qty = expected.get("stock_eoy_quantity", 0)
+
+        tests.append(OptionTestSpec(
+            id=test_dict["id"],
+            description=test_dict["description"],
+            underlying=underlying,
+            option=option,
+            option_trades=option_trades,
+            expected_rgls=rgls,
+            option_eoy_quantity=Decimal(str(option_eoy_qty)),
+            stock_eoy_quantity=Decimal(str(stock_eoy_qty)),
+            expected_errors=expected.get("errors", 0),
+            notes=test_dict.get("notes"),
+            stock_trades=stock_trades,
+            positions_soy=soy_pos,
+        ))
+
+    return tests
+
+
+def get_group8_options_tests() -> List[OptionTestSpec]:
+    """Load and parse Group 8: Options Lifecycle test specifications."""
+    spec_data = load_yaml_spec("group8_options.yaml")
+    return parse_option_tests(spec_data)

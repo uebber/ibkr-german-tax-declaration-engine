@@ -110,6 +110,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
-tax_report_2023.pdf
-Cache
-Data
+tax_report_202?.pdf
+cache/
+data/

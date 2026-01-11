@@ -117,10 +117,16 @@ class DomainEventFactory:
         notes_codes_parts = {part.strip() for part in (raw_trade.notes_codes or "").upper().split(';') if part.strip()}
         option_event_type: Optional[FinancialEventType] = None
 
-        open_close_ind = (raw_trade.open_close_indicator or "").upper()
-        if 'A' in notes_codes_parts and open_close_ind != 'C': option_event_type = FinancialEventType.OPTION_ASSIGNMENT
-        elif 'EX' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_EXERCISE
-        elif 'EP' in notes_codes_parts: option_event_type = FinancialEventType.OPTION_EXPIRATION_WORTHLESS
+        # Detect option lifecycle events from notes/codes
+        # Note: For assignments and exercises, Open/CloseIndicator is always 'C' (close)
+        # because these events close the option position. The 'A' or 'Ex' in Notes/Codes
+        # is the authoritative indicator of assignment/exercise.
+        if 'A' in notes_codes_parts:
+            option_event_type = FinancialEventType.OPTION_ASSIGNMENT
+        elif 'EX' in notes_codes_parts:
+            option_event_type = FinancialEventType.OPTION_EXERCISE
+        elif 'EP' in notes_codes_parts:
+            option_event_type = FinancialEventType.OPTION_EXPIRATION_WORTHLESS
 
         if option_event_type:
             raw_trade_quantity_val = safe_decimal(raw_trade.quantity, default=Decimal(0))

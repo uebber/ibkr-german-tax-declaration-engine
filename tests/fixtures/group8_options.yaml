@@ -1,0 +1,707 @@
+# Test Group 8: Options Lifecycle
+#
+# Revision: 2026-01-11
+# PRD Coverage: Options Exercise, Assignment, Expiration, Closing Trades
+#
+# Objective: Verify option lifecycle handling, including:
+# - Long call/put exercise
+# - Short put/call assignment
+# - Worthless expiration (long and short)
+# - Option closing trades (buy-to-close, sell-to-close)
+# - Premium adjustment on exercise/assignment
+#
+# Common assumptions:
+# - TAX_YEAR = 2023
+# - Commission = 1 EUR per trade
+# - Standard multiplier = 100
+# - For simplicity, 1:1 USD to EUR FX rate unless specified
+
+metadata:
+  group: 8
+  name: Options Lifecycle
+  prd_section: "Options"
+  revision: "2026-01-11"
+  commission_eur: 1.00
+  default_multiplier: 100
+
+tests:
+  # ===========================================================================
+  # Subgroup A: Long Call Exercise
+  # ===========================================================================
+
+  - id: OPT_CALL_EX_001
+    description: "Basic long call exercise - buy call, exercise, sell stock"
+    notes: "Buy 1 AAPL Jan50C @ $5, exercise, receive 100 AAPL @ $50, sell @ $60"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "50.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: BL           # Buy long option
+          date: "2023-01-05"
+          qty: 1             # 1 contract
+          price: "5.00"      # $5 per share = $500 total premium
+          currency: EUR
+        - type: SL           # Sell to close (exercised) - qty 0 price 0
+          date: "2023-01-15"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ex"  # Exercise code
+          currency: EUR
+      stock_trades:
+        - type: BL           # Stock acquired from exercise
+          date: "2023-01-15"
+          qty: 100
+          price: "50.00"     # Strike price
+          notes_codes: "Ex"
+          currency: EUR
+        - type: SL           # Sell the stock
+          date: "2023-01-20"
+          qty: 100
+          price: "60.00"
+          currency: EUR
+    expected:
+      # Stock sale RGL:
+      # cost = (100 * 50) + 1 stock_comm + (500 premium + 1 option_comm) = 5502
+      # proceeds = (100 * 60) - 1 commission = 5999
+      # gain = 5999 - 5502 = 497
+      rgls:
+        - asset: AAPL
+          realization_type: LONG_POSITION_SALE
+          quantity: 100
+          total_cost_basis_eur: "5502.00"
+          total_proceeds_eur: "5999.00"
+          gain_loss_eur: "497.00"
+          tax_category: ANLAGE_KAP_AKTIEN_GEWINN
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Subgroup B: Short Put Assignment
+  # ===========================================================================
+
+  - id: OPT_PUT_ASGN_001
+    description: "Basic short put assignment - sell put, get assigned, sell stock at loss"
+    notes: "Sell 1 AAPL Jan50P @ $3, assigned, forced to buy 100 AAPL @ $50, sell @ $45"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: P
+        strike: "50.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: SSO          # Sell short open
+          date: "2023-01-05"
+          qty: 1
+          price: "3.00"      # $3 per share = $300 premium received
+          currency: EUR
+        - type: BSC          # Buy to close (assigned)
+          date: "2023-01-15"
+          qty: 1
+          price: "0.00"
+          notes_codes: "A"   # Assignment code
+          currency: EUR
+      stock_trades:
+        - type: BL           # Stock acquired from assignment
+          date: "2023-01-15"
+          qty: 100
+          price: "50.00"     # Strike price
+          notes_codes: "A"
+          currency: EUR
+        - type: SL           # Sell the stock at loss
+          date: "2023-01-20"
+          qty: 100
+          price: "45.00"
+          currency: EUR
+    expected:
+      # Stock sale RGL:
+      # cost = (100 * 50) + 1 stock_comm - (300 premium - 1 option_comm) = 5001 - 299 = 4702
+      # proceeds = (100 * 45) - 1 commission = 4499
+      # loss = 4499 - 4702 = -203
+      rgls:
+        - asset: AAPL
+          realization_type: LONG_POSITION_SALE
+          quantity: 100
+          total_cost_basis_eur: "4702.00"
+          total_proceeds_eur: "4499.00"
+          gain_loss_eur: "-203.00"
+          tax_category: ANLAGE_KAP_AKTIEN_VERLUST
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Subgroup C: Short Call Assignment (Covered Call)
+  # ===========================================================================
+
+  - id: OPT_CCALL_ASGN_001
+    description: "Covered call assignment - own stock, sell call, get assigned"
+    notes: "Own 100 AAPL (cost $50), sell 1 Jan55C @ $2, assigned, sell stock @ $55"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "55.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      # Pre-existing stock position
+      positions_soy:
+        quantity: 100
+        cost_basis: "5001.00"  # 100 * 50 + 1 commission
+        currency: EUR
+      option_trades:
+        - type: SSO          # Sell short open (covered call)
+          date: "2023-01-10"
+          qty: 1
+          price: "2.00"      # $200 premium received
+          currency: EUR
+        - type: BSC          # Buy to close (assigned)
+          date: "2023-01-20"
+          qty: 1
+          price: "0.00"
+          notes_codes: "A"
+          currency: EUR
+      stock_trades:
+        - type: SL           # Stock sold due to assignment
+          date: "2023-01-20"
+          qty: 100
+          price: "55.00"
+          notes_codes: "A"
+          currency: EUR
+    expected:
+      # Stock sale RGL: cost = 5001 (from SOY)
+      # proceeds = (100 * 55) - 1 stock_comm + (200 premium - 1 option_comm) = 5499 + 199 = 5698
+      # gain = 5698 - 5001 = 697
+      rgls:
+        - asset: AAPL
+          realization_type: LONG_POSITION_SALE
+          quantity: 100
+          total_cost_basis_eur: "5001.00"
+          total_proceeds_eur: "5698.00"
+          gain_loss_eur: "697.00"
+          tax_category: ANLAGE_KAP_AKTIEN_GEWINN
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Subgroup D: Long Put Exercise (Protective Put)
+  # ===========================================================================
+
+  - id: OPT_PUT_EX_001
+    description: "Long put exercise with stock - own stock, buy put, exercise"
+    notes: "Own 100 AAPL (cost $60), buy 1 Jan55P @ $4, exercise, sell stock @ $55"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: P
+        strike: "55.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      # Pre-existing stock position
+      positions_soy:
+        quantity: 100
+        cost_basis: "6001.00"  # 100 * 60 + 1 commission
+        currency: EUR
+      option_trades:
+        - type: BL           # Buy put for protection
+          date: "2023-01-05"
+          qty: 1
+          price: "4.00"      # $400 premium paid
+          currency: EUR
+        - type: SL           # Sell to close (exercised)
+          date: "2023-01-15"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ex"
+          currency: EUR
+      stock_trades:
+        - type: SL           # Stock sold due to put exercise
+          date: "2023-01-15"
+          qty: 100
+          price: "55.00"
+          notes_codes: "Ex"
+          currency: EUR
+    expected:
+      # Stock sale RGL: cost = 6001 (from SOY)
+      # proceeds = (100 * 55) - 1 stock_comm - (400 premium + 1 option_comm) = 5499 - 401 = 5098
+      # loss = 5098 - 6001 = -903
+      rgls:
+        - asset: AAPL
+          realization_type: LONG_POSITION_SALE
+          quantity: 100
+          total_cost_basis_eur: "6001.00"
+          total_proceeds_eur: "5098.00"
+          gain_loss_eur: "-903.00"
+          tax_category: ANLAGE_KAP_AKTIEN_VERLUST
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Subgroup E: Worthless Expiration
+  # ===========================================================================
+
+  - id: OPT_EXP_LONG_001
+    description: "Long call expires worthless - full premium loss"
+    notes: "Buy 1 AAPL Jan50C @ $5, expires OTM"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "50.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-05"
+          qty: 1
+          price: "5.00"
+          currency: EUR
+        - type: SL           # Expired worthless
+          date: "2023-01-20"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ep"
+          currency: EUR
+    expected:
+      # Option RGL: cost = 500 + 1 commission = 501
+      # proceeds = 0 - 1 commission (but 0 for worthless) = 0
+      # loss = 0 - 501 = -501
+      rgls:
+        - realization_type: OPTION_EXPIRED_LONG
+          quantity: 1
+          total_cost_basis_eur: "501.00"
+          total_proceeds_eur: "0.00"
+          gain_loss_eur: "-501.00"
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+          is_stillhalter_income: false
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_EXP_LONG_002
+    description: "Long put expires worthless - full premium loss"
+    notes: "Buy 1 AAPL Jan45P @ $3, expires OTM"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: P
+        strike: "45.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-05"
+          qty: 1
+          price: "3.00"
+          currency: EUR
+        - type: SL
+          date: "2023-01-20"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ep"
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: OPTION_EXPIRED_LONG
+          quantity: 1
+          total_cost_basis_eur: "301.00"
+          total_proceeds_eur: "0.00"
+          gain_loss_eur: "-301.00"
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_EXP_SHORT_001
+    description: "Short call expires worthless - Stillhalter income"
+    notes: "Sell 1 AAPL Jan60C @ $2, expires OTM - premium is Stillhalter income"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "60.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: SSO
+          date: "2023-01-05"
+          qty: 1
+          price: "2.00"
+          currency: EUR
+        - type: BSC           # Expired worthless
+          date: "2023-01-20"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ep"
+          currency: EUR
+    expected:
+      # Option RGL: proceeds = 200 - 1 commission = 199
+      # cost = 0 + 0 (expired) = 0
+      # gain = 199 - 0 = 199
+      rgls:
+        - realization_type: OPTION_EXPIRED_SHORT
+          quantity: 1
+          total_cost_basis_eur: "0.00"
+          total_proceeds_eur: "199.00"
+          gain_loss_eur: "199.00"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+          is_stillhalter_income: true
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_EXP_SHORT_002
+    description: "Short put expires worthless - Stillhalter income"
+    notes: "Sell 1 AAPL Jan40P @ $1, expires OTM - premium is Stillhalter income"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: P
+        strike: "40.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: SSO
+          date: "2023-01-05"
+          qty: 1
+          price: "1.00"
+          currency: EUR
+        - type: BSC
+          date: "2023-01-20"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ep"
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: OPTION_EXPIRED_SHORT
+          quantity: 1
+          total_cost_basis_eur: "0.00"
+          total_proceeds_eur: "99.00"
+          gain_loss_eur: "99.00"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+          is_stillhalter_income: true
+      option_eoy_quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Subgroup F: Option Closing Trades
+  # ===========================================================================
+
+  - id: OPT_CLOSE_LONG_001
+    description: "Profitable long call close - buy call, sell at higher price"
+    notes: "Buy 1 call @ $5, sell @ $8 - profit from option trading"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "50.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-15"
+          qty: 1
+          price: "5.00"
+          currency: EUR
+        - type: SL
+          date: "2023-02-15"
+          qty: 1
+          price: "8.00"
+          currency: EUR
+    expected:
+      # cost = 500 + 1 = 501
+      # proceeds = 800 - 1 = 799
+      # gain = 799 - 501 = 298
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_LONG
+          quantity: 1
+          total_cost_basis_eur: "501.00"
+          total_proceeds_eur: "799.00"
+          gain_loss_eur: "298.00"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_CLOSE_LONG_002
+    description: "Losing long put close - buy put, sell at lower price"
+    notes: "Buy 1 put @ $4, sell @ $2 - loss from option trading"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: P
+        strike: "50.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-15"
+          qty: 1
+          price: "4.00"
+          currency: EUR
+        - type: SL
+          date: "2023-02-15"
+          qty: 1
+          price: "2.00"
+          currency: EUR
+    expected:
+      # cost = 400 + 1 = 401
+      # proceeds = 200 - 1 = 199
+      # loss = 199 - 401 = -202
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_LONG
+          quantity: 1
+          total_cost_basis_eur: "401.00"
+          total_proceeds_eur: "199.00"
+          gain_loss_eur: "-202.00"
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_CLOSE_SHORT_001
+    description: "Buy back short call at loss - sold call, buy back higher"
+    notes: "Sell 1 call @ $3, buy back @ $5 - loss from option trading"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "55.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: SSO
+          date: "2023-01-15"
+          qty: 1
+          price: "3.00"
+          currency: EUR
+        - type: BSC
+          date: "2023-02-15"
+          qty: 1
+          price: "5.00"
+          currency: EUR
+    expected:
+      # proceeds (from original short) = 300 - 1 = 299
+      # cost (buy back) = 500 + 1 = 501
+      # loss = 299 - 501 = -202
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_SHORT
+          quantity: 1
+          total_cost_basis_eur: "501.00"
+          total_proceeds_eur: "299.00"
+          gain_loss_eur: "-202.00"
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_CLOSE_SHORT_002
+    description: "Buy back short put at profit - sold put, buy back lower"
+    notes: "Sell 1 put @ $4, buy back @ $1 - profit from option trading"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: P
+        strike: "45.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: SSO
+          date: "2023-01-15"
+          qty: 1
+          price: "4.00"
+          currency: EUR
+        - type: BSC
+          date: "2023-02-15"
+          qty: 1
+          price: "1.00"
+          currency: EUR
+    expected:
+      # proceeds (from original short) = 400 - 1 = 399
+      # cost (buy back) = 100 + 1 = 101
+      # gain = 399 - 101 = 298
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_SHORT
+          quantity: 1
+          total_cost_basis_eur: "101.00"
+          total_proceeds_eur: "399.00"
+          gain_loss_eur: "298.00"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_CLOSE_FIFO_001
+    description: "Multi-lot option FIFO - multiple buys, single sell"
+    notes: "Buy 2 calls @ $5, buy 1 call @ $3, sell 2 calls @ $7 - FIFO uses first lot"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "50.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-10"
+          qty: 2
+          price: "5.00"
+          currency: EUR
+        - type: BL
+          date: "2023-01-15"
+          qty: 1
+          price: "3.00"
+          currency: EUR
+        - type: SL
+          date: "2023-02-15"
+          qty: 2
+          price: "7.00"
+          currency: EUR
+    expected:
+      # FIFO: sell 2 contracts from first lot (bought at $5)
+      # cost = 2 * 500 + 1 = 1001
+      # proceeds = 2 * 700 - 1 = 1399
+      # gain = 1399 - 1001 = 398
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_LONG
+          quantity: 2
+          total_cost_basis_eur: "1001.00"
+          total_proceeds_eur: "1399.00"
+          gain_loss_eur: "398.00"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      option_eoy_quantity: 1  # 1 contract remaining from second lot
+      errors: 0
+
+  # ===========================================================================
+  # Subgroup G: Edge Cases
+  # ===========================================================================
+
+  - id: OPT_EDGE_003
+    description: "EUR-denominated option - no FX conversion needed"
+    notes: "EUR option on EUR underlying - premium already in EUR"
+    inputs:
+      underlying:
+        symbol: LEG
+        isin: DE000LEG1110
+        conid: "121764205"
+      option:
+        type: P
+        strike: "69.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: SSO
+          date: "2023-02-24"
+          qty: 1
+          price: "1.75"
+          currency: EUR
+        - type: BSC
+          date: "2023-03-17"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ep"
+          currency: EUR
+    expected:
+      # No FX conversion - already in EUR
+      # proceeds = 175 - 1 = 174
+      rgls:
+        - realization_type: OPTION_EXPIRED_SHORT
+          quantity: 1
+          total_cost_basis_eur: "0.00"
+          total_proceeds_eur: "174.00"
+          gain_loss_eur: "174.00"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+          is_stillhalter_income: true
+      option_eoy_quantity: 0
+      errors: 0
+
+  - id: OPT_EXP_MULTI_001
+    description: "Multiple contracts expire worthless - FIFO from multiple lots"
+    notes: "Buy 2 calls @ $5, buy 1 call @ $4, all 3 expire worthless"
+    inputs:
+      underlying:
+        symbol: AAPL
+        isin: US0378331005
+        conid: "265598"
+      option:
+        type: C
+        strike: "60.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-05"
+          qty: 2
+          price: "5.00"
+          currency: EUR
+        - type: BL
+          date: "2023-01-10"
+          qty: 1
+          price: "4.00"
+          currency: EUR
+        - type: SL
+          date: "2023-01-20"
+          qty: 3
+          price: "0.00"
+          notes_codes: "Ep"
+          currency: EUR
+    expected:
+      # 3 RGLs expected (one per contract or per lot)
+      # Lot 1: 2 contracts @ $5 = $1000 + commission
+      # Lot 2: 1 contract @ $4 = $400 + commission
+      # Total loss = 1001 + 401 = 1402 (if combined) or split by lot
+      rgls:
+        - realization_type: OPTION_EXPIRED_LONG
+          quantity: 2
+          total_cost_basis_eur: "1001.00"
+          total_proceeds_eur: "0.00"
+          gain_loss_eur: "-1001.00"
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+        - realization_type: OPTION_EXPIRED_LONG
+          quantity: 1
+          total_cost_basis_eur: "401.00"
+          total_proceeds_eur: "0.00"
+          gain_loss_eur: "-401.00"
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+      option_eoy_quantity: 0
+      errors: 0
