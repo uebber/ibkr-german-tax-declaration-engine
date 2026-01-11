@@ -1,0 +1,361 @@
+# Test Group 2: Start-of-Year (SOY) Handling
+#
+# Revision: 2025-05-18
+# PRD Coverage: §2.4 (FIFO), §2.5 (SOY Position Initialization)
+#
+# Objective: Verify correct cost basis derivation from:
+# 1. SOY Report only (no historical trades)
+# 2. Historical trades (when sufficient)
+# 3. SOY Report fallback (when historical trades insufficient)
+# 4. Asset not in SOY report (intra-year only)
+
+metadata:
+  group: 2
+  name: SOY Handling
+  prd_section: "2.4, 2.5"
+  revision: "2025-05-18"
+  commission_eur: 1.00
+
+tests:
+  # ===========================================================================
+  # Report-Only Tests (SOY_R_*)
+  # ===========================================================================
+
+  - id: SOY_R_001
+    description: "SOY Long from Report Only (No Hist.), Sell All"
+    inputs:
+      asset:
+        symbol: ASSET.A.EUR
+        isin: TESTISINSOYRAEUR
+        category: STOCK
+      positions_soy:
+        quantity: 10
+        cost_basis: 1000.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-07-15"
+          qty: 10
+          price: 120.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-07-15"
+          total_cost_basis_eur: 1000.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 199.00
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: SOY_R_002
+    description: "SOY Short from Report Only (No Hist.), Cover All"
+    inputs:
+      asset:
+        symbol: ASSET.R002.EUR
+        isin: TESTISINSOYR002EUR
+        category: STOCK
+      positions_soy:
+        quantity: -10
+        cost_basis: 1000.00
+        currency: EUR
+      intra_year_trades:
+        - type: BSC
+          date: "2023-08-10"
+          qty: 10
+          price: 80.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 10
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-08-10"
+          total_cost_basis_eur: 801.00
+          total_proceeds_eur: 1000.00
+          gain_loss_eur: 199.00
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Historical Trades Sufficient Tests (SOY_H_*)
+  # ===========================================================================
+
+  - id: SOY_H_001
+    description: "SOY Long, Hist. sufficient, cost from Hist. trades"
+    notes: "Historical buy of 15@90, SOY qty 10, sell 10@120. Cost from hist trades."
+    inputs:
+      asset:
+        symbol: ASSET.B.USD
+        isin: TESTISINSOYHBUSD
+        category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-03-01"
+          qty: 15
+          price: 90.00
+          currency: USD
+      positions_soy:
+        quantity: 10
+        cost_basis: 950.00
+        currency: USD
+      intra_year_trades:
+        - type: SL
+          date: "2023-07-15"
+          qty: 10
+          price: 120.00
+          currency: USD
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-03-01"
+          realization_date: "2023-07-15"
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: SOY_H_002
+    description: "SOY Short, Hist. sufficient, proceeds from Hist. trades"
+    inputs:
+      asset:
+        symbol: ASSET.H002.USD
+        isin: TESTISINSOYH002USD
+        category: STOCK
+      historical_trades:
+        - type: SSO
+          date: "2022-04-01"
+          qty: 15
+          price: 110.00
+          currency: USD
+      positions_soy:
+        quantity: -10
+        cost_basis: 1150.00
+        currency: USD
+      intra_year_trades:
+        - type: BSC
+          date: "2023-06-20"
+          qty: 10
+          price: 90.00
+          currency: USD
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 10
+          acquisition_date: "2022-04-01"
+          realization_date: "2023-06-20"
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Fallback Tests (SOY_F_*)
+  # ===========================================================================
+
+  - id: SOY_F_001
+    description: "SOY Long Fallback, Hist. Insufficient, cost from SOY Report"
+    notes: "Historical buy only 10, but SOY qty is 20. Must use SOY report cost."
+    inputs:
+      asset:
+        symbol: ASSET.D.USD
+        isin: TESTISINSOYFDUSD
+        category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-08-01"
+          qty: 10
+          price: 90.00
+          currency: USD
+      positions_soy:
+        quantity: 20
+        cost_basis: 2000.00
+        currency: USD
+      intra_year_trades:
+        - type: SL
+          date: "2023-05-10"
+          qty: 20
+          price: 120.00
+          currency: USD
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 20
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-05-10"
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: SOY_F_002
+    description: "SOY Short Fallback, Hist. Insufficient, proceeds from SOY Report"
+    notes: "Historical SSO only 10, but SOY qty is -20. Must use SOY report proceeds."
+    inputs:
+      asset:
+        symbol: ASSET.F002.USD
+        isin: TESTISINSOYF002USD
+        category: STOCK
+      historical_trades:
+        - type: SSO
+          date: "2022-08-01"
+          qty: 10
+          price: 110.00
+          currency: USD
+      positions_soy:
+        quantity: -20
+        cost_basis: 2200.00
+        currency: USD
+      intra_year_trades:
+        - type: BSC
+          date: "2023-05-10"
+          qty: 20
+          price: 90.00
+          currency: USD
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 20
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-05-10"
+          gain_loss_eur: 798.00
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: SOY_F_003
+    description: "SOY Long Fallback, No Hist. Trades, Sell All"
+    inputs:
+      asset:
+        symbol: ASSET.F003.USD
+        isin: TESTISINSOYF003USD
+        category: STOCK
+      positions_soy:
+        quantity: 10
+        cost_basis: 1000.00
+        currency: USD
+      intra_year_trades:
+        - type: SL
+          date: "2023-03-10"
+          qty: 10
+          price: 120.00
+          currency: USD
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-03-10"
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # No SOY Report Tests (SOY_N_*)
+  # ===========================================================================
+
+  - id: SOY_N_001
+    description: "Asset Not in SOY Report, Intra-Year Buy then Sell"
+    inputs:
+      asset:
+        symbol: ASSET.N001.EUR
+        isin: TESTISINSOYN001EUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-02-15"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: SL
+          date: "2023-09-05"
+          qty: 10
+          price: 120.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-02-15"
+          realization_date: "2023-09-05"
+          total_cost_basis_eur: 1001.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 198.00
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Partial Sale Variations (SOY_V_*)
+  # ===========================================================================
+
+  - id: SOY_V_001
+    description: "SOY Long Fallback (Hist Insufficient), Sell Partial"
+    inputs:
+      asset:
+        symbol: ASSET.V001.USD
+        isin: TESTISINSOYV001USD
+        category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-07-01"
+          qty: 10
+          price: 95.00
+          currency: USD
+      positions_soy:
+        quantity: 20
+        cost_basis: 2000.00
+        currency: USD
+      intra_year_trades:
+        - type: SL
+          date: "2023-10-10"
+          qty: 15
+          price: 120.00
+          currency: USD
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 15
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-10-10"
+          gain_loss_eur: 598.00
+      eoy_state:
+        quantity: 5
+      errors: 0
+
+  - id: SOY_V_002
+    description: "SOY Short: Hist. SSO < SOY Qty (Fallback), Intra-year covers portion"
+    notes: "Historical SSO 10, SOY qty -20. Covers 15. Proceeds from SOY Report."
+    inputs:
+      asset:
+        symbol: ASSET.V002.USD
+        isin: TESTISINSOYV002USD
+        category: STOCK
+      historical_trades:
+        - type: SSO
+          date: "2022-07-01"
+          qty: 10
+          price: 105.00
+          currency: USD
+      positions_soy:
+        quantity: -20
+        cost_basis: 2200.00
+        currency: USD
+      intra_year_trades:
+        - type: BSC
+          date: "2023-10-10"
+          qty: 15
+          price: 90.00
+          currency: USD
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 15
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-10-10"
+          gain_loss_eur: 598.00
+      eoy_state:
+        quantity: -5
+      errors: 0

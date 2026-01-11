@@ -24,6 +24,7 @@ except ImportError:
         MAX_FALLBACK_DAYS_EXCHANGE_RATES = 7
         CURRENCY_CODE_MAPPING_ECB = {"CNH": "CNY"}
         OUTPUT_PRECISION_AMOUNTS = Decimal("0.01") # Added for test_result_defs.py
+        APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING = True
 
     app_config = MockAppConfig()
     print("Warning: Using MockAppConfig in tests/conftest.py. Ensure src is in PYTHONPATH.")
@@ -114,3 +115,9 @@ def mock_config_paths(temp_data_dir, monkeypatch):
         print(f"Notice: Skipping monkeypatch of config paths due to an issue: {e}. Ensure config is structured as expected or pass paths explicitly.")
 
     return paths_dict
+
+
+@pytest.fixture
+def default_tax_year():
+    """Returns the default tax year for tests."""
+    return 2023

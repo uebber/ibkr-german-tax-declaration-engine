@@ -1,0 +1,444 @@
+# Test Group 1: Core FIFO Mechanics
+#
+# Revision: 2025-05-18
+# PRD Coverage: §2.4 (FIFO)
+#
+# Objective: Verify basic FIFO lot matching, including:
+# - Opening and closing long positions
+# - Opening and closing short positions
+# - Partial sales consuming lots
+# - Multiple lots consumed by single sale
+#
+# Common assumptions:
+# - TAX_YEAR = 2023
+# - Commission = 1 EUR per trade
+# - EUR currency (no FX conversion)
+# - Stocks category
+
+metadata:
+  group: 1
+  name: Core FIFO Mechanics
+  prd_section: "2.4"
+  revision: "2025-05-18"
+  commission_eur: 1.00
+
+tests:
+  # ===========================================================================
+  # Long Position Tests (CFM_L_*)
+  # ===========================================================================
+
+  - id: CFM_L_001
+    description: "Simple Buy and Sell All: Buy 10 @ 100, Sell 10 @ 120"
+    inputs:
+      asset:
+        symbol: ASSET.A.EUR
+        isin: TESTISINAAAEUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-03-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: SL
+          date: "2023-09-15"
+          qty: 10
+          price: 120.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-09-15"
+          total_cost_basis_eur: 1001.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 198.00
+          tax_category: ANLAGE_KAP_AKTIEN_GEWINN
+      eoy_state:
+        quantity: 0
+      errors: 0
+    variations:
+      - name: USD currency
+        changes:
+          currency: USD
+          expected_gain_loss_eur: 196.00
+        notes: "With 1:2 USD to EUR mock conversion"
+      - name: No commissions
+        changes:
+          commission: 0
+          expected_gain_loss_eur: 200.00
+      - name: Sell for loss
+        changes:
+          sell_price: 90.00
+          expected_gain_loss_eur: -102.00
+          tax_category: ANLAGE_KAP_AKTIEN_VERLUST
+
+  - id: CFM_L_002
+    description: "Partial Sale: Buy 10 @ 100, Sell 5 @ 120"
+    inputs:
+      asset:
+        symbol: ASSET.C.EUR
+        isin: TESTISINCCCCEUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-04-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: SL
+          date: "2023-10-01"
+          qty: 5
+          price: 120.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-04-01"
+          realization_date: "2023-10-01"
+          total_cost_basis_eur: 500.50
+          total_proceeds_eur: 599.00
+          gain_loss_eur: 98.50
+      eoy_state:
+        quantity: 5
+      errors: 0
+
+  - id: CFM_L_003
+    description: "Multiple Buys, Single Sell (FIFO first lot): Buy 10@100, Buy 10@110, Sell 10@120"
+    inputs:
+      asset:
+        symbol: ASSET.D.EUR
+        isin: TESTISINDDDDEUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-03-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: BL
+          date: "2023-04-01"
+          qty: 10
+          price: 110.00
+          currency: EUR
+        - type: SL
+          date: "2023-09-01"
+          qty: 10
+          price: 120.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: 1001.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 198.00
+      eoy_state:
+        quantity: 10
+      errors: 0
+
+  - id: CFM_L_004
+    description: "Multiple Buys, Multiple Sells (crossing lots)"
+    notes: "Buy 10@100, Buy 10@110, Sell 5@120, Sell 10@125 - crosses lot boundary"
+    inputs:
+      asset:
+        symbol: ASSET.X.EUR
+        isin: TESTISINXL004EUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-03-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: BL
+          date: "2023-04-01"
+          qty: 10
+          price: 110.00
+          currency: EUR
+        - type: SL
+          date: "2023-09-01"
+          qty: 5
+          price: 120.00
+          currency: EUR
+        - type: SL
+          date: "2023-10-01"
+          qty: 10
+          price: 125.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: 500.50
+          total_proceeds_eur: 599.00
+          gain_loss_eur: 98.50
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-10-01"
+          total_cost_basis_eur: 500.50
+          total_proceeds_eur: 624.50
+          gain_loss_eur: 124.00
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-04-01"
+          realization_date: "2023-10-01"
+          total_cost_basis_eur: 550.50
+          total_proceeds_eur: 624.50
+          gain_loss_eur: 74.00
+      eoy_state:
+        quantity: 5
+      errors: 0
+
+  # ===========================================================================
+  # Short Position Tests (CFM_S_*)
+  # ===========================================================================
+
+  - id: CFM_S_001
+    description: "Basic Short: Sell Short 10 @ 100, Buy Cover 10 @ 80"
+    inputs:
+      asset:
+        symbol: ASSET.E.EUR
+        isin: TESTISINEEEEEUR
+        category: STOCK
+      intra_year_trades:
+        - type: SSO
+          date: "2023-05-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: BSC
+          date: "2023-11-01"
+          qty: 10
+          price: 80.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 10
+          acquisition_date: "2023-05-01"
+          realization_date: "2023-11-01"
+          total_cost_basis_eur: 801.00
+          total_proceeds_eur: 999.00
+          gain_loss_eur: 198.00
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: CFM_S_002
+    description: "Short Partial Cover: SSO 10 @ 100, BSC 5 @ 80"
+    inputs:
+      asset:
+        symbol: ASSET.X.EUR
+        isin: TESTISINXS002EUR
+        category: STOCK
+      intra_year_trades:
+        - type: SSO
+          date: "2023-05-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: BSC
+          date: "2023-11-01"
+          qty: 5
+          price: 80.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2023-05-01"
+          realization_date: "2023-11-01"
+          total_cost_basis_eur: 401.00
+          total_proceeds_eur: 499.50
+          gain_loss_eur: 98.50
+      eoy_state:
+        quantity: -5
+      errors: 0
+
+  - id: CFM_S_003
+    description: "Multiple SSOs, Single Cover (FIFO first lot)"
+    notes: "SSO 10@100, SSO 10@90, BSC 10@80 - uses first SSO lot"
+    inputs:
+      asset:
+        symbol: ASSET.X.EUR
+        isin: TESTISINXS003EUR
+        category: STOCK
+      intra_year_trades:
+        - type: SSO
+          date: "2023-05-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: SSO
+          date: "2023-06-01"
+          qty: 10
+          price: 90.00
+          currency: EUR
+        - type: BSC
+          date: "2023-11-01"
+          qty: 10
+          price: 80.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 10
+          acquisition_date: "2023-05-01"
+          realization_date: "2023-11-01"
+          total_cost_basis_eur: 801.00
+          total_proceeds_eur: 999.00
+          gain_loss_eur: 198.00
+      eoy_state:
+        quantity: -10
+      errors: 0
+
+  - id: CFM_S_004
+    description: "Multiple SSOs, Multiple Covers (crossing lots)"
+    notes: "SSO 10@100, SSO 10@90, BSC 5@80, BSC 10@75"
+    inputs:
+      asset:
+        symbol: ASSET.X.EUR
+        isin: TESTISINXS004EUR
+        category: STOCK
+      intra_year_trades:
+        - type: SSO
+          date: "2023-05-01"
+          qty: 10
+          price: 100.00
+          currency: EUR
+        - type: SSO
+          date: "2023-06-01"
+          qty: 10
+          price: 90.00
+          currency: EUR
+        - type: BSC
+          date: "2023-11-01"
+          qty: 5
+          price: 80.00
+          currency: EUR
+        - type: BSC
+          date: "2023-12-01"
+          qty: 10
+          price: 75.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2023-05-01"
+          realization_date: "2023-11-01"
+          total_cost_basis_eur: 401.00
+          total_proceeds_eur: 499.50
+          gain_loss_eur: 98.50
+        - realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2023-05-01"
+          realization_date: "2023-12-01"
+          total_cost_basis_eur: 375.50
+          total_proceeds_eur: 499.50
+          gain_loss_eur: 124.00
+        - realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2023-06-01"
+          realization_date: "2023-12-01"
+          total_cost_basis_eur: 375.50
+          total_proceeds_eur: 449.50
+          gain_loss_eur: 74.00
+      eoy_state:
+        quantity: -5
+      errors: 0
+
+  # ===========================================================================
+  # Edge Case Tests (CFM_Z_*)
+  # ===========================================================================
+
+  - id: CFM_Z_001
+    description: "Zero Quantity Trade - should result in no RGLs"
+    inputs:
+      asset:
+        symbol: ASSET.Z.EUR
+        isin: TESTISINXZ001EUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-07-01"
+          qty: 0
+          price: 100.00
+          currency: EUR
+    expected:
+      rgls: []
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Mixed Asset Tests (CFM_M_*)
+  # ===========================================================================
+
+  - id: CFM_M_001
+    description: "Mixed Assets: Long position on Asset X, Short position on Asset Y"
+    inputs:
+      assets:
+        - symbol: ASSET.X.EUR
+          isin: TESTISINXM01XEUR
+          category: STOCK
+        - symbol: ASSET.Y.EUR
+          isin: TESTISINXM01YEUR
+          category: STOCK
+      intra_year_trades:
+        - type: BL
+          asset: ASSET.X.EUR
+          date: "2023-03-01"
+          qty: 10
+          price: 50.00
+          currency: EUR
+        - type: SL
+          asset: ASSET.X.EUR
+          date: "2023-09-01"
+          qty: 10
+          price: 60.00
+          currency: EUR
+        - type: SSO
+          asset: ASSET.Y.EUR
+          date: "2023-04-01"
+          qty: 5
+          price: 100.00
+          currency: EUR
+        - type: BSC
+          asset: ASSET.Y.EUR
+          date: "2023-10-01"
+          qty: 5
+          price: 90.00
+          currency: EUR
+    expected:
+      rgls:
+        - asset: ASSET.X.EUR
+          realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: 501.00
+          total_proceeds_eur: 599.00
+          gain_loss_eur: 98.00
+        - asset: ASSET.Y.EUR
+          realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2023-04-01"
+          realization_date: "2023-10-01"
+          total_cost_basis_eur: 451.00
+          total_proceeds_eur: 499.00
+          gain_loss_eur: 48.00
+      eoy_states:
+        - asset: ASSET.X.EUR
+          quantity: 0
+        - asset: ASSET.Y.EUR
+          quantity: 0
+      errors: 0

@@ -1,0 +1,279 @@
+# Test Group 3: End-of-Year (EOY) Validation
+#
+# Revision: 2025-05-18
+# PRD Coverage: §2.6 (EOY Reconciliation)
+#
+# Objective: Verify EOY position reconciliation:
+# 1. Consistent: Calculated EOY matches reported EOY
+# 2. Mismatch: Calculated EOY differs from reported EOY
+
+metadata:
+  group: 3
+  name: EOY Validation
+  prd_section: "2.6"
+  revision: "2025-05-18"
+  commission_eur: 1.00
+
+tests:
+  # ===========================================================================
+  # Consistent EOY Tests (EOY_C_*)
+  # ===========================================================================
+
+  - id: EOY_C_001
+    description: "Consistent EOY: SOY Empty -> Buy -> Sell Partial -> EOY matches"
+    inputs:
+      asset:
+        symbol: ASSET.E.EUR
+        isin: TESTISINEOYCEUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-02-10"
+          qty: 20
+          price: 10.00
+          currency: EUR
+        - type: SL
+          date: "2023-08-20"
+          qty: 5
+          price: 12.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 15
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-02-10"
+          realization_date: "2023-08-20"
+          total_cost_basis_eur: 50.25
+          total_proceeds_eur: 59.00
+          gain_loss_eur: 8.75
+      eoy_state:
+        quantity: 15
+      errors: 0
+
+  - id: EOY_C_002
+    description: "Consistent EOY: SOY Present -> Sell Partial -> EOY matches"
+    inputs:
+      asset:
+        symbol: ASSET.EOYC002.EUR
+        isin: TESTISINEOYC002EUR
+        category: STOCK
+      positions_soy:
+        quantity: 20
+        cost_basis: 200.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-08-20"
+          qty: 5
+          price: 12.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 15
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-08-20"
+          total_cost_basis_eur: 50.00
+          total_proceeds_eur: 59.00
+          gain_loss_eur: 9.00
+      eoy_state:
+        quantity: 15
+      errors: 0
+
+  - id: EOY_C_003
+    description: "Consistent EOY: Calculated 0, Asset Missing in EOY Report"
+    inputs:
+      asset:
+        symbol: ASSET.EOYC003.EUR
+        isin: TESTISINEOYC003EUR
+        category: STOCK
+      positions_soy:
+        quantity: 10
+        cost_basis: 100.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-09-05"
+          qty: 10
+          price: 12.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-09-05"
+          total_cost_basis_eur: 100.00
+          total_proceeds_eur: 119.00
+          gain_loss_eur: 19.00
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Mismatch EOY Tests (EOY_M_*)
+  # ===========================================================================
+
+  - id: EOY_M_001
+    description: "Mismatch: Calculated EOY (20) > EOY Report Qty (10)"
+    notes: "Buy 20, no sales, but EOY report shows 10. Mismatch error."
+    inputs:
+      asset:
+        symbol: ASSET.F.EUR
+        isin: TESTISINEOYMFEUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-04-01"
+          qty: 20
+          price: 10.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 10
+    expected:
+      rgls: []
+      calculated_eoy_quantity: 20  # Engine calculates 20 (bought 20, sold 0)
+      eoy_state:
+        quantity: 10  # But broker reports 10, so asset ends up with 10
+      errors: 1
+
+  - id: EOY_M_002
+    description: "Mismatch: Calculated EOY (5) < EOY Report Qty (10)"
+    notes: "Buy 5, no sales, but EOY report shows 10. Mismatch error."
+    inputs:
+      asset:
+        symbol: ASSET.G.EUR
+        isin: TESTISINEOYMGEUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-03-01"
+          qty: 5
+          price: 10.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 10
+    expected:
+      rgls: []
+      calculated_eoy_quantity: 5  # Engine calculates 5 (bought 5, sold 0)
+      eoy_state:
+        quantity: 10  # But broker reports 10, so asset ends up with 10
+      errors: 1
+
+  - id: EOY_M_003
+    description: "Mismatch: Calculated EOY (10) != 0, Asset Missing in EOY Report"
+    notes: "Buy 10, no sales, but asset not in EOY report (implies 0). Mismatch error."
+    inputs:
+      asset:
+        symbol: ASSET.H.EUR
+        isin: TESTISINEOYMHEUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-05-01"
+          qty: 10
+          price: 10.00
+          currency: EUR
+      # No positions_eoy_report - asset missing from broker report (implies 0)
+    expected:
+      rgls: []
+      calculated_eoy_quantity: 10  # Engine calculates 10 (bought 10, sold 0)
+      eoy_state:
+        quantity: 0  # But broker report is missing this asset (treated as 0)
+      errors: 1
+
+  - id: EOY_M_004
+    description: "Mismatch: Calculated EOY 0, Asset Present in EOY Report with Non-Zero Qty"
+    notes: "SOY 10, sell 10, but EOY report shows 5. Mismatch error."
+    inputs:
+      asset:
+        symbol: ASSET.EOYM004.EUR
+        isin: TESTISINEOYM004EUR
+        category: STOCK
+      positions_soy:
+        quantity: 10
+        cost_basis: 100.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-10-15"
+          qty: 10
+          price: 12.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 5
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-10-15"
+          total_cost_basis_eur: 100.00
+          total_proceeds_eur: 119.00
+          gain_loss_eur: 19.00
+      calculated_eoy_quantity: 0  # Engine calculates 0 (SOY 10 - sold 10)
+      eoy_state:
+        quantity: 5  # But broker reports 5, so asset ends up with 5
+      errors: 1
+
+  # ===========================================================================
+  # Short Position EOY Tests (EOY_S_*, EOY_SM_*)
+  # ===========================================================================
+
+  - id: EOY_S_001
+    description: "Consistent EOY Short Position"
+    inputs:
+      asset:
+        symbol: ASSET.EOYS001.EUR
+        isin: TESTISINEOYS001EUR
+        category: STOCK
+      positions_soy:
+        quantity: -10
+        cost_basis: 1000.00
+        currency: EUR
+      intra_year_trades:
+        - type: BSC
+          date: "2023-07-10"
+          qty: 5
+          price: 90.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: -5
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-07-10"
+          total_cost_basis_eur: 451.00
+          total_proceeds_eur: 500.00
+          gain_loss_eur: 49.00
+      eoy_state:
+        quantity: -5
+      errors: 0
+
+  - id: EOY_SM_001
+    description: "Mismatch EOY Short: Calc -10, Report -5"
+    inputs:
+      asset:
+        symbol: ASSET.EOYSM001.EUR
+        isin: TESTISINEOYSM001EUR
+        category: STOCK
+      intra_year_trades:
+        - type: SSO
+          date: "2023-03-15"
+          qty: 10
+          price: 100.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: -5
+    expected:
+      rgls: []
+      calculated_eoy_quantity: -10  # Engine calculates -10 (short sold 10, covered 0)
+      eoy_state:
+        quantity: -5  # But broker reports -5, so asset ends up with -5
+      errors: 1

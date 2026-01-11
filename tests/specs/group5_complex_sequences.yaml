@@ -1,0 +1,294 @@
+# Test Group 5: Complex Trade Sequences & Scenarios
+#
+# Revision: 2025-05-18
+# PRD Coverage: §2.4 (FIFO), §5.7 (TradeEvent), §5.11 (Processing)
+#
+# Objective: Stress test FIFO logic with intricate sequences and combinations:
+# 1. Position reversals (close long then open short)
+# 2. Day trading patterns (same-day trades, FIFO by time)
+# 3. Last lot full consumption
+# 4. SOY position interactions with intra-year trades
+
+metadata:
+  group: 5
+  name: Complex Trade Sequences
+  prd_section: "2.4, 5.7, 5.11"
+  revision: "2025-05-18"
+  commission_eur: 1.00
+
+tests:
+  # ===========================================================================
+  # Position Transition Tests (CTX_LS_*)
+  # ===========================================================================
+
+  - id: CTX_LS_001
+    description: "Close Long then Open Short"
+    notes: "SOY Long 10@100, sell all to close, then open short 5@110, cover 5@100"
+    inputs:
+      asset:
+        symbol: ASSET.LS001.EUR
+        isin: TESTISINLS001EUR
+        category: STOCK
+      positions_soy:
+        quantity: 10
+        cost_basis: 1000.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-03-01"
+          qty: 10
+          price: 120.00
+          currency: EUR
+        - type: SSO
+          date: "2023-04-15"
+          qty: 5
+          price: 110.00
+          currency: EUR
+        - type: BSC
+          date: "2023-09-20"
+          qty: 5
+          price: 100.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 0
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-03-01"
+          total_cost_basis_eur: 1000.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 199.00
+        - realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2023-04-15"
+          realization_date: "2023-09-20"
+          total_cost_basis_eur: 501.00
+          total_proceeds_eur: 549.00
+          gain_loss_eur: 48.00
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Day Trading Tests (CTX_DT_*)
+  # ===========================================================================
+
+  - id: CTX_DT_001
+    description: "Day Trading Pattern (multiple buys/sells same day)"
+    notes: "BL(10@10 09:00), BL(10@11 09:05), SL(5@12 09:10), SL(10@13 09:15). FIFO by time."
+    inputs:
+      asset:
+        symbol: ASSET.DT001.EUR
+        isin: TESTISINDT001EUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-06-15"
+          time: "09:00:00"
+          qty: 10
+          price: 10.00
+          currency: EUR
+        - type: BL
+          date: "2023-06-15"
+          time: "09:05:00"
+          qty: 10
+          price: 11.00
+          currency: EUR
+        - type: SL
+          date: "2023-06-15"
+          time: "09:10:00"
+          qty: 5
+          price: 12.00
+          currency: EUR
+        - type: SL
+          date: "2023-06-15"
+          time: "09:15:00"
+          qty: 10
+          price: 13.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 5
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-06-15"
+          realization_date: "2023-06-15"
+          # 5 from lot1 @10, sold @12
+          total_cost_basis_eur: 50.50
+          total_proceeds_eur: 59.00
+          gain_loss_eur: 8.50
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-06-15"
+          realization_date: "2023-06-15"
+          # 5 from lot1 @10, sold @13
+          total_cost_basis_eur: 50.50
+          total_proceeds_eur: 64.50
+          gain_loss_eur: 14.00
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2023-06-15"
+          realization_date: "2023-06-15"
+          # 5 from lot2 @11, sold @13
+          total_cost_basis_eur: 55.50
+          total_proceeds_eur: 64.50
+          gain_loss_eur: 9.00
+      eoy_state:
+        quantity: 5
+      errors: 0
+
+  # ===========================================================================
+  # Lot Consumption Tests (CTX_LF_*)
+  # ===========================================================================
+
+  - id: CTX_LF_001
+    description: "Last Lot Full Consumption (sell exactly remaining shares)"
+    notes: "BL(7@10), BL(3@12), SL(10@15). Single sale consumes two distinct lots."
+    inputs:
+      asset:
+        symbol: ASSET.LF001.EUR
+        isin: TESTISINLF001EUR
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-02-01"
+          qty: 7
+          price: 10.00
+          currency: EUR
+        - type: BL
+          date: "2023-03-01"
+          qty: 3
+          price: 12.00
+          currency: EUR
+        - type: SL
+          date: "2023-10-15"
+          qty: 10
+          price: 15.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 0
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 7
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-10-15"
+          # 7 from lot1 @10, sold @15
+          total_cost_basis_eur: 71.00
+          total_proceeds_eur: 104.30
+          gain_loss_eur: 33.30
+        - realization_type: SOLD_LONG
+          quantity: 3
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-10-15"
+          # 3 from lot2 @12, sold @15
+          total_cost_basis_eur: 37.00
+          total_proceeds_eur: 44.70
+          gain_loss_eur: 7.70
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # SOY Full Consumption Tests (CTX_SOYF_*)
+  # ===========================================================================
+
+  - id: CTX_SOYF_001
+    description: "SOY Position Full Consumption then New Intra-Year Position"
+    notes: "SOY Long 10@1000, SL(10@120) closes SOY, BL(5@125), SL(3@130)"
+    inputs:
+      asset:
+        symbol: ASSET.SOYF001.EUR
+        isin: TESTISINSOYF001EUR
+        category: STOCK
+      positions_soy:
+        quantity: 10
+        cost_basis: 1000.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-03-01"
+          qty: 10
+          price: 120.00
+          currency: EUR
+        - type: BL
+          date: "2023-05-01"
+          qty: 5
+          price: 125.00
+          currency: EUR
+        - type: SL
+          date: "2023-11-01"
+          qty: 3
+          price: 130.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 2
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-03-01"
+          total_cost_basis_eur: 1000.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 199.00
+        - realization_type: SOLD_LONG
+          quantity: 3
+          acquisition_date: "2023-05-01"
+          realization_date: "2023-11-01"
+          # 3 from intra-year lot @125, sold @130
+          total_cost_basis_eur: 375.60
+          total_proceeds_eur: 389.00
+          gain_loss_eur: 13.40
+      eoy_state:
+        quantity: 2
+      errors: 0
+
+  - id: CTX_SOYF_002
+    description: "SOY Position Partial Consumption then Intra-Year Buys and More Sells"
+    notes: "SOY 20@2000, SL(5@110) partial, BL(10@115), SL(15@120) sells rest of SOY"
+    inputs:
+      asset:
+        symbol: ASSET.SOYF002.EUR
+        isin: TESTISINSOYF002EUR
+        category: STOCK
+      positions_soy:
+        quantity: 20
+        cost_basis: 2000.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-02-15"
+          qty: 5
+          price: 110.00
+          currency: EUR
+        - type: BL
+          date: "2023-04-01"
+          qty: 10
+          price: 115.00
+          currency: EUR
+        - type: SL
+          date: "2023-09-01"
+          qty: 15
+          price: 120.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 10
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-02-15"
+          gain_loss_eur: 49.00
+        - realization_type: SOLD_LONG
+          quantity: 15
+          acquisition_date: "2022-12-31"
+          realization_date: "2023-09-01"
+          gain_loss_eur: 299.00
+      eoy_state:
+        quantity: 10
+      errors: 0

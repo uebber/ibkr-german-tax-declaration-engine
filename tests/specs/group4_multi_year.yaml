@@ -1,0 +1,197 @@
+# Test Group 4: Multi-Year Data Handling
+#
+# Revision: 2025-05-18
+# PRD Coverage: §2.4 (FIFO), §2.5 (Historical Trades)
+#
+# Objective: Verify FIFO with trades spanning multiple years:
+# 1. Deep historical positions (TY-2, TY-3)
+# 2. Partial sales over multiple years
+# 3. Correct lot attribution across year boundaries
+
+metadata:
+  group: 4
+  name: Multi-Year Data Handling
+  prd_section: "2.4, 2.5"
+  revision: "2025-05-18"
+  commission_usd: 1.00
+  fx_rate_usd_eur: 2.0
+
+tests:
+  # ===========================================================================
+  # Deep History Long (MYH_L_*)
+  # ===========================================================================
+
+  - id: MYH_L_001
+    description: "Deep History Long: Buys over TY-2, TY-1, Sold in TY"
+    notes: "TY-2 BL(10@80), TY-1 BL(10@90), TY SL(15@100). FIFO uses TY-2 first."
+    inputs:
+      asset:
+        symbol: ASSET.MYHL001.USD
+        isin: TESTISINMYHL001USD
+        category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2021-03-10"
+          qty: 10
+          price: 80.00
+          currency: USD
+        - type: BL
+          date: "2022-06-15"
+          qty: 10
+          price: 90.00
+          currency: USD
+      positions_soy:
+        quantity: 20
+        cost_basis: 1702.00
+        currency: USD
+      intra_year_trades:
+        - type: SL
+          date: "2023-02-20"
+          qty: 15
+          price: 100.00
+          currency: USD
+      positions_eoy_report:
+        quantity: 5
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2021-03-10"
+          realization_date: "2023-02-20"
+          # 10 shares from TY-2 lot @ $80+comm, sold @$100, FX=2.0
+          total_cost_basis_eur: 1602.00
+          total_proceeds_eur: 1998.67
+          gain_loss_eur: 396.67
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2022-06-15"
+          realization_date: "2023-02-20"
+          # 5 shares from TY-1 lot @ $90+comm, sold @$100, FX=2.0
+          total_cost_basis_eur: 901.00
+          total_proceeds_eur: 999.33
+          gain_loss_eur: 98.33
+      eoy_state:
+        quantity: 5
+      errors: 0
+
+  # ===========================================================================
+  # Deep History Short (MYH_S_*)
+  # ===========================================================================
+
+  - id: MYH_S_001
+    description: "Deep History Short: SSOs over TY-2, TY-1, Covered in TY"
+    notes: "TY-2 SSO(10@120), TY-1 SSO(10@110), TY BSC(15@100). FIFO covers TY-2 first."
+    inputs:
+      asset:
+        symbol: ASSET.MYHS001.USD
+        isin: TESTISINMYHS001USD
+        category: STOCK
+      historical_trades:
+        - type: SSO
+          date: "2021-04-05"
+          qty: 10
+          price: 120.00
+          currency: USD
+        - type: SSO
+          date: "2022-07-10"
+          qty: 10
+          price: 110.00
+          currency: USD
+      positions_soy:
+        quantity: -20
+        cost_basis: 2298.00
+        currency: USD
+      intra_year_trades:
+        - type: BSC
+          date: "2023-03-25"
+          qty: 15
+          price: 100.00
+          currency: USD
+      positions_eoy_report:
+        quantity: -5
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 10
+          acquisition_date: "2021-04-05"
+          realization_date: "2023-03-25"
+          # 10 shares from TY-2 short @ $120, covered @$100, FX=2.0
+          total_cost_basis_eur: 2001.33
+          total_proceeds_eur: 2398.00
+          gain_loss_eur: 396.67
+        - realization_type: COV_SHORT
+          quantity: 5
+          acquisition_date: "2022-07-10"
+          realization_date: "2023-03-25"
+          # 5 shares from TY-1 short @ $110, covered @$100, FX=2.0
+          total_cost_basis_eur: 1000.67
+          total_proceeds_eur: 1099.00
+          gain_loss_eur: 98.33
+      eoy_state:
+        quantity: -5
+      errors: 0
+
+  # ===========================================================================
+  # Partial Sales Across Years (MYH_P_*)
+  # ===========================================================================
+
+  - id: MYH_P_001
+    description: "Deep History with Partial Sales Across Years"
+    notes: >
+      TY-3 BL(20@70), TY-2 SL(5@80), TY-1 BL(10@90), TY SL(20@100).
+      After TY-2 sale: 15 remaining from TY-3 lot.
+      TY sale: 15 from TY-3, 5 from TY-1.
+    inputs:
+      asset:
+        symbol: ASSET.MYHP001.USD
+        isin: TESTISINMYHP001USD
+        category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2020-02-10"
+          qty: 20
+          price: 70.00
+          currency: USD
+        - type: SL
+          date: "2021-05-15"
+          qty: 5
+          price: 80.00
+          currency: USD
+        - type: BL
+          date: "2022-08-20"
+          qty: 10
+          price: 90.00
+          currency: USD
+      positions_soy:
+        quantity: 25
+        cost_basis: 1951.75
+        currency: USD
+      intra_year_trades:
+        - type: SL
+          date: "2023-04-25"
+          qty: 20
+          price: 100.00
+          currency: USD
+      positions_eoy_report:
+        quantity: 5
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 15
+          acquisition_date: "2020-02-10"
+          realization_date: "2023-04-25"
+          # 15 remaining shares from TY-3 lot @ $70+comm, sold @$100, FX=2.0
+          total_cost_basis_eur: 2101.50
+          total_proceeds_eur: 2998.50
+          gain_loss_eur: 897.00
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2022-08-20"
+          realization_date: "2023-04-25"
+          # 5 shares from TY-1 lot @ $90+comm, sold @$100, FX=2.0
+          total_cost_basis_eur: 901.00
+          total_proceeds_eur: 999.50
+          gain_loss_eur: 98.50
+      eoy_state:
+        quantity: 5
+      errors: 0

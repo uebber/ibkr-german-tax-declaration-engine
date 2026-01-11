@@ -36,14 +36,17 @@ uv run python -m src.main --group-by-type
 # View all CLI options
 uv run python -m src.main --help
 
-# Run tests
+# Run all tests
 uv run pytest
-
-# Run a specific test file
-uv run pytest tests/fifo_scenarios/test_simple_buy_sell.py
 
 # Run tests with verbose output
 uv run pytest -v
+
+# Run spec-driven FIFO tests (Groups 1-5)
+uv run pytest tests/test_fifo_groups.py -v
+
+# Run loss offsetting tests (Group 6)
+uv run pytest tests/test_group6_loss_offsetting.py -v
 ```
 
 ## Architecture
