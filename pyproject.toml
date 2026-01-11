@@ -14,5 +14,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pymupdf>=1.24.11",
     "pytest",
+    "pyyaml",
 ]

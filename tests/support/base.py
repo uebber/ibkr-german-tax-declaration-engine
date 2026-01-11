@@ -1,4 +1,4 @@
-# tests/fifo_scenarios/test_case_base.py
+# tests/support/base.py
 import os
 import pytest
 from decimal import Decimal
@@ -6,19 +6,19 @@ from typing import Any, Optional, List, Dict, Tuple
 
 # Application components
 from src.pipeline_runner import run_core_processing_pipeline, ProcessingOutput
-from src.utils.exchange_rate_provider import ExchangeRateProvider # Base class for mock
+from src.utils.exchange_rate_provider import ExchangeRateProvider  # Base class for mock
 from src.domain.results import RealizedGainLoss
 from src.domain.assets import Asset
 from src.identification.asset_resolver import AssetResolver
 # Ensure AssetClassifier is imported for the dummy instantiation
-from src.classification.asset_classifier import AssetClassifier 
+from src.classification.asset_classifier import AssetClassifier
 
 # Test helpers
-from tests.helpers.csv_creators import (
+from tests.support.csv_creators import (
     create_trades_csv_string, create_positions_csv_string,
     create_cash_transactions_csv_string, create_corporate_actions_csv_string
 )
-from tests.results.test_result_defs import ScenarioExpectedOutput
+from tests.support.expected import ScenarioExpectedOutput
 
 class FifoTestCaseBase:
     """

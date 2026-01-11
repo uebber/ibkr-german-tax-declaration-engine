@@ -20,11 +20,11 @@ import pytest
 from decimal import Decimal
 from typing import List, Tuple
 
-from tests.fifo_scenarios.test_case_base import FifoTestCaseBase
-from tests.helpers.mock_providers import MockECBExchangeRateProvider
-from tests.specs import FifoTestSpec
+from tests.support.base import FifoTestCaseBase
+from tests.support.mock_providers import MockECBExchangeRateProvider
+from tests.fixtures import FifoTestSpec
 
-from tests._test_helpers import (
+from tests.support.helpers import (
     DEFAULT_TAX_YEAR,
     load_group_specs,
     get_spec_currency,
@@ -33,6 +33,7 @@ from tests._test_helpers import (
     spec_to_trades_data,
     spec_to_positions_data,
     spec_to_expected_outcome,
+    _get_asset_class_and_desc_for_category,
 )
 
 
@@ -120,10 +121,11 @@ class TestFifoGroups(FifoTestCaseBase):
         # - get_eoy_file_quantity uses positions_eoy_report if present, else expected_eoy_quantity
         # - Empty list if quantity is 0 (handles sold-all and mismatch scenarios)
         eoy_file_qty = get_eoy_file_quantity(spec)
+        asset_class_code, asset_desc = _get_asset_class_and_desc_for_category(spec)
         if eoy_file_qty != Decimal("0"):
             positions_end = [[
-                account_id, currency, "STK", "COMMON",
-                spec.asset_symbol, f"{spec.asset_symbol} Desc", spec.asset_isin,
+                account_id, currency, asset_class_code, "COMMON",
+                spec.asset_symbol, asset_desc, spec.asset_isin,
                 eoy_file_qty, Decimal("0"), Decimal("100"),
                 Decimal("0"), None, f"CON{spec.asset_isin[:6]}", None, Decimal("1")
             ]]
@@ -155,7 +157,7 @@ class TestFifoSpecsLoaded:
 
     def test_total_spec_count(self):
         """Verify total number of specs across all groups."""
-        assert len(ALL_FIFO_SPECS) == 37, f"Expected 37 total specs, got {len(ALL_FIFO_SPECS)}"
+        assert len(ALL_FIFO_SPECS) == 42, f"Expected 42 total specs, got {len(ALL_FIFO_SPECS)}"
 
     def test_group1_count(self):
         """Verify Group 1 has 10 specs."""
@@ -178,9 +180,9 @@ class TestFifoSpecsLoaded:
         assert len(group4) == 3, f"Group 4 should have 3 specs, got {len(group4)}"
 
     def test_group5_count(self):
-        """Verify Group 5 has 5 specs."""
+        """Verify Group 5 has 10 specs."""
         group5 = [s for g, s in ALL_FIFO_SPECS if g == "group5"]
-        assert len(group5) == 5, f"Group 5 should have 5 specs, got {len(group5)}"
+        assert len(group5) == 10, f"Group 5 should have 10 specs, got {len(group5)}"
 
     def test_group1_ids_start_with_cfm(self):
         """Verify Group 1 spec IDs follow naming convention."""

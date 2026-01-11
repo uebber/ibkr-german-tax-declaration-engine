@@ -1,5 +1,5 @@
 """
-Test Specifications Module
+Test Fixtures Module
 
 This module provides structured test specifications in two formats:
 
@@ -8,7 +8,7 @@ This module provides structured test specifications in two formats:
    - Human-readable, parseable, git-diff friendly
    - Use load_yaml_spec() to parse
 
-2. Python dataclass specs (group6_loss_offsetting.py, etc.)
+2. Python dataclass specs (loss_offsetting_data.py, etc.)
    - Best for: Complex data structures with type safety
    - IDE support, refactoring-friendly
    - Import directly and use with pytest.mark.parametrize
@@ -27,7 +27,7 @@ from decimal import Decimal
 import yaml
 
 
-SPECS_DIR = Path(__file__).parent
+FIXTURES_DIR = Path(__file__).parent
 
 
 @dataclass
@@ -135,12 +135,12 @@ def load_yaml_spec(filename: str) -> Dict[str, Any]:
     Load a YAML test specification file.
 
     Args:
-        filename: Name of the YAML file in the specs directory
+        filename: Name of the YAML file in the fixtures directory
 
     Returns:
         Parsed YAML content as a dictionary
     """
-    filepath = SPECS_DIR / filename
+    filepath = FIXTURES_DIR / filename
 
     # Register Decimal constructor for numeric values
     yaml.add_constructor("!decimal", _decimal_constructor, Loader=yaml.SafeLoader)

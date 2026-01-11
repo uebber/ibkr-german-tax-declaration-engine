@@ -13,17 +13,17 @@ from typing import List, Optional
 from datetime import date
 
 # Test infrastructure imports
-from tests.fifo_scenarios.test_case_base import FifoTestCaseBase
-from tests.results.test_result_defs import (
+from tests.support.base import FifoTestCaseBase
+from tests.support.expected import (
     ScenarioExpectedOutput,
     ExpectedRealizedGainLoss,
     ExpectedAssetEoyState,
 )
-from tests.helpers.mock_providers import MockECBExchangeRateProvider
+from tests.support.mock_providers import MockECBExchangeRateProvider
 from src.domain.enums import AssetCategory, TaxReportingCategory, RealizationType
 
-# Spec imports
-from tests.specs import (
+# Fixtures imports
+from tests.fixtures import (
     load_yaml_spec,
     parse_fifo_tests,
     FifoTestSpec,
@@ -325,6 +325,32 @@ def load_group_specs(group_filename: str) -> List[FifoTestSpec]:
         return []
 
 
+def _get_asset_class_and_desc_for_category(spec: FifoTestSpec) -> tuple:
+    """
+    Get the IBKR asset class code and description for a spec based on its asset category.
+
+    The asset classifier uses description keywords to determine category.
+    For PRIVATE_SALE_ASSET, we include keywords that trigger the §23 classification.
+    """
+    category = spec.asset_category
+
+    if category == "PRIVATE_SALE_ASSET":
+        # Use keywords that trigger PRIVATE_SALE_ASSET classification
+        # (see asset_classifier.py lines 121-124)
+        return "STK", f"{spec.asset_symbol} XETRA-GOLD Physical Gold ETC"
+    elif category == "INVESTMENT_FUND":
+        return "FUND", f"{spec.asset_symbol} Investment Fund ETF"
+    elif category == "OPTION":
+        return "OPT", f"{spec.asset_symbol} Option"
+    elif category == "CFD":
+        return "CFD", f"{spec.asset_symbol} CFD"
+    elif category == "BOND":
+        return "BOND", f"{spec.asset_symbol} Bond"
+    else:
+        # Default: STOCK
+        return "STK", f"{spec.asset_symbol} Desc"
+
+
 def spec_to_trades_data(
     spec: FifoTestSpec,
     account_id: str,
@@ -338,6 +364,9 @@ def spec_to_trades_data(
     """
     trades_data = []
     commission = Decimal("-1.00")
+
+    # Get asset class code and description based on category
+    asset_class_code, asset_desc = _get_asset_class_and_desc_for_category(spec)
 
     # Add historical trades if present
     if include_historical and spec.historical_trades:
@@ -353,10 +382,10 @@ def spec_to_trades_data(
             trades_data.append([
                 account_id,
                 trade.currency,
-                "STK",
+                asset_class_code,
                 "COMMON",
                 trade.asset or spec.asset_symbol,
-                f"{spec.asset_symbol} Desc",
+                asset_desc,
                 spec.asset_isin,
                 None, None, None,
                 trade_datetime,
@@ -388,10 +417,10 @@ def spec_to_trades_data(
         trades_data.append([
             account_id,
             trade.currency,
-            "STK",
+            asset_class_code,
             "COMMON",
             trade.asset or spec.asset_symbol,
-            f"{spec.asset_symbol} Desc",
+            asset_desc,
             spec.asset_isin,
             None, None, None,
             trade_datetime,
@@ -424,13 +453,16 @@ def spec_to_positions_data(
     if not pos:
         return []
 
+    # Get asset class code and description based on category
+    asset_class_code, asset_desc = _get_asset_class_and_desc_for_category(spec)
+
     return [[
         account_id,
         pos.currency,
-        "STK",
+        asset_class_code,
         "COMMON",
         spec.asset_symbol,
-        f"{spec.asset_symbol} Desc",
+        asset_desc,
         spec.asset_isin,
         pos.quantity,
         pos.quantity * Decimal("100"),  # Approximate value
@@ -441,6 +473,36 @@ def spec_to_positions_data(
         None,
         Decimal("1"),
     ]]
+
+
+def _get_asset_category_enum_name(category_str: str) -> str:
+    """Convert category string from spec to AssetCategory enum name."""
+    category_map = {
+        "STOCK": AssetCategory.STOCK.name,
+        "PRIVATE_SALE_ASSET": AssetCategory.PRIVATE_SALE_ASSET.name,
+        "INVESTMENT_FUND": AssetCategory.INVESTMENT_FUND.name,
+        "OPTION": AssetCategory.OPTION.name,
+        "CFD": AssetCategory.CFD.name,
+        "BOND": AssetCategory.BOND.name,
+    }
+    return category_map.get(category_str, AssetCategory.STOCK.name)
+
+
+def _get_default_tax_category(
+    asset_category: str, realization_type: str, gain_loss_eur: Decimal
+) -> str:
+    """Get default tax reporting category based on asset type and gain/loss."""
+    if asset_category == "PRIVATE_SALE_ASSET":
+        if gain_loss_eur >= 0:
+            return TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN.name
+        else:
+            return TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS.name
+    else:
+        # Default to stock categories for most asset types
+        if gain_loss_eur >= 0:
+            return TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN.name
+        else:
+            return TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST.name
 
 
 def spec_to_expected_outcome(
@@ -466,19 +528,14 @@ def spec_to_expected_outcome(
             spec, rgl, fx_rate
         )
 
-        # Determine tax category from gain/loss sign
+        # Determine tax category from gain/loss sign and asset type
         realization_type = rgl.realization_type
+        default_tax_cat = _get_default_tax_category(
+            spec.asset_category, realization_type, gain_loss_eur
+        )
 
-        if "LONG" in realization_type or realization_type == "SOLD_LONG":
-            if gain_loss_eur >= 0:
-                tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN.name
-            else:
-                tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST.name
-        else:
-            if gain_loss_eur >= 0:
-                tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN.name
-            else:
-                tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST.name
+        # Get proper asset category enum name
+        asset_category_name = _get_asset_category_enum_name(spec.asset_category)
 
         expected_rgls.append(
             ExpectedRealizedGainLoss(
@@ -489,8 +546,8 @@ def spec_to_expected_outcome(
                 total_realization_value_eur=proceeds_eur,
                 gross_gain_loss_eur=gain_loss_eur,
                 acquisition_date=rgl.acquisition_date or "",
-                asset_category_at_realization=AssetCategory.STOCK.name,
-                tax_reporting_category=rgl.tax_category or tax_cat,
+                asset_category_at_realization=asset_category_name,
+                tax_reporting_category=rgl.tax_category or default_tax_cat,
                 realization_type=REALIZATION_TYPE_MAP.get(
                     rgl.realization_type, rgl.realization_type
                 ),

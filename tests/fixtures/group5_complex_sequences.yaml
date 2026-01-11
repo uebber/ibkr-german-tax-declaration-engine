@@ -292,3 +292,207 @@ tests:
       eoy_state:
         quantity: 10
       errors: 0
+
+  # ===========================================================================
+  # §23 EStG Holding Period Boundary Tests (CTX_P23_*)
+  # ===========================================================================
+  # PRD Coverage: §23 EStG private sale taxation
+  # These tests verify the 365-day holding period boundary:
+  # - Holding period <= 365 days: Taxable under §23 EStG
+  # - Holding period > 365 days: Exempt from §23 EStG
+  # Note: These use PRIVATE_SALE_ASSET category to trigger §23 logic
+
+  - id: CTX_P23_001
+    description: "§23 Boundary - Sold exactly on day 365 (taxable)"
+    notes: "Buy 2022-03-15, sell 2023-03-15 = exactly 365 days. Should be taxable."
+    inputs:
+      asset:
+        symbol: GOLD.P23.EUR
+        isin: TESTISINP23001EUR
+        category: PRIVATE_SALE_ASSET
+      historical_trades:
+        - type: BL
+          date: "2022-03-15"
+          qty: 10
+          price: 100.00
+          currency: EUR
+      positions_soy:
+        quantity: 10
+        cost_basis: 1001.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-03-15"
+          qty: 10
+          price: 120.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 0
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-03-15"
+          realization_date: "2023-03-15"
+          total_cost_basis_eur: 1001.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 198.00
+          tax_category: SECTION_23_ESTG_TAXABLE_GAIN
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: CTX_P23_002
+    description: "§23 Boundary - Sold on day 366 (exempt)"
+    notes: "Buy 2022-03-15, sell 2023-03-16 = 366 days. Should be exempt."
+    inputs:
+      asset:
+        symbol: GOLD.P23.EUR
+        isin: TESTISINP23002EUR
+        category: PRIVATE_SALE_ASSET
+      historical_trades:
+        - type: BL
+          date: "2022-03-15"
+          qty: 10
+          price: 100.00
+          currency: EUR
+      positions_soy:
+        quantity: 10
+        cost_basis: 1001.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-03-16"
+          qty: 10
+          price: 120.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 0
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-03-15"
+          realization_date: "2023-03-16"
+          total_cost_basis_eur: 1001.00
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 198.00
+          tax_category: SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: CTX_P23_003
+    description: "§23 Leap Year - Feb 28 to Feb 28 next year (365 days, taxable)"
+    notes: "Buy 2022-02-28, sell 2023-02-28 = 365 days (2022 not leap). Taxable."
+    inputs:
+      asset:
+        symbol: SILVER.P23.EUR
+        isin: TESTISINP23003EUR
+        category: PRIVATE_SALE_ASSET
+      historical_trades:
+        - type: BL
+          date: "2022-02-28"
+          qty: 5
+          price: 50.00
+          currency: EUR
+      positions_soy:
+        quantity: 5
+        cost_basis: 251.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-02-28"
+          qty: 5
+          price: 60.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 0
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 5
+          acquisition_date: "2022-02-28"
+          realization_date: "2023-02-28"
+          total_cost_basis_eur: 251.00
+          total_proceeds_eur: 299.00
+          gain_loss_eur: 48.00
+          tax_category: SECTION_23_ESTG_TAXABLE_GAIN
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: CTX_P23_004
+    description: "§23 Year-End Boundary - Dec 31 to Jan 1 crossing"
+    notes: "Buy 2022-01-02, sell 2023-01-01 = 364 days. Taxable (under 365 days)."
+    inputs:
+      asset:
+        symbol: WINE.P23.EUR
+        isin: TESTISINP23004EUR
+        category: PRIVATE_SALE_ASSET
+      historical_trades:
+        - type: BL
+          date: "2022-01-02"
+          qty: 3
+          price: 500.00
+          currency: EUR
+      positions_soy:
+        quantity: 3
+        cost_basis: 1501.00
+        currency: EUR
+      intra_year_trades:
+        - type: SL
+          date: "2023-01-01"
+          qty: 3
+          price: 600.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 0
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 3
+          acquisition_date: "2022-01-02"
+          realization_date: "2023-01-01"
+          total_cost_basis_eur: 1501.00
+          total_proceeds_eur: 1799.00
+          gain_loss_eur: 298.00
+          tax_category: SECTION_23_ESTG_TAXABLE_GAIN
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: CTX_P23_005
+    description: "§23 Loss on taxable sale (holding period < 365 days)"
+    notes: "Quick flip with loss - should be reported as taxable loss."
+    inputs:
+      asset:
+        symbol: ART.P23.EUR
+        isin: TESTISINP23005EUR
+        category: PRIVATE_SALE_ASSET
+      intra_year_trades:
+        - type: BL
+          date: "2023-06-01"
+          qty: 1
+          price: 5000.00
+          currency: EUR
+        - type: SL
+          date: "2023-09-15"
+          qty: 1
+          price: 4000.00
+          currency: EUR
+      positions_eoy_report:
+        quantity: 0
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 1
+          acquisition_date: "2023-06-01"
+          realization_date: "2023-09-15"
+          total_cost_basis_eur: 5001.00
+          total_proceeds_eur: 3999.00
+          gain_loss_eur: -1002.00
+          tax_category: SECTION_23_ESTG_TAXABLE_LOSS
+      eoy_state:
+        quantity: 0
+      errors: 0

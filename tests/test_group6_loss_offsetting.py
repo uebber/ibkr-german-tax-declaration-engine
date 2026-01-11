@@ -29,8 +29,8 @@ from src.domain.assets import Asset, InvestmentFund
 from src.domain.events import FinancialEvent
 import src.config as global_config
 
-# Spec imports
-from tests.specs.group6_loss_offsetting import (
+# Fixtures imports
+from tests.fixtures.loss_offsetting_data import (
     LOSS_OFFSETTING_TESTS,
     LossOffsettingTestCase,
 )
@@ -125,6 +125,31 @@ def create_mock_rgl(
     return rgl
 
 
+def get_fund_type_from_string(fund_type_str: Optional[str]) -> InvestmentFundType:
+    """Convert fund type string to enum, defaulting to AKTIENFONDS."""
+    if fund_type_str is None:
+        return InvestmentFundType.AKTIENFONDS
+    try:
+        return InvestmentFundType[fund_type_str]
+    except KeyError:
+        return InvestmentFundType.AKTIENFONDS
+
+
+def get_tf_rate_for_fund_type(fund_type: InvestmentFundType) -> Decimal:
+    """Get Teilfreistellung rate for fund type."""
+    D = Decimal
+    if fund_type == InvestmentFundType.AKTIENFONDS:
+        return D("0.30")  # 30%
+    elif fund_type == InvestmentFundType.MISCHFONDS:
+        return D("0.15")  # 15%
+    elif fund_type == InvestmentFundType.IMMOBILIENFONDS:
+        return D("0.60")  # 60%
+    elif fund_type == InvestmentFundType.AUSLANDS_IMMOBILIENFONDS:
+        return D("0.80")  # 80%
+    else:
+        return D("0.00")  # SONSTIGE_FONDS and others
+
+
 def build_rgls_from_test_case(
     test_case: LossOffsettingTestCase,
     asset_resolver: MockAssetResolver,
@@ -139,7 +164,8 @@ def build_rgls_from_test_case(
     # Fund income handling (special case)
     if test_case.fund_income_net_taxable != D("0"):
         fund_asset_id = uuid.uuid4()
-        tf_rate = D("0.30")  # Aktienfonds TF rate
+        fund_type = get_fund_type_from_string(test_case.fund_type)
+        tf_rate = get_tf_rate_for_fund_type(fund_type)
 
         # Calculate gross from net: Net = Gross * (1 - TF_Rate)
         denominator = D("1") - tf_rate
@@ -150,19 +176,27 @@ def build_rgls_from_test_case(
 
         gross_fund_gl = gross_fund_gl.quantize(D("0.000001"), rounding=ROUND_HALF_UP)
 
-        # Create the fund asset
+        # Create the fund asset with appropriate type
+        fund_type_names = {
+            InvestmentFundType.AKTIENFONDS: "Aktienfonds",
+            InvestmentFundType.MISCHFONDS: "Mischfonds",
+            InvestmentFundType.IMMOBILIENFONDS: "Immobilienfonds",
+            InvestmentFundType.AUSLANDS_IMMOBILIENFONDS: "Auslands-Immobilienfonds",
+            InvestmentFundType.SONSTIGE_FONDS: "Sonstige Fonds",
+        }
+        fund_name = fund_type_names.get(fund_type, "Mock Fund")
         mock_fund_asset = InvestmentFund(
             internal_asset_id=fund_asset_id,
-            description="Mock Aktienfonds for Test",
+            description=f"Mock {fund_name} for Test",
             currency="EUR",
-            fund_type=InvestmentFundType.AKTIENFONDS,
+            fund_type=fund_type,
         )
         asset_resolver.add_mock_asset(mock_fund_asset)
 
         fund_rgl = create_mock_rgl(
             gross_amount=gross_fund_gl,
             asset_category=AssetCategory.INVESTMENT_FUND,
-            fund_type=InvestmentFundType.AKTIENFONDS,
+            fund_type=fund_type,
             asset_id=fund_asset_id,
         )
         mock_rgls.append(fund_rgl)

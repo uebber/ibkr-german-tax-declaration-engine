@@ -95,6 +95,8 @@ class LossOffsettingTestCase:
 
     # Optional: Simulated fund income (not part of GrossPotComponents)
     fund_income_net_taxable: Decimal = Decimal("0")
+    # Fund type for Teilfreistellung rate calculation (default: AKTIENFONDS for 30%)
+    fund_type: Optional[str] = None  # Uses InvestmentFundType enum name if specified
 
     # Documentation
     notes: Optional[str] = None

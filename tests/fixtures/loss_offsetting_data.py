@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import List, Optional
 
-from ._schema import GrossPotComponents, ExpectedReportingFigures, LossOffsettingTestCase, D
+from .schema import GrossPotComponents, ExpectedReportingFigures, LossOffsettingTestCase, D
 
 
 # =============================================================================
@@ -812,6 +812,141 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_derivatives_capped=D("0.00"),
             conceptual_net_p23_estg=D("0.00"),
             conceptual_fund_income_net_taxable=D("-60.00"),
+        ),
+    ),
+
+    # -------------------------------------------------------------------------
+    # Fund Type Teilfreistellung Rate Tests
+    # -------------------------------------------------------------------------
+    # These tests verify correct Teilfreistellung (partial exemption) rates:
+    # - Aktienfonds: 30% (already tested in LO_FUND_001/002)
+    # - Mischfonds: 15%
+    # - Immobilienfonds: 60%
+    # - Auslands-Immobilienfonds: 80%
+    # - Sonstige Fonds: 0%
+
+    LossOffsettingTestCase(
+        id="LO_FUND_MISCH_001",
+        description="Mischfonds with 15% Teilfreistellung",
+        notes="Net 170 with 15% TF means Gross = 170 / 0.85 = 200. Taxable = 170.",
+        prd_references=["2.7"],
+        fund_income_net_taxable=D("170.00"),
+        fund_type="MISCHFONDS",
+        inputs=GrossPotComponents(),
+        expected=ExpectedReportingFigures(
+            form_kap_z19_auslaendische_net=D("0.00"),
+            form_kap_z20_aktien_g=D("0.00"),
+            form_kap_z21_derivate_g=D("0.00"),
+            form_kap_z22_sonstige_v=D("0.00"),
+            form_kap_z23_aktien_v=D("0.00"),
+            form_kap_z24_derivate_v=D("0.00"),
+            form_so_z54_p23_net_gv=D("0.00"),
+            conceptual_net_other_income=D("0.00"),
+            conceptual_net_stocks=D("0.00"),
+            conceptual_net_derivatives_uncapped=D("0.00"),
+            conceptual_net_derivatives_capped=D("0.00"),
+            conceptual_net_p23_estg=D("0.00"),
+            conceptual_fund_income_net_taxable=D("170.00"),
+        ),
+    ),
+
+    LossOffsettingTestCase(
+        id="LO_FUND_IMMO_001",
+        description="Immobilienfonds with 60% Teilfreistellung",
+        notes="Net 400 with 60% TF means Gross = 400 / 0.40 = 1000. Taxable = 400.",
+        prd_references=["2.7"],
+        fund_income_net_taxable=D("400.00"),
+        fund_type="IMMOBILIENFONDS",
+        inputs=GrossPotComponents(),
+        expected=ExpectedReportingFigures(
+            form_kap_z19_auslaendische_net=D("0.00"),
+            form_kap_z20_aktien_g=D("0.00"),
+            form_kap_z21_derivate_g=D("0.00"),
+            form_kap_z22_sonstige_v=D("0.00"),
+            form_kap_z23_aktien_v=D("0.00"),
+            form_kap_z24_derivate_v=D("0.00"),
+            form_so_z54_p23_net_gv=D("0.00"),
+            conceptual_net_other_income=D("0.00"),
+            conceptual_net_stocks=D("0.00"),
+            conceptual_net_derivatives_uncapped=D("0.00"),
+            conceptual_net_derivatives_capped=D("0.00"),
+            conceptual_net_p23_estg=D("0.00"),
+            conceptual_fund_income_net_taxable=D("400.00"),
+        ),
+    ),
+
+    LossOffsettingTestCase(
+        id="LO_FUND_AUSLAND_001",
+        description="Auslands-Immobilienfonds with 80% Teilfreistellung",
+        notes="Net 200 with 80% TF means Gross = 200 / 0.20 = 1000. Taxable = 200.",
+        prd_references=["2.7"],
+        fund_income_net_taxable=D("200.00"),
+        fund_type="AUSLANDS_IMMOBILIENFONDS",
+        inputs=GrossPotComponents(),
+        expected=ExpectedReportingFigures(
+            form_kap_z19_auslaendische_net=D("0.00"),
+            form_kap_z20_aktien_g=D("0.00"),
+            form_kap_z21_derivate_g=D("0.00"),
+            form_kap_z22_sonstige_v=D("0.00"),
+            form_kap_z23_aktien_v=D("0.00"),
+            form_kap_z24_derivate_v=D("0.00"),
+            form_so_z54_p23_net_gv=D("0.00"),
+            conceptual_net_other_income=D("0.00"),
+            conceptual_net_stocks=D("0.00"),
+            conceptual_net_derivatives_uncapped=D("0.00"),
+            conceptual_net_derivatives_capped=D("0.00"),
+            conceptual_net_p23_estg=D("0.00"),
+            conceptual_fund_income_net_taxable=D("200.00"),
+        ),
+    ),
+
+    LossOffsettingTestCase(
+        id="LO_FUND_SONST_001",
+        description="Sonstige Fonds with 0% Teilfreistellung",
+        notes="Net = Gross for 0% TF. Taxable = 500.",
+        prd_references=["2.7"],
+        fund_income_net_taxable=D("500.00"),
+        fund_type="SONSTIGE_FONDS",
+        inputs=GrossPotComponents(),
+        expected=ExpectedReportingFigures(
+            form_kap_z19_auslaendische_net=D("0.00"),
+            form_kap_z20_aktien_g=D("0.00"),
+            form_kap_z21_derivate_g=D("0.00"),
+            form_kap_z22_sonstige_v=D("0.00"),
+            form_kap_z23_aktien_v=D("0.00"),
+            form_kap_z24_derivate_v=D("0.00"),
+            form_so_z54_p23_net_gv=D("0.00"),
+            conceptual_net_other_income=D("0.00"),
+            conceptual_net_stocks=D("0.00"),
+            conceptual_net_derivatives_uncapped=D("0.00"),
+            conceptual_net_derivatives_capped=D("0.00"),
+            conceptual_net_p23_estg=D("0.00"),
+            conceptual_fund_income_net_taxable=D("500.00"),
+        ),
+    ),
+
+    LossOffsettingTestCase(
+        id="LO_FUND_MISCH_002",
+        description="Mischfonds loss with 15% TF",
+        notes="Net loss -85 with 15% TF means Gross = -85 / 0.85 = -100. Taxable loss = -85.",
+        prd_references=["2.7"],
+        fund_income_net_taxable=D("-85.00"),
+        fund_type="MISCHFONDS",
+        inputs=GrossPotComponents(),
+        expected=ExpectedReportingFigures(
+            form_kap_z19_auslaendische_net=D("0.00"),
+            form_kap_z20_aktien_g=D("0.00"),
+            form_kap_z21_derivate_g=D("0.00"),
+            form_kap_z22_sonstige_v=D("0.00"),
+            form_kap_z23_aktien_v=D("0.00"),
+            form_kap_z24_derivate_v=D("0.00"),
+            form_so_z54_p23_net_gv=D("0.00"),
+            conceptual_net_other_income=D("0.00"),
+            conceptual_net_stocks=D("0.00"),
+            conceptual_net_derivatives_uncapped=D("0.00"),
+            conceptual_net_derivatives_capped=D("0.00"),
+            conceptual_net_p23_estg=D("0.00"),
+            conceptual_fund_income_net_taxable=D("-85.00"),
         ),
     ),
 ]

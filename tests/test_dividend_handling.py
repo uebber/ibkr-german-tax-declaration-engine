@@ -1,10 +1,10 @@
-# tests/fifo_scenarios/test_dividend_handling.py
+# tests/test_dividend_handling.py
 import pytest
 from decimal import Decimal
 
-from tests.fifo_scenarios.test_case_base import FifoTestCaseBase
-from tests.results.test_result_defs import ScenarioExpectedOutput, ExpectedRealizedGainLoss, ExpectedAssetEoyState
-from tests.helpers.mock_providers import MockECBExchangeRateProvider
+from tests.support.base import FifoTestCaseBase
+from tests.support.expected import ScenarioExpectedOutput, ExpectedRealizedGainLoss, ExpectedAssetEoyState
+from tests.support.mock_providers import MockECBExchangeRateProvider
 from src.domain.enums import AssetCategory, TaxReportingCategory, RealizationType, FinancialEventType
 from src.engine.loss_offsetting import LossOffsettingEngine
 
