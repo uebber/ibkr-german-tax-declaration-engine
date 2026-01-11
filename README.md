@@ -46,7 +46,7 @@ The goal is to provide accurate, directly usable figures to significantly reduce
 ## Prerequisites
 
 *   **Python 3.8 or higher.**
-*   **`pip`** (Python package installer).
+*   **`uv`** (Python package manager). Install from: https://docs.astral.sh/uv/getting-started/installation/
 *   **IBKR Flex Query Reports (CSV format):** You will need reports covering your activity for the `TAX_YEAR` you are processing, *and potentially historical trade data if you want the system to simulate SOY cost basis rather than relying solely on the SOY positions file for cost basis.*
     1.  **Trades:** Your trade activity. *Crucially, this file **MUST** include the `Open/CloseIndicator` column for accurate trade classification.*
     2.  **Cash Transactions:** Dividends, interest, withholding tax, fees, etc.
@@ -64,16 +64,11 @@ The goal is to provide accurate, directly usable figures to significantly reduce
     cd ibkr-german-tax-engine
     ```
 
-2.  **Create and activate a virtual environment (recommended):**
+2.  **Install dependencies with uv:**
     ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    uv sync
     ```
-
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+    This will automatically create a virtual environment and install all dependencies.
 
 ## Configuration
 
@@ -104,39 +99,39 @@ Navigate to the project's root directory in your terminal (where `src/` is locat
 
 **Basic run (using defaults from `config.py`):**
 ```bash
-python -m src.main
+uv run python -m src.main
 ```
 
 **Common options:**
 
 *   **Enable interactive classification (overrides config):**
     ```bash
-    python -m src.main --interactive
+    uv run python -m src.main --interactive
     ```
 *   **Disable interactive classification (overrides config):**
     ```bash
-    python -m src.main --no-interactive
+    uv run python -m src.main --no-interactive
     ```
 *   **Generate console tax summary and PDF report:**
     ```bash
-    python -m src.main --report-tax-declaration
+    uv run python -m src.main --report-tax-declaration
     ```
     (This will also create `tax_report_<TAX_YEAR>.pdf` by default, e.g., `tax_report_2023.pdf` if `TAX_YEAR` is 2023)
 
 *   **Specify a custom PDF output file name:**
     ```bash
-    python -m src.main --report-tax-declaration --pdf-output-file my_tax_details_<TAX_YEAR>.pdf
+    uv run python -m src.main --report-tax-declaration --pdf-output-file my_tax_details_<TAX_YEAR>.pdf
     ```
 
 *   **Specify input file paths (example for trades file):**
     ```bash
-    python -m src.main --trades path/to/your/trades_report.csv
+    uv run python -m src.main --trades path/to/your/trades_report.csv
     ```
     (Similar arguments exist for `--cash`, `--pos_start`, `--pos_end`, `--corp_actions`)
 
 *   **View all available options:**
     ```bash
-    python -m src.main --help
+    uv run python -m src.main --help
     ```
 
 ## Output
