@@ -243,30 +243,30 @@ def print_vorabpauschale_diagnostic(vorabpauschale_items: List[VorabpauschaleDat
 def print_withholding_tax_linking_diagnostic(events: List[FinancialEvent], asset_resolver: AssetResolver):
     """Prints diagnostic information about withholding tax linking."""
     from src.domain.events import WithholdingTaxEvent, CashFlowEvent
-    
+
     print("\n--- Withholding Tax Linking Diagnostic ---")
-    
+
     wht_events = [ev for ev in events if isinstance(ev, WithholdingTaxEvent)]
-    
+
     if not wht_events:
         print("  No withholding tax events found.")
         return
-    
+
     print(f"  Total withholding tax events: {len(wht_events)}")
-    
+
     # Count linked vs unlinked events
     linked_events = [ev for ev in wht_events if getattr(ev, 'taxed_income_event_id', None) is not None]
     unlinked_events = [ev for ev in wht_events if getattr(ev, 'taxed_income_event_id', None) is None]
-    
+
     print(f"  Linked events: {len(linked_events)}")
     print(f"  Unlinked events: {len(unlinked_events)}")
-    
+
     if linked_events:
         # Show confidence distribution
         confidence_counts = {'high': 0, 'medium': 0, 'low': 0, 'unknown': 0}
         total_confidence = 0
         count_with_confidence = 0
-        
+
         for wht_event in linked_events:
             confidence = getattr(wht_event, 'link_confidence_score', None)
             if confidence is not None:
@@ -280,13 +280,13 @@ def print_withholding_tax_linking_diagnostic(events: List[FinancialEvent], asset
                     confidence_counts['low'] += 1
             else:
                 confidence_counts['unknown'] += 1
-        
+
         print(f"  Confidence distribution: High (≥80%): {confidence_counts['high']}, Medium (60-79%): {confidence_counts['medium']}, Low (<60%): {confidence_counts['low']}, Unknown: {confidence_counts['unknown']}")
-        
+
         if count_with_confidence > 0:
             avg_confidence = total_confidence / count_with_confidence
             print(f"  Average confidence: {avg_confidence:.1f}%")
-    
+
     if unlinked_events:
         print(f"\n  Unlinked withholding tax events ({len(unlinked_events)}):")
         for wht_event in unlinked_events:
@@ -296,27 +296,27 @@ def print_withholding_tax_linking_diagnostic(events: List[FinancialEvent], asset
             print(f"    - Date: {wht_event.event_date}, Asset: {asset_desc}, Amount: {amount_str}")
             if wht_event.ibkr_activity_description:
                 print(f"      Description: {wht_event.ibkr_activity_description}")
-    
+
     # Show linking examples for linked events
     if linked_events:
         print(f"\n  Sample linked events (first 3):")
         for i, wht_event in enumerate(linked_events[:3]):
             asset = asset_resolver.get_asset_by_id(wht_event.asset_internal_id)
             asset_desc = _get_asset_display_key(asset)
-            
+
             # Find the linked income event
             income_event = None
             if wht_event.taxed_income_event_id:
                 income_event = next((ev for ev in events if ev.event_id == wht_event.taxed_income_event_id), None)
-            
+
             confidence = getattr(wht_event, 'link_confidence_score', 'N/A')
             tax_rate = getattr(wht_event, 'effective_tax_rate', None)
             tax_rate_str = f"{(tax_rate * 100):.1f}%" if tax_rate else "N/A"
-            
+
             print(f"    {i+1}. WHT Event: {wht_event.event_date}, {asset_desc}")
             print(f"       Amount: {wht_event.gross_amount_foreign_currency} {wht_event.local_currency}")
             print(f"       Confidence: {confidence}%, Tax Rate: {tax_rate_str}")
-            
+
             if income_event:
                 income_asset = asset_resolver.get_asset_by_id(income_event.asset_internal_id)
                 income_asset_desc = _get_asset_display_key(income_asset)
@@ -324,5 +324,116 @@ def print_withholding_tax_linking_diagnostic(events: List[FinancialEvent], asset
                 print(f"       Income Amount: {income_event.gross_amount_foreign_currency} {income_event.local_currency}")
             else:
                 print(f"       Linked to: Event not found (ID: {wht_event.taxed_income_event_id})")
-    
+
     print("--- End Withholding Tax Linking Diagnostic ---")
+
+
+def print_asset_pl_summary_debug(
+    asset_resolver: AssetResolver,
+    realized_gains_losses: List[RealizedGainLoss]
+):
+    """Prints debug summary of each asset with classification and gross P/L."""
+    import uuid
+
+    # Aggregate P/L by asset
+    asset_pl_map: Dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+    for rgl in realized_gains_losses:
+        asset_pl_map[rgl.asset_internal_id] += rgl.gross_gain_loss_eur
+
+    # Define category sort order
+    category_order = {
+        AssetCategory.STOCK: 1,
+        AssetCategory.BOND: 2,
+        AssetCategory.INVESTMENT_FUND: 3,
+        AssetCategory.OPTION: 4,
+        AssetCategory.CFD: 5,
+        AssetCategory.PRIVATE_SALE_ASSET: 6,
+        AssetCategory.CASH_BALANCE: 7,
+        AssetCategory.UNKNOWN: 8,
+    }
+
+    # Define fund type sort order (for sub-sorting within INVESTMENT_FUND)
+    fund_type_order = {
+        InvestmentFundType.AKTIENFONDS: 1,
+        InvestmentFundType.MISCHFONDS: 2,
+        InvestmentFundType.IMMOBILIENFONDS: 3,
+        InvestmentFundType.AUSLANDS_IMMOBILIENFONDS: 4,
+        InvestmentFundType.SONSTIGE_FONDS: 5,
+        InvestmentFundType.NONE: 6,
+    }
+
+    # Create sortable list
+    def get_sort_key(item):
+        asset_id, asset = item
+
+        # Primary: Category order
+        cat_order = category_order.get(asset.asset_category, 999)
+
+        # Secondary: Fund type (if INVESTMENT_FUND)
+        fund_order = 0
+        if isinstance(asset, InvestmentFund):
+            fund_order = fund_type_order.get(asset.fund_type, 999)
+
+        # Tertiary: Alphanumeric by identifier
+        try:
+            identifier = asset.get_classification_key()
+        except ValueError:
+            identifier = str(asset.internal_asset_id)
+
+        return (cat_order, fund_order, identifier)
+
+    # Sort assets
+    sorted_assets = sorted(
+        asset_resolver.assets_by_internal_id.items(),
+        key=get_sort_key
+    )
+
+    # Print header
+    print("\n" + "=" * 110)
+    print("DEBUG: Asset Summary with Classification and P/L")
+    print("=" * 110)
+    print(f"{'Classification':<40} | {'Identifier':<25} | {'Description':<25} | {'Gross P/L (EUR)':>15}")
+    print("-" * 110)
+
+    # Print each asset
+    total_pl = Decimal('0')
+    assets_with_pl = 0
+
+    for asset_id, asset in sorted_assets:
+        # Get full classification
+        if isinstance(asset, InvestmentFund):
+            fund_type_name = asset.fund_type.name if asset.fund_type else "NONE"
+            classification = f"{asset.asset_category.name} / {fund_type_name}"
+        else:
+            classification = asset.asset_category.name
+
+        # Get identifier
+        try:
+            identifier = asset.get_classification_key()
+        except ValueError:
+            identifier = f"ID_{str(asset.internal_asset_id)[:8]}"
+
+        # Truncate for display
+        identifier_display = identifier[:25]
+
+        # Get description
+        description = (asset.description or "N/A")[:25]
+
+        # Get total P/L for this asset
+        pl = asset_pl_map.get(asset_id, Decimal('0'))
+        if pl != Decimal('0'):
+            assets_with_pl += 1
+        total_pl += pl
+
+        # Format P/L
+        pl_display = f"{pl:,.2f}"
+
+        # Print row
+        print(f"{classification:<40} | {identifier_display:<25} | {description:<25} | {pl_display:>15}")
+
+    # Print summary
+    print("-" * 110)
+    print(f"Total Assets: {len(sorted_assets)}")
+    print(f"Assets with Realized P/L: {assets_with_pl}")
+    print(f"Total Gross P/L: {total_pl:,.2f} EUR")
+    print("=" * 110)

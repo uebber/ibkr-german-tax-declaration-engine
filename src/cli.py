@@ -20,6 +20,7 @@ def parse_arguments():
     # Reporting options
     parser.add_argument("--group-by-type", action="store_true", help="Print detailed events and asset information grouped by asset type/category.")
     parser.add_argument("--count-objects", action="store_true", help="Print counts of different object types after processing.")
+    parser.add_argument("--debug-asset-summary", action="store_true", help="Print debug summary of each asset with classification and gross P/L.")
     parser.add_argument("--report-tax-declaration", action="store_true", help="Generate and print a console tax declaration summary. Also generates a PDF report.")
     parser.add_argument("--report-stock-trades-details", type=str, metavar="SYMBOL", help="Generate a detailed report of all trades for a given stock symbol in the tax year.")
     parser.add_argument("--pdf-output-file", type=str, default=None, help="Filename for the PDF report. Defaults to tax_report_<tax_year>.pdf if --report-tax-declaration is used.")

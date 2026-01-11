@@ -22,7 +22,8 @@ from src.reporting.diagnostic_reports import (
     print_assets_by_category_diagnostic,
     print_object_counts_diagnostic,
     print_realized_gains_losses_diagnostic,
-    print_vorabpauschale_diagnostic
+    print_vorabpauschale_diagnostic,
+    print_asset_pl_summary_debug
 )
 from src.reporting.pdf_generator import PdfReportGenerator # Added PDF Generator
 
@@ -104,6 +105,12 @@ def main_application():
             all_events=processing_results.all_financial_events_enriched, # Display count of all
             rgl_items=processing_results.realized_gains_losses,
             vp_items=processing_results.vorabpauschale_items
+        )
+
+    if args.debug_asset_summary:
+        print_asset_pl_summary_debug(
+            asset_resolver=asset_resolver,
+            realized_gains_losses=processing_results.realized_gains_losses
         )
 
     if args.report_tax_declaration:

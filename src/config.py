@@ -9,7 +9,7 @@ POSITIONS_START_FILE_PATH = "data/positions_start_of_year_2023.csv"
 POSITIONS_END_FILE_PATH = "data/positions_end_of_year_2023.csv"
 CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_2023.csv" # e.g. corpact*.csv
 # Tax year being processed
-TAX_YEAR = 2023 """
+TAX_YEAR = 2024 """
 
 # TRADES_FILE_PATH = "data/Gemini_Trades.csv"
 # CASH_TRANSACTIONS_FILE_PATH = "data/Gemini_Cash_Transactions.csv"
@@ -19,11 +19,11 @@ TAX_YEAR = 2023 """
 # # Tax year being processed
 # TAX_YEAR = 2024
 
-TRADES_FILE_PATH = "data/trades_2024.csv"
-CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions_2024.csv"
-POSITIONS_START_FILE_PATH = "data/positions_start_of_year_2024.csv"
-POSITIONS_END_FILE_PATH = "data/positions_end_of_year_2024.csv"
-CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_2024.csv" # e.g. corpact*.csv
+TRADES_FILE_PATH = "data/trades.csv"
+CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions.csv"
+POSITIONS_START_FILE_PATH = "data/positions_start_of_year.csv"
+POSITIONS_END_FILE_PATH = "data/positions_end_of_year.csv"
+CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions.csv" # e.g. corpact*.csv
 # Tax year being processed
 TAX_YEAR = 2024
 
