@@ -1,2 +1,2 @@
 # src/parsers/__init__.py
-# This file can be empty.
+from .cash_balance_parser import parse_cash_balance_csv

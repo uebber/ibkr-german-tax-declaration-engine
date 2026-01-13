@@ -19,12 +19,14 @@ from src.utils.type_utils import parse_ibkr_date, parse_ibkr_datetime, safe_deci
 import src.config as global_config 
 
 from .raw_models import (
-    RawTradeRecord, RawCashTransactionRecord, RawPositionRecord, RawCorporateActionRecord
+    RawTradeRecord, RawCashTransactionRecord, RawPositionRecord, RawCorporateActionRecord,
+    RawCashBalanceRecord
 )
 from .trades_parser import parse_trades_csv
 from .cash_transactions_parser import parse_cash_transactions_csv
 from .positions_parser import parse_positions_csv
 from .corporate_actions_parser import parse_corporate_actions_csv
+from .cash_balance_parser import parse_cash_balance_csv
 from .domain_event_factory import DomainEventFactory
 # NEW IMPORTS
 from src.processing.option_trade_linker import perform_option_trade_linking
@@ -44,6 +46,7 @@ class ParsingOrchestrator:
         self.raw_positions_start: List[RawPositionRecord] = []
         self.raw_positions_end: List[RawPositionRecord] = []
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
+        self.raw_cash_balances: List[RawCashBalanceRecord] = []
 
         self.domain_financial_events: List[FinancialEvent] = []
         # NEW: Store collections for linking
@@ -58,7 +61,8 @@ class ParsingOrchestrator:
                            cash_transactions_file: Optional[str] = None,
                            positions_start_file: Optional[str] = None,
                            positions_end_file: Optional[str] = None,
-                           corporate_actions_file: Optional[str] = None):
+                           corporate_actions_file: Optional[str] = None,
+                           cash_balance_file: Optional[str] = None):
         # ... (implementation is the same)
         if trades_file:
             self.raw_trades = parse_trades_csv(trades_file)
@@ -75,6 +79,9 @@ class ParsingOrchestrator:
         if corporate_actions_file:
             self.raw_corporate_actions = parse_corporate_actions_csv(corporate_actions_file)
             logger.info(f"Loaded {len(self.raw_corporate_actions)} raw corporate action records.")
+        if cash_balance_file:
+            self.raw_cash_balances = parse_cash_balance_csv(cash_balance_file)
+            logger.info(f"Loaded {len(self.raw_cash_balances)} raw cash balance records.")
 
     def process_positions(self):
         # ... (implementation is the same)
@@ -478,7 +485,8 @@ class ParsingOrchestrator:
                              cash_transactions_file: Optional[str] = None,
                              positions_start_file: Optional[str] = None,
                              positions_end_file: Optional[str] = None,
-                             corporate_actions_file: Optional[str] = None
+                             corporate_actions_file: Optional[str] = None,
+                             cash_balance_file: Optional[str] = None
                              ) -> List[FinancialEvent]:
         logger.info("Starting parsing pipeline...")
         try:
@@ -487,7 +495,8 @@ class ParsingOrchestrator:
                 cash_transactions_file=cash_transactions_file,
                 positions_start_file=positions_start_file,
                 positions_end_file=positions_end_file,
-                corporate_actions_file=corporate_actions_file
+                corporate_actions_file=corporate_actions_file,
+                cash_balance_file=cash_balance_file
             )
             self.process_positions()
             self.discover_assets_from_transactions()

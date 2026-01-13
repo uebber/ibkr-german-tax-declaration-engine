@@ -118,3 +118,30 @@
 | `Proceeds`         | `proceeds`                  | `Optional[Decimal]`| Monetary proceeds from the CA (e.g., cash from merger).                       | Optional. Example: "0", "19000"                                                                                                             |
 | `Value`            | `value`                     | `Optional[Decimal]`| Monetary value related to the CA (e.g., FMV of stock dividend).               | Optional. Example: "0", "-18884", "149.85" (negative value seems to indicate cost/value given up in sample)                                   |
 | `Quantity`         | `quantity`                  | `Optional[Decimal]`| Quantity of shares/units involved (e.g., new shares from split/dividend).   | Optional. Example: "400", "-200" (negative for shares disposed in merger), "5"                                                              |
+
+---
+
+## 5. Cash Balance File (Currency Balances)
+- **Default Name (from `config.py`):** `cash_balance.csv`
+- **Sample File Provided:** `Gemini_Cash_Balance.csv`
+- **Purpose:** Records currency holdings at start and end of year for tracking FX positions and potential currency gains/losses under §23 EStG.
+- **Associated Pydantic Model:** `RawCashBalanceRecord` (to be implemented)
+
+**Column Specifications (based on IBKR Cash Report Flex Query):**
+
+| CSV Header              | Model Field Name (Pydantic) | Model Data Type     | Description                                                                 | Notes (Optionality, Example, Parsing Detail)                                                                                               |
+|-------------------------|-----------------------------|---------------------|-----------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `ClientAccountID`       | `client_account_id`         | `Optional[str]`     | The client's account identifier.                                            | Optional. Example: "U7542366"                                                                                                              |
+| `CurrencyPrimary`       | `currency_primary`          | `str`               | The currency code (ISO 4217).                                               | Required. Example: "EUR", "USD", "CHF", "JPY"                                                                                              |
+| `FromDate`              | `from_date`                 | `str`               | Start date of the report period (YYYYMMDD).                                 | Required. Example: "20230102"                                                                                                              |
+| `ToDate`                | `to_date`                   | `str`               | End date of the report period (YYYYMMDD).                                   | Required. Example: "20231229"                                                                                                              |
+| `StartingCash`          | `starting_cash`             | `Decimal`           | Trade date cash balance at start of period.                                 | Required. Can be negative (margin/borrowed). Example: "29230.65000374", "-331.370344641"                                                   |
+| `EndingCash`            | `ending_cash`               | `Decimal`           | Trade date cash balance at end of period.                                   | Required. Can be negative (margin/borrowed). Example: "-0.000014368", "1750.969333782"                                                     |
+
+**Notes on Currency Taxation (§23 EStG):**
+- Currency holdings held for less than 1 year are subject to private sale taxation under German tax law.
+- Gains/losses are calculated using FIFO method against acquisition costs.
+- The base currency (typically EUR) is not taxable; only foreign currency holdings are relevant.
+- FX trade data from the Trades file is required to build the FIFO lot history for accurate gain/loss calculation.
+
+**Reference:** [IBKR Cash Report Flex Statement](https://www.ibkrguides.com/reportingreference/reportguide/cash%20reportfq.htm)

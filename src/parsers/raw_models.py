@@ -221,6 +221,29 @@ class RawCorporateActionRecord(RawBaseRecord): # From corpact*.csv
         if v is None or str(v).strip() == "":
             return None
         return str(v).strip()
-        
+
+    class Config:
+        extra = 'ignore'
+
+
+class RawCashBalanceRecord(RawBaseRecord):
+    """Raw record for currency cash balances from IBKR Cash Report."""
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    from_date: str = Field(alias="FromDate")   # YYYYMMDD format
+    to_date: str = Field(alias="ToDate")       # YYYYMMDD format
+    starting_cash: Decimal = Field(alias="StartingCash")
+    ending_cash: Decimal = Field(alias="EndingCash")
+
+    @validator('starting_cash', 'ending_cash', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
+        return safe_decimal(v, default=Decimal("0.0"))
+
+    @validator('from_date', 'to_date', pre=True)
+    def validate_date_strings(cls, v: Any) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        return str(v).strip()
+
     class Config:
         extra = 'ignore'

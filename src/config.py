@@ -24,6 +24,7 @@ CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions.csv"
 POSITIONS_START_FILE_PATH = "data/positions_start_of_year.csv"
 POSITIONS_END_FILE_PATH = "data/positions_end_of_year.csv"
 CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions.csv" # e.g. corpact*.csv
+CASH_BALANCE_FILE_PATH = "data/Gemini_Cash_Balance.csv"
 # Tax year being processed
 TAX_YEAR = 2024
 
