@@ -113,3 +113,4 @@ venv.bak/
 tax_report_202?.pdf
 cache/
 data/
+ibkr_token
