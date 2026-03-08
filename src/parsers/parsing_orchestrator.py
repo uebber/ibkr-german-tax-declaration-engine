@@ -20,13 +20,14 @@ import src.config as global_config
 
 from .raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawPositionRecord, RawCorporateActionRecord,
-    RawCashBalanceRecord
+    RawCashBalanceRecord, RawOptionsEAERecord
 )
 from .trades_parser import parse_trades_csv
 from .cash_transactions_parser import parse_cash_transactions_csv
 from .positions_parser import parse_positions_csv
 from .corporate_actions_parser import parse_corporate_actions_csv
 from .cash_balance_parser import parse_cash_balance_csv
+from .options_eae_parser import parse_options_eae_csv
 from .domain_event_factory import DomainEventFactory
 # NEW IMPORTS
 from src.processing.option_trade_linker import perform_option_trade_linking
@@ -47,6 +48,7 @@ class ParsingOrchestrator:
         self.raw_positions_end: List[RawPositionRecord] = []
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
+        self.raw_options_eae: List[RawOptionsEAERecord] = []
 
         self.domain_financial_events: List[FinancialEvent] = []
         # NEW: Store collections for linking
@@ -62,7 +64,8 @@ class ParsingOrchestrator:
                            positions_start_file: Optional[str] = None,
                            positions_end_file: Optional[str] = None,
                            corporate_actions_file: Optional[str] = None,
-                           cash_balance_file: Optional[str] = None):
+                           cash_balance_file: Optional[str] = None,
+                           options_eae_file: Optional[str] = None):
         # ... (implementation is the same)
         if trades_file:
             self.raw_trades = parse_trades_csv(trades_file)
@@ -82,6 +85,9 @@ class ParsingOrchestrator:
         if cash_balance_file:
             self.raw_cash_balances = parse_cash_balance_csv(cash_balance_file)
             logger.info(f"Loaded {len(self.raw_cash_balances)} raw cash balance records.")
+        if options_eae_file:
+            self.raw_options_eae = parse_options_eae_csv(options_eae_file)
+            logger.info(f"Loaded {len(self.raw_options_eae)} raw OptionEAE records.")
 
     def process_positions(self):
         # ... (implementation is the same)
@@ -485,12 +491,14 @@ class ParsingOrchestrator:
 
         cash_events = event_factory.create_events_from_cash_transactions(self.raw_cash_transactions)
         ca_events = event_factory.create_events_from_corporate_actions(self.raw_corporate_actions)
+        options_eae_events = event_factory.create_events_from_options_eae(self.raw_options_eae) if self.raw_options_eae else []
 
         # Populate the main list of events
         self.domain_financial_events.clear() # Clear if run multiple times (though not typical)
         self.domain_financial_events.extend(all_trade_events)
         self.domain_financial_events.extend(cash_events)
         self.domain_financial_events.extend(ca_events)
+        self.domain_financial_events.extend(options_eae_events)
 
         logger.info(f"DomainEventFactory created {len(self.domain_financial_events)} total financial events initially.")
         logger.info(f"Collected {len(self.candidate_option_lifecycle_events)} candidate option lifecycle events for linking.")
@@ -565,6 +573,7 @@ class ParsingOrchestrator:
                              positions_end_file: Optional[str] = None,
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
+                             options_eae_file: Optional[str] = None,
                              tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
         logger.info("Starting parsing pipeline...")
@@ -575,7 +584,8 @@ class ParsingOrchestrator:
                 positions_start_file=positions_start_file,
                 positions_end_file=positions_end_file,
                 corporate_actions_file=corporate_actions_file,
-                cash_balance_file=cash_balance_file
+                cash_balance_file=cash_balance_file,
+                options_eae_file=options_eae_file
             )
             self.process_positions()
             self._process_cash_balance_positions(tax_year=tax_year)

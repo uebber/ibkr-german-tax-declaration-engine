@@ -121,6 +121,11 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         "corporate_actions": "Corporate_Actions",
     }
 
+    # Optional transaction types (no error if missing)
+    optional_transaction_types = {
+        "options_eae": "Options_EAE",
+    }
+
     for file_key, prefix in transaction_types.items():
         available_years = _find_years_available(prefix)
         years_to_include = [y for y in available_years if y <= tax_year]
@@ -136,6 +141,27 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
                 f"{prefix}-{tax_year}.csv not found in {IMPORT_DIR}/. "
                 f"Available years: {years_to_include}"
             )
+
+        paths = [IMPORT_DIR / f"{prefix}-{y}.csv" for y in years_to_include]
+        output_path = WORKING_DIR / f"{file_key}.csv"
+
+        if len(paths) == 1:
+            _copy_file(paths[0], output_path)
+        else:
+            _concatenate_csvs(paths, output_path)
+
+        result[file_key] = str(output_path)
+        logger.info("%s: %d year(s) included (%s)", file_key, len(years_to_include),
+                    ", ".join(str(y) for y in years_to_include))
+
+    for file_key, prefix in optional_transaction_types.items():
+        available_years = _find_years_available(prefix)
+        years_to_include = [y for y in available_years if y <= tax_year]
+
+        if not years_to_include:
+            logger.info("No %s files found in %s/. Skipping.", prefix, IMPORT_DIR)
+            result[file_key] = ""
+            continue
 
         paths = [IMPORT_DIR / f"{prefix}-{y}.csv" for y in years_to_include]
         output_path = WORKING_DIR / f"{file_key}.csv"

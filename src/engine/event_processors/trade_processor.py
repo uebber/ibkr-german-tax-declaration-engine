@@ -457,33 +457,47 @@ class TradeProcessor(EventProcessor):
 
         eur_per_unit = comm_eur_abs / comm_abs
 
-        # Consume from long lots (commission is a cash outflow)
-        available_long_qty = sum(lot.quantity for lot in currency_ledger.lots)
+        # Positive commission = rebate (cash inflow), negative = normal fee (cash outflow)
+        is_rebate = commission_amount > Decimal("0")
 
-        if available_long_qty > Decimal("0"):
-            qty_to_consume = min(comm_abs, available_long_qty)
-            long_results = currency_processor.realize_long_lots_for_cashflow_expense(
-                currency_ledger, currency_asset.internal_asset_id,
-                event.event_date, event.event_id, event.ibkr_transaction_id,
-                qty_to_consume, eur_per_unit
-            )
-            results.extend(long_results)
-
-            if long_results:
-                total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in long_results)
-                logger.info(
-                    f"Trade {event.event_id}: Commission FX from consuming {qty_to_consume:.2f} "
-                    f"{commission_currency}. FX gain/loss: {total_fx_gl:.2f} EUR"
-                )
-
-            comm_abs -= qty_to_consume
-
-        # If insufficient balance, open short
-        if comm_abs > Decimal("1e-10"):
-            currency_processor.open_short_position_for_cashflow_expense(
+        if is_rebate:
+            # Commission rebate: acquire currency (same as receiving proceeds)
+            currency_processor.create_long_lot_for_security_trade(
                 currency_ledger, event.event_date, event.ibkr_transaction_id,
                 comm_abs, eur_per_unit
             )
+            logger.debug(
+                f"Trade {event.event_id}: Commission rebate created {comm_abs:.2f} "
+                f"{commission_currency} lot @ {eur_per_unit:.6f} EUR per unit"
+            )
+        else:
+            # Normal commission fee: consume currency (cash outflow)
+            available_long_qty = sum(lot.quantity for lot in currency_ledger.lots)
+
+            if available_long_qty > Decimal("0"):
+                qty_to_consume = min(comm_abs, available_long_qty)
+                long_results = currency_processor.realize_long_lots_for_cashflow_expense(
+                    currency_ledger, currency_asset.internal_asset_id,
+                    event.event_date, event.event_id, event.ibkr_transaction_id,
+                    qty_to_consume, eur_per_unit
+                )
+                results.extend(long_results)
+
+                if long_results:
+                    total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in long_results)
+                    logger.info(
+                        f"Trade {event.event_id}: Commission FX from consuming {qty_to_consume:.2f} "
+                        f"{commission_currency}. FX gain/loss: {total_fx_gl:.2f} EUR"
+                    )
+
+                comm_abs -= qty_to_consume
+
+            # If insufficient balance, open short
+            if comm_abs > Decimal("1e-10"):
+                currency_processor.open_short_position_for_cashflow_expense(
+                    currency_ledger, event.event_date, event.ibkr_transaction_id,
+                    comm_abs, eur_per_unit
+                )
 
         return results
 

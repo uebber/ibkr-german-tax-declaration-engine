@@ -67,7 +67,11 @@ class CurrencyConversionProcessor:
         """
         results: List[RealizedGainLoss] = []
 
-        # Phase 5b: Detect and log cross-currency FX trades
+        # Phase 5b: Cross-currency conversions (e.g., USD→GBP).
+        # Each side is valued independently via ECB reference rate to EUR.
+        # The EUR values may not sum to zero — this is correct per German tax law.
+        # ECB rates are independent reference rates; cross-rate consistency is not required.
+        # Each currency position's cost basis / proceeds must use its own ECB rate.
         from_is_non_eur = event.from_currency.upper() != "EUR"
         to_is_non_eur = event.to_currency.upper() != "EUR"
         if from_is_non_eur and to_is_non_eur:

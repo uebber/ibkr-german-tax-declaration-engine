@@ -9,8 +9,9 @@ from datetime import datetime, date
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,
-    CorpActionExpireDividendRights, OptionExerciseEvent, OptionAssignmentEvent, 
-    OptionExpirationWorthlessEvent, OptionLifecycleEvent, CashFlowEvent, FeeEvent, 
+    CorpActionExpireDividendRights, OptionExerciseEvent, OptionAssignmentEvent,
+    OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
+    OptionLifecycleEvent, CashFlowEvent, FeeEvent,
     WithholdingTaxEvent, CurrencyConversionEvent
 )
 from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance
@@ -33,7 +34,8 @@ from .event_processors.corporate_action_processor import (
     GenericCorporateActionProcessor, ExpireDividendRightsProcessor
 )
 from .event_processors.option_processor import (
-    OptionExerciseProcessor, OptionAssignmentProcessor, OptionExpirationWorthlessProcessor
+    OptionExerciseProcessor, OptionAssignmentProcessor, OptionExpirationWorthlessProcessor,
+    OptionCashSettlementProcessor
 )
 from .event_processors.currency_conversion_processor import CurrencyConversionProcessor
 
@@ -69,8 +71,11 @@ def _initialize_currency_soy_ledger(ledger: FifoLedger, asset: CashBalance, tax_
     # Get ECB rate at fallback date for cost basis calculation
     ecb_rate = exchange_rate_provider.get_rate(fallback_date, asset.currency)
     if ecb_rate is None or ecb_rate == Decimal("0"):
-        logger.warning(f"Currency {asset.currency}: No ECB rate for {fallback_date_str}, using 1:1 fallback")
-        ecb_rate = Decimal("1")
+        raise ValueError(
+            f"Currency {asset.currency}: No ECB rate available for SOY date {fallback_date_str}. "
+            f"Cannot initialize currency FIFO ledger without a valid exchange rate. "
+            f"Ensure ECB rate cache covers this date."
+        )
 
     if reported_soy_qty > Decimal("0"):
         # Positive SOY = long position
@@ -147,6 +152,7 @@ def run_main_calculations(
     vorabpauschale_data_items: List[VorabpauschaleData] = []
 
     historical_events_by_asset: DefaultDict[uuid.UUID, List[FinancialEvent]] = defaultdict(list)
+    historical_merger_events: List[CorpActionMergerStock] = []
     historical_currency_events: DefaultDict[str, List[FinancialEvent]] = defaultdict(list)
     current_year_events: List[FinancialEvent] = []
 
@@ -175,7 +181,9 @@ def run_main_calculations(
             continue 
 
         if event_date_obj < tax_year_start_date_obj:
-            if isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)):
+            if isinstance(event, CorpActionMergerStock):
+                historical_merger_events.append(event)
+            elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)):
                 historical_events_by_asset[event.asset_internal_id].append(event)
             elif isinstance(event, CurrencyConversionEvent):
                 # CurrencyConversionEvents need to be associated with the non-EUR currency's asset ID
@@ -209,7 +217,9 @@ def run_main_calculations(
     fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}
     currency_fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}  # Separate dict for currency ledgers
 
-    logger.info("Initializing FIFO ledgers from Start-of-Year positions and historical data...")
+    # === Three-pass SOY initialization ===
+    # Pass 1: Create ledgers and simulate historical events (trades, splits, stock dividends)
+    logger.info("Pass 1: Creating FIFO ledgers and simulating historical events...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if asset_obj.asset_category != AssetCategory.CASH_BALANCE:
             asset_multiplier_val: Optional[Decimal] = None
@@ -224,7 +234,7 @@ def run_main_calculations(
                 asset_internal_id=asset_id, asset_category=asset_obj.asset_category,
                 asset_multiplier_from_asset=asset_multiplier_val,
                 currency_converter=currency_converter, exchange_rate_provider=exchange_rate_provider,
-                internal_working_precision=internal_calculation_precision, # Pass renamed variable
+                internal_working_precision=internal_calculation_precision,
                 decimal_rounding_mode=decimal_rounding_mode,
                 fund_type=asset_fund_type
             )
@@ -241,18 +251,78 @@ def run_main_calculations(
                     raise e
 
             try:
-                ledger.initialize_lots_from_soy(
+                ledger.simulate_historical_events(
                     asset=asset_obj,
                     all_historical_events_for_asset=asset_historical_events_for_soy_init,
                     tax_year=tax_year
                 )
             except ValueError as e:
-                logger.critical(f"Fatal error initializing FIFO lots from SOY for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
+                logger.critical(f"Fatal error simulating historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
                 raise e
 
             fifo_ledgers[asset_id] = ledger
 
-    logger.info(f"Initialized {len(fifo_ledgers)} FIFO ledgers.")
+    # Pass 2: Replay historical mergers in chronological order
+    if historical_merger_events:
+        logger.info(f"Pass 2: Replaying {len(historical_merger_events)} historical stock merger(s)...")
+        try:
+            sorted_mergers = sorted(historical_merger_events, key=lambda e: get_event_sort_key(e, asset_resolver))
+        except ValueError as e:
+            logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
+            raise e
+
+        for merger_event in sorted_mergers:
+            source_ledger = fifo_ledgers.get(merger_event.asset_internal_id)
+            target_ledger = fifo_ledgers.get(merger_event.new_asset_internal_id)
+
+            if source_ledger is None:
+                logger.warning(f"Historical merger {merger_event.event_id}: No source ledger for {merger_event.asset_internal_id}. Skipping.")
+                continue
+            if target_ledger is None:
+                logger.error(f"Historical merger {merger_event.event_id}: No target ledger for {merger_event.new_asset_internal_id}. Cannot transfer lots.")
+                raise ValueError(f"Target ledger missing for historical merger {merger_event.event_id}")
+
+            source_long_lots = source_ledger.drain_all_long_lots()
+            source_short_lots = source_ledger.drain_all_short_lots()
+            if not source_long_lots and not source_short_lots:
+                logger.debug(f"Historical merger {merger_event.event_id}: Source ledger {merger_event.asset_internal_id} has no lots. Skipping.")
+                continue
+
+            try:
+                target_ledger.receive_all_lots_from_merger(
+                    source_long_lots, source_short_lots,
+                    merger_event.new_shares_received_per_old, merger_event
+                )
+            except Exception as e:
+                # Rollback source
+                source_ledger.lots.extend(source_long_lots)
+                source_ledger.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
+                source_ledger.short_lots.extend(source_short_lots)
+                source_ledger.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
+                logger.error(f"Historical merger {merger_event.event_id}: Failed to transfer lots. Rolled back. Error: {e}")
+                raise
+
+            assert len(source_ledger.lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no long lots after historical merger"
+            assert len(source_ledger.short_lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no short lots after historical merger"
+
+            logger.info(f"Historical merger: Transferred {len(source_long_lots)} long + {len(source_short_lots)} "
+                         f"short lots from {merger_event.asset_internal_id} to {merger_event.new_asset_internal_id} "
+                         f"(ratio: {merger_event.new_shares_received_per_old})")
+    else:
+        logger.info("Pass 2: No historical stock mergers to replay.")
+
+    # Pass 3: Reconcile all ledgers against SoY positions (after merger lots are in place)
+    logger.info("Pass 3: Reconciling ledgers with SoY positions...")
+    for asset_id, ledger in fifo_ledgers.items():
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
+        if asset_obj:
+            try:
+                ledger.reconcile_with_soy_position(asset_obj, tax_year)
+            except ValueError as e:
+                logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
+                raise e
+
+    logger.info(f"Initialized {len(fifo_ledgers)} FIFO ledgers (three-pass).")
 
     # Initialize currency FIFO ledgers with comprehensive historical replay
     logger.info("Initializing currency FIFO ledgers for foreign currency positions...")
@@ -322,6 +392,7 @@ def run_main_calculations(
     option_exercise_processor = OptionExerciseProcessor()
     option_assignment_processor = OptionAssignmentProcessor()
     option_expiration_processor = OptionExpirationWorthlessProcessor()
+    option_cash_settlement_processor = OptionCashSettlementProcessor()
 
     # Currency conversion processor for FX trades
     currency_conversion_processor = CurrencyConversionProcessor(
@@ -343,6 +414,7 @@ def run_main_calculations(
         FinancialEventType.OPTION_EXERCISE: option_exercise_processor,
         FinancialEventType.OPTION_ASSIGNMENT: option_assignment_processor,
         FinancialEventType.OPTION_EXPIRATION_WORTHLESS: option_expiration_processor,
+        FinancialEventType.OPTION_CASH_SETTLEMENT: option_cash_settlement_processor,
     }
 
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")
@@ -362,7 +434,7 @@ def run_main_calculations(
             logger.warning(f"Event {event.event_id} is generic CorporateActionEvent with type {event.event_type.name} for asset {_format_asset_info(asset_object)} but specific processor expects subclass. Using GenericCorporateActionProcessor.")
             processor = generic_ca_processor
 
-        if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS]):
+        if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS, FinancialEventType.OPTION_CASH_SETTLEMENT]):
             if not ledger and asset_object.asset_category == AssetCategory.OPTION:
                 logger.warning(f"Option event {event.event_id} ({event.event_type.name}) occurred, but no FIFO ledger exists. Processor will handle.")
             elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:
@@ -372,20 +444,31 @@ def run_main_calculations(
             try:
                 context: Dict[str, Any] = {
                     'asset_resolver': asset_resolver,
+                    'fifo_ledgers': fifo_ledgers,
                     'pending_option_adjustments': pending_option_adjustments,
                     'currency_converter': currency_converter,
                     # Phase 5a: Pass currency infrastructure for implicit FX from security trades
                     'currency_fifo_ledgers': currency_fifo_ledgers,
                     'currency_processor': currency_conversion_processor,
                 }
-                logger.debug(f"Dispatching event {event.event_id} ({event.event_type.name}) to {type(processor).__name__}")
-
                 current_ledger = ledger if ledger else None
-                new_rgls = processor.process(event, current_ledger, context)
 
-                if new_rgls:
-                    realized_gains_losses.extend(new_rgls)
-                    logger.debug(f"  Processor generated {len(new_rgls)} RGL records.")
+                # Split position flip events (C;O / O;C) into close + open sub-events
+                if isinstance(event, TradeEvent) and event.is_position_flip and current_ledger:
+                    from .fifo_manager import split_position_flip_event
+                    avail_long = sum(lot.quantity for lot in current_ledger.lots) if current_ledger.lots else Decimal(0)
+                    avail_short = sum(lot.quantity_shorted for lot in current_ledger.short_lots) if current_ledger.short_lots else Decimal(0)
+                    sub_events = split_position_flip_event(event, avail_long, avail_short)
+                else:
+                    sub_events = [event]
+
+                for dispatch_event in sub_events:
+                    sub_processor = event_processor_map.get(dispatch_event.event_type, processor)
+                    logger.debug(f"Dispatching event {dispatch_event.event_id} ({dispatch_event.event_type.name}) to {type(sub_processor).__name__}")
+                    new_rgls = sub_processor.process(dispatch_event, current_ledger, context)
+                    if new_rgls:
+                        realized_gains_losses.extend(new_rgls)
+                        logger.debug(f"  Processor generated {len(new_rgls)} RGL records.")
 
             except ValueError as e:
                 logger.critical(f"Fatal error processing event {event.event_id} ({event.event_type.name}) for asset {asset_object.get_classification_key()} via {type(processor).__name__}: {e}. Aborting.")
@@ -876,6 +959,13 @@ def _collect_historical_currency_event(
             historical_currency_events[ccy].append(event)
         return
 
+    # Cash merger: acquisition proceeds create foreign currency cash
+    if isinstance(event, CorpActionMergerCash):
+        ccy = (event.local_currency or "").upper()
+        if ccy and ccy != "EUR" and event.gross_amount_foreign_currency:
+            historical_currency_events[ccy].append(event)
+        return
+
     # Cash flow events: dividends, interest, WHT, fees, etc.
     ccy = getattr(event, 'local_currency', None)
     if ccy:
@@ -941,6 +1031,23 @@ def _replay_historical_currency_events(
                         )
                         replayed += 1
 
+            elif isinstance(event, CorpActionMergerCash):
+                # Cash merger: acquisition proceeds create currency lot
+                ccy = (event.local_currency or "").upper()
+                if ccy != currency_code:
+                    continue
+
+                foreign_amount = event.gross_amount_foreign_currency
+                eur_amount = event.gross_amount_eur
+
+                if foreign_amount and eur_amount and foreign_amount > Decimal("0") and eur_amount > Decimal("0"):
+                    eur_per_unit = ctx.divide(eur_amount, foreign_amount)
+                    _create_lot_historical(
+                        ledger, foreign_amount, eur_per_unit, event.event_date,
+                        event.ibkr_transaction_id, ctx
+                    )
+                    replayed += 1
+
             elif isinstance(event, TradeEvent):
                 trade_ccy = (event.local_currency or "").upper()
                 if trade_ccy != currency_code:
@@ -963,8 +1070,13 @@ def _replay_historical_currency_events(
                             event.ibkr_transaction_id, ctx
                         )
                         replayed += 1
+                elif foreign_amount is not None and foreign_amount < Decimal("0"):
+                    logger.warning(
+                        f"Historical currency replay: Trade {event.event_id} has negative "
+                        f"gross_amount_foreign_currency ({foreign_amount}). Skipping currency impact."
+                    )
 
-                # Commission (always an outflow, typically same currency as trade)
+                # Commission: negative = fee (outflow), positive = rebate (inflow)
                 comm = event.commission_foreign_currency
                 comm_ccy = (event.commission_currency or "").upper()
                 comm_eur = event.commission_eur
@@ -973,7 +1085,12 @@ def _replay_historical_currency_events(
                     comm_eur_abs = comm_eur.copy_abs()
                     if comm_abs > Decimal("0") and comm_eur_abs > Decimal("0"):
                         comm_eur_per_unit = ctx.divide(comm_eur_abs, comm_abs)
-                        _consume_lots_historical(ledger, comm_abs, comm_eur_per_unit, event.event_date, ctx)
+                        if comm > Decimal("0"):
+                            # Rebate: creates currency inflow
+                            _create_lot_historical(ledger, comm_abs, comm_eur_per_unit, event.event_date, event.ibkr_transaction_id, ctx)
+                        else:
+                            # Normal fee: consumes currency
+                            _consume_lots_historical(ledger, comm_abs, comm_eur_per_unit, event.event_date, ctx)
 
             else:
                 # Cash flow event
@@ -986,6 +1103,12 @@ def _replay_historical_currency_events(
 
                 if foreign_amount is None or eur_amount is None:
                     continue
+
+                if foreign_amount < Decimal("0"):
+                    logger.warning(
+                        f"Historical currency replay: CashFlow {event.event_id} has negative "
+                        f"gross_amount_foreign_currency ({foreign_amount}). Using absolute value."
+                    )
 
                 fa_abs = foreign_amount.copy_abs()
                 ea_abs = eur_amount.copy_abs()
@@ -1145,8 +1268,11 @@ def _reconcile_currency_soy(
 
     ecb_rate = exchange_rate_provider.get_rate(fallback_date, asset.currency)
     if ecb_rate is None or ecb_rate == Decimal("0"):
-        logger.warning(f"Currency {asset.currency}: No ECB rate for SOY reconciliation, using 1:1")
-        ecb_rate = Decimal("1")
+        raise ValueError(
+            f"Currency {asset.currency}: No ECB rate available for SOY reconciliation date {fallback_date_str}. "
+            f"Cannot reconcile currency FIFO ledger without a valid exchange rate. "
+            f"Ensure ECB rate cache covers this date."
+        )
 
     # Default EUR per unit from ECB rate
     default_unit_eur = ctx.divide(Decimal("1"), ecb_rate)
@@ -1179,9 +1305,9 @@ def _reconcile_currency_soy(
         # FIFO > SOY: too much currency, consume excess from long lots
         excess = diff.copy_abs()
 
-        # For negative SOY (short position), create short lot with provided proceeds
-        if reported_soy < Decimal("0") and fifo_qty <= Decimal("0.01"):
-            # Pure short position from SOY
+        # For negative SOY (short position) with no historical lots at all, create full SOY short lot
+        if reported_soy < Decimal("0") and long_qty <= Decimal("0.01") and short_qty <= Decimal("0.01"):
+            # Pure short position from SOY — no historical lots exist
             soy_abs = reported_soy.copy_abs()
             if hasattr(asset, 'soy_short_proceeds_eur') and asset.soy_short_proceeds_eur:
                 total_proceeds = asset.soy_short_proceeds_eur

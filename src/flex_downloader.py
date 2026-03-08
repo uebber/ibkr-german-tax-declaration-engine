@@ -453,6 +453,7 @@ def download_and_merge(
         "cash_transactions": "Cash_Transactions",
         "corporate_actions": "Corporate_Actions",
         "cash_balance": "Cash_Balance",
+        "options_eae": "Options_EAE",
     }
 
     # Positions are special: SOY and EOY are separate files from the same query

@@ -61,6 +61,11 @@ class TradeEvent(FinancialEvent):
     # If this trade results from an option event (exercise/assignment)
     related_option_event_id: Optional[uuid.UUID] = None
 
+    # True if this trade is a position flip (IBKR C;O or O;C indicator),
+    # meaning part closes existing position and part opens opposite direction.
+    # Split into two sub-events at FIFO dispatch time when ledger state is known.
+    is_position_flip: bool = False
+
     # event_type will be one of:
     # TRADE_BUY_LONG, TRADE_SELL_LONG, TRADE_SELL_SHORT_OPEN, TRADE_BUY_SHORT_COVER
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
@@ -71,6 +76,7 @@ class TradeEvent(FinancialEvent):
                  commission_eur: Optional[Decimal] = None,
                  net_proceeds_or_cost_basis_eur: Optional[Decimal] = None,
                  related_option_event_id: Optional[uuid.UUID] = None,
+                 is_position_flip: bool = False,
                  **kwargs_for_parent_kw_only): # Catches event_id, gross_amount_foreign_currency etc.
         super().__init__(asset_internal_id, event_date, event_type=event_type, **kwargs_for_parent_kw_only)
         self.quantity = quantity
@@ -80,6 +86,7 @@ class TradeEvent(FinancialEvent):
         self.commission_eur = commission_eur
         self.net_proceeds_or_cost_basis_eur = net_proceeds_or_cost_basis_eur
         self.related_option_event_id = related_option_event_id
+        self.is_position_flip = is_position_flip
 
     def __post_init__(self):
         super().__post_init__()
@@ -311,6 +318,40 @@ class OptionExpirationWorthlessEvent(OptionLifecycleEvent):
         super().__init__(asset_internal_id, event_date, quantity_contracts=quantity_contracts,
                          event_type=FinancialEventType.OPTION_EXPIRATION_WORTHLESS,
                          **kwargs_for_parent_kw_only)
+    def __post_init__(self): super().__post_init__()
+
+
+@dataclass
+class OptionCashSettlementEvent(OptionLifecycleEvent):
+    """Cash settlement for index options (SPX, ESTX50).
+
+    The cash_settlement_proceeds is the total intrinsic value exchanged:
+    - Positive = money received (long option exercised ITM)
+    - Negative = money paid out (short option assigned ITM)
+
+    The related_option_event_id links to the companion Assignment/Exercise event
+    that closed the option position.
+    """
+    _: KW_ONLY
+    cash_settlement_proceeds: Decimal  # In local_currency, signed
+    commission_foreign_currency: Decimal = Decimal('0')
+    commission_eur: Optional[Decimal] = None
+    related_option_event_id: Optional[uuid.UUID] = None
+
+    def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
+                 quantity_contracts: Decimal,
+                 cash_settlement_proceeds: Decimal,
+                 commission_foreign_currency: Decimal = Decimal('0'),
+                 commission_eur: Optional[Decimal] = None,
+                 related_option_event_id: Optional[uuid.UUID] = None,
+                 **kwargs_for_parent_kw_only):
+        super().__init__(asset_internal_id, event_date, quantity_contracts=quantity_contracts,
+                         event_type=FinancialEventType.OPTION_CASH_SETTLEMENT,
+                         **kwargs_for_parent_kw_only)
+        self.cash_settlement_proceeds = cash_settlement_proceeds
+        self.commission_foreign_currency = commission_foreign_currency
+        self.commission_eur = commission_eur
+        self.related_option_event_id = related_option_event_id
     def __post_init__(self): super().__post_init__()
 
 

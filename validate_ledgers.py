@@ -85,6 +85,7 @@ def run_validation_for_year(year: int) -> YearResult:
             interactive_classification_mode=False,
             tax_year_to_process=year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
+            options_eae_file_path=data_paths.get("options_eae", "") or None,
         )
     except Exception as e:
         result.success = False

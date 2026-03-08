@@ -226,6 +226,46 @@ class RawCorporateActionRecord(RawBaseRecord): # From corpact*.csv
         extra = 'ignore'
 
 
+class RawOptionsEAERecord(RawBaseRecord):
+    """Raw record from IBKR OptionEAE Flex Query (Option Exercises, Assignments, Expirations)."""
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    fx_rate_to_base: Optional[Decimal] = Field(None, alias="FXRateToBase")
+    asset_class: Optional[str] = Field(None, alias="AssetClass")
+    symbol: str = Field(alias="Symbol")
+    description: str = Field(alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    underlying_conid: Optional[str] = Field(None, alias="UnderlyingConid")
+    underlying_symbol: Optional[str] = Field(None, alias="UnderlyingSymbol")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    strike: Optional[Decimal] = Field(None, alias="Strike")
+    expiry: Optional[str] = Field(None, alias="Expiry")
+    put_call: Optional[str] = Field(None, alias="Put/Call")
+    date: str = Field(alias="Date")
+    transaction_type: str = Field(alias="Transaction Type")
+    quantity: Optional[Decimal] = Field(None, alias="Quantity")
+    trade_price: Optional[Decimal] = Field(None, alias="Trade Price")
+    proceeds: Optional[Decimal] = Field(None, alias="Proceeds")
+    comm_tax: Optional[Decimal] = Field(None, alias="Comm/Tax")
+    basis: Optional[Decimal] = Field(None, alias="Basis")
+    realized_pnl: Optional[Decimal] = Field(None, alias="RealizedPnl")
+
+    @validator('fx_rate_to_base', 'multiplier', 'strike', 'quantity', 'trade_price',
+               'proceeds', 'comm_tax', 'basis', 'realized_pnl', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
+        return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
+
+    @validator('date', 'expiry', pre=True)
+    def validate_date_strings(cls, v: Any) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        return str(v).strip()
+
+    class Config:
+        extra = 'ignore'
+
+
 class RawCashBalanceRecord(RawBaseRecord):
     """Raw record for currency cash balances from IBKR Cash Report."""
     client_account_id: Optional[str] = Field(None, alias="ClientAccountID")

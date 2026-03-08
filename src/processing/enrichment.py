@@ -5,7 +5,7 @@ from typing import List
 
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionStockDividend, CorpActionMergerCash,
-    FinancialEventType
+    OptionCashSettlementEvent, FinancialEventType
 )
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.type_utils import parse_ibkr_date
@@ -158,6 +158,22 @@ def enrich_financial_events(
                 elif not event.local_currency:
                      logger.warning(f"Event {event_idx+1} (CorpActionMergerCash ID: {event.event_id}): Missing currency. Cannot convert cash_per_share to EUR.")
                      eur_corp_action_detail_conversions_failed += 1
+
+        # 3b. Enrich OptionCashSettlementEvent commission
+        elif isinstance(event, OptionCashSettlementEvent):
+            if event.commission_foreign_currency is not None and event.commission_eur is None:
+                comm = event.commission_foreign_currency
+                if comm == Decimal("0"):
+                    event.commission_eur = Decimal("0")
+                elif event.local_currency and event.local_currency.upper() != "EUR":
+                    eur_comm = currency_converter.convert_to_eur(comm, event.local_currency, event_date_obj)
+                    if eur_comm is not None:
+                        event.commission_eur = ctx.create_decimal(eur_comm)
+                    else:
+                        logger.warning(f"Event {event_idx+1} (CashSettlement {event.event_id}): "
+                                      f"Could not convert commission {comm} {event.local_currency} to EUR.")
+                elif event.local_currency and event.local_currency.upper() == "EUR":
+                    event.commission_eur = ctx.create_decimal(comm)
 
         # 4. Enrich CorpActionStockDividend specific fields
         elif isinstance(event, CorpActionStockDividend):

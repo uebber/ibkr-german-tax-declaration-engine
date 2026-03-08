@@ -7,22 +7,24 @@
 German tax residents using Interactive Brokers (IBKR) often face significant challenges in accurately completing their tax declaration forms, especially Anlage KAP, Anlage KAP-INV, and Anlage SO. This tool aims to simplify this process by:
 
 1.  Parsing your IBKR Flex Query CSV reports (with full historical data for FIFO cost basis).
-2.  Identifying and classifying your assets (stocks, bonds, ETFs, options, etc.).
+2.  Identifying and classifying your assets (stocks, bonds, ETFs, options, CFDs, etc.).
 3.  Performing currency conversions to EUR using daily ECB rates.
 4.  Calculating capital gains/losses using the FIFO method (with `Decimal` precision).
-5.  Handling corporate actions (splits, cash mergers, taxable stock dividends).
-6.  Processing option exercises, assignments, and expirations.
-7.  Calculating income from dividends, interest, and fees within the tax year.
-8.  Applying German Teilfreistellung (partial tax exemption) for investment funds.
-9.  Calculating Vorabpauschale for investment funds.
-10. Aggregating figures required for specific lines on the German tax forms.
-11. Generating a console summary and a detailed PDF report for your records.
+5.  Handling corporate actions (splits, cash mergers, stock-for-stock mergers, taxable stock dividends).
+6.  Processing option exercises, assignments, expirations, and cash settlements (index options).
+7.  Tracking position flips (IBKR `C;O` / `O;C` indicators) with automatic FIFO lot splitting.
+8.  Calculating income from dividends, interest, and fees within the tax year.
+9.  Applying German Teilfreistellung (partial tax exemption) for investment funds.
+10. Calculating Vorabpauschale for investment funds.
+11. Tracking foreign currency positions and FX gains/losses under section 23 EStG.
+12. Aggregating figures required for specific lines on the German tax forms.
+13. Generating a console summary and a detailed PDF report for your records.
 
 ## Prerequisites
 
 *   **Python 3.10 or higher.**
 *   **`uv`** (Python package manager). Install from: https://docs.astral.sh/uv/getting-started/installation/
-*   **IBKR Flex Query Reports (CSV format).**
+*   **IBKR Flex Query Reports (CSV format)** -- see [Setting Up IBKR Flex Queries](#setting-up-ibkr-flex-queries) below.
 
 ## Installation
 
@@ -37,6 +39,229 @@ German tax residents using Interactive Brokers (IBKR) often face significant cha
     uv sync
     ```
 
+## Setting Up IBKR Flex Queries
+
+Before you can use this tool, you need to create several Flex Queries in the IBKR Client Portal that export exactly the columns the engine expects. This section walks you through the full setup.
+
+### Navigating to Flex Queries
+
+1. Log into the [IBKR Client Portal](https://www.interactivebrokers.com/portal).
+2. Navigate to **Performance & Reports > Flex Queries** (or **Menu > Reporting > Flex Queries**).
+3. In the **Activity Flex Query** section, click the **+** icon to create a new query.
+
+### General Configuration (same for all queries)
+
+For each query, configure these general settings:
+
+| Setting | Value |
+|---------|-------|
+| **Format** | CSV |
+| **Include column headers** | Yes |
+| **Date Format** | yyyy-MM-dd |
+| **Time Format** | HH:mm:ss |
+| **Date/Time Separator** | `;` (semicolon) |
+| **Period** | Last 365 Calendar Days (overridden via API for specific years) |
+
+### Query 1: Trades
+
+Create an Activity Flex Query with only the **Trades** section enabled.
+
+Select these fields (order matters for readability, but the parser matches by header name):
+
+| # | Field to Select | Description |
+|---|-----------------|-------------|
+| 1 | ClientAccountID | Account identifier |
+| 2 | CurrencyPrimary | Transaction currency |
+| 3 | AssetClass | STK, OPT, BOND, CFD, CASH |
+| 4 | SubCategory | COMMON, ETF, ADR, Corp, etc. |
+| 5 | Symbol | Trading symbol |
+| 6 | Description | Instrument description |
+| 7 | ISIN | International Securities Identification Number |
+| 8 | Strike | Option strike price |
+| 9 | Expiry | Option/future expiration date |
+| 10 | Put/Call | C or P for options |
+| 11 | TradeDate | Date of the trade |
+| 12 | Quantity | Units traded (positive=buy, negative=sell) |
+| 13 | TradePrice | Price per unit |
+| 14 | IBCommission | Commission charged (usually negative) |
+| 15 | IBCommissionCurrency | Currency of commission |
+| 16 | Buy/Sell | BUY or SELL |
+| 17 | TransactionID | Unique transaction identifier |
+| 18 | Notes/Codes | Trade codes (P=partial, A=assignment, Ex=exercise, Ep=expiration) |
+| 19 | UnderlyingSymbol | Underlying for derivatives |
+| 20 | Conid | Contract identifier |
+| 21 | UnderlyingConid | Contract ID of the underlying |
+| 22 | Multiplier | Contract multiplier (e.g. 100 for options) |
+| 23 | **Open/CloseIndicator** | **O** (open) or **C** (close) -- **CRITICAL** |
+
+**CRITICAL:** The `Open/CloseIndicator` field is essential for accurate trade classification. Without it, the engine cannot distinguish opening from closing trades. IBKR also uses composite values like `C;O` for position flips (a single trade that closes one position and opens the opposite direction), which the engine handles automatically.
+
+### Query 2: Cash Transactions
+
+Create an Activity Flex Query with only the **Cash Transactions** section enabled.
+
+Select these fields:
+
+| # | Field to Select | Description |
+|---|-----------------|-------------|
+| 1 | ClientAccountID | Account identifier |
+| 2 | CurrencyPrimary | Transaction currency |
+| 3 | AssetClass | Related asset class (STK, BOND, etc.) |
+| 4 | SubCategory | Asset sub-category |
+| 5 | Symbol | Related instrument symbol |
+| 6 | Description | Transaction description (used for type determination) |
+| 7 | SettleDate | Settlement date |
+| 8 | Amount | Monetary amount (positive=inflow, negative=outflow) |
+| 9 | Type | Transaction type (Dividends, Withholding Tax, etc.) |
+| 10 | Conid | Contract identifier |
+| 11 | UnderlyingConid | Underlying contract ID |
+| 12 | ISIN | ISIN of related instrument |
+| 13 | IssuerCountryCode | ISO country code of issuer (for WHT source) |
+| 14 | TransactionID | Unique transaction identifier |
+
+**Transaction Types to Include:** When configuring the Cash Transactions section, ensure **all** of the following transaction types are selected. Missing types cause currency EOY balance mismatches.
+
+| Transaction Type | Why It's Needed |
+|------------------|-----------------|
+| Dividends | Dividend income |
+| Withholding Tax | Foreign withholding tax |
+| Broker Interest Received | Interest income |
+| Broker Interest Paid | Interest expense |
+| Payment In Lieu Of Dividends | Substitute dividend payments |
+| Bond Interest Received | Bond coupon income |
+| Bond Interest Paid | Stueckzinsen (accrued interest paid on purchase) |
+| Other Fees | Miscellaneous fees |
+| Deposits/Withdrawals | Cash movements |
+| Commission Adjustments | Commission corrections |
+
+### Query 3: Corporate Actions
+
+Create an Activity Flex Query with only the **Corporate Actions** section enabled.
+
+Select these fields:
+
+| # | Field to Select | Description |
+|---|-----------------|-------------|
+| 1 | ClientAccountID | Account identifier |
+| 2 | Symbol | Affected instrument symbol |
+| 3 | Description | Corporate action description (parsed for merger ratios, etc.) |
+| 4 | ISIN | ISIN of affected instrument |
+| 5 | Report Date | Date the action was reported |
+| 6 | Code | IBKR sub-type code |
+| 7 | Type | Corporate action type code (FS=forward split, TC=merger, HI=stock dividend) |
+| 8 | ActionID | Unique corporate action identifier |
+| 9 | Conid | Contract identifier |
+| 10 | UnderlyingConid | Underlying contract ID |
+| 11 | UnderlyingSymbol | Underlying symbol |
+| 12 | CurrencyPrimary | Currency of monetary amounts |
+| 13 | Amount | Monetary amount |
+| 14 | Proceeds | Cash proceeds |
+| 15 | Value | Fair market value |
+| 16 | Quantity | Shares involved (negative=dispose, positive=receive) |
+
+### Query 4: Positions (used for both SOY and EOY)
+
+Create an Activity Flex Query with only the **Open Positions** section enabled. A single query is used for both start-of-year and end-of-year snapshots -- the date is overridden via the API.
+
+Select these fields:
+
+| # | Field to Select | Description |
+|---|-----------------|-------------|
+| 1 | ClientAccountID | Account identifier |
+| 2 | CurrencyPrimary | Position currency |
+| 3 | AssetClass | STK, OPT, BOND, etc. |
+| 4 | SubCategory | COMMON, ETF, ADR, etc. |
+| 5 | Symbol | Instrument symbol |
+| 6 | Description | Instrument description |
+| 7 | ISIN | ISIN |
+| 8 | Quantity | Units held (positive=long, negative=short) |
+| 9 | PositionValue | Market value in position currency |
+| 10 | MarkPrice | Mark-to-market price per unit |
+| 11 | CostBasisMoney | Total cost basis in position currency |
+| 12 | UnderlyingSymbol | Underlying for derivatives |
+| 13 | Conid | Contract identifier |
+| 14 | UnderlyingConid | Underlying contract ID |
+| 15 | Multiplier | Contract multiplier |
+
+### Query 5: Cash Balance
+
+Create an Activity Flex Query with only the **Cash Report** section enabled.
+
+Select these fields:
+
+| # | Field to Select | Description |
+|---|-----------------|-------------|
+| 1 | ClientAccountID | Account identifier |
+| 2 | CurrencyPrimary | Currency code (ISO 4217) |
+| 3 | FromDate | Report period start date |
+| 4 | ToDate | Report period end date |
+| 5 | StartingCash | Cash balance at start of period |
+| 6 | EndingCash | Cash balance at end of period |
+
+### Query 6: Option Exercises, Assignments & Expirations (Optional)
+
+This query is needed for **cash-settled index options** (e.g. SPX, ESTX50). If you don't trade index options, this query is not required.
+
+Create an Activity Flex Query with only the **Option Exercises, Assignments and Expirations** section enabled.
+
+Select these fields:
+
+| # | Field to Select | Description |
+|---|-----------------|-------------|
+| 1 | ClientAccountID | Account identifier |
+| 2 | CurrencyPrimary | Transaction currency |
+| 3 | FXRateToBase | FX rate to base currency |
+| 4 | AssetClass | OPT |
+| 5 | Symbol | Option contract symbol |
+| 6 | Description | Contract description |
+| 7 | Conid | Contract identifier |
+| 8 | ISIN | ISIN |
+| 9 | UnderlyingConid | Underlying contract ID |
+| 10 | UnderlyingSymbol | Underlying symbol |
+| 11 | Multiplier | Contract multiplier |
+| 12 | Strike | Strike price |
+| 13 | Expiry | Expiration date |
+| 14 | Put/Call | C or P |
+| 15 | Date | Transaction date |
+| 16 | Transaction Type | Assignment, Exercise, Expiration, or Cash Settlement |
+| 17 | Quantity | Number of contracts |
+| 18 | Trade Price | Transaction price |
+| 19 | Proceeds | Cash proceeds |
+| 20 | Comm/Tax | Commission and tax |
+| 21 | Basis | Cost basis |
+| 22 | RealizedPnl | Realized P&L |
+
+### Enabling the Flex Web Service (for automated download)
+
+To use the automated download feature (`--download`), you need to enable the Flex Web Service and generate an access token:
+
+1. In the Client Portal, go to **Performance & Reports > Flex Queries > Flex Web Service Configuration**.
+2. Check **Flex Web Service Status** to enable it.
+3. Choose a token expiration duration from the **Should Expire After** dropdown.
+4. Optionally restrict to a specific IP address.
+5. Click **Generate New Token** and copy the token.
+6. Store the token in one of these locations (checked in order):
+   - Environment variable `IBKR_FLEX_TOKEN`
+   - File `~/.ibkr_flex_token`
+   - File `./ibkr_token` in the project directory
+
+**Note:** Generating a new token invalidates the previous one. Tokens can expire (default: 6 hours unless configured longer).
+
+### Recording Query IDs
+
+After creating each query, IBKR assigns a numeric **Query ID**. You can find it in the Flex Queries list. Enter these IDs in `src/config.py`:
+
+```python
+FLEX_QUERY_IDS: dict[str, int | None] = {
+    "trades": 123456,            # Your Trades query ID
+    "cash_transactions": 123457, # Your Cash Transactions query ID
+    "positions": 123458,         # Your Positions query ID (used for both SOY/EOY)
+    "corporate_actions": 123459, # Your Corporate Actions query ID
+    "cash_balance": 123460,      # Your Cash Balance query ID
+    "options_eae": None,         # Your Options EAE query ID (or None if not needed)
+}
+```
+
 ## Preparing Input Data
 
 Place your IBKR Flex Query CSV files in the `data_import/` directory using this naming scheme:
@@ -46,17 +271,18 @@ Trades-{YYYY}.csv               # One file per year
 Cash_Transactions-{YYYY}.csv    # One file per year
 Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
+Options_EAE-{YYYY}.csv          # One file per year (optional, for cash-settled index options)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
 
-The `data_import/` directory is **read-only** and never modified by the application. Transaction files (Trades, Cash_Transactions, Corporate_Actions) for all available years up to the tax year are automatically concatenated to provide full FIFO history.
+The `data_import/` directory is **read-only** and never modified by the application.
 
-**Critical:** The Trades file **must** include the `Open/CloseIndicator` column (`O`/`C`) for accurate trade classification. See `input_data_spec.md` for detailed column specifications.
+**History concatenation:** Transaction files (Trades, Cash_Transactions, Corporate_Actions, Options_EAE) for all available years up to the tax year are automatically concatenated to provide full FIFO history. Position and Cash Balance files are used only for the selected tax year.
 
 ### Automatic Download
 
-You can download data directly from IBKR Flex Web Service if you configure your Flex Query IDs in `src/config.py` and provide your IBKR Flex token:
+You can download data directly from IBKR's Flex Web Service if you have configured your Flex Query IDs and access token:
 
 ```bash
 # Download and process
@@ -66,16 +292,21 @@ uv run python -m src.main --tax-year 2024 --download
 uv run python -m src.main --tax-year 2024 --download-only
 ```
 
-The token is resolved from: env var `IBKR_FLEX_TOKEN` > `~/.ibkr_flex_token` > `./ibkr_token`.
+The download uses a two-step API workflow:
+1. **SendRequest** -- triggers report generation, returns a reference code.
+2. **GetStatement** -- polls with the reference code until the CSV is ready.
+
+Date ranges are overridden per query to cover the exact calendar year. The `User-Agent` header is required by IBKR's API.
 
 ## Configuration
 
 Edit `src/config.py` before running:
 
-*   `TAX_YEAR` — Default year to process (overridable with `--tax-year`).
-*   `TAXPAYER_NAME`, `ACCOUNT_ID` — For PDF reports.
-*   `IS_INTERACTIVE_CLASSIFICATION` — Enable/disable interactive asset classification.
-*   `FLEX_QUERY_IDS` — IBKR Flex Query IDs for automatic download.
+*   `TAX_YEAR` -- Default year to process (overridable with `--tax-year`).
+*   `TAXPAYER_NAME`, `ACCOUNT_ID` -- For PDF reports.
+*   `IS_INTERACTIVE_CLASSIFICATION` -- Enable/disable interactive asset classification.
+*   `FLEX_QUERY_IDS` -- IBKR Flex Query IDs for automatic download.
+*   `APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING` -- Whether to apply the 20,000 EUR cap on derivative losses in the conceptual summary (form reporting is always un-capped).
 
 ## Running the Engine
 
@@ -122,19 +353,51 @@ uv run python validate_ledgers.py --verbose --quiet
 
 *   **Anlage KAP:** Stock/derivative gains/losses (Zeilen 19-24), foreign WHT (Zeile 41).
 *   **Anlage KAP-INV:** Investment fund distributions and gains (GROSS figures, Zeilen 4-8, 14, 17, 20, 23, 26).
-*   **Anlage SO:** Private sales under §23 EStG (holding period < 1 year).
+*   **Anlage SO:** Private sales under section 23 EStG (holding period < 1 year), including FX gains/losses.
+
+## Architecture
+
+### Core Processing Flow
+
+1. **Data Preparation** (`src/data_preparation.py`) -- Resolves and concatenates files from `data_import/` by tax year.
+2. **Parsing Layer** (`src/parsers/`) -- Parses IBKR CSV files, builds asset alias map via `AssetResolver`.
+3. **Domain Layer** (`src/domain/`) -- Data structures for assets, events, and calculation results.
+4. **Enrichment** (`src/processing/enrichment.py`) -- Currency conversion to EUR using ECB rates.
+5. **Classification** (`src/classification/`) -- Categorizes assets (STOCK, INVESTMENT_FUND, OPTION, etc.).
+6. **Calculation Engine** (`src/engine/`) -- FIFO ledger management, gain/loss calculations, corporate action processing.
+7. **Loss Offsetting** (`src/engine/loss_offsetting.py`) -- Aggregates figures for tax form lines.
+8. **Reporting** (`src/reporting/`) -- Console and PDF report generation.
+
+### Key Modules
+
+- `src/identification/asset_resolver.py` -- Global alias map maintaining unique Asset objects across all input files.
+- `src/engine/fifo_manager.py` -- FIFO lot tracking for long/short positions, including drain/receive for stock mergers and position flip splitting.
+- `src/engine/calculation_engine.py` -- Main calculation orchestration with three-pass historical replay for mergers.
+- `src/engine/event_processors/` -- Processors for trades, corporate actions, options, and currency conversions.
+- `src/processing/option_trade_linker.py` -- Links option exercises/assignments to stock trades.
+- `src/pipeline_runner.py` -- Orchestrates the full processing pipeline.
+
+### Domain Model
+
+- **Assets** (`domain/assets.py`): `Asset`, `Stock`, `Bond`, `InvestmentFund`, `Option`, `Cfd`, `PrivateSaleAsset`, `CashBalance`.
+- **Events** (`domain/events.py`): `FinancialEvent` base class with subtypes `TradeEvent`, `CashFlowEvent`, `CorporateActionEvent`, `OptionLifecycleEvent`, `OptionCashSettlementEvent`, `CurrencyConversionEvent`, etc.
+- **Results** (`domain/results.py`): `RealizedGainLoss`, `VorabpauschaleData`.
+- **Enums** (`domain/enums.py`): `AssetCategory`, `FinancialEventType`, `RealizationType`, `TaxReportingCategory`.
 
 ## Running Tests
 
 ```bash
 uv run pytest
 uv run pytest -v
-uv run pytest tests/test_fifo_groups.py -v
+uv run pytest tests/test_fifo_groups.py -v          # FIFO tests (Groups 1-5)
+uv run pytest tests/test_group6_loss_offsetting.py -v # Loss offsetting
+uv run pytest tests/test_stock_merger_fifo.py -v      # Stock merger FIFO lot transfer
+uv run pytest tests/test_options_lifecycle.py -v      # Options lifecycle
+uv run pytest tests/test_group7_currency_fifo.py -v   # Currency FIFO
 ```
 
 ## Known Limitations
 
-*   **Stock-for-stock mergers:** FIFO lot transfer for tax-neutral stock mergers is not yet implemented (see `docs/TODO_stock_merger_fifo.md`).
 *   **No "Alt-Anteile":** Assumes all investment fund shares were acquired on or after January 1, 2018.
 *   **Foreign WHT:** Aggregates WHT paid (Anlage KAP Zeile 41) but does not calculate creditable WHT.
 *   **No loss carry-forward/backward:** Calculations are limited to the specified tax year.

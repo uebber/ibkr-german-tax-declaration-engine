@@ -90,7 +90,8 @@ def main_application():
             corporate_actions_file_path=data_paths["corporate_actions"],
             interactive_classification_mode=args.interactive,
             tax_year_to_process=tax_year,
-            cash_balance_file_path=data_paths.get("cash_balance", "")
+            cash_balance_file_path=data_paths.get("cash_balance", ""),
+            options_eae_file_path=data_paths.get("options_eae", "") or None
         )
     except Exception as e:
         logger.critical(f"Core processing pipeline failed: {e}. Exiting.", exc_info=True)

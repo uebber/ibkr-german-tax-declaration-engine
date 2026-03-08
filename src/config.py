@@ -49,6 +49,7 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "positions": 1212973,         # Used for both SOY and EOY with date overrides
     "corporate_actions": 1213973,
     "cash_balance": 1372852,
+    "options_eae": 1427928,
 }
 
 # Cache directory for downloaded Flex Query CSVs

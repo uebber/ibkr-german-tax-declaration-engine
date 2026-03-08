@@ -42,6 +42,14 @@ CASH_BALANCE_COLUMNS = (
     "StartingCash", "EndingCash",
 )
 
+OPTIONS_EAE_COLUMNS = (
+    "ClientAccountID", "CurrencyPrimary", "FXRateToBase", "AssetClass",
+    "Symbol", "Description", "Conid", "ISIN", "UnderlyingConid",
+    "UnderlyingSymbol", "Multiplier", "Strike", "Expiry", "Put/Call",
+    "Date", "Transaction Type", "Quantity", "Trade Price", "Proceeds",
+    "Comm/Tax", "Basis", "RealizedPnl",
+)
+
 
 def validate_csv_columns(
     actual_headers: Sequence[str],

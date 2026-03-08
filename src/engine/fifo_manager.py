@@ -6,7 +6,7 @@ import uuid
 from datetime import date as date_obj, datetime
 
 from src.domain.assets import Asset, Option 
-from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend 
+from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType 
 from src.utils.currency_converter import CurrencyConverter
@@ -91,6 +91,88 @@ class ConsumedLotDetail:
     original_lot_source_tx_id: str
 
 
+def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, available_short_qty: Decimal) -> List[TradeEvent]:
+    """Split a position-flip trade (C;O / O;C) into close + open sub-events.
+
+    Uses available ledger quantities to determine how much closes existing
+    position vs opens new opposite position. Amounts are split proportionally.
+
+    Returns a list of 1-2 TradeEvent objects with correct event_types,
+    quantities, and proportionally split monetary amounts.
+    """
+    if not event.is_position_flip:
+        return [event]
+
+    abs_qty = event.quantity.copy_abs()
+
+    # Determine close quantity based on event type (close direction)
+    if event.event_type == FinancialEventType.TRADE_SELL_LONG:
+        close_qty = min(abs_qty, available_long_qty)
+        close_type = FinancialEventType.TRADE_SELL_LONG
+        open_type = FinancialEventType.TRADE_SELL_SHORT_OPEN
+    elif event.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
+        close_qty = min(abs_qty, available_short_qty)
+        close_type = FinancialEventType.TRADE_BUY_SHORT_COVER
+        open_type = FinancialEventType.TRADE_BUY_LONG
+    else:
+        logger.warning(f"Position flip event {event.event_id} has unexpected type {event.event_type.name}. Processing as-is.")
+        return [event]
+
+    open_qty = abs_qty - close_qty
+    results: List[TradeEvent] = []
+
+    def _make_sub_event(sub_type: FinancialEventType, sub_abs_qty: Decimal) -> TradeEvent:
+        """Create a sub-event with proportionally split amounts."""
+        ratio = sub_abs_qty / abs_qty
+        # Preserve sign convention: BUY qty > 0, SELL qty < 0
+        if sub_type in (FinancialEventType.TRADE_BUY_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER):
+            signed_qty = sub_abs_qty
+        else:
+            signed_qty = -sub_abs_qty
+
+        # Proportionally split all monetary amounts
+        sub_gross_fc = event.gross_amount_foreign_currency * ratio if event.gross_amount_foreign_currency is not None else None
+        sub_gross_eur = event.gross_amount_eur * ratio if event.gross_amount_eur is not None else None
+        sub_commission_fc = event.commission_foreign_currency * ratio if event.commission_foreign_currency is not None else None
+        sub_commission_eur = event.commission_eur * ratio if event.commission_eur is not None else None
+        sub_net = event.net_proceeds_or_cost_basis_eur * ratio if event.net_proceeds_or_cost_basis_eur is not None else None
+
+        return TradeEvent(
+            asset_internal_id=event.asset_internal_id,
+            event_date=event.event_date,
+            event_type=sub_type,
+            quantity=signed_qty,
+            price_foreign_currency=event.price_foreign_currency,
+            commission_foreign_currency=sub_commission_fc,
+            commission_currency=event.commission_currency,
+            commission_eur=sub_commission_eur,
+            net_proceeds_or_cost_basis_eur=sub_net,
+            related_option_event_id=None,  # flip events don't arise from option exercise
+            is_position_flip=False,
+            local_currency=event.local_currency,
+            gross_amount_foreign_currency=sub_gross_fc,
+            gross_amount_eur=sub_gross_eur,
+            ibkr_transaction_id=event.ibkr_transaction_id,
+            ibkr_activity_description=event.ibkr_activity_description,
+            ibkr_notes_codes=event.ibkr_notes_codes,
+        )
+
+    if close_qty > Decimal(0):
+        results.append(_make_sub_event(close_type, close_qty))
+
+    if open_qty > Decimal(0):
+        results.append(_make_sub_event(open_type, open_qty))
+
+    if not results:
+        logger.warning(f"Position flip event {event.event_id}: both close and open quantities are zero. Skipping.")
+
+    logger.info(
+        f"Split position flip {event.ibkr_transaction_id}: "
+        f"{close_type.name}({close_qty}) + {open_type.name}({open_qty}) from total {abs_qty}"
+    )
+    return results
+
+
 class FifoLedger:
     def __init__(self,
                  asset_internal_id: uuid.UUID,
@@ -133,23 +215,33 @@ class FifoLedger:
                                  asset: Asset,
                                  all_historical_events_for_asset: List[FinancialEvent],
                                  tax_year: int):
-        
+        """Convenience method: simulate + reconcile in one call (used when no mergers)."""
+        self.simulate_historical_events(asset, all_historical_events_for_asset, tax_year)
+        self.reconcile_with_soy_position(asset, tax_year)
+
+    def simulate_historical_events(self,
+                                    asset: Asset,
+                                    all_historical_events_for_asset: List[FinancialEvent],
+                                    tax_year: int):
+        """Pass 1: Replay trades, splits, stock dividends to build lot state.
+        Does NOT reconcile against SoY position yet."""
+
         if self.asset_category == AssetCategory.INVESTMENT_FUND:
-            asset_fund_type = getattr(asset, 'fund_type', None) 
+            asset_fund_type = getattr(asset, 'fund_type', None)
             if isinstance(asset_fund_type, InvestmentFundType) and asset_fund_type != InvestmentFundType.NONE:
                  if self.fund_type == InvestmentFundType.NONE:
                      logger.info(f"Updating FifoLedger fund_type for {self.asset_internal_id} from SOY asset object to {asset_fund_type}.")
                      self.fund_type = asset_fund_type
-            elif self.fund_type is None: 
+            elif self.fund_type is None:
                  logger.warning(f"FifoLedger for Investment Fund {self.asset_internal_id} still has no specific fund_type after asset load for SOY. Using InvestmentFundType.NONE.")
                  self.fund_type = InvestmentFundType.NONE
 
         self.lots.clear()
         self.short_lots.clear()
-        historical_simulation_inconsistent = False 
+        self._historical_simulation_inconsistent = False
 
-        logger.info(f"Asset {asset.get_classification_key()} (ID: {asset.internal_asset_id}): Initializing SOY. "
-                    f"Processing {len(all_historical_events_for_asset)} historical events for simulation.")
+        logger.info(f"Asset {asset.get_classification_key()} (ID: {asset.internal_asset_id}): Simulating "
+                    f"{len(all_historical_events_for_asset)} historical events.")
 
         for hist_event in all_historical_events_for_asset:
             event_date_obj = parse_ibkr_date(hist_event.event_date)
@@ -160,33 +252,45 @@ class FifoLedger:
 
             try:
                 if isinstance(hist_event, TradeEvent):
-                    if hist_event.event_type == FinancialEventType.TRADE_BUY_LONG:
-                        self.add_long_lot(hist_event)
-                    elif hist_event.event_type == FinancialEventType.TRADE_SELL_LONG:
-                        self.consume_long_lots_for_sale(hist_event, is_historical_simulation=True) 
-                    elif hist_event.event_type == FinancialEventType.TRADE_SELL_SHORT_OPEN:
-                        self.add_short_lot(hist_event)
-                    elif hist_event.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
-                        self.consume_short_lots_for_cover(hist_event, is_historical_simulation=True)
+                    # Split position flip events (C;O / O;C) using current ledger state
+                    if hist_event.is_position_flip:
+                        avail_long = sum(lot.quantity for lot in self.lots) if self.lots else Decimal(0)
+                        avail_short = sum(lot.quantity_shorted for lot in self.short_lots) if self.short_lots else Decimal(0)
+                        sub_events = split_position_flip_event(hist_event, avail_long, avail_short)
+                    else:
+                        sub_events = [hist_event]
+
+                    for sub in sub_events:
+                        if sub.event_type == FinancialEventType.TRADE_BUY_LONG:
+                            self.add_long_lot(sub)
+                        elif sub.event_type == FinancialEventType.TRADE_SELL_LONG:
+                            self.consume_long_lots_for_sale(sub, is_historical_simulation=True)
+                        elif sub.event_type == FinancialEventType.TRADE_SELL_SHORT_OPEN:
+                            self.add_short_lot(sub)
+                        elif sub.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
+                            self.consume_short_lots_for_cover(sub, is_historical_simulation=True)
                 elif isinstance(hist_event, CorpActionSplitForward):
                     self.adjust_lots_for_split(hist_event)
                 elif isinstance(hist_event, CorpActionStockDividend):
                      self.add_lot_for_stock_dividend(hist_event)
-            except UserWarning as uw: 
+            except UserWarning as uw:
                 logger.warning(f"Historical simulation warning for asset {asset.internal_asset_id} processing event {hist_event.event_id}: {uw}")
-                historical_simulation_inconsistent = True
+                self._historical_simulation_inconsistent = True
 
+    def reconcile_with_soy_position(self, asset: Asset, tax_year: int):
+        """Pass 3: Compare reconstructed lots against SoY position and apply fallback if needed."""
+        historical_simulation_inconsistent = getattr(self, '_historical_simulation_inconsistent', False)
 
-        reconstructed_long_lots_snapshot = list(self.lots) 
-        reconstructed_short_lots_snapshot = list(self.short_lots) 
-        self.lots.clear() 
+        reconstructed_long_lots_snapshot = list(self.lots)
+        reconstructed_short_lots_snapshot = list(self.short_lots)
+        self.lots.clear()
         self.short_lots.clear()
 
         reconstructed_total_long_qty = sum(lot.quantity for lot in reconstructed_long_lots_snapshot)
         reconstructed_total_short_qty_abs = sum(lot.quantity_shorted for lot in reconstructed_short_lots_snapshot)
         reconstructed_net_qty = self.ctx.subtract(reconstructed_total_long_qty, reconstructed_total_short_qty_abs)
 
-        reported_soy_qty = asset.soy_quantity # Renamed from initial_quantity_soy
+        reported_soy_qty = asset.soy_quantity
         if reported_soy_qty is None:
             logger.warning(f"Asset {asset.get_classification_key()}: SOY quantity from positions report is None. Assuming 0 for ledger initialization.")
             reported_soy_qty = Decimal(0)
@@ -199,10 +303,10 @@ class FifoLedger:
             logger.info(f"Asset {asset.get_classification_key()}: Reported SOY quantity is 0. Initializing with no lots.")
             return
 
-        use_fallback = historical_simulation_inconsistent 
+        use_fallback = historical_simulation_inconsistent
 
-        if not use_fallback: 
-            if reported_soy_qty > Decimal(0): 
+        if not use_fallback:
+            if reported_soy_qty > Decimal(0):
                 if reconstructed_total_long_qty >= reported_soy_qty and reconstructed_total_short_qty_abs == Decimal(0):
                     logger.info(f"Asset {asset.get_classification_key()}: Using reconstructed FIFO long lots and costs.")
                     qty_to_assign = reported_soy_qty
@@ -211,19 +315,19 @@ class FifoLedger:
                         qty_from_this_lot = min(lot.quantity, qty_to_assign)
                         final_lot = FifoLot(
                             acquisition_date=lot.acquisition_date, quantity=qty_from_this_lot,
-                            unit_cost_basis_eur=lot.unit_cost_basis_eur, # Renamed
-                            total_cost_basis_eur=self.ctx.multiply(qty_from_this_lot, lot.unit_cost_basis_eur), # Renamed
+                            unit_cost_basis_eur=lot.unit_cost_basis_eur,
+                            total_cost_basis_eur=self.ctx.multiply(qty_from_this_lot, lot.unit_cost_basis_eur),
                             source_transaction_id=lot.source_transaction_id
                         )
                         self.lots.append(final_lot)
                         qty_to_assign -= qty_from_this_lot
                     if qty_to_assign.copy_abs() > Decimal('1e-8'):
                          logger.error(f"Asset {asset.get_classification_key()}: Mismatch after assigning sufficient long lots. Rem: {qty_to_assign}")
-                         use_fallback = True 
+                         use_fallback = True
                 else:
                     use_fallback = True
-            
-            elif reported_soy_qty < Decimal(0): 
+
+            elif reported_soy_qty < Decimal(0):
                 reported_soy_qty_abs = reported_soy_qty.copy_abs()
                 if reconstructed_total_short_qty_abs >= reported_soy_qty_abs and reconstructed_total_long_qty == Decimal(0):
                     logger.info(f"Asset {asset.get_classification_key()}: Using reconstructed FIFO short lots and proceeds.")
@@ -233,23 +337,23 @@ class FifoLedger:
                         qty_from_this_lot = min(lot.quantity_shorted, qty_to_assign)
                         final_short_lot = ShortFifoLot(
                             opening_date=lot.opening_date, quantity_shorted=qty_from_this_lot,
-                            unit_sale_proceeds_eur=lot.unit_sale_proceeds_eur, # Renamed
-                            total_sale_proceeds_eur=self.ctx.multiply(qty_from_this_lot, lot.unit_sale_proceeds_eur), # Renamed
+                            unit_sale_proceeds_eur=lot.unit_sale_proceeds_eur,
+                            total_sale_proceeds_eur=self.ctx.multiply(qty_from_this_lot, lot.unit_sale_proceeds_eur),
                             source_transaction_id=lot.source_transaction_id
                         )
                         self.short_lots.append(final_short_lot)
                         qty_to_assign -= qty_from_this_lot
                     if qty_to_assign.copy_abs() > Decimal('1e-8'):
                          logger.error(f"Asset {asset.get_classification_key()}: Mismatch after assigning sufficient short lots. Rem: {qty_to_assign}")
-                         use_fallback = True 
+                         use_fallback = True
                 else:
                     use_fallback = True
-            else: 
+            else:
                  use_fallback = True
 
 
         if use_fallback:
-            self.lots.clear() 
+            self.lots.clear()
             self.short_lots.clear()
             logger.warning(f"Asset {asset.get_classification_key()}: Historical FIFO reconstruction "
                            f"(Long: {reconstructed_total_long_qty}, Short: {reconstructed_total_short_qty_abs}, Inconsistent: {historical_simulation_inconsistent}) "
@@ -258,7 +362,7 @@ class FifoLedger:
                 self._create_fallback_long_lot(asset, reported_soy_qty, tax_year)
             elif reported_soy_qty < Decimal(0):
                 self._create_fallback_short_lot(asset, reported_soy_qty.copy_abs(), tax_year)
-        
+
         if self.lots:
             self.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
             if any((parse_ibkr_date(lot.acquisition_date) is None) for lot in self.lots):
@@ -338,6 +442,64 @@ class FifoLedger:
             f"Asset {asset.get_classification_key()}: Created fallback SOY short lot: "
             f"Qty Short: {fallback_short_lot.quantity_shorted}, Proceeds/Unit EUR: {fallback_short_lot.unit_sale_proceeds_eur}, Opening Date: {fallback_short_lot.opening_date}" # Renamed
         )
+
+    def drain_all_long_lots(self) -> List[FifoLot]:
+        """Remove and return all long lots from this ledger."""
+        drained = list(self.lots)
+        self.lots.clear()
+        return drained
+
+    def drain_all_short_lots(self) -> List[ShortFifoLot]:
+        """Remove and return all short lots from this ledger."""
+        drained = list(self.short_lots)
+        self.short_lots.clear()
+        return drained
+
+    def receive_all_lots_from_merger(self,
+                                     long_lots: List[FifoLot],
+                                     short_lots: List[ShortFifoLot],
+                                     ratio: Decimal,
+                                     merger_event: CorpActionMergerStock) -> None:
+        """
+        Atomic prepare-then-commit transfer of lots from a merger source.
+
+        Phase 1 (PREPARE): Constructs all target FifoLot/ShortFifoLot objects.
+            FifoLot.__post_init__ / ShortFifoLot.__post_init__ validation runs here.
+            If any construction fails, exception propagates — no ledger was touched.
+
+        Phase 2 (COMMIT): Extends self.lots / self.short_lots and re-sorts.
+            Cannot fail (just list.extend + sort).
+        """
+        # Phase 1 — PREPARE (can fail, no ledger mutation)
+        prepared_long_lots: List[FifoLot] = []
+        for lot in long_lots:
+            new_qty = self.ctx.multiply(lot.quantity, ratio)
+            new_unit_cost = self.ctx.divide(lot.total_cost_basis_eur, new_qty) if new_qty != Decimal(0) else Decimal(0)
+            prepared_long_lots.append(FifoLot(
+                acquisition_date=lot.acquisition_date,
+                quantity=new_qty,
+                unit_cost_basis_eur=new_unit_cost,
+                total_cost_basis_eur=lot.total_cost_basis_eur,
+                source_transaction_id=str(merger_event.event_id),
+            ))
+
+        prepared_short_lots: List[ShortFifoLot] = []
+        for lot in short_lots:
+            new_qty = self.ctx.multiply(lot.quantity_shorted, ratio)
+            new_unit_proceeds = self.ctx.divide(lot.total_sale_proceeds_eur, new_qty) if new_qty != Decimal(0) else Decimal(0)
+            prepared_short_lots.append(ShortFifoLot(
+                opening_date=lot.opening_date,
+                quantity_shorted=new_qty,
+                unit_sale_proceeds_eur=new_unit_proceeds,
+                total_sale_proceeds_eur=lot.total_sale_proceeds_eur,
+                source_transaction_id=str(merger_event.event_id),
+            ))
+
+        # Phase 2 — COMMIT (cannot fail)
+        self.lots.extend(prepared_long_lots)
+        self.lots.sort(key=lambda l: (parse_ibkr_date(l.acquisition_date) or datetime.min.date(), l.source_transaction_id))
+        self.short_lots.extend(prepared_short_lots)
+        self.short_lots.sort(key=lambda l: (parse_ibkr_date(l.opening_date) or datetime.min.date(), l.source_transaction_id))
 
     def add_long_lot(self, trade_event: TradeEvent):
         if trade_event.event_type != FinancialEventType.TRADE_BUY_LONG: return

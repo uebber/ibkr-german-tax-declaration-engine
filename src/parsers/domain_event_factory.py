@@ -10,13 +10,15 @@ from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, WithholdingTaxEvent,
     CorporateActionEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionMergerStock, CorpActionStockDividend, CorpActionExpireDividendRights,
-    OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent, 
-    OptionExpirationWorthlessEvent, CurrencyConversionEvent, FeeEvent
+    OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent,
+    OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
+    CurrencyConversionEvent, FeeEvent
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.raw_models import (
-    RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord
+    RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord,
+    RawOptionsEAERecord
 )
 from src.utils.type_utils import parse_ibkr_date, parse_ibkr_datetime, safe_decimal
 
@@ -61,29 +63,52 @@ class DomainEventFactory:
         return None
 
 
-    def _determine_trade_event_type(self, raw_trade: RawTradeRecord) -> FinancialEventType:
+    def _determine_trade_event_type(self, raw_trade: RawTradeRecord) -> Tuple[FinancialEventType, bool]:
+        """Returns (event_type, is_position_flip).
+
+        For C;O or O;C indicators, classifies by the close direction and
+        sets is_position_flip=True so the FIFO dispatch can split into
+        close + open sub-events when ledger state is known.
+        """
         buy_sell = (raw_trade.buy_sell or "").upper()
         open_close_ind = (raw_trade.open_close_indicator or "").upper()
         trade_quantity = safe_decimal(raw_trade.quantity, default=Decimal(0))
 
+        # Detect position flip (C;O or O;C)
+        is_flip = "C" in open_close_ind and "O" in open_close_ind
+
         if buy_sell == "BUY":
-            if open_close_ind == "O": return FinancialEventType.TRADE_BUY_LONG
-            if open_close_ind == "C": return FinancialEventType.TRADE_BUY_SHORT_COVER
+            if is_flip:
+                logger.info(
+                    f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (BUY): "
+                    f"Position flip detected (Open/CloseIndicator='{raw_trade.open_close_indicator}'). "
+                    f"Classifying as BUY_SHORT_COVER; open portion will be split at FIFO dispatch."
+                )
+                return FinancialEventType.TRADE_BUY_SHORT_COVER, True
+            if open_close_ind == "O": return FinancialEventType.TRADE_BUY_LONG, False
+            if open_close_ind == "C": return FinancialEventType.TRADE_BUY_SHORT_COVER, False
             logger.warning(
                 f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (BUY): "
                 f"Missing or unexpected Open/Close Indicator: '{raw_trade.open_close_indicator}'. Notes/Codes was: '{raw_trade.notes_codes}'. "
                 f"Assuming TRADE_BUY_LONG as default for BUY based on PRD directive for data inconsistency."
             )
-            return FinancialEventType.TRADE_BUY_LONG
+            return FinancialEventType.TRADE_BUY_LONG, False
         elif buy_sell == "SELL":
-            if open_close_ind == "O": return FinancialEventType.TRADE_SELL_SHORT_OPEN
-            if open_close_ind == "C": return FinancialEventType.TRADE_SELL_LONG
+            if is_flip:
+                logger.info(
+                    f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (SELL): "
+                    f"Position flip detected (Open/CloseIndicator='{raw_trade.open_close_indicator}'). "
+                    f"Classifying as SELL_LONG; open portion will be split at FIFO dispatch."
+                )
+                return FinancialEventType.TRADE_SELL_LONG, True
+            if open_close_ind == "O": return FinancialEventType.TRADE_SELL_SHORT_OPEN, False
+            if open_close_ind == "C": return FinancialEventType.TRADE_SELL_LONG, False
             logger.warning(
                 f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (SELL): "
                 f"Missing or unexpected Open/Close Indicator: '{raw_trade.open_close_indicator}'. Notes/Codes was: '{raw_trade.notes_codes}'. "
                 f"Assuming TRADE_SELL_LONG as default for SELL based on PRD directive for data inconsistency."
             )
-            return FinancialEventType.TRADE_SELL_LONG
+            return FinancialEventType.TRADE_SELL_LONG, False
 
         if trade_quantity != Decimal(0):
             logger.warning(
@@ -91,9 +116,9 @@ class DomainEventFactory:
                 f"Using quantity sign to infer trade direction. Open/CloseIndicator was '{open_close_ind}'."
             )
             if trade_quantity > 0:
-                return FinancialEventType.TRADE_BUY_SHORT_COVER if open_close_ind == "C" else FinancialEventType.TRADE_BUY_LONG
+                return (FinancialEventType.TRADE_BUY_SHORT_COVER if open_close_ind == "C" else FinancialEventType.TRADE_BUY_LONG), is_flip
             if trade_quantity < 0:
-                return FinancialEventType.TRADE_SELL_SHORT_OPEN if open_close_ind == "O" else FinancialEventType.TRADE_SELL_LONG
+                return (FinancialEventType.TRADE_SELL_SHORT_OPEN if open_close_ind == "O" else FinancialEventType.TRADE_SELL_LONG), is_flip
 
         err_msg = (
             f"Could not determine trade event type for trade: {raw_trade.transaction_id or raw_trade.trade_id}, "
@@ -299,7 +324,7 @@ class DomainEventFactory:
                     continue
 
                 try:
-                    event_type = self._determine_trade_event_type(rt)
+                    event_type, is_position_flip = self._determine_trade_event_type(rt)
                 except ValueError as e:
                     logger.error(f"Skipping trade ID {tx_id_primary} due to error determining type: {e}")
                     continue
@@ -344,7 +369,7 @@ class DomainEventFactory:
                     logger.debug(f"Trade {tx_id_primary}: Using provided gross amount from TradeMoney/Proceeds: {calculated_gross_amount} (Source: '{calculated_gross_amount_raw_source}')")
 
 
-                commission_val = safe_decimal(rt.ib_commission, default=Decimal('0.0')).copy_abs()
+                commission_val = safe_decimal(rt.ib_commission, default=Decimal('0.0'))
 
                 trade_event = TradeEvent(
                     asset_internal_id=asset.internal_asset_id,
@@ -358,8 +383,15 @@ class DomainEventFactory:
                     gross_amount_foreign_currency=calculated_gross_amount.copy_abs(),
                     ibkr_transaction_id=tx_id_primary,
                     ibkr_activity_description=rt.description,
-                    ibkr_notes_codes=rt.notes_codes
+                    ibkr_notes_codes=rt.notes_codes,
+                    is_position_flip=is_position_flip,
                 )
+
+                if trade_event.gross_amount_foreign_currency is not None and trade_event.gross_amount_foreign_currency < Decimal("0"):
+                    raise ValueError(
+                        f"TradeEvent {trade_event.ibkr_transaction_id}: gross_amount_foreign_currency must be non-negative, "
+                        f"got {trade_event.gross_amount_foreign_currency}. Direction is encoded in event_type."
+                    )
 
                 if isinstance(asset, Stock) and rt.notes_codes:
                     notes_codes_parts_stock = {part.strip() for part in (rt.notes_codes or "").upper().split(';') if part.strip()}
@@ -530,6 +562,12 @@ class DomainEventFactory:
 
             elif "FEE" in event_type_str_upper or code_upper == "FE" or "FEES" in event_type_str_upper:
                 # Fees are costs, raw_amount typically negative. Store as positive cost.
+                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
+                domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
+
+            elif "COMMISSION" in event_type_str_upper:
+                # Commission adjustments are post-trade fee corrections from IBKR.
+                # raw_amount is typically negative (additional fee charged). Store as positive cost.
                 event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
                 domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
 
@@ -729,26 +767,34 @@ class DomainEventFactory:
                     logger.debug(f"CA Record {idx+1} (TC-Stock): Parsed - new_asset_symbol_from_desc: {new_asset_symbol_from_desc}, new_shares_per_old_stock: {new_shares_per_old_stock}")
 
                     if new_shares_per_old_stock is not None and new_asset_symbol_from_desc is not None:
-                         new_asset = self.asset_resolver.get_or_create_asset(
-                             raw_isin=None, raw_conid=None,
-                             raw_symbol=new_asset_symbol_from_desc,
-                             raw_currency=rca.currency_primary or affected_asset.currency,
-                             raw_ibkr_asset_class=rca.asset_class or affected_asset.ibkr_asset_class_raw,
-                             raw_description=f"New asset from merger: {new_asset_symbol_from_desc}",
-                             description_source_type="corp_act_generated"
-                         )
-                         logger.debug(f"CA Record {idx+1} (TC-Stock): Attempted to resolve/create new asset by symbol '{new_asset_symbol_from_desc}'. Resulting asset ID: {new_asset.internal_asset_id if new_asset else 'Not Found/Created'}")
-                         if new_asset:
-                            common_ca_params_kw_base["gross_amount_foreign_currency"] = Decimal('0.0')
-                            common_ca_params_kw = {k: v for k, v in common_ca_params_kw_base.items() if v is not None}
-                            domain_ca_event_instance = CorpActionMergerStock(
-                                asset_internal_id=affected_asset.internal_asset_id, event_date=event_date_str,
-                                new_asset_internal_id=new_asset.internal_asset_id,
-                                new_shares_received_per_old=new_shares_per_old_stock,
-                                **common_ca_params_kw
-                            )
+                         # Only create the merger event from the dispose row (negative qty).
+                         # The receive row (positive qty) carries the same info and would create
+                         # a spurious self-referencing event (asset=SGBS, new_asset=SGBS).
+                         if quantity_ca is not None and quantity_ca >= Decimal(0):
+                             logger.info(f"CA Record {idx+1} (TC-Stock): Skipping receive-side row "
+                                         f"for stock merger {rca.action_id_ibkr} (qty={quantity_ca}). "
+                                         f"Lot transfer handled by dispose-side event.")
                          else:
-                              logger.warning(f"CA Record {idx+1} (TC-Stock): Stock Merger CA {rca.action_id_ibkr}: Could not resolve or create new asset with symbol '{new_asset_symbol_from_desc}'. Cannot create event.")
+                             new_asset = self.asset_resolver.get_or_create_asset(
+                                 raw_isin=None, raw_conid=None,
+                                 raw_symbol=new_asset_symbol_from_desc,
+                                 raw_currency=rca.currency_primary or affected_asset.currency,
+                                 raw_ibkr_asset_class=rca.asset_class or affected_asset.ibkr_asset_class_raw,
+                                 raw_description=f"New asset from merger: {new_asset_symbol_from_desc}",
+                                 description_source_type="corp_act_generated"
+                             )
+                             logger.debug(f"CA Record {idx+1} (TC-Stock): Attempted to resolve/create new asset by symbol '{new_asset_symbol_from_desc}'. Resulting asset ID: {new_asset.internal_asset_id if new_asset else 'Not Found/Created'}")
+                             if new_asset:
+                                 common_ca_params_kw_base["gross_amount_foreign_currency"] = Decimal('0.0')
+                                 common_ca_params_kw = {k: v for k, v in common_ca_params_kw_base.items() if v is not None}
+                                 domain_ca_event_instance = CorpActionMergerStock(
+                                     asset_internal_id=affected_asset.internal_asset_id, event_date=event_date_str,
+                                     new_asset_internal_id=new_asset.internal_asset_id,
+                                     new_shares_received_per_old=new_shares_per_old_stock,
+                                     **common_ca_params_kw
+                                 )
+                             else:
+                                 logger.warning(f"CA Record {idx+1} (TC-Stock): Stock Merger CA {rca.action_id_ibkr}: Could not resolve or create new asset with symbol '{new_asset_symbol_from_desc}'. Cannot create event.")
                     elif not stock_ratio_match:
                          logger.warning(f"CA Record {idx+1} (TC): Could not determine if Merger CA {rca.action_id_ibkr} is cash or stock, or parse details from description '{ca_desc_from_file}'. Will fall through to generic.")
 
@@ -802,3 +848,97 @@ class DomainEventFactory:
                  domain_ca_events.append(generic_event)
                  logger.info(f"CA Record {idx+1}: Created generic CorporateActionEvent for fallback. Type assigned: {fallback_event_type.name}, Gross: {gross_amount_ca}")
         return domain_ca_events
+
+    def create_events_from_options_eae(
+        self, raw_records: List[RawOptionsEAERecord]
+    ) -> List[OptionCashSettlementEvent]:
+        """
+        Creates OptionCashSettlementEvent instances from OptionEAE CSV "Cash Settlement" rows.
+
+        Only "Cash Settlement" transaction type rows contain new information not already
+        in the Trades CSV. Physical delivery rows (Buy/Sell) and Assignment/Exercise rows
+        duplicate what's already parsed from Trades.
+
+        Each Cash Settlement row is paired with its preceding Assignment/Exercise row
+        (same Conid + Date) to get the contract quantity and commission.
+        """
+        logger.info(f"Processing {len(raw_records)} raw OptionEAE records...")
+        cash_settlement_events: List[OptionCashSettlementEvent] = []
+
+        # Group records by (conid, date) to pair Assignment/Exercise with Cash Settlement
+        from collections import defaultdict
+        groups: dict[tuple[str, str], list[RawOptionsEAERecord]] = defaultdict(list)
+        for rec in raw_records:
+            key = (rec.conid or "", rec.date or "")
+            groups[key].append(rec)
+
+        for (conid, date_str), records in groups.items():
+            # Find "Cash Settlement" rows and their companion Assignment/Exercise rows
+            settlement_rows = [r for r in records if (r.transaction_type or "").strip() == "Cash Settlement"]
+            ae_rows = [r for r in records if (r.transaction_type or "").strip() in ("Assignment", "Exercise")]
+
+            if not settlement_rows:
+                continue  # No cash settlement in this group — skip
+
+            for settle_row in settlement_rows:
+                proceeds = safe_decimal(settle_row.proceeds, default=Decimal("0"))
+                if proceeds == Decimal("0"):
+                    logger.debug(f"OptionEAE: Skipping zero-proceeds Cash Settlement for {settle_row.symbol} on {date_str}")
+                    continue
+
+                # Get the option asset
+                option_asset = self.asset_resolver.get_or_create_asset(
+                    raw_isin=settle_row.isin,
+                    raw_conid=settle_row.conid,
+                    raw_symbol=settle_row.symbol,
+                    raw_currency=settle_row.currency_primary,
+                    raw_ibkr_asset_class=settle_row.asset_class,
+                    raw_description=settle_row.description,
+                    description_source_type="options_eae",
+                    raw_multiplier=settle_row.multiplier,
+                    raw_strike=settle_row.strike,
+                    raw_expiry=settle_row.expiry,
+                    raw_put_call=settle_row.put_call,
+                    raw_underlying_conid=settle_row.underlying_conid,
+                    raw_underlying_symbol=settle_row.underlying_symbol
+                )
+
+                event_date = self._get_prioritized_date(trade_date_str=settle_row.date)
+                if not event_date:
+                    logger.error(f"OptionEAE: Cannot determine date for Cash Settlement of {settle_row.symbol}. Skipping.")
+                    continue
+
+                # Get quantity and commission from the companion Assignment/Exercise row
+                qty_contracts = Decimal("0")
+                commission = Decimal("0")
+                for ae_row in ae_rows:
+                    qty_contracts = safe_decimal(ae_row.quantity, default=Decimal("0")).copy_abs()
+                    commission = safe_decimal(ae_row.comm_tax, default=Decimal("0"))
+                    break  # Use first matching A/E row
+
+                if qty_contracts == Decimal("0"):
+                    # Cash Settlement row itself has Quantity=0; use 1 as fallback
+                    # so FIFO consumption has a nonzero contract count
+                    qty_contracts = Decimal("1")
+                    logger.warning(f"OptionEAE: No companion Assignment/Exercise row found for "
+                                   f"Cash Settlement of {settle_row.symbol} on {date_str}. "
+                                   f"Using qty_contracts=1 as fallback.")
+
+                event = OptionCashSettlementEvent(
+                    asset_internal_id=option_asset.internal_asset_id,
+                    event_date=event_date,
+                    quantity_contracts=qty_contracts,
+                    cash_settlement_proceeds=proceeds,
+                    commission_foreign_currency=commission,
+                    local_currency=settle_row.currency_primary,
+                    gross_amount_foreign_currency=proceeds.copy_abs(),
+                    ibkr_activity_description=f"Cash Settlement: {settle_row.description}",
+                )
+
+                cash_settlement_events.append(event)
+                logger.info(f"OptionEAE: Created OptionCashSettlementEvent for {settle_row.symbol} "
+                           f"on {event_date}: proceeds={proceeds} {settle_row.currency_primary}, "
+                           f"qty={qty_contracts} contracts, commission={commission}")
+
+        logger.info(f"Created {len(cash_settlement_events)} OptionCashSettlementEvents from OptionEAE data.")
+        return cash_settlement_events
