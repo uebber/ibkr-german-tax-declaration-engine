@@ -4,6 +4,7 @@ from typing import List
 from pydantic import ValidationError
 
 from .raw_models import RawCashBalanceRecord
+from .column_validator import validate_csv_columns, CASH_BALANCE_COLUMNS
 
 
 def parse_cash_balance_csv(file_path: str, encoding='utf-8-sig') -> List[RawCashBalanceRecord]:
@@ -12,6 +13,7 @@ def parse_cash_balance_csv(file_path: str, encoding='utf-8-sig') -> List[RawCash
     try:
         with open(file_path, mode='r', encoding=encoding) as csvfile:
             reader = csv.DictReader(csvfile)
+            validate_csv_columns(reader.fieldnames or [], CASH_BALANCE_COLUMNS, f"Cash Balance ({file_path})")
             for i, row_dict in enumerate(reader):
                 try:
                     raw_balances.append(RawCashBalanceRecord(**row_dict))

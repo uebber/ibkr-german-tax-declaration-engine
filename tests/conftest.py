@@ -82,6 +82,7 @@ def mock_config_paths(temp_data_dir, monkeypatch):
         "pos_start": data_path("positions_start_of_year.csv"),
         "pos_end": data_path("positions_end_of_year.csv"),
         "corp_actions": data_path("corporate_actions.csv"),
+        "cash_balance": data_path("cash_balance.csv"),
         "classification_cache": cache_path("user_classifications.json"),
         "ecb_cache": cache_path("ecb_exchange_rates.json"),
         "temp_dir_root": temp_data_dir

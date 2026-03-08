@@ -4,12 +4,14 @@ from typing import List
 from pydantic import ValidationError
 
 from .raw_models import RawPositionRecord
+from .column_validator import validate_csv_columns, POSITIONS_COLUMNS
 
 def parse_positions_csv(file_path: str, encoding='utf-8-sig') -> List[RawPositionRecord]:
     raw_positions: List[RawPositionRecord] = []
     try:
         with open(file_path, mode='r', encoding=encoding) as csvfile:
             reader = csv.DictReader(csvfile)
+            validate_csv_columns(reader.fieldnames or [], POSITIONS_COLUMNS, f"Positions ({file_path})")
             for i, row_dict in enumerate(reader):
                 try:
                     # Assuming 'Quantity' in CSV maps to 'Position' in RawPositionRecord via alias or direct name

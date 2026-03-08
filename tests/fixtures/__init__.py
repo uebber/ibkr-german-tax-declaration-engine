@@ -439,3 +439,425 @@ def get_group8_options_tests() -> List[OptionTestSpec]:
     """Load and parse Group 8: Options Lifecycle test specifications."""
     spec_data = load_yaml_spec("group8_options.yaml")
     return parse_option_tests(spec_data)
+
+
+# =============================================================================
+# Currency FIFO dataclasses (Group 7)
+# =============================================================================
+
+@dataclass
+class FxTradeSpec:
+    """
+    Parsed explicit FX trade from YAML spec.
+
+    Represents a currency conversion: EUR ↔ Foreign currency.
+    """
+    type: str  # BUY (EUR→Foreign), SELL (Foreign→EUR), or CROSS_CURRENCY
+    date: str
+    foreign_amount: Decimal
+    eur_amount: Decimal
+    ecb_rate: Optional[Decimal]  # Foreign currency per EUR (for from_currency in cross-currency); None = missing rate
+    time: Optional[str] = None
+    foreign_currency: Optional[str] = None  # The non-EUR currency (USD, GBP, etc.)
+    # Cross-currency fields
+    to_currency: Optional[str] = None  # Target currency for cross-currency trades
+    ecb_rate_to: Optional[Decimal] = None  # ECB rate for target currency
+
+
+@dataclass
+class SecurityTradeForFxSpec:
+    """
+    Parsed security trade that causes implicit FX movement.
+
+    When buying/selling securities in foreign currency, the currency
+    balance changes implicitly, potentially triggering FX gains/losses.
+    """
+    type: str  # BUY_LONG, SELL_LONG, etc.
+    date: str
+    asset_symbol: str
+    asset_isin: str
+    quantity: Decimal
+    price_foreign: Decimal  # Price per share in local_currency
+    local_currency: str  # Currency the trade settles in (e.g., USD)
+    ecb_rate: Decimal  # local_currency per EUR
+    time: Optional[str] = None
+
+
+@dataclass
+class CurrencyPositionSpec:
+    """
+    Currency position specification (SOY or EOY).
+
+    Supports both long positions (positive balance) and
+    short positions (negative balance).
+    """
+    currency: str
+    balance: Decimal
+    cost_basis_eur: Optional[Decimal] = None  # For long positions
+    acquisition_date: Optional[str] = None  # For long positions
+    short_proceeds_eur: Optional[Decimal] = None  # For short positions
+    short_opening_date: Optional[str] = None  # For short positions
+    fallback_ecb_rate: Optional[Decimal] = None  # When no historical data
+
+
+@dataclass
+class ExpectedCurrencyRGLSpec:
+    """
+    Expected currency RGL from YAML spec.
+
+    Similar to ExpectedRGLSpec but with currency-specific fields.
+    """
+    realization_type: str  # FX_CONVERSION_SALE, FX_CONVERSION_SHORT_COVER, FX_IMPLICIT_*
+    currency: str
+    quantity: Decimal
+    acquisition_date: Optional[str] = None
+    realization_date: Optional[str] = None
+    total_cost_basis_eur: Optional[Decimal] = None
+    total_proceeds_eur: Optional[Decimal] = None
+    gain_loss_eur: Optional[Decimal] = None
+    tax_category: Optional[str] = None
+
+
+@dataclass
+class ExpectedCurrencyEoyState:
+    """Expected EOY state for a currency position."""
+    currency: str
+    quantity: Decimal
+    # Lot details are optional - for documentation/debugging
+    lots: Optional[List[Dict[str, Any]]] = None
+    short_lots: Optional[List[Dict[str, Any]]] = None
+
+
+@dataclass
+class ExpectedAggregates:
+    """
+    Expected tax form aggregates.
+
+    Kept separate from RGLs for clean separation between
+    unit testing (RGLs) and integration testing (aggregates).
+    """
+    kap_other_income: Decimal = Decimal("0")
+    kap_other_losses: Decimal = Decimal("0")
+
+
+@dataclass
+class CurrencyFifoTestSpec:
+    """
+    A single currency FIFO test case parsed from YAML.
+
+    Supports:
+    - Explicit FX trades (EUR ↔ Foreign)
+    - Implicit FX from security trades
+    - Long and short currency positions
+    - Cross-currency trades
+    - Multi-currency portfolios
+    """
+    id: str
+    description: str
+    # Currency positions (supports multi-currency)
+    currency_positions_soy: List[CurrencyPositionSpec]
+    # Trade inputs
+    fx_trades: List[FxTradeSpec]
+    security_trades: List[SecurityTradeForFxSpec]
+    # Expected outputs
+    expected_rgls: List[ExpectedCurrencyRGLSpec]
+    expected_eoy_states: List[ExpectedCurrencyEoyState]
+    expected_aggregates: ExpectedAggregates
+    expected_errors: int
+    expected_warnings: int
+    # Documentation
+    notes: Optional[str] = None
+    # Whether rgls were explicitly specified in YAML (even if empty list)
+    has_explicit_rgl_expectations: bool = True
+    # Skip flag for tests that test unimplemented features
+    skip: bool = False
+    skip_reason: Optional[str] = None
+
+
+# =============================================================================
+# Currency FIFO parsing functions
+# =============================================================================
+
+def _parse_fx_trade(trade_dict: Dict) -> FxTradeSpec:
+    """Parse an FX trade dictionary into FxTradeSpec.
+
+    Supports two formats:
+    1. New simplified format:
+       type: BUY/SELL, foreign_amount, eur_amount, ecb_rate
+
+    2. Legacy format:
+       type: BUY_FOREIGN/SELL_FOREIGN, from_currency, from_amount, to_currency, to_amount, ecb_rate
+       For cross-currency: ecb_rate_from, ecb_rate_to instead of ecb_rate
+    """
+    trade_type = trade_dict["type"]
+    date = trade_dict["date"]
+    time = trade_dict.get("time")
+
+    # Handle ECB rate - support both single rate and separate from/to rates
+    if "ecb_rate" in trade_dict and trade_dict["ecb_rate"] is not None:
+        ecb_rate = Decimal(str(trade_dict["ecb_rate"]))
+    elif "ecb_rate_from" in trade_dict and trade_dict["ecb_rate_from"] is not None:
+        # Cross-currency trade - use the "from" rate as the primary rate
+        ecb_rate = Decimal(str(trade_dict["ecb_rate_from"]))
+    elif "ecb_rate" in trade_dict and trade_dict["ecb_rate"] is None:
+        ecb_rate = None  # Explicitly null - test missing rate scenario
+    else:
+        ecb_rate = Decimal("1.0")  # Default fallback when not specified
+
+    # Check if using new simplified format
+    if "foreign_amount" in trade_dict:
+        # New format should also have foreign_currency
+        foreign_currency = trade_dict.get("foreign_currency", trade_dict.get("currency"))
+        return FxTradeSpec(
+            type=trade_type,
+            date=date,
+            foreign_amount=Decimal(str(trade_dict["foreign_amount"])),
+            eur_amount=Decimal(str(trade_dict["eur_amount"])),
+            ecb_rate=ecb_rate,
+            time=time,
+            foreign_currency=foreign_currency,
+        )
+
+    # Legacy format with from_currency/to_currency
+    from_currency = trade_dict.get("from_currency", "")
+    to_currency = trade_dict.get("to_currency", "")
+    from_amount = Decimal(str(trade_dict.get("from_amount", "0")))
+    to_amount = Decimal(str(trade_dict.get("to_amount", "0")))
+
+    # Determine which is EUR and which is foreign
+    if from_currency == "EUR":
+        # Selling EUR to buy foreign (BUY foreign)
+        eur_amount = from_amount
+        foreign_amount = to_amount
+        normalized_type = "BUY"
+        foreign_currency = to_currency
+    elif to_currency == "EUR":
+        # Selling foreign to buy EUR (SELL foreign)
+        foreign_amount = from_amount
+        eur_amount = to_amount
+        normalized_type = "SELL"
+        foreign_currency = from_currency
+    else:
+        # Cross-currency trade (neither is EUR)
+        foreign_amount = from_amount
+        eur_amount = to_amount
+        normalized_type = "CROSS_CURRENCY"
+        foreign_currency = from_currency
+        to_currency_val = to_currency
+        ecb_rate_to_val = Decimal(str(trade_dict["ecb_rate_to"])) if "ecb_rate_to" in trade_dict else None
+
+        return FxTradeSpec(
+            type=normalized_type,
+            date=date,
+            foreign_amount=foreign_amount,
+            eur_amount=eur_amount,
+            ecb_rate=ecb_rate,
+            time=time,
+            foreign_currency=foreign_currency,
+            to_currency=to_currency_val,
+            ecb_rate_to=ecb_rate_to_val,
+        )
+
+    return FxTradeSpec(
+        type=normalized_type,
+        date=date,
+        foreign_amount=foreign_amount,
+        eur_amount=eur_amount,
+        ecb_rate=ecb_rate,
+        time=time,
+        foreign_currency=foreign_currency,
+    )
+
+
+def _parse_security_trade_for_fx(trade_dict: Dict) -> SecurityTradeForFxSpec:
+    """Parse a security trade dictionary for FX purposes."""
+    return SecurityTradeForFxSpec(
+        type=trade_dict["type"],
+        date=trade_dict["date"],
+        asset_symbol=trade_dict["asset_symbol"],
+        asset_isin=trade_dict["asset_isin"],
+        quantity=Decimal(str(trade_dict["quantity"])),
+        price_foreign=Decimal(str(trade_dict["price_foreign"])),
+        local_currency=trade_dict["local_currency"],
+        ecb_rate=Decimal(str(trade_dict["ecb_rate"])),
+        time=trade_dict.get("time"),
+    )
+
+
+def _parse_currency_position(pos_dict: Dict) -> CurrencyPositionSpec:
+    """Parse a currency position dictionary using 'balance' key format."""
+    return CurrencyPositionSpec(
+        currency=pos_dict["currency"],
+        balance=Decimal(str(pos_dict["balance"])),
+        cost_basis_eur=Decimal(str(pos_dict["cost_basis_eur"])) if pos_dict.get("cost_basis_eur") else None,
+        acquisition_date=pos_dict.get("acquisition_date"),
+        short_proceeds_eur=Decimal(str(pos_dict["short_proceeds_eur"])) if pos_dict.get("short_proceeds_eur") else None,
+        short_opening_date=pos_dict.get("short_opening_date"),
+        fallback_ecb_rate=Decimal(str(pos_dict["fallback_ecb_rate"])) if pos_dict.get("fallback_ecb_rate") else None,
+    )
+
+
+def _parse_soy_currency_position(pos_dict: Dict) -> CurrencyPositionSpec:
+    """Parse a SOY currency position dictionary using 'soy_balance' key format.
+
+    This is for the 'currencies:' YAML format which uses soy_* prefixed keys
+    to explicitly denote Start-of-Year validation points.
+    """
+    return CurrencyPositionSpec(
+        currency=pos_dict["currency"],
+        balance=Decimal(str(pos_dict.get("soy_balance", "0"))),
+        cost_basis_eur=Decimal(str(pos_dict["soy_cost_basis_eur"])) if pos_dict.get("soy_cost_basis_eur") else None,
+        acquisition_date=pos_dict.get("soy_acquisition_date"),
+        short_proceeds_eur=Decimal(str(pos_dict["soy_short_proceeds_eur"])) if pos_dict.get("soy_short_proceeds_eur") else None,
+        short_opening_date=pos_dict.get("soy_short_opening_date"),
+        fallback_ecb_rate=Decimal(str(pos_dict["soy_fallback_ecb_rate"])) if pos_dict.get("soy_fallback_ecb_rate") else None,
+    )
+
+
+def _parse_currency_rgl(rgl_dict: Dict) -> ExpectedCurrencyRGLSpec:
+    """Parse an expected currency RGL dictionary."""
+    return ExpectedCurrencyRGLSpec(
+        realization_type=rgl_dict["realization_type"],
+        currency=rgl_dict["currency"],
+        quantity=Decimal(str(rgl_dict["quantity"])),
+        acquisition_date=rgl_dict.get("acquisition_date"),
+        realization_date=rgl_dict.get("realization_date"),
+        total_cost_basis_eur=Decimal(str(rgl_dict["total_cost_basis_eur"])) if rgl_dict.get("total_cost_basis_eur") else None,
+        total_proceeds_eur=Decimal(str(rgl_dict["total_proceeds_eur"])) if rgl_dict.get("total_proceeds_eur") else None,
+        gain_loss_eur=Decimal(str(rgl_dict["gain_loss_eur"])) if rgl_dict.get("gain_loss_eur") else None,
+        tax_category=rgl_dict.get("tax_category"),
+    )
+
+
+def _parse_currency_eoy_state(state_dict: Dict) -> ExpectedCurrencyEoyState:
+    """Parse expected EOY state for a currency."""
+    return ExpectedCurrencyEoyState(
+        currency=state_dict["currency"],
+        quantity=Decimal(str(state_dict["quantity"])),
+        lots=state_dict.get("lots"),
+        short_lots=state_dict.get("short_lots"),
+    )
+
+
+def _parse_aggregates(agg_dict: Optional[Dict]) -> ExpectedAggregates:
+    """Parse expected aggregates dictionary."""
+    if not agg_dict:
+        return ExpectedAggregates()
+    return ExpectedAggregates(
+        kap_other_income=Decimal(str(agg_dict.get("kap_other_income", "0"))),
+        kap_other_losses=Decimal(str(agg_dict.get("kap_other_losses", "0"))),
+    )
+
+
+def parse_currency_fifo_tests(spec_data: Dict[str, Any]) -> List[CurrencyFifoTestSpec]:
+    """
+    Parse currency FIFO test specifications from loaded YAML.
+
+    Args:
+        spec_data: Loaded YAML dictionary
+
+    Returns:
+        List of CurrencyFifoTestSpec objects
+    """
+    tests = []
+
+    for test_dict in spec_data.get("tests", []):
+        inputs = test_dict.get("inputs", {})
+        expected = test_dict.get("expected", {})
+
+        # Parse currency positions (SOY)
+        soy_positions = []
+        # Support both single currency and multi-currency formats
+        if "currency_positions" in inputs:
+            for pos in inputs["currency_positions"]:
+                soy_positions.append(_parse_currency_position(pos))
+        elif "currencies" in inputs:
+            # Multi-currency SOY format using 'currencies:' key with soy_* prefixed fields
+            for pos in inputs["currencies"]:
+                soy_positions.append(_parse_soy_currency_position(pos))
+        elif "currency" in inputs:
+            # Legacy single-currency format
+            soy_positions.append(CurrencyPositionSpec(
+                currency=inputs["currency"],
+                balance=Decimal(str(inputs.get("soy_balance", "0"))),
+                cost_basis_eur=Decimal(str(inputs["soy_cost_basis_eur"])) if inputs.get("soy_cost_basis_eur") else None,
+                acquisition_date=inputs.get("soy_acquisition_date"),
+                short_proceeds_eur=Decimal(str(inputs["soy_short_proceeds_eur"])) if inputs.get("soy_short_proceeds_eur") else None,
+                short_opening_date=inputs.get("soy_short_opening_date"),
+                fallback_ecb_rate=Decimal(str(inputs["soy_fallback_ecb_rate"])) if inputs.get("soy_fallback_ecb_rate") else None,
+            ))
+
+        # Parse FX trades
+        fx_trades = []
+        for trade in inputs.get("fx_trades", []):
+            fx_trades.append(_parse_fx_trade(trade))
+
+        # Parse security trades
+        security_trades = []
+        for trade in inputs.get("security_trades", []):
+            security_trades.append(_parse_security_trade_for_fx(trade))
+
+        # Parse expected RGLs (support both 'rgls' and 'currency_rgls' keys)
+        rgls = []
+        has_explicit_rgl_expectations = "rgls" in expected or "currency_rgls" in expected
+        rgl_list = expected.get("rgls", expected.get("currency_rgls", []))
+        for rgl in rgl_list:
+            rgls.append(_parse_currency_rgl(rgl))
+
+        # Parse expected EOY states
+        eoy_states = []
+        if "eoy_states" in expected:
+            for state in expected["eoy_states"]:
+                eoy_states.append(_parse_currency_eoy_state(state))
+        elif "eoy_state" in expected:
+            # Single currency EOY state
+            eoy_state = expected["eoy_state"]
+            # Derive currency from SOY positions or first RGL
+            currency = soy_positions[0].currency if soy_positions else (rgls[0].currency if rgls else "USD")
+            eoy_states.append(ExpectedCurrencyEoyState(
+                currency=currency,
+                quantity=Decimal(str(eoy_state.get("quantity", "0"))),
+                lots=eoy_state.get("lots"),
+                short_lots=eoy_state.get("short_lots"),
+            ))
+        elif inputs.get("eoy_balance_expected") is not None:
+            # Legacy format
+            currency = soy_positions[0].currency if soy_positions else "USD"
+            eoy_states.append(ExpectedCurrencyEoyState(
+                currency=currency,
+                quantity=Decimal(str(inputs["eoy_balance_expected"])),
+            ))
+
+        # Parse aggregates
+        aggregates = _parse_aggregates(expected.get("aggregates"))
+        # Also support legacy format
+        if "kap_other_income_positive" in expected:
+            aggregates = ExpectedAggregates(
+                kap_other_income=Decimal(str(expected.get("kap_other_income_positive", "0"))),
+                kap_other_losses=Decimal(str(expected.get("kap_other_losses_abs", "0"))),
+            )
+
+        tests.append(CurrencyFifoTestSpec(
+            id=test_dict["id"],
+            description=test_dict["description"],
+            currency_positions_soy=soy_positions,
+            fx_trades=fx_trades,
+            security_trades=security_trades,
+            expected_rgls=rgls,
+            expected_eoy_states=eoy_states,
+            expected_aggregates=aggregates,
+            expected_errors=expected.get("errors", 0),
+            expected_warnings=expected.get("warnings", 0),
+            has_explicit_rgl_expectations=has_explicit_rgl_expectations,
+            notes=test_dict.get("notes"),
+            skip=test_dict.get("skip", False),
+            skip_reason=test_dict.get("skip_reason"),
+        ))
+
+    return tests
+
+
+def get_group7_currency_fifo_tests() -> List[CurrencyFifoTestSpec]:
+    """Load and parse Group 7: Currency FIFO test specifications."""
+    spec_data = load_yaml_spec("group7_currency_fifo.yaml")
+    return parse_currency_fifo_tests(spec_data)

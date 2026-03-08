@@ -1,0 +1,2810 @@
+# Test Group 7: Currency FIFO Mechanics
+#
+# Revision: 2026-01-13
+# PRD Coverage: §20 EStG (Capital Income from Interest-Bearing Accounts)
+#
+# Legal Background:
+# - BMF Circular May 2022, Para. 131: IBKR FX reserves are "interest-bearing"
+# - Foreign currency gains from interest-bearing instruments: §20 EStG (NOT §23 EStG)
+# - Key implications:
+#   - NO 1-year holding period applies - ALL gains are taxable immediately
+#   - Report on Anlage KAP Zeile 19
+#   - Tax category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE (gains)
+#                   ANLAGE_KAP_SONSTIGE_VERLUSTE (losses)
+# - FIFO method: §23 EStG codified (2014) - applies to currency disposals
+#
+# References:
+# - Flick Gocke Schaumburg: "New Rules on Taxing Foreign Currency Gains in Private Assets"
+# - Private Banking Magazine: "Fremdwährungskonten"
+#
+# Test Organization:
+# - CFX_L_*   : Long position explicit FX trades
+# - CFX_SOY_* : SOY position handling
+# - CFX_S_*   : Short position explicit FX trades
+# - CFX_X_*   : Cross-currency trades
+# - CFX_E_*   : Edge cases
+# - CFX_HP_*  : Holding period verification (no exemption)
+# - CFX_I_*   : Implicit FX from security trades (Phase 5a)
+# - CFX_IS_*  : Implicit FX with short currency positions
+# - CFX_MIX_* : Mixed explicit FX + implicit security trades
+# - CFX_P_*   : Precision and rounding edge cases
+# - CFX_V_*   : Validation and EOY reconciliation
+#
+# Common assumptions:
+# - TAX_YEAR = 2023
+# - Base currency: EUR
+# - ECB exchange rate applies at trade date
+# - Gains → Anlage KAP Zeile 19 (kap_other_income_positive)
+# - Losses → Anlage KAP Zeile 19 (kap_other_losses_abs)
+
+metadata:
+  group: 7
+  name: Currency FIFO Mechanics
+  prd_section: "§20 EStG, BMF 2022 Para 131"
+  revision: "2026-01-13"
+  legal_basis: |
+    BMF Circular May 2022, Para. 131: Foreign currency held in interest-bearing
+    brokerage accounts (such as IBKR) is treated as capital income under §20 EStG.
+    This means:
+    - No speculation period (1 year) unlike §23 EStG private sales
+    - All realized FX gains are taxable regardless of holding period
+    - All realized FX losses are deductible against capital income
+    - Reported on Anlage KAP Zeile 19
+
+tests:
+  # ===========================================================================
+  # PART A: EXPLICIT FX TRADES - Long Position Tests (CFX_L_*)
+  # ===========================================================================
+
+  - id: CFX_L_001
+    description: "Simple FX round-trip with gain - Buy USD, sell USD at higher rate"
+    notes: |
+      Buy 999.999 USD with EUR at rate 1.10 (cost 909.09 EUR)
+      Sell 999.999 USD for EUR at rate 1.05 (proceeds 952.38 EUR)
+      Gain: 952.38 - 909.09 = 43.29 EUR
+
+      USD strengthened from 1.10 to 1.05 EUR/USD = gain
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN       # EUR → USD
+          date: "2023-02-15"
+          from_currency: EUR
+          from_amount: "909.09"
+          to_currency: USD
+          to_amount: "999.999"    # 909.09 * 1.10
+          ecb_rate: "1.10"        # USD/EUR rate
+        - type: SELL_FOREIGN      # USD → EUR
+          date: "2023-09-20"
+          from_currency: USD
+          from_amount: "999.999"  # Must match buy amount for full sale
+          to_currency: EUR
+          to_amount: "952.38"
+          ecb_rate: "1.05"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "999.999"
+          acquisition_date: "2023-02-15"
+          realization_date: "2023-09-20"
+          total_cost_basis_eur: "909.09"
+          total_proceeds_eur: "952.38"
+          gain_loss_eur: "43.29"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      kap_other_income_positive: "43.29"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_L_002
+    description: "Simple FX round-trip with loss - Buy USD, sell USD at lower rate"
+    notes: |
+      Buy 1000 USD with EUR at rate 1.25 (cost 800 EUR)
+      Sell 1000 USD for EUR at rate 1.25 (proceeds 800 EUR, but we sell at rate 1.6)
+      Using clean divisible values: rate 1.25 = 5/4
+
+      Actually, let's use: Buy 1000 USD @ 1.25, Sell 1000 USD @ 1.6
+      Buy: 800 EUR * 1.25 = 1000 USD (cost 800 EUR)
+      Sell: 625 EUR * 1.6 = 1000 USD (proceeds 625 EUR)
+      Loss: 625 - 800 = -175 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-03-01"
+          from_currency: EUR
+          from_amount: "800"
+          to_currency: USD
+          to_amount: "1000"              # 800 * 1.25 = 1000
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-11-15"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "625"               # 1000 / 1.6 = 625
+          ecb_rate: "1.6"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-11-15"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "625.00"
+          gain_loss_eur: "-175.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "175.00"
+      errors: 0
+
+  - id: CFX_L_003
+    description: "Partial sale - Buy 5000 USD, sell 3000 USD, EOY 2000 USD remains"
+    notes: |
+      Using clean divisible values:
+      Buy: 4000 EUR * 1.25 = 5000 USD (cost 4000 EUR)
+      Sell: 2400 EUR * 1.25 = 3000 USD (proceeds 2400 EUR, same rate for simplicity)
+
+      FIFO: 3000 of 5000 from single lot
+      Proportional cost: 4000 * (3000/5000) = 2400 EUR
+      Gain/Loss: 2400 - 2400 = 0 EUR (break even at same rate)
+
+      Let's make it a gain by selling at better rate:
+      Sell: 2000 EUR * 1.5 = 3000 USD (proceeds 2000 EUR)
+      Cost: 4000 * (3000/5000) = 2400 EUR
+      Loss: 2000 - 2400 = -400 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-04-10"
+          from_currency: EUR
+          from_amount: "4000"
+          to_currency: USD
+          to_amount: "5000"              # 4000 * 1.25 = 5000
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-08-25"
+          from_currency: USD
+          from_amount: "3000"
+          to_currency: EUR
+          to_amount: "2000"              # 3000 / 1.5 = 2000
+          ecb_rate: "1.5"
+      eoy_balance_expected: "2000"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "3000"
+          acquisition_date: "2023-04-10"
+          realization_date: "2023-08-25"
+          total_cost_basis_eur: "2400.00"
+          total_proceeds_eur: "2000.00"
+          gain_loss_eur: "-400.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_state:
+        quantity: "2000"
+        lots:
+          - acquisition_date: "2023-04-10"
+            quantity: "2000"
+            unit_cost_basis_eur: "0.80"   # 4000/5000
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "400.00"
+      errors: 0
+
+  - id: CFX_L_004
+    description: "Multiple buys, single sell - FIFO consumes oldest lot first"
+    notes: |
+      Buy 1000 USD @ 1.25 on Jan 15 (cost 800 EUR)
+      Buy 1800 USD @ 1.5 on Mar 20 (cost 1200 EUR)
+      Sell 1600 USD @ 1.25 on Sep 10 (proceeds 1280 EUR)
+
+      FIFO: Uses 1000 from lot1, 600 from lot2
+      Lot1 cost: 800 EUR (full lot)
+      Lot2 partial cost: 1200 * (600/1800) = 400 EUR
+      Total cost: 800 + 400 = 1200 EUR
+      Total proceeds: 1280 EUR
+      Gain: 1280 - 1200 = 80 EUR
+
+      Remaining: 1800 - 600 = 1200 USD from lot2
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-01-15"
+          from_currency: EUR
+          from_amount: "800"
+          to_currency: USD
+          to_amount: "1000"              # 800 * 1.25 = 1000
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN
+          date: "2023-03-20"
+          from_currency: EUR
+          from_amount: "1200"
+          to_currency: USD
+          to_amount: "1800"              # 1200 * 1.5 = 1800
+          ecb_rate: "1.5"
+        - type: SELL_FOREIGN
+          date: "2023-09-10"
+          from_currency: USD
+          from_amount: "1600"
+          to_currency: EUR
+          to_amount: "1280"              # 1600 / 1.25 = 1280
+          ecb_rate: "1.25"
+      eoy_balance_expected: "1200"
+    expected:
+      rgls:
+        # Two RGLs due to FIFO crossing lot boundary
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2023-01-15"
+          realization_date: "2023-09-10"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "800.00"    # 1000/1600 * 1280 = 800
+          gain_loss_eur: "0.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "600"
+          acquisition_date: "2023-03-20"
+          realization_date: "2023-09-10"
+          total_cost_basis_eur: "400.00"
+          total_proceeds_eur: "480.00"    # 600/1600 * 1280 = 480
+          gain_loss_eur: "80.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      kap_other_income_positive: "80.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_L_005
+    description: "Multiple sells crossing lot boundaries with mixed gain/loss"
+    notes: |
+      FIFO Bug Detection: Ensure proceeds are correctly apportioned across lot boundaries
+
+      Buy 1000 USD @ 2.5 on Feb 1 (cost 400 EUR)
+      Buy 1500 USD @ 2.0 on Mar 1 (cost 750 EUR)
+      Sell 800 USD @ 2.0 on Jun 1 (proceeds 400 EUR)
+      Sell 2000 USD @ 2.5 on Sep 1 (proceeds 800 EUR)
+
+      Sale 1: 800 from lot1 → cost 320, proceeds 400, gain 80
+      Sale 2: 200 from lot1 + 1500 from lot2 + opens 300 short
+        - Lot1 portion: cost 80, proceeds 80, gain 0
+        - Lot2 portion: cost 750, proceeds 600, loss -150
+        - Net loss: -70 EUR (80 gain - 150 loss)
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-02-01"
+          from_currency: EUR
+          from_amount: "400"
+          to_currency: USD
+          to_amount: "1000"              # 400 * 2.5 = 1000
+          ecb_rate: "2.5"
+        - type: BUY_FOREIGN
+          date: "2023-03-01"
+          from_currency: EUR
+          from_amount: "750"
+          to_currency: USD
+          to_amount: "1500"              # 750 * 2.0 = 1500
+          ecb_rate: "2.0"
+        - type: SELL_FOREIGN
+          date: "2023-06-01"
+          from_currency: USD
+          from_amount: "800"
+          to_currency: EUR
+          to_amount: "400"               # 800 / 2.0 = 400
+          ecb_rate: "2.0"
+        - type: SELL_FOREIGN
+          date: "2023-09-01"
+          from_currency: USD
+          from_amount: "2000"
+          to_currency: EUR
+          to_amount: "800"               # 2000 / 2.5 = 800
+          ecb_rate: "2.5"
+      eoy_balance_expected: "-300"       # Oversold - opens short position
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "800"
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-06-01"
+          total_cost_basis_eur: "320.00"
+          total_proceeds_eur: "400.00"
+          gain_loss_eur: "80.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "200"
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: "80.00"
+          total_proceeds_eur: "80.00"    # 200/2000 * 800 = 80
+          gain_loss_eur: "0.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1500"
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: "750.00"
+          total_proceeds_eur: "600.00"   # 1500/2000 * 800 = 600
+          gain_loss_eur: "-150.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_state:
+        quantity: "-300"
+        short_lots:
+          - opening_date: "2023-09-01"
+            quantity_shorted: "300"
+      kap_other_income_positive: "80.00"
+      kap_other_losses_abs: "150.00"
+      errors: 0
+
+  # ===========================================================================
+  # PART A: SOY Position Tests (CFX_SOY_*)
+  # ===========================================================================
+
+  - id: CFX_SOY_001
+    description: "SOY balance, no trades, EOY matches - No FX events"
+    notes: |
+      Start with 1000 USD, no FX activity during year
+      No gain/loss realized (still holding currency)
+    inputs:
+      currency: USD
+      soy_balance: "1000.00"
+      soy_cost_basis_eur: "925.93"  # Acquired at rate 1.08
+      soy_acquisition_date: "2022-06-15"
+      fx_trades: []
+      eoy_balance_expected: "1000.00"
+    expected:
+      rgls: []
+      eoy_state:
+        quantity: "1000.00"
+        lots:
+          - acquisition_date: "2022-06-15"
+            quantity: "1000.00"
+            unit_cost_basis_eur: "0.9259"
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_SOY_002
+    description: "Prior year position, sell all in current year"
+    notes: |
+      Buy 3000 USD in 2022 (cost 2400 EUR at rate 1.25)
+      Sell all in 2023 at rate 1.2 (proceeds 2500 EUR)
+      Gain: 2500 - 2400 = 100 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2022-08-01"
+          from_currency: EUR
+          from_amount: "2400"
+          to_currency: USD
+          to_amount: "3000"              # 2400 * 1.25 = 3000
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-05-15"
+          from_currency: USD
+          from_amount: "3000"
+          to_currency: EUR
+          to_amount: "2500"              # 3000 / 1.2 = 2500
+          ecb_rate: "1.2"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "3000"
+          acquisition_date: "2022-08-01"
+          realization_date: "2023-05-15"
+          total_cost_basis_eur: "2400.00"
+          total_proceeds_eur: "2500.00"
+          gain_loss_eur: "100.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "0.00"
+      kap_other_income_positive: "100.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_SOY_003
+    description: "Prior year position + current year buy, partial sell - FIFO order"
+    notes: |
+      Buy 2000 USD in 2022 (cost 1600 EUR at rate 1.25)
+      Buy 1500 USD in 2023 Mar (cost 750 EUR at rate 2.0)
+      Total: 3500 USD
+      Sell 2500 USD in 2023 Oct at rate 1.25 → 2000 EUR
+
+      FIFO: 2000 from 2022 lot + 500 from Mar lot
+      2022 lot: cost 1600, proceeds 2000/2500×2000=1600, gain 0
+      Mar lot partial: cost 750×500/1500=250, proceeds 500/2500×2000=400, gain 150
+
+      Remaining: 1000 USD from Mar lot
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2022-09-15"
+          from_currency: EUR
+          from_amount: "1600"
+          to_currency: USD
+          to_amount: "2000"              # 1600 * 1.25 = 2000
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN
+          date: "2023-03-01"
+          from_currency: EUR
+          from_amount: "750"
+          to_currency: USD
+          to_amount: "1500"              # 750 * 2.0 = 1500
+          ecb_rate: "2.0"
+        - type: SELL_FOREIGN
+          date: "2023-10-01"
+          from_currency: USD
+          from_amount: "2500"
+          to_currency: EUR
+          to_amount: "2000"              # 2500 / 1.25 = 2000
+          ecb_rate: "1.25"
+      eoy_balance_expected: "1000"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "2000"
+          acquisition_date: "2022-09-15"
+          realization_date: "2023-10-01"
+          total_cost_basis_eur: "1600.00"
+          total_proceeds_eur: "1600.00"  # 2000/2500 * 2000 = 1600
+          gain_loss_eur: "0.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "500"
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-10-01"
+          total_cost_basis_eur: "250.00"
+          total_proceeds_eur: "400.00"   # 500/2500 * 2000 = 400
+          gain_loss_eur: "150.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "1000"
+        lots:
+          - acquisition_date: "2023-03-01"
+            quantity: "1000"
+      kap_other_income_positive: "150.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_SOY_004
+    description: "Prior year position with gain on sale"
+    notes: |
+      Buy 3000 USD in 2022 (cost 2000 EUR at rate 1.5)
+      Sell all in 2023 at rate 1.2 → proceeds 2500 EUR
+      Gain: 2500 - 2000 = 500 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2022-04-20"
+          from_currency: EUR
+          from_amount: "2000"
+          to_currency: USD
+          to_amount: "3000"              # 2000 * 1.5 = 3000
+          ecb_rate: "1.5"
+        - type: SELL_FOREIGN
+          date: "2023-07-15"
+          from_currency: USD
+          from_amount: "3000"
+          to_currency: EUR
+          to_amount: "2500"              # 3000 / 1.2 = 2500
+          ecb_rate: "1.2"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "3000"
+          acquisition_date: "2022-04-20"
+          realization_date: "2023-07-15"
+          total_cost_basis_eur: "2000.00"
+          total_proceeds_eur: "2500.00"
+          gain_loss_eur: "500.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      kap_other_income_positive: "500.00"
+      errors: 0
+
+  # ===========================================================================
+  # PART A: Short Position Tests (CFX_S_*)
+  # ===========================================================================
+
+  - id: CFX_S_001
+    description: "Short currency open and cover with gain - Sell USD short, buy back lower"
+    notes: |
+      Legal: Short selling currency = borrowing then selling, taxable under §20 EStG
+
+      No SOY balance (start with 0 USD)
+      Sell (short) 1000 USD at rate 1.25 (proceeds 800 EUR)
+      Buy (cover) 1000 USD at rate 2.0 (cost 500 EUR)
+
+      Short gain = proceeds - cover cost = 800 - 500 = 300 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: SELL_FOREIGN     # Opens short position
+          date: "2023-04-01"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "800"               # 1000 / 1.25 = 800
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN      # Covers short position
+          date: "2023-07-15"
+          from_currency: EUR
+          from_amount: "500"
+          to_currency: USD
+          to_amount: "1000"              # 500 * 2.0 = 1000
+          ecb_rate: "2.0"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SHORT_COVER
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2023-04-01"   # Short opening date
+          realization_date: "2023-07-15"   # Cover date
+          total_cost_basis_eur: "500.00"   # Cover cost
+          total_proceeds_eur: "800.00"     # Short sale proceeds
+          gain_loss_eur: "300.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "0.00"
+      kap_other_income_positive: "300.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_S_002
+    description: "Short currency open and cover with loss - Sell USD short, buy back higher"
+    notes: |
+      No SOY balance
+      Sell (short) 1000.0032 USD at rate 1.12 (proceeds 892.86 EUR)
+      Buy (cover) 999.999 USD at rate 1.05 (cost 952.38 EUR)
+      Note: 892.86 * 1.12 = 1000.0032 and 952.38 * 1.05 = 999.999
+
+      Short loss = proceeds - cover cost = 892.86 - 952.38 = -59.52 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: SELL_FOREIGN
+          date: "2023-02-10"
+          from_currency: USD
+          from_amount: "1000.0032"       # 892.86 * 1.12
+          to_currency: EUR
+          to_amount: "892.86"
+          ecb_rate: "1.12"
+        - type: BUY_FOREIGN
+          date: "2023-10-20"
+          from_currency: EUR
+          from_amount: "952.38"
+          to_currency: USD
+          to_amount: "999.999"           # 952.38 * 1.05
+          ecb_rate: "1.05"
+      eoy_balance_expected: "-0.0042"    # 1000.0032 - 999.999 = residual short
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SHORT_COVER
+          currency: USD
+          quantity: "999.999"
+          acquisition_date: "2023-02-10"
+          realization_date: "2023-10-20"
+          total_cost_basis_eur: "952.38"
+          total_proceeds_eur: "892.86"   # Proportional: 892.86 * (999.999/1000.0032)
+          gain_loss_eur: "-59.52"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "59.52"
+      errors: 0
+
+  - id: CFX_S_003
+    description: "Prior year short position, cover in tax year with gain"
+    notes: |
+      Prior year: Sold short 1000 USD at rate 1.25 (proceeds 800 EUR) on Nov 1, 2022
+      Tax year: Buy to cover 1000 USD at rate 2.0 (cost 500 EUR)
+
+      Gain = 800 - 500 = 300 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: SELL_FOREIGN     # Opens short in prior year
+          date: "2022-11-01"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "800"               # 1000 / 1.25 = 800
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN      # Cover in tax year
+          date: "2023-03-15"
+          from_currency: EUR
+          from_amount: "500"
+          to_currency: USD
+          to_amount: "1000"              # 500 * 2.0 = 1000
+          ecb_rate: "2.0"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SHORT_COVER
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2022-11-01"
+          realization_date: "2023-03-15"
+          total_cost_basis_eur: "500.00"
+          total_proceeds_eur: "800.00"
+          gain_loss_eur: "300.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      kap_other_income_positive: "300.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_S_004
+    description: "Sell more than available - consumes long, opens short for remainder"
+    notes: |
+      Prior year: Buy 500 USD at rate 1.25 (cost 400 EUR) on Oct 15, 2022
+      Tax year: Sell 1500 USD at rate 1.25 → proceeds 1200 EUR
+
+      FIFO: Consume 500 from long lot, open short for 1000
+      - Long sale: cost 400, proceeds 500/1500×1200 = 400, gain 0 EUR
+      - Short open: 1000 USD @ proceeds 1000/1500×1200 = 800 EUR
+
+      EOY: -1000 USD (short position)
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2022-10-15"
+          from_currency: EUR
+          from_amount: "400"
+          to_currency: USD
+          to_amount: "500"               # 400 * 1.25 = 500
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-06-01"
+          from_currency: USD
+          from_amount: "1500"
+          to_currency: EUR
+          to_amount: "1200"              # 1500 / 1.25 = 1200
+          ecb_rate: "1.25"
+      eoy_balance_expected: "-1000"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "500"
+          acquisition_date: "2022-10-15"
+          realization_date: "2023-06-01"
+          total_cost_basis_eur: "400.00"
+          total_proceeds_eur: "400.00"   # 500/1500 * 1200 = 400
+          gain_loss_eur: "0.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "-1000"
+        short_lots:
+          - opening_date: "2023-06-01"
+            quantity_shorted: "1000"
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_S_005
+    description: "Buy into short position, continue to long"
+    notes: |
+      Prior year: Sold short 1000 USD at rate 1.25 (proceeds 800 EUR) on Dec 1, 2022
+      Tax year: Buy 2000 USD at rate 2.0 (cost 1000 EUR)
+
+      - Cover 1000 short: cost = 1000/2000×1000 = 500 EUR, proceeds 800 EUR
+        Gain = 800 - 500 = 300 EUR
+      - Create long lot: 1000 USD @ cost = 1000/2000×1000 = 500 EUR
+
+      EOY: 1000 USD (long position)
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: SELL_FOREIGN     # Opens short in prior year
+          date: "2022-12-01"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "800"               # 1000 / 1.25 = 800
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN      # Cover + create long
+          date: "2023-04-20"
+          from_currency: EUR
+          from_amount: "1000"
+          to_currency: USD
+          to_amount: "2000"              # 1000 * 2.0 = 2000
+          ecb_rate: "2.0"
+      eoy_balance_expected: "1000"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SHORT_COVER
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2022-12-01"
+          realization_date: "2023-04-20"
+          total_cost_basis_eur: "500.00"
+          total_proceeds_eur: "800.00"
+          gain_loss_eur: "300.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "1000"
+        lots:
+          - acquisition_date: "2023-04-20"
+            quantity: "1000"
+      kap_other_income_positive: "300.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_S_006
+    description: "Multiple short opens and covers - FIFO ordering for shorts"
+    notes: |
+      SOY: 0 USD
+      Sell 499.9968 USD @ 1.08 on Jan 15 (proceeds 462.96 EUR) - short #1
+      Sell 300.003 USD @ 1.10 on Feb 20 (proceeds 272.73 EUR) - short #2
+      Buy 399.9975 USD @ 1.05 on Mar 10 (cost 380.95 EUR) - covers short #1 (399.9975 of 499.9968)
+      Note: 462.96 * 1.08 = 499.9968, 272.73 * 1.10 = 300.003, 380.95 * 1.05 = 399.9975
+
+      FIFO covers Jan 15 short first
+      Cover RGL: proceeds 370.37 EUR (399.9975/499.9968 * 462.96), cost 380.95, loss -10.58 EUR
+
+      Remaining short: 99.9993 USD from Jan 15 + 300.003 USD from Feb 20 = 400.0023 USD
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: SELL_FOREIGN
+          date: "2023-01-15"
+          from_currency: USD
+          from_amount: "499.9968"         # 462.96 * 1.08
+          to_currency: EUR
+          to_amount: "462.96"
+          ecb_rate: "1.08"
+        - type: SELL_FOREIGN
+          date: "2023-02-20"
+          from_currency: USD
+          from_amount: "300.003"          # 272.73 * 1.10
+          to_currency: EUR
+          to_amount: "272.73"
+          ecb_rate: "1.10"
+        - type: BUY_FOREIGN
+          date: "2023-03-10"
+          from_currency: EUR
+          from_amount: "380.95"
+          to_currency: USD
+          to_amount: "399.9975"           # 380.95 * 1.05
+          ecb_rate: "1.05"
+      eoy_balance_expected: "-400.0023"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SHORT_COVER
+          currency: USD
+          quantity: "399.9975"
+          acquisition_date: "2023-01-15"
+          realization_date: "2023-03-10"
+          total_cost_basis_eur: "380.95"
+          total_proceeds_eur: "370.37"
+          gain_loss_eur: "-10.58"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_state:
+        quantity: "-400.0023"
+        short_lots:
+          - opening_date: "2023-01-15"
+            quantity_shorted: "99.9993"
+          - opening_date: "2023-02-20"
+            quantity_shorted: "300.003"
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "10.58"
+      errors: 0
+
+  # ===========================================================================
+  # PART A: Cross-Currency Tests (CFX_X_*)
+  # ===========================================================================
+
+  - id: CFX_X_001
+    description: "Cross-currency: USD to GBP (neither is EUR)"
+    notes: |
+      Legal: Cross-currency trades are valued through EUR bridge.
+      Both sides trigger independent FIFO operations.
+
+      SOY: 2000 USD (cost 1818.18 EUR @ 1.10, unit cost 0.90909 EUR/USD)
+             0 GBP
+      Trade: Convert 1500 USD → 1200 GBP on Jun 1
+      ECB USD rate: 1.08, ECB GBP rate: 0.86
+
+      USD side (disposal): Sell 1500 USD
+        - Proceeds = EUR value of GBP received: 1200/0.86 = 1395.35 EUR
+        - Cost = FIFO: 1500 × 0.90909 = 1363.64 EUR
+        - Gain: 1395.35 - 1363.64 = 31.71 EUR
+
+      GBP side (acquisition): Buy 1200 GBP
+        - Cost = EUR value of USD paid: 1500/1.08 = 1388.89 EUR
+        - Creates new lot, no RGL
+
+      EOY: 500 USD, 1200 GBP
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "2000.00"
+          soy_cost_basis_eur: "1818.18"
+          soy_acquisition_date: "2022-07-01"
+        - currency: GBP
+          soy_balance: "0.00"
+      fx_trades:
+        - type: CROSS_CURRENCY
+          date: "2023-06-01"
+          from_currency: USD
+          from_amount: "1500.00"
+          to_currency: GBP
+          to_amount: "1200.00"
+          ecb_rate_from: "1.08"   # USD/EUR
+          ecb_rate_to: "0.86"     # GBP/EUR
+      eoy_balances_expected:
+        USD: "500.00"
+        GBP: "1200.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1500.00"
+          realization_date: "2023-06-01"
+          total_cost_basis_eur: "1363.64"
+          total_proceeds_eur: "1395.35"
+          gain_loss_eur: "31.71"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_states:
+        - currency: USD
+          quantity: "500.00"
+        - currency: GBP
+          quantity: "1200.00"
+      kap_other_income_positive: "31.71"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_X_002
+    description: "Cross-currency: CHF to GBP covering GBP short"
+    notes: |
+      SOY: 5000 CHF (cost 5102.04 EUR @ 0.98, unit cost 1.020408 EUR/CHF)
+           -1000 GBP (short proceeds 1136.36 EUR @ 0.88)
+      Trade: Convert 2000 CHF → 1500 GBP on Aug 15
+      ECB CHF rate: 0.96, ECB GBP rate: 0.85
+
+      CHF side (disposal): Sell 2000 CHF
+        - Proceeds = EUR value of GBP received: 1500/0.85 = 1764.71 EUR
+        - Cost = FIFO: 2000 × 1.020408 = 2040.82 EUR
+        - Loss: 1764.71 - 2040.82 = -276.11 EUR
+
+      GBP side (acquisition): Buy 1500 GBP
+        - Cost = EUR value of CHF paid: 2000/0.96 = 2083.33 EUR
+        - Unit cost: 2083.33/1500 = 1.3889 EUR/GBP
+        - Cover 1000 short: original proceeds 1136.36, cover cost 1388.89
+          - Loss: 1136.36 - 1388.89 = -252.53 EUR
+        - Create 500 long @ 1.3889 EUR/GBP
+
+      EOY: 3000 CHF, 500 GBP
+    inputs:
+      currencies:
+        - currency: CHF
+          soy_balance: "5000.00"
+          soy_cost_basis_eur: "5102.04"
+          soy_acquisition_date: "2022-05-20"
+        - currency: GBP
+          soy_balance: "-1000.00"
+          soy_short_proceeds_eur: "1136.36"
+          soy_short_opening_date: "2022-09-10"
+          soy_fallback_ecb_rate: "0.88"
+      fx_trades:
+        - type: CROSS_CURRENCY
+          date: "2023-08-15"
+          from_currency: CHF
+          from_amount: "2000.00"
+          to_currency: GBP
+          to_amount: "1500.00"
+          ecb_rate_from: "0.96"
+          ecb_rate_to: "0.85"
+      eoy_balances_expected:
+        CHF: "3000.00"
+        GBP: "500.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: CHF
+          quantity: "2000.00"
+          realization_date: "2023-08-15"
+          total_cost_basis_eur: "2040.82"
+          total_proceeds_eur: "1764.71"
+          gain_loss_eur: "-276.11"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+        - realization_type: FX_CONVERSION_SHORT_COVER
+          currency: GBP
+          quantity: "1000.00"
+          realization_date: "2023-08-15"
+          total_cost_basis_eur: "1388.89"
+          total_proceeds_eur: "1136.36"
+          gain_loss_eur: "-252.53"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      kap_other_losses_abs: "528.64"
+      errors: 0
+
+  # ===========================================================================
+  # PART A: Edge Cases (CFX_E_*)
+  # ===========================================================================
+
+  - id: CFX_E_001
+    description: "Tiny balance filtering - CAD below threshold ignored"
+    notes: |
+      SOY: -0.00002 CAD (rounding residual)
+      EOY: -0.00002 CAD
+
+      Below 0.01 threshold - should be filtered out, no FIFO activity
+    inputs:
+      currency: CAD
+      soy_balance: "-0.00002"
+      eoy_balance_expected: "-0.00002"
+      fx_trades: []
+    expected:
+      rgls: []
+      filtered_as_tiny_balance: true
+      errors: 0
+
+  - id: CFX_E_002
+    description: "EUR currency - base currency, no FIFO tracking"
+    notes: |
+      EUR is the base currency - should not have FIFO ledger
+      FX trades only affect non-EUR currencies
+    inputs:
+      currency: EUR
+      soy_balance: "10000.00"
+      fx_trades: []
+      eoy_balance_expected: "10000.00"
+    expected:
+      rgls: []
+      no_ledger_created: true
+      errors: 0
+
+  - id: CFX_E_003
+    description: "Same-day buy and sell - FIFO still applies chronologically"
+    notes: |
+      Buy 1000 USD @ 09:00 at rate 1.25 (cost 800 EUR)
+      Sell 1000 USD @ 15:00 at rate 1.0 (proceeds 1000 EUR)
+
+      FIFO uses morning lot for afternoon sale
+      Gain: 1000 - 800 = 200 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-07-15"
+          time: "09:00:00"
+          from_currency: EUR
+          from_amount: "800"
+          to_currency: USD
+          to_amount: "1000"
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-07-15"
+          time: "15:00:00"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "1000"
+          ecb_rate: "1.0"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2023-07-15"
+          realization_date: "2023-07-15"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "1000.00"
+          gain_loss_eur: "200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      kap_other_income_positive: "200.00"
+      errors: 0
+
+  - id: CFX_E_004
+    description: "Multiple currencies - independent FIFO ledgers"
+    notes: |
+      USD: Buy 1000 @ rate 1.25 (cost 800 EUR), sell 1000 @ rate 1.0 (proceeds 1000 EUR)
+           Gain = 1000 - 800 = 200 EUR
+      GBP: Buy 500 @ rate 0.5 (cost 1000 EUR), sell 500 @ rate 0.625 (proceeds 800 EUR)
+           Loss = 800 - 1000 = -200 EUR
+
+      Each currency has independent FIFO, both reported on Zeile 19
+      Net result: +200 - 200 = 0 EUR
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+        - currency: GBP
+          soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-02-01"
+          from_currency: EUR
+          from_amount: "800"
+          to_currency: USD
+          to_amount: "1000"
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN
+          date: "2023-02-15"
+          from_currency: EUR
+          from_amount: "1000"
+          to_currency: GBP
+          to_amount: "500"
+          ecb_rate: "0.5"
+        - type: SELL_FOREIGN
+          date: "2023-09-01"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "1000"
+          ecb_rate: "1.0"
+        - type: SELL_FOREIGN
+          date: "2023-09-15"
+          from_currency: GBP
+          from_amount: "500"
+          to_currency: EUR
+          to_amount: "800"
+          ecb_rate: "0.625"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "1000.00"
+          gain_loss_eur: "200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: GBP
+          quantity: "500"
+          acquisition_date: "2023-02-15"
+          realization_date: "2023-09-15"
+          total_cost_basis_eur: "1000.00"
+          total_proceeds_eur: "800.00"
+          gain_loss_eur: "-200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      kap_other_income_positive: "200.00"
+      kap_other_losses_abs: "200.00"
+      net_kap_other: "0.00"
+      errors: 0
+
+  # ===========================================================================
+  # PART A: Legal Verification: NO Holding Period (CFX_HP_*)
+  # ===========================================================================
+
+  - id: CFX_HP_001
+    description: "No holding period exemption - Same day round-trip is taxable"
+    notes: |
+      Unlike §23 EStG (1-year holding period), §20 EStG has NO exemption.
+      Even a same-day FX round-trip is fully taxable.
+
+      Buy 1000 USD @ rate 1.25 (cost 800 EUR)
+      Sell 1000 USD @ rate 1.0 (proceeds 1000 EUR)
+      Gain: 1000 - 800 = 200 EUR (TAXABLE - no exemption!)
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-06-15"
+          time: "10:00:00"
+          from_currency: EUR
+          from_amount: "800"
+          to_currency: USD
+          to_amount: "1000"
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-06-15"
+          time: "14:00:00"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "1000"
+          ecb_rate: "1.0"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2023-06-15"
+          realization_date: "2023-06-15"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "1000.00"
+          gain_loss_eur: "200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+          holding_period_exemption: false  # Explicitly: NO exemption for FX
+      errors: 0
+
+  - id: CFX_HP_002
+    description: "No holding period exemption - Multi-year holding still taxable"
+    notes: |
+      Unlike §23 EStG where >1 year holding = exempt,
+      §20 EStG for FX: >1 year holding = STILL TAXABLE
+
+      Buy 5000 USD in 2021 (cost basis 4000 EUR at rate 1.25)
+      Sell all in 2023 at rate 1.0 = 5000 EUR
+      Gain: 5000 - 4000 = 1000 EUR (TAXABLE - no exemption despite 2+ years held!)
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2021-03-15"
+          from_currency: EUR
+          from_amount: "4000"
+          to_currency: USD
+          to_amount: "5000"
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-10-20"
+          from_currency: USD
+          from_amount: "5000"
+          to_currency: EUR
+          to_amount: "5000"
+          ecb_rate: "1.0"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "5000"
+          acquisition_date: "2021-03-15"
+          realization_date: "2023-10-20"
+          total_cost_basis_eur: "4000.00"
+          total_proceeds_eur: "5000.00"
+          gain_loss_eur: "1000.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+          holding_period_exemption: false  # NO exemption even after 2+ years
+      kap_other_income_positive: "1000.00"
+      errors: 0
+      notes: |
+        CRITICAL: This is NOT §23 EStG (private sales) where 1-year exemption applies.
+        This is §20 EStG (capital income from interest-bearing accounts).
+        Per BMF 2022 Para 131: IBKR FX balances are interest-bearing = always taxable.
+
+  # ===========================================================================
+  # PART B: IMPLICIT FX FROM SECURITY TRADES (CFX_I_*)
+  # Phase 5a: Currency consumption/acquisition from stock trades
+  # ===========================================================================
+
+  - id: CFX_I_001
+    description: "Buy USD stock with existing USD balance - FX gain"
+    notes: |
+      Implicit FX: When you buy a stock using foreign currency, you are
+      implicitly disposing of that currency, triggering an FX gain/loss.
+
+      SOY: 5000 USD (acquired at ECB rate 1.20 → cost basis 4166.67 EUR)
+      Buy: 100 AAPL @ 150 USD = 15000 USD gross on Mar 15
+      ECB rate on Mar 15: 1.10 USD/EUR → 15000 USD = 13636.36 EUR
+
+      Currency FIFO:
+      - Consume 5000 USD from long lot
+        - Cost basis: 5000 / 1.20 = 4166.67 EUR
+        - Disposal value: 5000 / 1.10 = 4545.45 EUR
+        - FX gain: 4545.45 - 4166.67 = 378.78 EUR (USD strengthened)
+      - Open short for remaining 10000 USD at rate 1.10
+
+      EOY: -10000 USD (short position)
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "5000.00"
+          soy_cost_basis_eur: "4166.67"
+          soy_acquisition_date: "2022-05-01"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-03-15"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.10"
+      eoy_balance_expected: "-10000.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "5000.00"
+          acquisition_date: "2022-05-01"
+          realization_date: "2023-03-15"
+          total_cost_basis_eur: "4166.67"
+          total_proceeds_eur: "4545.45"
+          gain_loss_eur: "378.78"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "-10000.00"
+        short_lots:
+          - opening_date: "2023-03-15"
+            quantity_shorted: "10000.00"
+      kap_other_income_positive: "378.78"
+      errors: 0
+      notes: |
+        Stock trade creates AAPL position with cost basis 13636.36 EUR.
+        Currency trade realizes FX gain on consumed USD.
+        Both are independent tax events.
+
+  - id: CFX_I_002
+    description: "Buy USD stock with existing USD balance - FX loss"
+    notes: |
+      SOY: 10000 USD (acquired at ECB rate 1.05 → cost basis 9523.81 EUR)
+      Buy: 50 AAPL @ 150 USD = 7500 USD gross on Jun 20
+      ECB rate on Jun 20: 1.15 USD/EUR → 7500 USD = 6521.74 EUR
+
+      Currency FIFO:
+      - Consume 7500 USD from long lot (FIFO)
+        - Cost basis: 7500 / 1.05 = 7142.86 EUR
+        - Disposal value: 7500 / 1.15 = 6521.74 EUR
+        - FX loss: 6521.74 - 7142.86 = -621.12 EUR (USD weakened)
+
+      Remaining: 2500 USD
+      EOY: 2500 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "10000.00"
+          soy_cost_basis_eur: "9523.81"
+          soy_acquisition_date: "2022-08-01"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-06-20"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 50
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.15"
+      eoy_balance_expected: "2500.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "7500.00"
+          acquisition_date: "2022-08-01"
+          realization_date: "2023-06-20"
+          total_cost_basis_eur: "7142.86"
+          total_proceeds_eur: "6521.74"
+          gain_loss_eur: "-621.12"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_state:
+        quantity: "2500.00"
+        lots:
+          - acquisition_date: "2022-08-01"
+            quantity: "2500.00"
+      kap_other_losses_abs: "621.12"
+      errors: 0
+
+  - id: CFX_I_003
+    description: "Sell USD stock - receive USD into cash balance (no FX event)"
+    notes: |
+      SOY: 0 USD
+      Sell: 100 AAPL @ 160 USD = 16000 USD gross on Sep 10
+      ECB rate on Sep 10: 1.08 USD/EUR → 16000 USD = 14814.81 EUR
+
+      Currency FIFO:
+      - Create new USD long lot
+        - Quantity: 16000 USD
+        - Cost basis per unit: 14814.81 / 16000 = 0.9259 EUR/USD
+        - Total cost basis: 14814.81 EUR
+      - No immediate FX gain/loss from currency acquisition
+
+      EOY: 16000 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+      security_trades:
+        - type: SELL_LONG
+          date: "2023-09-10"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "160.00"
+          local_currency: USD
+          ecb_rate: "1.08"
+      eoy_balance_expected: "16000.00"
+    expected:
+      currency_rgls: []  # No FX gain/loss - only lot creation
+      eoy_state:
+        quantity: "16000.00"
+        lots:
+          - acquisition_date: "2023-09-10"
+            quantity: "16000.00"
+            unit_cost_basis_eur: "0.9259"
+      kap_other_income_positive: "0.00"
+      errors: 0
+      notes: |
+        Stock sale creates stock RGL based on stock FIFO.
+        Currency received creates new USD lot.
+        FX gain/loss realized when USD is later spent or converted.
+
+  - id: CFX_I_004
+    description: "Sell USD stock covers implicit short currency position"
+    notes: |
+      Sequence:
+      1. SOY: 0 USD
+      2. Buy 100 AAPL @ 150 USD = 15000 USD on Feb 1 (opens short currency)
+         ECB rate Feb 1: 1.10 → short opened at 15000/1.10 = 13636.36 EUR
+      3. Sell 100 AAPL @ 160 USD = 16000 USD on Nov 15
+         ECB rate Nov 15: 1.05 → currency acquired at 16000/1.05 = 15238.10 EUR
+
+      Currency FIFO:
+      - Feb 1: Open short currency position 15000 USD @ 0.9091 EUR/USD
+      - Nov 15: Receive 16000 USD
+        - Cover 15000 USD short (FIFO)
+          - Original proceeds: 15000 × 0.9091 = 13636.36 EUR
+          - Cover cost: 15000 / 1.05 = 14285.71 EUR
+          - FX loss: 13636.36 - 14285.71 = -649.35 EUR (USD strengthened, covering costs more)
+        - Create long lot: 1000 USD @ 0.9524 EUR/USD
+
+      EOY: 1000 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-02-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.10"
+        - type: SELL_LONG
+          date: "2023-11-15"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "160.00"
+          local_currency: USD
+          ecb_rate: "1.05"
+      eoy_balance_expected: "1000.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_SALE
+          currency: USD
+          quantity: "15000.00"
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-11-15"
+          total_cost_basis_eur: "14285.71"
+          total_proceeds_eur: "13636.36"
+          gain_loss_eur: "-649.35"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_state:
+        quantity: "1000.00"
+        lots:
+          - acquisition_date: "2023-11-15"
+            quantity: "1000.00"
+      kap_other_losses_abs: "649.35"
+      errors: 0
+
+  - id: CFX_I_005
+    description: "EUR stock trade has no currency impact"
+    notes: |
+      EUR is the base currency - EUR trades do not affect currency FIFO.
+
+      SOY: 1000 USD
+      Buy: 50 SAP (EUR stock) @ 100 EUR = 5000 EUR on Apr 1
+      EOY: 1000 USD (unchanged)
+
+      No FX gain/loss generated - trade in base currency.
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "1000.00"
+          soy_cost_basis_eur: "909.09"
+          soy_acquisition_date: "2022-06-01"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-04-01"
+          asset_symbol: SAP
+          asset_isin: DE0007164600
+          quantity: 50
+          price_foreign: "100.00"
+          local_currency: EUR
+          ecb_rate: "1.00"  # EUR/EUR = 1
+      eoy_balance_expected: "1000.00"
+    expected:
+      currency_rgls: []  # No FX impact from EUR trades
+      eoy_state:
+        quantity: "1000.00"
+        lots:
+          - acquisition_date: "2022-06-01"
+            quantity: "1000.00"
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_I_006
+    description: "Multiple security trades consuming from same currency lot - FIFO"
+    notes: |
+      Bug Detection: Verify FIFO ordering is maintained across multiple security trades.
+
+      SOY: 20000 USD (acquired at rate 1.10 → cost 18181.82 EUR)
+      Trade 1: Buy 50 AAPL @ 150 USD = 7500 USD on Mar 1 @ rate 1.08
+      Trade 2: Buy 50 MSFT @ 200 USD = 10000 USD on Jun 1 @ rate 1.05
+      Trade 3: Buy 20 GOOGL @ 100 USD = 2000 USD on Sep 1 @ rate 1.02
+
+      Currency consumption: 7500 + 10000 + 2000 = 19500 USD
+      Remaining: 500 USD
+
+      FIFO from single SOY lot:
+      - Trade 1: 7500 USD @ cost 6818.18, proceeds 6944.44, gain 126.26 EUR
+      - Trade 2: 10000 USD @ cost 9090.91, proceeds 9523.81, gain 432.90 EUR
+      - Trade 3: 2000 USD @ cost 1818.18, proceeds 1960.78, gain 142.60 EUR
+      Total gain: 701.76 EUR
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "20000.00"
+          soy_cost_basis_eur: "18181.82"
+          soy_acquisition_date: "2022-04-01"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-03-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 50
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.08"
+        - type: BUY_LONG
+          date: "2023-06-01"
+          asset_symbol: MSFT
+          asset_isin: US5949181045
+          quantity: 50
+          price_foreign: "200.00"
+          local_currency: USD
+          ecb_rate: "1.05"
+        - type: BUY_LONG
+          date: "2023-09-01"
+          asset_symbol: GOOGL
+          asset_isin: US02079K1079
+          quantity: 20
+          price_foreign: "100.00"
+          local_currency: USD
+          ecb_rate: "1.02"
+      eoy_balance_expected: "500.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "7500.00"
+          acquisition_date: "2022-04-01"
+          realization_date: "2023-03-01"
+          gain_loss_eur: "126.26"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "10000.00"
+          acquisition_date: "2022-04-01"
+          realization_date: "2023-06-01"
+          gain_loss_eur: "432.90"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "2000.00"
+          acquisition_date: "2022-04-01"
+          realization_date: "2023-09-01"
+          gain_loss_eur: "142.60"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "500.00"
+        lots:
+          - acquisition_date: "2022-04-01"
+            quantity: "500.00"
+      kap_other_income_positive: "701.76"
+      errors: 0
+
+  - id: CFX_I_007
+    description: "Security sale creates lot then security purchase consumes SOY lot first - same day FIFO ordering"
+    notes: |
+      Bug Detection: Verify same-day FIFO ordering is correct.
+      ECB publishes one rate per day, so both trades use rate 1.08.
+      The gain comes from the SOY lot having a different cost basis (rate 1.25),
+      NOT from intraday rate differences.
+
+      SOY: 15000 USD (acquired at rate 1.25 → cost 12000.00 EUR)
+      09:00 - Sell 100 AAPL @ 150 USD = 15000 USD @ rate 1.08 → create new lot
+      14:00 - Buy 50 MSFT @ 200 USD = 10000 USD @ rate 1.08 → FIFO consumes from SOY lot first
+
+      Currency ledger after sell AAPL:
+      - Lot 1 (SOY): 15000 USD @ cost 0.80 EUR/USD
+      - Lot 2 (AAPL): 15000 USD @ cost 0.9259 EUR/USD
+
+      FIFO consumption for buy MSFT (10000 USD):
+      - Consumes from SOY lot (oldest): 10000 USD
+        - Cost: 10000 / 1.25 = 8000.00 EUR
+        - Proceeds: 10000 / 1.08 = 9259.26 EUR
+        - Gain: 1259.26 EUR
+
+      If FIFO ordering were wrong (consuming from AAPL lot instead):
+        - Cost: 10000 / 1.08 = 9259.26 EUR
+        - Proceeds: 10000 / 1.08 = 9259.26 EUR
+        - Gain: 0.00 EUR (WRONG - would miss the gain)
+
+      EOY: SOY remaining 5000 + AAPL lot 15000 = 20000 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "15000.00"
+          soy_cost_basis_eur: "12000.00"
+          soy_acquisition_date: "2022-06-01"
+      security_trades:
+        - type: SELL_LONG
+          date: "2023-07-15"
+          time: "09:00:00"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.08"
+        - type: BUY_LONG
+          date: "2023-07-15"
+          time: "14:00:00"
+          asset_symbol: MSFT
+          asset_isin: US5949181045
+          quantity: 50
+          price_foreign: "200.00"
+          local_currency: USD
+          ecb_rate: "1.08"
+      eoy_balance_expected: "20000.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "10000.00"
+          realization_date: "2023-07-15"
+          gain_loss_eur: "1259.26"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "20000.00"
+      kap_other_income_positive: "1259.26"
+      errors: 0
+
+  # ===========================================================================
+  # PART B: IMPLICIT FX WITH SHORT CURRENCY POSITIONS (CFX_IS_*)
+  # ===========================================================================
+
+  - id: CFX_IS_001
+    description: "Security purchase opens implicit short, security sale covers it"
+    notes: |
+      Full lifecycle of implicit short currency position:
+
+      SOY: 0 USD
+      Mar: Buy 100 AAPL @ 150 USD = 15000 USD (opens short @ rate 1.10)
+      Sep: Sell 100 AAPL @ 160 USD = 16000 USD (covers short + creates lot @ rate 1.05)
+
+      Short: opened at 15000/1.10 = 13636.36 EUR
+      Cover: 15000/1.05 = 14285.71 EUR
+      Loss on short: 13636.36 - 14285.71 = -649.35 EUR (USD strengthened, covering costs more)
+
+      Remaining: 1000 USD long lot
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-03-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.10"
+        - type: SELL_LONG
+          date: "2023-09-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "160.00"
+          local_currency: USD
+          ecb_rate: "1.05"
+      eoy_balance_expected: "1000.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_SALE
+          currency: USD
+          quantity: "15000.00"
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: "14285.71"
+          total_proceeds_eur: "13636.36"
+          gain_loss_eur: "-649.35"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_state:
+        quantity: "1000.00"
+        lots:
+          - acquisition_date: "2023-09-01"
+            quantity: "1000.00"
+      kap_other_losses_abs: "649.35"
+      errors: 0
+
+  - id: CFX_IS_002
+    description: "Multiple security purchases stack up short position"
+    notes: |
+      Bug Detection: Ensure multiple short lots are created and ordered correctly.
+
+      SOY: 0 USD
+      Feb: Buy 50 AAPL @ 150 USD = 7500 USD (short #1 @ rate 1.12)
+      Apr: Buy 50 MSFT @ 200 USD = 10000 USD (short #2 @ rate 1.10)
+      Jun: Buy 25 GOOGL @ 100 USD = 2500 USD (short #3 @ rate 1.08)
+
+      Total short: 20000 USD
+      Short lots (FIFO order): 7500 @ Feb, 10000 @ Apr, 2500 @ Jun
+
+      Sep: Sell 100 stocks, receive 22000 USD (covers all + creates long lot @ rate 1.05)
+
+      Cover short #1: 7500/1.05 = 7142.86 EUR cost, 7500/1.12 = 6696.43 EUR proceeds
+                      Loss: 6696.43 - 7142.86 = -446.43 EUR
+      Cover short #2: 10000/1.05 = 9523.81 EUR cost, 10000/1.10 = 9090.91 EUR proceeds
+                      Loss: 9090.91 - 9523.81 = -432.90 EUR
+      Cover short #3: 2500/1.05 = 2380.95 EUR cost, 2500/1.08 = 2314.81 EUR proceeds
+                      Loss: 2314.81 - 2380.95 = -66.14 EUR
+      Total loss: -945.47 EUR
+
+      Remaining long lot: 2000 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-02-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 50
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.12"
+        - type: BUY_LONG
+          date: "2023-04-01"
+          asset_symbol: MSFT
+          asset_isin: US5949181045
+          quantity: 50
+          price_foreign: "200.00"
+          local_currency: USD
+          ecb_rate: "1.10"
+        - type: BUY_LONG
+          date: "2023-06-01"
+          asset_symbol: GOOGL
+          asset_isin: US02079K1079
+          quantity: 25
+          price_foreign: "100.00"
+          local_currency: USD
+          ecb_rate: "1.08"
+        - type: SELL_LONG
+          date: "2023-09-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 110
+          price_foreign: "200.00"
+          local_currency: USD
+          ecb_rate: "1.05"
+      eoy_balance_expected: "2000.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_SALE
+          currency: USD
+          quantity: "7500.00"
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-09-01"
+          gain_loss_eur: "-446.43"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+        - realization_type: FX_IMPLICIT_SECURITY_SALE
+          currency: USD
+          quantity: "10000.00"
+          acquisition_date: "2023-04-01"
+          realization_date: "2023-09-01"
+          gain_loss_eur: "-432.90"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+        - realization_type: FX_IMPLICIT_SECURITY_SALE
+          currency: USD
+          quantity: "2500.00"
+          acquisition_date: "2023-06-01"
+          realization_date: "2023-09-01"
+          gain_loss_eur: "-66.14"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_state:
+        quantity: "2000.00"
+        lots:
+          - acquisition_date: "2023-09-01"
+            quantity: "2000.00"
+      kap_other_losses_abs: "945.47"
+      errors: 0
+
+  # ===========================================================================
+  # PART C: MIXED EXPLICIT FX + IMPLICIT SECURITY TRADES (CFX_MIX_*)
+  # ===========================================================================
+
+  - id: CFX_MIX_001
+    description: "Explicit FX buy, then security purchase consumes - FIFO maintained"
+    notes: |
+      Integration Test: Verify explicit FX and implicit security trades share FIFO.
+
+      SOY: 0 USD
+      Jan 10: Explicit FX - Buy 5000 EUR→USD at rate 1.12 (acquire 5600 USD @ cost 5000 EUR)
+      Mar 15: Security - Buy 50 AAPL @ 100 USD = 5000 USD (ECB rate 1.10)
+      Jun 20: Explicit FX - Sell 2000 USD→EUR at rate 1.08
+
+      Currency ledger operations:
+      1. Jan 10: Create lot 5600 USD @ 0.8929 EUR/USD (5000/5600)
+      2. Mar 15: Consume 5000 USD from Jan lot
+         - Cost: 5000 × 0.8929 = 4464.29 EUR
+         - Proceeds: 5000 / 1.10 = 4545.45 EUR
+         - Gain: 81.16 EUR
+         - Remaining: 600 USD
+      3. Jun 20: Consume 600 USD from Jan lot + open short 1400 USD
+         - From 600 USD: cost 535.71 EUR, proceeds 555.56 EUR, gain 19.85 EUR
+         - Open short: 1400 USD @ 0.9259 EUR/USD (2000/1.08 = 1851.85 EUR total)
+
+      Total FX gain: 81.16 + 19.85 = 101.01 EUR
+      EOY: -1400 USD (short)
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-01-10"
+          from_currency: EUR
+          from_amount: "5000.00"
+          to_currency: USD
+          to_amount: "5600.00"
+          ecb_rate: "1.12"
+        - type: SELL_FOREIGN
+          date: "2023-06-20"
+          from_currency: USD
+          from_amount: "2000.00"
+          to_currency: EUR
+          to_amount: "1851.85"
+          ecb_rate: "1.08"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-03-15"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 50
+          price_foreign: "100.00"
+          local_currency: USD
+          ecb_rate: "1.10"
+      eoy_balance_expected: "-1400.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "5000.00"
+          acquisition_date: "2023-01-10"
+          realization_date: "2023-03-15"
+          gain_loss_eur: "81.16"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "600.00"
+          acquisition_date: "2023-01-10"
+          realization_date: "2023-06-20"
+          gain_loss_eur: "19.85"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "-1400.00"
+        short_lots:
+          - opening_date: "2023-06-20"
+            quantity_shorted: "1400.00"
+      kap_other_income_positive: "101.01"
+      errors: 0
+
+  - id: CFX_MIX_002
+    description: "Security sale creates lot, explicit FX consumes it"
+    notes: |
+      SOY: 0 USD
+      Apr: Sell 100 AAPL @ 150 USD = 15000 USD @ rate 1.10 → create lot
+      Aug: Explicit FX - Sell 10000 USD→EUR at rate 1.05
+
+      Currency ledger:
+      1. Apr: Create lot 15000 USD @ 0.9091 EUR/USD (15000/1.10 = 13636.36 EUR)
+      2. Aug: Consume 10000 USD from lot
+         - Cost: 10000 × 0.9091 = 9090.91 EUR
+         - Proceeds: 10000 / 1.05 = 9523.81 EUR
+         - Gain: 432.90 EUR
+
+      Remaining: 5000 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+      fx_trades:
+        - type: SELL_FOREIGN
+          date: "2023-08-01"
+          from_currency: USD
+          from_amount: "10000.00"
+          to_currency: EUR
+          to_amount: "9523.81"
+          ecb_rate: "1.05"
+      security_trades:
+        - type: SELL_LONG
+          date: "2023-04-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 100
+          price_foreign: "150.00"
+          local_currency: USD
+          ecb_rate: "1.10"
+      eoy_balance_expected: "5000.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "10000.00"
+          acquisition_date: "2023-04-01"
+          realization_date: "2023-08-01"
+          gain_loss_eur: "432.90"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "5000.00"
+        lots:
+          - acquisition_date: "2023-04-01"
+            quantity: "5000.00"
+      kap_other_income_positive: "432.90"
+      errors: 0
+
+  - id: CFX_MIX_003
+    description: "Complex interleaved explicit FX and security trades"
+    notes: |
+      Comprehensive integration test with mixed chronological ordering.
+      Uses rates where eur_amount × ecb_rate produces clean foreign amounts.
+
+      SOY: 3000 USD (cost 2727.27 EUR @ rate 1.10, unit cost = 0.90909 EUR/USD)
+
+      Chronological events:
+      1. Feb 15: Buy 2000 EUR → 2160 USD @ 1.08 (lot: 2160 USD @ 0.925926 EUR/USD)
+      2. Mar 20: Buy 40 AAPL @ 100 USD = 4000 USD @ 1.06 (consume SOY 3000 + Feb 1000)
+      3. May 10: Sell 20 AAPL @ 120 USD = 2400 USD @ 1.04 (create lot @ 0.961538 EUR/USD)
+      4. Jul 25: Sell 1040 USD → 1000 EUR @ 1.04 (consume Feb 1040, remaining 120)
+      5. Oct 05: Sell 2620 USD → 2620 EUR @ 1.00 (consume Feb 120 + May 2400 + open short 100)
+
+      Ledger trace:
+      After 1: [SOY:3000@0.90909, Feb:2160@0.925926]
+      After 2: [Feb:1160@0.925926]
+      After 3: [Feb:1160@0.925926, May:2400@0.961538]
+      After 4: [Feb:120@0.925926, May:2400@0.961538]
+      After 5: [Short:100@1.00] → EOY: -100 USD
+
+      RGLs (5 total, one per lot consumed):
+      - Mar 20 SOY: 3000 × (0.943396 - 0.90909) = 102.92 gain
+      - Mar 20 Feb: 1000 × (0.943396 - 0.925926) = 17.47 gain
+      - Jul 25 Feb: 1040 × (0.961538 - 0.925926) = 37.04 gain
+      - Oct 05 Feb: 120 × (1.00 - 0.925926) = 8.89 gain
+      - Oct 05 May: 2400 × (1.00 - 0.961538) = 92.31 gain
+      Total: 258.63 EUR
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "3000.00"
+          soy_cost_basis_eur: "2727.27"
+          soy_acquisition_date: "2022-09-01"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-02-15"
+          from_currency: EUR
+          from_amount: "2000.00"
+          to_currency: USD
+          to_amount: "2160.00"
+          ecb_rate: "1.08"
+        - type: SELL_FOREIGN
+          date: "2023-07-25"
+          from_currency: USD
+          from_amount: "1040.00"
+          to_currency: EUR
+          to_amount: "1000.00"
+          ecb_rate: "1.04"
+        - type: SELL_FOREIGN
+          date: "2023-10-05"
+          from_currency: USD
+          from_amount: "2620.00"
+          to_currency: EUR
+          to_amount: "2620.00"
+          ecb_rate: "1.00"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-03-20"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 40
+          price_foreign: "100.00"
+          local_currency: USD
+          ecb_rate: "1.06"
+        - type: SELL_LONG
+          date: "2023-05-10"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 20
+          price_foreign: "120.00"
+          local_currency: USD
+          ecb_rate: "1.04"
+      eoy_balance_expected: "-100.00"
+    expected:
+      currency_rgls:
+        # Mar 20: Consume 4000 USD (3000 from SOY + 1000 from Feb lot)
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "3000.00"
+          realization_date: "2023-03-20"
+          gain_loss_eur: "102.92"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "1000.00"
+          realization_date: "2023-03-20"
+          gain_loss_eur: "17.47"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        # Jul 25: Consume 1040 from Feb lot (1160 remaining → 120)
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1040.00"
+          realization_date: "2023-07-25"
+          gain_loss_eur: "37.04"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        # Oct 05: Consume Feb 120 + May 2400 + open 100 short
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "120.00"
+          realization_date: "2023-10-05"
+          gain_loss_eur: "8.89"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "2400.00"
+          realization_date: "2023-10-05"
+          gain_loss_eur: "92.31"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "-100.00"
+        short_lots:
+          - opening_date: "2023-10-05"
+            quantity_shorted: "100.00"
+      kap_other_income_positive: "258.62"
+      errors: 0
+
+  # ===========================================================================
+  # PART D: PRECISION AND ROUNDING EDGE CASES (CFX_P_*)
+  # ===========================================================================
+
+  - id: CFX_P_001
+    description: "Small FX gain - precision test"
+    notes: |
+      Bug Detection: Ensure small gains are calculated correctly.
+
+      Buy 1000 USD @ 1.25 (cost 800 EUR)
+      Sell 1000 USD @ 1.0 (proceeds 1000 EUR)
+
+      Gain: 1000.00 - 800.00 = 200.00 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-04-01"
+          from_currency: EUR
+          from_amount: "800"
+          to_currency: USD
+          to_amount: "1000"
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-08-01"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "1000"
+          ecb_rate: "1.0"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2023-04-01"
+          realization_date: "2023-08-01"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "1000.00"
+          gain_loss_eur: "200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      kap_other_income_positive: "200.00"
+      errors: 0
+
+  - id: CFX_P_002
+    description: "Large amounts - precision test"
+    notes: |
+      Bug Detection: Ensure large amounts maintain precision.
+
+      Buy 1,000,000 USD @ 1.25 (cost 800,000 EUR)
+      Sell 1,000,000 USD @ 1.0 (proceeds 1,000,000 EUR)
+
+      Gain: 1,000,000 - 800,000 = 200,000 EUR
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-02-01"
+          from_currency: EUR
+          from_amount: "800000"
+          to_currency: USD
+          to_amount: "1000000"
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-11-01"
+          from_currency: USD
+          from_amount: "1000000"
+          to_currency: EUR
+          to_amount: "1000000"
+          ecb_rate: "1.0"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000000"
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-11-01"
+          total_cost_basis_eur: "800000.00"
+          total_proceeds_eur: "1000000.00"
+          gain_loss_eur: "200000.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      kap_other_income_positive: "200000.00"
+      errors: 0
+
+  - id: CFX_P_003
+    description: "Same ECB rate buy and sell - exact zero gain"
+    notes: |
+      Bug Detection: Ensure exactly zero gain is handled correctly.
+
+      Buy 5000 USD @ 1.25 (cost 4000 EUR)
+      Sell 5000 USD @ 1.25 (proceeds 4000 EUR)
+
+      Gain: 0.00 EUR exactly
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-03-01"
+          from_currency: EUR
+          from_amount: "4000"
+          to_currency: USD
+          to_amount: "5000"
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-09-01"
+          from_currency: USD
+          from_amount: "5000"
+          to_currency: EUR
+          to_amount: "4000"
+          ecb_rate: "1.25"
+      eoy_balance_expected: "0.00"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "5000"
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: "4000.00"
+          total_proceeds_eur: "4000.00"
+          gain_loss_eur: "0.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE  # Zero still uses positive category
+      kap_other_income_positive: "0.00"
+      kap_other_losses_abs: "0.00"
+      errors: 0
+
+  - id: CFX_P_004
+    description: "Fractional currency amounts - partial lot consumption"
+    notes: |
+      Bug Detection: Ensure fractional amounts don't cause precision loss.
+
+      Buy 1200 USD @ 1.5 (cost 800 EUR)
+      Sell 600 USD @ 1.2 (proceeds 500 EUR)
+
+      Cost basis for 600 USD: 600 * (800/1200) = 400 EUR
+      Gain: 500 - 400 = 100 EUR
+      Remaining: 600 USD
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-05-15"
+          from_currency: EUR
+          from_amount: "800"
+          to_currency: USD
+          to_amount: "1200"
+          ecb_rate: "1.5"
+        - type: SELL_FOREIGN
+          date: "2023-10-20"
+          from_currency: USD
+          from_amount: "600"
+          to_currency: EUR
+          to_amount: "500"
+          ecb_rate: "1.2"
+      eoy_balance_expected: "600"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "600"
+          acquisition_date: "2023-05-15"
+          realization_date: "2023-10-20"
+          total_cost_basis_eur: "400.00"
+          total_proceeds_eur: "500.00"
+          gain_loss_eur: "100.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "600"
+      errors: 0
+
+  # ===========================================================================
+  # PART E: VALIDATION AND EOY RECONCILIATION (CFX_V_*)
+  # ===========================================================================
+
+  - id: CFX_V_001
+    description: "EOY reconciliation with explicit FX only"
+    notes: |
+      Validation Test: SOY + explicit FX = EOY
+
+      SOY: 5000 USD (acquired in prior year at rate 1.25, cost 4000 EUR)
+      Buy: 3000 USD on Apr 1 @ rate 1.5 (from 2000 EUR)
+      Sell: 2000 USD on Aug 1 @ rate 1.0 (to 2000 EUR)
+
+      FIFO: Sell 2000 USD from SOY lot (cost = 2000 * 0.8 = 1600 EUR)
+      RGL: proceeds 2000 - cost 1600 = 400 EUR gain
+
+      Expected EOY: 5000 + 3000 - 2000 = 6000 USD
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2022-06-01"
+          from_currency: EUR
+          from_amount: "4000"
+          to_currency: USD
+          to_amount: "5000"
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN
+          date: "2023-04-01"
+          from_currency: EUR
+          from_amount: "2000"
+          to_currency: USD
+          to_amount: "3000"
+          ecb_rate: "1.5"
+        - type: SELL_FOREIGN
+          date: "2023-08-01"
+          from_currency: USD
+          from_amount: "2000"
+          to_currency: EUR
+          to_amount: "2000"
+          ecb_rate: "1.0"
+      eoy_balance_expected: "6000"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "2000"
+          acquisition_date: "2022-06-01"
+          realization_date: "2023-08-01"
+          total_cost_basis_eur: "1600.00"
+          total_proceeds_eur: "2000.00"
+          gain_loss_eur: "400.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_reconciliation:
+        soy_balance: "5000"
+        fx_buys: "3000"
+        fx_sells: "2000"
+        calculated_eoy: "6000"
+        actual_eoy: "6000"
+        discrepancy: "0"
+      errors: 0
+
+  - id: CFX_V_002
+    description: "EOY reconciliation with explicit FX + implicit security trades"
+    notes: |
+      Validation Test: SOY + explicit FX + security FX = EOY
+
+      SOY: 10000 USD
+      Explicit Buy: 5000 USD
+      Security Purchase: -8000 USD (consume)
+      Security Sale: +6000 USD (acquire)
+      Explicit Sell: -3000 USD
+      Expected EOY: 10000 + 5000 - 8000 + 6000 - 3000 = 10000 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "10000.00"
+          soy_cost_basis_eur: "9090.91"
+          soy_acquisition_date: "2022-05-01"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2023-02-01"
+          from_currency: EUR
+          from_amount: "4545.45"
+          to_currency: USD
+          to_amount: "5000.00"
+          ecb_rate: "1.10"
+        - type: SELL_FOREIGN
+          date: "2023-11-01"
+          from_currency: USD
+          from_amount: "3000.00"
+          to_currency: EUR
+          to_amount: "2857.14"
+          ecb_rate: "1.05"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-05-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 80
+          price_foreign: "100.00"
+          local_currency: USD
+          ecb_rate: "1.08"
+        - type: SELL_LONG
+          date: "2023-08-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 60
+          price_foreign: "100.00"
+          local_currency: USD
+          ecb_rate: "1.06"
+      eoy_balance_expected: "10000.00"
+    expected:
+      eoy_reconciliation:
+        soy_balance: "10000.00"
+        fx_buys: "5000.00"
+        fx_sells: "3000.00"
+        security_purchases: "8000.00"
+        security_sales: "6000.00"
+        calculated_eoy: "10000.00"
+        actual_eoy: "10000.00"
+        discrepancy: "0.00"
+      errors: 0
+
+  - id: CFX_V_003
+    description: "EOY reconciliation mismatch detection"
+    notes: |
+      Validation Test: Detect when calculated EOY doesn't match actual EOY.
+
+      This tests the warning/error generation when there's a discrepancy.
+      Common causes: missing transactions, timing differences, fees.
+
+      Buy 5000 USD in prior year @ rate 1.25 (cost 4000 EUR)
+      Buy: 2000 USD @ rate 1.25 (cost 1600 EUR)
+      Sell: 1000 USD @ rate 1.0 (proceeds 1000 EUR)
+
+      FIFO: Sell 1000 USD from prior year lot
+      Cost = 1000 * 0.8 = 800 EUR
+      RGL = 1000 - 800 = 200 EUR gain
+
+      Calculated EOY: 5000 + 2000 - 1000 = 6000 USD
+      Actual EOY from file: 5800 USD (200 USD discrepancy - maybe fee)
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: BUY_FOREIGN
+          date: "2022-06-01"
+          from_currency: EUR
+          from_amount: "4000"
+          to_currency: USD
+          to_amount: "5000"
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN
+          date: "2023-03-01"
+          from_currency: EUR
+          from_amount: "1600"
+          to_currency: USD
+          to_amount: "2000"
+          ecb_rate: "1.25"
+        - type: SELL_FOREIGN
+          date: "2023-09-01"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "1000"
+          ecb_rate: "1.0"
+      eoy_balance_expected: "5800"  # Intentional mismatch
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2022-06-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "1000.00"
+          gain_loss_eur: "200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_reconciliation:
+        soy_balance: "5000"
+        fx_buys: "2000"
+        fx_sells: "1000"
+        calculated_eoy: "6000"
+        actual_eoy: "5800"
+        discrepancy: "-200"  # Missing 200 USD (likely fees or missing transaction)
+      warnings: 1
+      errors: 0  # Discrepancy < 1 EUR equivalent may just be warning
+
+  - id: CFX_V_004
+    description: "Multiple currencies EOY reconciliation"
+    notes: |
+      Validation Test: Independent reconciliation per currency.
+
+      Historical trades set up SOY positions:
+      - USD: Buy 5000 in prior year @ 1.25 (cost 4000 EUR)
+      - GBP: Buy 3000 in prior year @ 0.5 (cost 6000 EUR)
+
+      Current year:
+      - USD: Buy 2000 @ 1.25 (cost 1600), Sell 1000 @ 1.0 (proceeds 1000)
+        - RGL: proceeds 1000 - cost 800 = 200 EUR gain
+        - EOY: 5000 + 2000 - 1000 = 6000
+      - GBP: Buy 1000 @ 0.5 (cost 2000), Sell 500 @ 0.625 (proceeds 800)
+        - RGL: proceeds 800 - cost 1000 = -200 EUR loss
+        - EOY: 3000 + 1000 - 500 = 3500
+      - CHF: Buy 2000 @ 1.0, no sell → EOY 2000 (no RGL)
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "0.00"
+        - currency: GBP
+          soy_balance: "0.00"
+        - currency: CHF
+          soy_balance: "0.00"
+      fx_trades:
+        # Prior year trades to establish SOY positions
+        - type: BUY_FOREIGN
+          date: "2022-05-01"
+          from_currency: EUR
+          from_amount: "4000"
+          to_currency: USD
+          to_amount: "5000"
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN
+          date: "2022-06-01"
+          from_currency: EUR
+          from_amount: "6000"
+          to_currency: GBP
+          to_amount: "3000"
+          ecb_rate: "0.5"
+        # Current year trades
+        - type: BUY_FOREIGN
+          date: "2023-02-01"
+          from_currency: EUR
+          from_amount: "1600"
+          to_currency: USD
+          to_amount: "2000"
+          ecb_rate: "1.25"
+        - type: BUY_FOREIGN
+          date: "2023-03-01"
+          from_currency: EUR
+          from_amount: "2000"
+          to_currency: GBP
+          to_amount: "1000"
+          ecb_rate: "0.5"
+        - type: BUY_FOREIGN
+          date: "2023-04-01"
+          from_currency: EUR
+          from_amount: "2000"
+          to_currency: CHF
+          to_amount: "2000"
+          ecb_rate: "1.0"
+        - type: SELL_FOREIGN
+          date: "2023-08-01"
+          from_currency: USD
+          from_amount: "1000"
+          to_currency: EUR
+          to_amount: "1000"
+          ecb_rate: "1.0"
+        - type: SELL_FOREIGN
+          date: "2023-09-01"
+          from_currency: GBP
+          from_amount: "500"
+          to_currency: EUR
+          to_amount: "800"
+          ecb_rate: "0.625"
+      eoy_balances_expected:
+        USD: "6000"
+        GBP: "3500"
+        CHF: "2000"
+    expected:
+      rgls:
+        - realization_type: FX_CONVERSION_SALE
+          currency: USD
+          quantity: "1000"
+          acquisition_date: "2022-05-01"
+          realization_date: "2023-08-01"
+          total_cost_basis_eur: "800.00"
+          total_proceeds_eur: "1000.00"
+          gain_loss_eur: "200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+        - realization_type: FX_CONVERSION_SALE
+          currency: GBP
+          quantity: "500"
+          acquisition_date: "2022-06-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: "1000.00"
+          total_proceeds_eur: "800.00"
+          gain_loss_eur: "-200.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_VERLUSTE
+      eoy_reconciliations:
+        - currency: USD
+          calculated_eoy: "6000"
+          discrepancy: "0"
+        - currency: GBP
+          calculated_eoy: "3500"
+          discrepancy: "0"
+        - currency: CHF
+          calculated_eoy: "2000"
+          discrepancy: "0"
+      errors: 0
+
+  # ===========================================================================
+  # PART F: CROSS-CURRENCY SECURITY TRADES (CFX_XS_*)
+  # Phase 5b: Security trades in cross-currency scenarios
+  # ===========================================================================
+
+  - id: CFX_XS_001
+    description: "Buy GBP stock with USD settlement - cross-currency"
+    notes: |
+      Cross-Currency Security Trade: Buy a GBP-denominated stock, settled in USD.
+      The FX impact is on the SETTLEMENT currency (USD), not the asset currency (GBP).
+      IBKR reports the trade in the settlement currency, so price_foreign is in USD.
+
+      SOY: 10000 USD (cost 8000 EUR, unit cost 0.80 EUR/USD)
+
+      Buy: 50 VOD.L settled at 100 USD/share = 5000 USD consumed
+      ECB rate on trade date: 1.00 (1 EUR = 1.00 USD)
+
+      Currency impact (on SETTLEMENT currency USD):
+      - Consume 5000 USD from FIFO
+        - Cost: 5000 × 0.80 = 4000.00 EUR
+        - Disposal value: 5000 / 1.00 = 5000.00 EUR
+        - Gain: +1000.00 EUR
+
+      EOY: 5000 USD
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "10000.00"
+          soy_cost_basis_eur: "8000.00"
+          soy_acquisition_date: "2022-05-01"
+      security_trades:
+        - type: BUY_LONG
+          date: "2023-06-01"
+          asset_symbol: VOD.L
+          asset_isin: GB00BH4HKS39
+          quantity: 50
+          price_foreign: "100.00"
+          local_currency: USD  # Settlement currency (not asset's native GBP)
+          ecb_rate: "1.00"
+      eoy_balance_expected: "5000.00"
+    expected:
+      currency_rgls:
+        - realization_type: FX_IMPLICIT_SECURITY_PURCHASE
+          currency: USD
+          quantity: "5000.00"
+          acquisition_date: "2022-05-01"
+          realization_date: "2023-06-01"
+          gain_loss_eur: "1000.00"
+          tax_category: ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE
+      eoy_state:
+        quantity: "5000.00"
+        lots:
+          - acquisition_date: "2022-05-01"
+            quantity: "5000.00"
+      kap_other_income_positive: "1000.00"
+      errors: 0
+
+  - id: CFX_XS_002
+    description: "Sell CHF stock with GBP settlement - cross-currency"
+    notes: |
+      Cross-Currency Security Trade: Sell a CHF-denominated stock, receive GBP.
+
+      SOY: 0 GBP (but will receive GBP from sale)
+           (Assume stock position exists from prior year)
+
+      Sell: 100 NESN.SW @ 80 CHF = 8000 CHF value
+      Settlement currency: GBP
+      Settlement amount: 7000 GBP
+      ECB rates: CHF 0.96, GBP 0.85
+
+      Currency impact (on SETTLEMENT currency GBP):
+      - Receive 7000 GBP → create new GBP lot
+        - EUR value: 7000 / 0.85 = 8235.29 EUR
+
+      No immediate FX gain/loss (only lot creation).
+      EOY: 7000 GBP
+    inputs:
+      currencies:
+        - currency: GBP
+          soy_balance: "0.00"
+        - currency: CHF
+          soy_balance: "0.00"
+      security_trades:
+        - type: SELL_LONG
+          date: "2023-09-15"
+          asset_symbol: NESN.SW
+          asset_isin: CH0038863350
+          asset_currency: CHF
+          quantity: 100
+          price_foreign: "80.00"
+          local_currency: GBP  # Settlement currency
+          settlement_amount: "7000.00"
+          ecb_rate: "0.85"  # For GBP (settlement)
+          ecb_rate_asset: "0.96"  # For CHF (asset)
+      eoy_balances_expected:
+        GBP: "7000.00"
+        CHF: "0.00"
+    expected:
+      currency_rgls: []  # No FX gain/loss, only lot creation
+      eoy_states:
+        - currency: GBP
+          quantity: "7000.00"
+          lots:
+            - acquisition_date: "2023-09-15"
+              quantity: "7000.00"
+              unit_cost_basis_eur: "1.1765"  # 8235.29 / 7000
+        - currency: CHF
+          quantity: "0.00"
+      errors: 0
+
+  # ===========================================================================
+  # PART G: ERROR CONDITIONS AND BOUNDARY CASES (CFX_ERR_*)
+  # ===========================================================================
+
+  - id: CFX_ERR_001
+    description: "Missing ECB rate - graceful error handling"
+    notes: |
+      Bug Detection: Verify system handles missing ECB rates gracefully.
+
+      When ecb_rate is null (missing), the CSV row has no valid trade rate.
+      The parser skips the event, so no FIFO lot is consumed and no RGL
+      is generated. The SOY balance remains unchanged at EOY.
+    inputs:
+      currency: XYZ  # Exotic currency with no ECB rate
+      soy_balance: "1000.00"
+      fx_trades:
+        - type: SELL_FOREIGN
+          date: "2023-06-01"
+          from_currency: XYZ
+          from_amount: "500.00"
+          to_currency: EUR
+          to_amount: "450.00"
+          ecb_rate: null  # Missing rate - parser will skip this trade
+      eoy_balance_expected: "1000.00"  # Unchanged - trade was skipped
+    expected:
+      rgls: []  # No RGL - trade skipped due to missing rate
+      errors: 0  # No EOY mismatch
+
+  - id: CFX_ERR_002
+    description: "Negative quantity in FX trade - error handling"
+    notes: |
+      Bug Detection: Verify system rejects invalid negative quantities.
+
+      When from_amount is negative, the trade is invalid and should be
+      skipped during CSV row creation. No FIFO lot is consumed, no RGL
+      is generated, and the SOY balance remains unchanged.
+    inputs:
+      currency: USD
+      soy_balance: "1000.00"
+      fx_trades:
+        - type: SELL_FOREIGN
+          date: "2023-06-01"
+          from_currency: USD
+          from_amount: "-500.00"  # Invalid negative - trade will be skipped
+          to_currency: EUR
+          to_amount: "450.00"
+          ecb_rate: "1.11"
+      eoy_balance_expected: "1000.00"  # Unchanged - invalid trade skipped
+    expected:
+      rgls: []  # No RGL - invalid trade skipped
+      errors: 0  # No EOY mismatch
+
+  - id: CFX_ERR_003
+    description: "Consume from empty lot - short position handling"
+    notes: |
+      Edge Case: Selling currency when no long lots exist opens short.
+      Verify short opening is correctly handled.
+    inputs:
+      currency: USD
+      soy_balance: "0.00"
+      fx_trades:
+        - type: SELL_FOREIGN
+          date: "2023-06-01"
+          from_currency: USD
+          from_amount: "1000.00"
+          to_currency: EUR
+          to_amount: "925.93"
+          ecb_rate: "1.08"
+      eoy_balance_expected: "-1000.00"
+    expected:
+      rgls: []  # No RGL for opening short
+      eoy_state:
+        quantity: "-1000.00"
+        short_lots:
+          - opening_date: "2023-06-01"
+            quantity_shorted: "1000.00"
+      errors: 0
+
+  # ===========================================================================
+  # PART H: AGGREGATION TESTS - LOSS OFFSETTING (CFX_AGG_*)
+  # ===========================================================================
+
+  - id: CFX_AGG_001
+    description: "FX gains and losses aggregate correctly on Anlage KAP"
+    notes: |
+      Aggregation Test: Multiple FX trades across 3 currencies aggregate to
+      correct Anlage KAP lines (Zeile 19 gains, Zeile 22 losses).
+
+      SOY positions (all with clean unit costs):
+        USD: 5000 @ 1.00 EUR/USD (cost 5000 EUR)
+        GBP: 3000 @ 1.25 EUR/GBP (cost 3750 EUR)
+        CHF: 4000 @ 1.00 EUR/CHF (cost 4000 EUR)
+
+      Trade 1: Sell 1000 USD @ ECB 0.80 → EUR 1250.00
+        Cost: 1000 × 1.00 = 1000.00 EUR → Gain = +250.00 EUR
+      Trade 2: Sell 500 GBP @ ECB 1.00 → EUR 500.00
+        Cost: 500 × 1.25 = 625.00 EUR → Loss = -125.00 EUR
+      Trade 3: Sell 800 CHF @ ECB 0.80 → EUR 1000.00
+        Cost: 800 × 1.00 = 800.00 EUR → Gain = +200.00 EUR
+      Trade 4: Sell 500 USD @ ECB 1.25 → EUR 400.00
+        Cost: 500 × 1.00 = 500.00 EUR → Loss = -100.00 EUR
+
+      kap_other_income_positive: 250 + 200 = 450.00 EUR
+      kap_other_losses_abs: 125 + 100 = 225.00 EUR
+      Net: 450 - 225 = 225.00 EUR
+
+      Key: ecb_rate = foreign_amount / eur_amount for CSV consistency.
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "5000.00"
+          soy_cost_basis_eur: "5000.00"
+          soy_acquisition_date: "2022-01-01"
+        - currency: GBP
+          soy_balance: "3000.00"
+          soy_cost_basis_eur: "3750.00"
+          soy_acquisition_date: "2022-01-01"
+        - currency: CHF
+          soy_balance: "4000.00"
+          soy_cost_basis_eur: "4000.00"
+          soy_acquisition_date: "2022-01-01"
+      fx_trades:
+        # Trade 1: USD gain +250 EUR
+        - type: SELL_FOREIGN
+          date: "2023-03-01"
+          from_currency: USD
+          from_amount: "1000.00"
+          to_currency: EUR
+          to_amount: "1250.00"
+          ecb_rate: "0.80"
+        # Trade 2: GBP loss -125 EUR
+        - type: SELL_FOREIGN
+          date: "2023-04-01"
+          from_currency: GBP
+          from_amount: "500.00"
+          to_currency: EUR
+          to_amount: "500.00"
+          ecb_rate: "1.00"
+        # Trade 3: CHF gain +200 EUR
+        - type: SELL_FOREIGN
+          date: "2023-05-01"
+          from_currency: CHF
+          from_amount: "800.00"
+          to_currency: EUR
+          to_amount: "1000.00"
+          ecb_rate: "0.80"
+        # Trade 4: USD loss -100 EUR
+        - type: SELL_FOREIGN
+          date: "2023-06-01"
+          from_currency: USD
+          from_amount: "500.00"
+          to_currency: EUR
+          to_amount: "400.00"
+          ecb_rate: "1.25"
+    expected:
+      kap_other_income_positive: "450.00"
+      kap_other_losses_abs: "225.00"
+      net_kap_other: "225.00"
+      errors: 0
+
+  - id: CFX_AGG_002
+    description: "Mixed explicit FX and implicit security FX aggregate together"
+    notes: |
+      Aggregation Test: Both explicit FX trades and implicit FX from security trades
+      should aggregate to the same Anlage KAP lines.
+
+      SOY: 10000 USD (cost 9090.91 EUR, unit cost 0.909091 EUR/USD)
+
+      Chronological events:
+      1. Mar 01: Buy 80 AAPL @ 100 USD = consume 8000 USD from SOY lot
+         - Cost: 8000 × 0.909091 = 7272.73 EUR
+         - Value: 8000 / 1.12 = 7142.86 EUR
+         - Implicit FX loss: -129.87 EUR
+      2. Sep 01: Sell ~1998 USD (via CSV: qty 2018.18 EUR × rate 0.99)
+         - Cost: 1997.998 × 0.909091 = 1816.36 EUR
+         - Proceeds: 2018.18 EUR
+         - Explicit FX gain: +201.82 EUR
+      3. Nov 01: Sell 80 AAPL @ 110 USD = receive 8800 USD → new lot (no RGL)
+
+      Total: kap_other_income_positive: 201.82 EUR (explicit gain)
+             kap_other_losses_abs: 129.87 EUR (implicit loss)
+             Net: 71.95 EUR
+    inputs:
+      currencies:
+        - currency: USD
+          soy_balance: "10000.00"
+          soy_cost_basis_eur: "9090.91"
+          soy_acquisition_date: "2022-01-01"
+      fx_trades:
+        - type: SELL_FOREIGN
+          date: "2023-09-01"
+          from_currency: USD
+          from_amount: "2000.00"
+          to_currency: EUR
+          to_amount: "2018.18"
+          ecb_rate: "0.99"
+      security_trades:
+        # Consume 8000 USD for security purchase → FX loss
+        - type: BUY_LONG
+          date: "2023-03-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 80
+          price_foreign: "100.00"
+          local_currency: USD
+          ecb_rate: "1.12"  # USD weaker → FX loss
+        # Sell security, receive USD → lot creation only (no short cover)
+        - type: SELL_LONG
+          date: "2023-11-01"
+          asset_symbol: AAPL
+          asset_isin: US0378331005
+          quantity: 80
+          price_foreign: "110.00"
+          local_currency: USD
+          ecb_rate: "1.08"
+    expected:
+      kap_other_income_positive: "201.82"  # Explicit FX gain from USD sale
+      kap_other_losses_abs: "129.87"  # Implicit FX loss from security purchase
+      net_kap_other: "71.95"
+      errors: 0

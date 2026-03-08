@@ -1,0 +1,235 @@
+# Test Group 10: Options with Variable FX Rates
+#
+# Revision: 2026-03-08
+# PRD Coverage: Options Lifecycle, §20 Abs. 4 EStG (FIFO), Termingeschaefte
+#
+# Objective: Verify that option lifecycle calculations produce correct EUR
+# values when options are traded in foreign currency (USD) with different
+# ECB rates on different trade dates.
+#
+# Group 8 uses EUR for all option trades, so it never tests the FX interaction.
+# This group closes that gap.
+#
+# All tests use USD with explicit fx_rates schedules. The fx_rates section
+# defines foreign_to_eur rates (1 USD = X EUR) per date.
+#
+# Commission: $1 USD per trade (consistent with Groups 1-5, 8)
+# Multiplier: 100 (standard option contract)
+
+metadata:
+  group: 10
+  name: Options with Variable FX Rates
+  prd_section: "Options, 2.4"
+  revision: "2026-03-08"
+  commission_usd: 1.00
+  default_multiplier: 100
+
+tests:
+  # ===========================================================================
+  # Option Closing Trades in USD (OPTFX_CLOSE_*)
+  # ===========================================================================
+
+  - id: OPTFX_CLOSE_001
+    description: "Long call close in USD - USD strengthens between buy and sell"
+    notes: >
+      Buy 1 call @ $5/share when 1 USD = 0.80 EUR (weak USD).
+      Sell 1 call @ $8/share when 1 USD = 1.25 EUR (strong USD).
+      Both foreign price gain AND FX movement amplify the EUR profit.
+      EUR gain (597.95) is much larger than equivalent EUR-only test (298.00).
+    inputs:
+      underlying:
+        symbol: MSFT
+        isin: US5949181045
+        conid: "272093"
+      option:
+        type: C
+        strike: "50.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-15"
+          qty: 1
+          price: "5.00"
+          currency: USD
+        - type: SL
+          date: "2023-02-15"
+          qty: 1
+          price: "8.00"
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-01-15": "0.80"
+          "2023-02-15": "1.25"
+    expected:
+      # Buy: gross=500/1.25=400, comm=1/1.25=0.80, cost=400.80
+      # Sell: gross=800/0.80=1000, comm=1/0.80=1.25, proceeds=998.75
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_LONG
+          quantity: 1
+          total_cost_basis_eur: "400.80"
+          total_proceeds_eur: "998.75"
+          gain_loss_eur: "597.95"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0
+
+  - id: OPTFX_CLOSE_002
+    description: "Long put close in USD - USD weakens, amplified EUR loss"
+    notes: >
+      Buy 1 put @ $4/share when 1 USD = 1.25 EUR (strong USD).
+      Sell 1 put @ $2/share when 1 USD = 0.80 EUR (weak USD).
+      Foreign loss of $200 becomes EUR loss of -342.05 due to FX.
+    inputs:
+      underlying:
+        symbol: MSFT
+        isin: US5949181045
+        conid: "272093"
+      option:
+        type: P
+        strike: "50.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-15"
+          qty: 1
+          price: "4.00"
+          currency: USD
+        - type: SL
+          date: "2023-02-15"
+          qty: 1
+          price: "2.00"
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-01-15": "1.25"
+          "2023-02-15": "0.80"
+    expected:
+      # Buy: gross=400/0.80=500, comm=1/0.80=1.25, cost=501.25
+      # Sell: gross=200/1.25=160, comm=1/1.25=0.80, proceeds=159.20
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_LONG
+          quantity: 1
+          total_cost_basis_eur: "501.25"
+          total_proceeds_eur: "159.20"
+          gain_loss_eur: "-342.05"
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0
+
+  - id: OPTFX_CLOSE_003
+    description: "Short put buyback in USD - USD strengthens, amplified gain"
+    notes: >
+      Sell 1 put @ $4/share when 1 USD = 1.25 EUR (strong USD at open).
+      Buy back 1 put @ $1/share when 1 USD = 0.80 EUR (weak USD at close).
+      Premium received was high in EUR, buyback cost is low in EUR.
+    inputs:
+      underlying:
+        symbol: MSFT
+        isin: US5949181045
+        conid: "272093"
+      option:
+        type: P
+        strike: "45.00"
+        expiry: "2023-03-17"
+        multiplier: 100
+      option_trades:
+        - type: SSO
+          date: "2023-01-15"
+          qty: 1
+          price: "4.00"
+          currency: USD
+        - type: BSC
+          date: "2023-02-15"
+          qty: 1
+          price: "1.00"
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-01-15": "1.25"
+          "2023-02-15": "0.80"
+    expected:
+      # SSO: gross=400/0.80=500, comm=1/0.80=1.25, proceeds=498.75
+      # BSC: gross=100/1.25=80, comm=1/1.25=0.80, cost=80.80
+      rgls:
+        - realization_type: OPTION_TRADE_CLOSE_SHORT
+          quantity: 1
+          total_cost_basis_eur: "80.80"
+          total_proceeds_eur: "498.75"
+          gain_loss_eur: "417.95"
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Option Exercise in USD (OPTFX_EX_*)
+  # ===========================================================================
+
+  - id: OPTFX_EX_001
+    description: "Long call exercise in USD - premium and stock at different FX rates"
+    notes: >
+      Buy 1 MSFT Jan50C @ $5 when USD=0.80 EUR (option premium: 400.80 EUR).
+      Exercise: receive 100 shares @ $50 when USD=0.90 EUR (stock cost: 4500.90 EUR).
+      Sell 100 shares @ $60 when USD=1.00 EUR (proceeds: 5999.00 EUR).
+      Total cost = stock(4500.90) + premium(400.80) = 4901.70 EUR.
+      Each leg converted at its own trade-date rate.
+    inputs:
+      underlying:
+        symbol: MSFT
+        isin: US5949181045
+        conid: "272093"
+      option:
+        type: C
+        strike: "50.00"
+        expiry: "2023-01-20"
+        multiplier: 100
+      option_trades:
+        - type: BL
+          date: "2023-01-05"
+          qty: 1
+          price: "5.00"
+          currency: USD
+        - type: SL
+          date: "2023-01-15"
+          qty: 1
+          price: "0.00"
+          notes_codes: "Ex"
+          currency: USD
+      stock_trades:
+        - type: BL
+          date: "2023-01-15"
+          qty: 100
+          price: "50.00"
+          notes_codes: "Ex"
+          currency: USD
+        - type: SL
+          date: "2023-01-20"
+          qty: 100
+          price: "60.00"
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-01-05": "0.80"
+          "2023-01-15": "0.90"
+          "2023-01-20": "1.00"
+    expected:
+      # Option BL: gross=500*0.80=400, comm=1*0.80=0.80 → cost=400.80 EUR
+      # Stock BL (exercise): gross=5000*0.90=4500, comm=1*0.90=0.90 → cost=4500.90 EUR
+      # Total cost = 4500.90 + 400.80 = 4901.70
+      # Stock SL: gross=6000*1.00=6000, comm=1*1.00=1.00 → proceeds=5999.00
+      # Gain = 5999.00 - 4901.70 = 1097.30
+      rgls:
+        - asset: MSFT
+          realization_type: LONG_POSITION_SALE
+          quantity: 100
+          total_cost_basis_eur: "4901.70"
+          total_proceeds_eur: "5999.00"
+          gain_loss_eur: "1097.30"
+          tax_category: ANLAGE_KAP_AKTIEN_GEWINN
+      option_eoy_quantity: 0
+      stock_eoy_quantity: 0
+      errors: 0

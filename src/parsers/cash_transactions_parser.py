@@ -4,12 +4,14 @@ from typing import List
 from pydantic import ValidationError
 
 from .raw_models import RawCashTransactionRecord
+from .column_validator import validate_csv_columns, CASH_TRANSACTIONS_COLUMNS
 
 def parse_cash_transactions_csv(file_path: str, encoding='utf-8-sig') -> List[RawCashTransactionRecord]:
     raw_cash_transactions: List[RawCashTransactionRecord] = []
     try:
         with open(file_path, mode='r', encoding=encoding) as csvfile:
             reader = csv.DictReader(csvfile)
+            validate_csv_columns(reader.fieldnames or [], CASH_TRANSACTIONS_COLUMNS, f"Cash Transactions ({file_path})")
             for i, row_dict in enumerate(reader):
                 try:
                     raw_cash_transactions.append(RawCashTransactionRecord(**row_dict))

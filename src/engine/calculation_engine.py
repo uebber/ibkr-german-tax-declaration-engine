@@ -13,7 +13,7 @@ from src.domain.events import (
     OptionExpirationWorthlessEvent, OptionLifecycleEvent, CashFlowEvent, FeeEvent, 
     WithholdingTaxEvent, CurrencyConversionEvent
 )
-from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund
+from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance
 from src.identification.asset_resolver import AssetResolver
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.domain.enums import FinancialEventType, InvestmentFundType 
@@ -35,9 +35,84 @@ from .event_processors.corporate_action_processor import (
 from .event_processors.option_processor import (
     OptionExerciseProcessor, OptionAssignmentProcessor, OptionExpirationWorthlessProcessor
 )
+from .event_processors.currency_conversion_processor import CurrencyConversionProcessor
 
 
 logger = logging.getLogger(__name__)
+
+
+def _initialize_currency_soy_ledger(ledger: FifoLedger, asset: CashBalance, tax_year: int,
+                                     exchange_rate_provider: ECBExchangeRateProvider,
+                                     ctx: Context) -> None:
+    """
+    Initialize currency FIFO ledger using SOY position with fallback cost basis.
+
+    Supports both positive (long) and negative (short) SOY positions.
+
+    Process:
+    1. Get SOY quantity from CashBalance asset
+    2. If positive: Create long lot with cost basis from ECB rate at SOY date
+    3. If negative: Create short lot with proceeds from ECB rate at SOY date
+    """
+    from src.engine.fifo_manager import FifoLot, ShortFifoLot
+    from datetime import date as date_obj
+
+    reported_soy_qty = asset.soy_quantity
+    if reported_soy_qty is None or reported_soy_qty == Decimal("0"):
+        logger.debug(f"Currency {asset.currency}: SOY quantity is zero or None, no lots to create")
+        return
+
+    # Fallback date is last day of previous year
+    fallback_date = date_obj(tax_year - 1, 12, 31)
+    fallback_date_str = fallback_date.isoformat()
+
+    # Get ECB rate at fallback date for cost basis calculation
+    ecb_rate = exchange_rate_provider.get_rate(fallback_date, asset.currency)
+    if ecb_rate is None or ecb_rate == Decimal("0"):
+        logger.warning(f"Currency {asset.currency}: No ECB rate for {fallback_date_str}, using 1:1 fallback")
+        ecb_rate = Decimal("1")
+
+    if reported_soy_qty > Decimal("0"):
+        # Positive SOY = long position
+        # Use provided cost basis if available, otherwise calculate from ECB rate
+        if asset.soy_cost_basis_amount and asset.soy_cost_basis_amount > Decimal("0"):
+            total_cost_basis_eur = asset.soy_cost_basis_amount
+            unit_cost_basis_eur = ctx.divide(total_cost_basis_eur, reported_soy_qty)
+            logger.debug(f"Currency {asset.currency}: Using provided SOY cost basis: {total_cost_basis_eur:.2f} EUR")
+        else:
+            # EUR value = foreign amount / rate
+            total_cost_basis_eur = ctx.divide(reported_soy_qty, ecb_rate)
+            unit_cost_basis_eur = ctx.divide(total_cost_basis_eur, reported_soy_qty)
+
+        lot = FifoLot(
+            acquisition_date=fallback_date_str,
+            quantity=reported_soy_qty,
+            unit_cost_basis_eur=unit_cost_basis_eur,
+            total_cost_basis_eur=total_cost_basis_eur,
+            source_transaction_id=f"SOY_CURRENCY_FALLBACK_{asset.currency}"
+        )
+        ledger.lots.append(lot)
+        logger.info(f"Currency {asset.currency}: Created SOY LONG lot - Qty: {reported_soy_qty}, "
+                   f"Cost Basis: {total_cost_basis_eur:.2f} EUR (rate: {ecb_rate})")
+
+    else:
+        # Negative SOY = short position
+        soy_qty_abs = reported_soy_qty.copy_abs()
+        # EUR proceeds = foreign amount / rate
+        total_proceeds_eur = ctx.divide(soy_qty_abs, ecb_rate)
+        unit_proceeds_eur = ctx.divide(total_proceeds_eur, soy_qty_abs)
+
+        short_lot = ShortFifoLot(
+            opening_date=fallback_date_str,
+            quantity_shorted=soy_qty_abs,
+            unit_sale_proceeds_eur=unit_proceeds_eur,
+            total_sale_proceeds_eur=total_proceeds_eur,
+            source_transaction_id=f"SOY_CURRENCY_FALLBACK_SHORT_{asset.currency}"
+        )
+        ledger.short_lots.append(short_lot)
+        logger.info(f"Currency {asset.currency}: Created SOY SHORT lot - Qty: {soy_qty_abs}, "
+                   f"Proceeds: {total_proceeds_eur:.2f} EUR (rate: {ecb_rate})")
+
 
 def _format_asset_info(asset_obj) -> str:
     """Helper to format asset information for logging."""
@@ -72,6 +147,7 @@ def run_main_calculations(
     vorabpauschale_data_items: List[VorabpauschaleData] = []
 
     historical_events_by_asset: DefaultDict[uuid.UUID, List[FinancialEvent]] = defaultdict(list)
+    historical_currency_events: DefaultDict[str, List[FinancialEvent]] = defaultdict(list)
     current_year_events: List[FinancialEvent] = []
 
     pending_option_adjustments: Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]] = {}
@@ -99,8 +175,25 @@ def run_main_calculations(
             continue 
 
         if event_date_obj < tax_year_start_date_obj:
-            if isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)): 
+            if isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)):
                 historical_events_by_asset[event.asset_internal_id].append(event)
+            elif isinstance(event, CurrencyConversionEvent):
+                # CurrencyConversionEvents need to be associated with the non-EUR currency's asset ID
+                # (or both currencies for cross-currency trades like USD→GBP)
+                from_is_non_eur = event.from_currency.upper() != "EUR"
+                to_is_non_eur = event.to_currency.upper() != "EUR"
+
+                if from_is_non_eur:
+                    from_asset = asset_resolver.get_cash_balance_asset(event.from_currency)
+                    if from_asset:
+                        historical_events_by_asset[from_asset.internal_asset_id].append(event)
+
+                if to_is_non_eur:
+                    to_asset = asset_resolver.get_cash_balance_asset(event.to_currency)
+                    if to_asset:
+                        historical_events_by_asset[to_asset.internal_asset_id].append(event)
+            # Collect ALL currency-impacting historical events for comprehensive FIFO replay
+            _collect_historical_currency_event(event, historical_currency_events)
         elif event_date_obj <= tax_year_end_date_obj:
             current_year_events.append(event)
         else:
@@ -114,6 +207,7 @@ def run_main_calculations(
                 f"{len(current_year_events)} current tax year events.")
 
     fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}
+    currency_fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}  # Separate dict for currency ledgers
 
     logger.info("Initializing FIFO ledgers from Start-of-Year positions and historical data...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
@@ -125,16 +219,16 @@ def run_main_calculations(
                 asset_multiplier_val = asset_obj.multiplier
             elif isinstance(asset_obj, InvestmentFund):
                 asset_fund_type = asset_obj.fund_type
-            
+
             ledger = FifoLedger(
                 asset_internal_id=asset_id, asset_category=asset_obj.asset_category,
                 asset_multiplier_from_asset=asset_multiplier_val,
                 currency_converter=currency_converter, exchange_rate_provider=exchange_rate_provider,
                 internal_working_precision=internal_calculation_precision, # Pass renamed variable
                 decimal_rounding_mode=decimal_rounding_mode,
-                fund_type=asset_fund_type 
+                fund_type=asset_fund_type
             )
-            
+
             asset_historical_events_for_soy_init = []
             if asset_id in historical_events_by_asset:
                 try:
@@ -149,16 +243,73 @@ def run_main_calculations(
             try:
                 ledger.initialize_lots_from_soy(
                     asset=asset_obj,
-                    all_historical_events_for_asset=asset_historical_events_for_soy_init, 
+                    all_historical_events_for_asset=asset_historical_events_for_soy_init,
                     tax_year=tax_year
                 )
             except ValueError as e:
                 logger.critical(f"Fatal error initializing FIFO lots from SOY for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
-                raise e 
+                raise e
 
             fifo_ledgers[asset_id] = ledger
 
     logger.info(f"Initialized {len(fifo_ledgers)} FIFO ledgers.")
+
+    # Initialize currency FIFO ledgers with comprehensive historical replay
+    logger.info("Initializing currency FIFO ledgers for foreign currency positions...")
+
+    # Collect currencies that need FIFO ledgers (only from known CashBalance assets,
+    # not from historical events alone - avoids creating spurious currency tracking
+    # when no cash_balance CSV was provided)
+    currencies_to_init: set = set()
+    for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
+        if isinstance(asset_obj, CashBalance) and asset_obj.currency:
+            ccy = asset_obj.currency.upper()
+            if ccy != "EUR":
+                currencies_to_init.add(ccy)
+
+    for currency_code in sorted(currencies_to_init):
+        # Ensure CashBalance asset and ledger exist
+        _ensure_currency_ledger_exists(
+            currency_code, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
+            currency_converter, exchange_rate_provider,
+            internal_calculation_precision, decimal_rounding_mode,
+            f"Currency init {currency_code}"
+        )
+
+        currency_asset = asset_resolver.get_cash_balance_asset(currency_code)
+        if not currency_asset:
+            continue
+
+        currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+        if not currency_ledger:
+            continue
+
+        # Replay ALL historical events to build FIFO lots with correct acquisition dates
+        hist_events = historical_currency_events.get(currency_code, [])
+        if hist_events:
+            try:
+                sort_key_func = lambda e: get_event_sort_key(e, asset_resolver)
+                sorted_hist = sorted(hist_events, key=sort_key_func)
+            except ValueError as e:
+                logger.error(f"Could not sort historical events for {currency_code}: {e}")
+                sorted_hist = hist_events
+
+            replayed = _replay_historical_currency_events(
+                sorted_hist, currency_ledger, currency_code,
+                currency_converter, ctx
+            )
+            logger.info(f"Currency {currency_code}: Replayed {replayed}/{len(hist_events)} historical events")
+
+        # SOY quantity is authoritative - always reconcile to match it.
+        # Historical replay provides accurate lot-level cost basis,
+        # but the total quantity MUST match the reported SOY balance.
+        if isinstance(currency_asset, CashBalance):
+            _reconcile_currency_soy(
+                currency_ledger, currency_asset, tax_year,
+                exchange_rate_provider, ctx
+            )
+
+    logger.info(f"Initialized {len(currency_fifo_ledgers)} currency FIFO ledgers.")
 
     logger.info("Initializing event processors...")
     trade_processor = TradeProcessor()
@@ -171,6 +322,13 @@ def run_main_calculations(
     option_exercise_processor = OptionExerciseProcessor()
     option_assignment_processor = OptionAssignmentProcessor()
     option_expiration_processor = OptionExpirationWorthlessProcessor()
+
+    # Currency conversion processor for FX trades
+    currency_conversion_processor = CurrencyConversionProcessor(
+        currency_converter=currency_converter,
+        internal_calculation_precision=internal_calculation_precision,
+        decimal_rounding_mode=decimal_rounding_mode
+    )
 
     event_processor_map: Dict[FinancialEventType, EventProcessor] = {
         FinancialEventType.TRADE_BUY_LONG: trade_processor,
@@ -215,7 +373,10 @@ def run_main_calculations(
                 context: Dict[str, Any] = {
                     'asset_resolver': asset_resolver,
                     'pending_option_adjustments': pending_option_adjustments,
-                    'currency_converter': currency_converter 
+                    'currency_converter': currency_converter,
+                    # Phase 5a: Pass currency infrastructure for implicit FX from security trades
+                    'currency_fifo_ledgers': currency_fifo_ledgers,
+                    'currency_processor': currency_conversion_processor,
                 }
                 logger.debug(f"Dispatching event {event.event_id} ({event.event_type.name}) to {type(processor).__name__}")
 
@@ -237,7 +398,24 @@ def run_main_calculations(
                 continue
 
         elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:
-            logger.warning(f"Event {event.event_id} ({event.event_type.name}) for non-cash asset {asset_object.get_classification_key()} occurred, but no FIFO ledger exists. Skipping processing for this event.")
+            # No security FIFO ledger, but cash flow events still affect currency ledgers
+            if event.event_type in [
+                FinancialEventType.DIVIDEND_CASH, FinancialEventType.DISTRIBUTION_FUND,
+                FinancialEventType.INTEREST_RECEIVED, FinancialEventType.INTEREST_PAID_STUECKZINSEN,
+                FinancialEventType.WITHHOLDING_TAX, FinancialEventType.FEE_TRANSACTION
+            ]:
+                logger.debug(f"Event {event.event_id} ({event.event_type.name}) for {asset_object.get_classification_key()} has no security ledger, but processing currency impact.")
+                if currency_conversion_processor is not None:
+                    cashflow_fx_rgls = _process_cashflow_currency_impact(
+                        event, asset_resolver, currency_fifo_ledgers,
+                        currency_conversion_processor, fifo_ledgers,
+                        currency_converter, exchange_rate_provider,
+                        internal_calculation_precision, decimal_rounding_mode
+                    )
+                    if cashflow_fx_rgls:
+                        realized_gains_losses.extend(cashflow_fx_rgls)
+            else:
+                logger.warning(f"Event {event.event_id} ({event.event_type.name}) for non-cash asset {asset_object.get_classification_key()} occurred, but no FIFO ledger exists. Skipping processing for this event.")
 
         # Handle capital repayments directly
         elif event.event_type == FinancialEventType.CAPITAL_REPAYMENT and ledger:
@@ -247,27 +425,73 @@ def run_main_calculations(
                 excess = ledger.reduce_cost_basis_for_capital_repayment(repayment_amount_eur)
                 if excess > Decimal('0'):
                     logger.info(f"Capital repayment excess {excess} EUR becomes taxable dividend income")
-                    
+
                     # Create new DIVIDEND_CASH event for excess amount
                     _create_excess_dividend_event(event, excess, asset_object, current_year_events)
-                    
+
                     # Reduce original capital repayment event to only the cost basis portion
                     cost_basis_portion = repayment_amount_eur - excess
                     event.gross_amount_eur = cost_basis_portion
                     event.gross_amount_foreign_currency = cost_basis_portion
                     logger.info(f"Reduced capital repayment event to cost basis portion: {cost_basis_portion} EUR")
+
+                # Capital repayment = you receive cash in the security's currency.
+                # If non-EUR, this creates a currency FIFO lot (same as dividend income).
+                if currency_conversion_processor is not None:
+                    cashflow_fx_rgls = _process_cashflow_currency_impact(
+                        event, asset_resolver, currency_fifo_ledgers,
+                        currency_conversion_processor, fifo_ledgers,
+                        currency_converter, exchange_rate_provider,
+                        internal_calculation_precision, decimal_rounding_mode
+                    )
+                    if cashflow_fx_rgls:
+                        realized_gains_losses.extend(cashflow_fx_rgls)
+
             except Exception as e:
                 logger.error(f"Error processing capital repayment {event.event_id}: {e}", exc_info=True)
+
+        # Handle currency conversion events
+        elif isinstance(event, CurrencyConversionEvent):
+            try:
+                logger.debug(f"Processing currency conversion event {event.event_id}: "
+                           f"{event.from_amount} {event.from_currency} -> {event.to_amount} {event.to_currency}")
+                # Ensure CashBalance assets and ledgers exist for involved currencies
+                # (may not exist yet if this FX trade is the first event for a currency)
+                for fx_currency_code in [event.from_currency, event.to_currency]:
+                    _ensure_currency_ledger_exists(
+                        fx_currency_code, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
+                        currency_converter, exchange_rate_provider,
+                        internal_calculation_precision, decimal_rounding_mode,
+                        f"FX trade {event.event_id}"
+                    )
+                fx_rgls = currency_conversion_processor.process(event, fifo_ledgers, asset_resolver)
+                if fx_rgls:
+                    realized_gains_losses.extend(fx_rgls)
+                    logger.debug(f"  Currency conversion generated {len(fx_rgls)} RGL records.")
+            except Exception as e:
+                logger.error(f"Error processing currency conversion {event.event_id}: {e}", exc_info=True)
 
         elif not processor:
             if event.event_type not in [
                 FinancialEventType.DIVIDEND_CASH, FinancialEventType.CAPITAL_REPAYMENT, FinancialEventType.DISTRIBUTION_FUND,
                 FinancialEventType.INTEREST_RECEIVED, FinancialEventType.INTEREST_PAID_STUECKZINSEN,
-                FinancialEventType.WITHHOLDING_TAX, FinancialEventType.FEE_TRANSACTION, FinancialEventType.CURRENCY_CONVERSION
+                FinancialEventType.WITHHOLDING_TAX, FinancialEventType.FEE_TRANSACTION
             ]:
                 logger.warning(f"No processor mapped and no ledger interaction expected for event type: {event.event_type.name} (ID: {event.event_id}).")
             else:
                 logger.debug(f"Event type {event.event_type.name} (ID: {event.event_id}) does not require FIFO ledger processing. Skipping processor dispatch.")
+
+                # Phase 5c: Process implicit currency impact from cash flows
+                if currency_conversion_processor is not None:
+                    cashflow_fx_rgls = _process_cashflow_currency_impact(
+                        event, asset_resolver, currency_fifo_ledgers,
+                        currency_conversion_processor, fifo_ledgers,
+                        currency_converter, exchange_rate_provider,
+                        internal_calculation_precision, decimal_rounding_mode
+                    )
+                    if cashflow_fx_rgls:
+                        realized_gains_losses.extend(cashflow_fx_rgls)
+                        logger.debug(f"  Cashflow currency impact generated {len(cashflow_fx_rgls)} RGL records.")
 
 
     logger.info("Finished processing current year events.")
@@ -318,6 +542,49 @@ def run_main_calculations(
     else:
         logger.info("EOY Quantity Validation passed or no critical mismatches found against reported EOY positions.")
 
+    # Currency EOY validation: compare FIFO ledger quantities against reported cash balances
+    logger.info("Performing currency EOY quantity validation...")
+    currency_eoy_mismatches = 0
+    for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
+        if asset_obj.asset_category != AssetCategory.CASH_BALANCE:
+            continue
+        if not isinstance(asset_obj, CashBalance):
+            continue
+        if asset_obj.currency and asset_obj.currency.upper() == "EUR":
+            continue
+
+        reported_eoy = asset_obj.eoy_quantity
+        if reported_eoy is None:
+            continue
+
+        ledger = currency_fifo_ledgers.get(asset_id)
+        if ledger:
+            long_qty = sum(lot.quantity for lot in ledger.lots)
+            short_qty = sum(lot.quantity_shorted for lot in ledger.short_lots)
+            calculated_eoy = long_qty - short_qty
+        else:
+            calculated_eoy = Decimal("0")
+
+        currency_tolerance = Decimal("0.01")
+        diff = calculated_eoy - reported_eoy
+        if abs(diff) > currency_tolerance:
+            logger.warning(
+                f"CURRENCY EOY MISMATCH {asset_obj.currency}: "
+                f"FIFO ledger={calculated_eoy:.2f}, Reported={reported_eoy:.2f}, "
+                f"Diff={diff:.2f}"
+            )
+            currency_eoy_mismatches += 1
+        else:
+            logger.debug(f"Currency EOY OK {asset_obj.currency}: FIFO={calculated_eoy:.2f}, Reported={reported_eoy:.2f}")
+
+    if currency_eoy_mismatches > 0:
+        logger.warning(f"Currency EOY validation: {currency_eoy_mismatches} mismatches found. "
+                      f"Common causes: cash balance CSV dates don't match tax year, "
+                      f"or untracked currency-impacting events (deposits, withdrawals, "
+                      f"margin interest, broker fees not in cash transactions CSV).")
+    else:
+        logger.info("Currency EOY validation passed.")
+
     logger.info("Vorabpauschale calculation skipped (result is €0 for tax year 2023).")
 
     processed_income_events_for_output: List[FinancialEvent] = list(current_year_events)
@@ -361,5 +628,610 @@ def _create_excess_dividend_event(original_event, excess_amount, asset_object, c
     current_year_events.append(excess_dividend_event)
     
     logger.info(f"Created excess dividend event {excess_dividend_event.event_id} for {excess_amount} EUR from capital repayment excess")
-    
+
     return excess_dividend_event
+
+
+def _ensure_currency_ledger_exists(
+    currency_code: str,
+    asset_resolver: AssetResolver,
+    currency_fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
+    fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
+    currency_converter: CurrencyConverter,
+    exchange_rate_provider: ECBExchangeRateProvider,
+    internal_calculation_precision: int,
+    decimal_rounding_mode: str,
+    context_label: str = "",
+) -> None:
+    """
+    Ensure a CashBalance asset and FIFO ledger exist for the given currency.
+    Creates both on-the-fly if they don't exist yet.
+    This makes event processing robust against any CSV/event ordering.
+    """
+    if currency_code.upper() == "EUR":
+        return
+
+    existing_asset = asset_resolver.get_cash_balance_asset(currency_code.upper())
+    if existing_asset:
+        # Asset exists; ensure ledger also exists
+        if existing_asset.internal_asset_id not in fifo_ledgers:
+            new_ledger = FifoLedger(
+                asset_internal_id=existing_asset.internal_asset_id,
+                asset_category=AssetCategory.CASH_BALANCE,
+                asset_multiplier_from_asset=None,
+                currency_converter=currency_converter,
+                exchange_rate_provider=exchange_rate_provider,
+                internal_working_precision=internal_calculation_precision,
+                decimal_rounding_mode=decimal_rounding_mode,
+            )
+            currency_fifo_ledgers[existing_asset.internal_asset_id] = new_ledger
+            fifo_ledgers[existing_asset.internal_asset_id] = new_ledger
+            logger.info(f"{context_label}: Created currency ledger for existing {currency_code} asset")
+        return
+
+    # Create CashBalance asset on-the-fly
+    new_asset = asset_resolver.get_or_create_asset(
+        raw_isin=None, raw_conid=None, raw_symbol=currency_code.upper(),
+        raw_currency=currency_code.upper(), raw_ibkr_asset_class="CASH",
+        raw_description=f"Cash Balance {currency_code.upper()}",
+        description_source_type="on_the_fly"
+    )
+    if new_asset:
+        new_ledger = FifoLedger(
+            asset_internal_id=new_asset.internal_asset_id,
+            asset_category=AssetCategory.CASH_BALANCE,
+            asset_multiplier_from_asset=None,
+            currency_converter=currency_converter,
+            exchange_rate_provider=exchange_rate_provider,
+            internal_working_precision=internal_calculation_precision,
+            decimal_rounding_mode=decimal_rounding_mode,
+        )
+        currency_fifo_ledgers[new_asset.internal_asset_id] = new_ledger
+        fifo_ledgers[new_asset.internal_asset_id] = new_ledger
+        logger.info(f"{context_label}: Created CashBalance asset and ledger for {currency_code}")
+
+
+def _process_cashflow_currency_impact(
+    event: FinancialEvent,
+    asset_resolver: AssetResolver,
+    currency_fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
+    currency_processor: 'CurrencyConversionProcessor',
+    fifo_ledgers: Optional[Dict[uuid.UUID, 'FifoLedger']] = None,
+    currency_converter: Optional[CurrencyConverter] = None,
+    exchange_rate_provider: Optional[ECBExchangeRateProvider] = None,
+    internal_calculation_precision: int = 28,
+    decimal_rounding_mode: str = "ROUND_HALF_EVEN",
+) -> List[RealizedGainLoss]:
+    """
+    Phase 5c: Handle implicit currency acquisition/consumption from cash flows.
+
+    Income events (dividends, interest, distributions) in foreign currency:
+      - You receive foreign currency → create new FIFO lot
+      - If short lots exist, cover them first (realizes FX gain/loss)
+
+    Expense events (WHT, fees, Stückzinsen paid) in foreign currency:
+      - You pay foreign currency → consume from FIFO ledger (realizes FX gain/loss)
+      - If insufficient balance, opens short currency position
+
+    Returns:
+        List of RealizedGainLoss records for any FX gains/losses
+    """
+    results: List[RealizedGainLoss] = []
+
+    # Determine currency from the event
+    cash_currency = event.local_currency
+    if not cash_currency or cash_currency.upper() == "EUR":
+        return results
+
+    # Get amounts
+    foreign_amount = event.gross_amount_foreign_currency
+    eur_amount = event.gross_amount_eur
+
+    if foreign_amount is None or eur_amount is None:
+        return results
+
+    # Ensure positive amounts for FIFO operations
+    foreign_amount = foreign_amount.copy_abs()
+    eur_amount = eur_amount.copy_abs()
+
+    if foreign_amount <= Decimal("0") or eur_amount <= Decimal("0"):
+        return results
+
+    # Get currency asset and ledger
+    currency_asset = asset_resolver.get_cash_balance_asset(cash_currency.upper())
+    if not currency_asset:
+        # Create CashBalance asset on-the-fly (e.g., first-ever USD dividend with no prior balance)
+        currency_asset = asset_resolver.get_or_create_asset(
+            raw_isin=None, raw_conid=None, raw_symbol=cash_currency.upper(),
+            raw_currency=cash_currency.upper(), raw_ibkr_asset_class="CASH",
+            raw_description=f"Cash Balance {cash_currency.upper()}",
+            description_source_type="cashflow_implicit"
+        )
+        if not currency_asset:
+            logger.debug(f"Cashflow {event.event_id}: Could not create CashBalance asset for {cash_currency}")
+            return results
+
+    currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+    if not currency_ledger:
+        # Create ledger on-the-fly (no prior balance, first cash flow in this currency)
+        ledger_kwargs = dict(
+            asset_internal_id=currency_asset.internal_asset_id,
+            asset_category=AssetCategory.CASH_BALANCE,
+            asset_multiplier_from_asset=None,
+            currency_converter=currency_converter,
+            exchange_rate_provider=exchange_rate_provider,
+            internal_working_precision=internal_calculation_precision,
+            decimal_rounding_mode=decimal_rounding_mode,
+        )
+        currency_ledger = FifoLedger(**ledger_kwargs)
+        currency_fifo_ledgers[currency_asset.internal_asset_id] = currency_ledger
+        if fifo_ledgers is not None:
+            fifo_ledgers[currency_asset.internal_asset_id] = currency_ledger
+        logger.info(f"Cashflow {event.event_id}: Created currency ledger for {cash_currency} (first cash flow)")
+
+    eur_per_unit = eur_amount / foreign_amount
+
+    # Classify: income (creates lots) vs expense (consumes lots)
+    if event.event_type in [
+        FinancialEventType.DIVIDEND_CASH,
+        FinancialEventType.DISTRIBUTION_FUND,
+        FinancialEventType.INTEREST_RECEIVED,
+        FinancialEventType.CAPITAL_REPAYMENT,
+    ]:
+        # INCOME: You receive foreign currency
+        quantity_to_acquire = foreign_amount
+
+        # Cover short positions first if they exist
+        available_short_qty = sum(lot.quantity_shorted for lot in currency_ledger.short_lots)
+        if available_short_qty > Decimal("0"):
+            qty_to_cover = min(quantity_to_acquire, available_short_qty)
+            short_cover_results = currency_processor.cover_short_lots_for_cashflow_income(
+                currency_ledger, currency_asset.internal_asset_id,
+                event.event_date, event.event_id, event.ibkr_transaction_id,
+                qty_to_cover, eur_per_unit
+            )
+            results.extend(short_cover_results)
+            if short_cover_results:
+                total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in short_cover_results)
+                logger.info(
+                    f"Cashflow {event.event_id} ({event.event_type.name}): Covered {qty_to_cover:.2f} "
+                    f"{cash_currency} short with income. FX gain/loss: {total_fx_gl:.2f} EUR"
+                )
+            quantity_to_acquire -= qty_to_cover
+
+        # Create new lot for remaining
+        if quantity_to_acquire > Decimal("1e-10"):
+            currency_processor.create_long_lot_for_cashflow_income(
+                currency_ledger, event.event_date, event.ibkr_transaction_id,
+                quantity_to_acquire, eur_per_unit
+            )
+            logger.debug(
+                f"Cashflow {event.event_id} ({event.event_type.name}): Created {cash_currency} lot: "
+                f"{quantity_to_acquire:.2f} @ {eur_per_unit:.6f} EUR per unit"
+            )
+
+    elif event.event_type in [
+        FinancialEventType.WITHHOLDING_TAX,
+        FinancialEventType.FEE_TRANSACTION,
+        FinancialEventType.INTEREST_PAID_STUECKZINSEN,
+    ]:
+        # EXPENSE: You pay foreign currency
+        quantity_to_consume = foreign_amount
+
+        # Consume from long lots
+        available_long_qty = sum(lot.quantity for lot in currency_ledger.lots)
+        if available_long_qty > Decimal("0"):
+            qty_to_consume_from_longs = min(quantity_to_consume, available_long_qty)
+            long_results = currency_processor.realize_long_lots_for_cashflow_expense(
+                currency_ledger, currency_asset.internal_asset_id,
+                event.event_date, event.event_id, event.ibkr_transaction_id,
+                qty_to_consume_from_longs, eur_per_unit
+            )
+            results.extend(long_results)
+            if long_results:
+                total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in long_results)
+                logger.info(
+                    f"Cashflow {event.event_id} ({event.event_type.name}): Consumed {qty_to_consume_from_longs:.2f} "
+                    f"{cash_currency} for expense. FX gain/loss: {total_fx_gl:.2f} EUR"
+                )
+            quantity_to_consume -= qty_to_consume_from_longs
+
+        # Open short if insufficient
+        if quantity_to_consume > Decimal("1e-10"):
+            logger.info(
+                f"Cashflow {event.event_id} ({event.event_type.name}): Opening implicit SHORT "
+                f"{cash_currency} position: {quantity_to_consume:.2f} (expense exceeds currency balance)"
+            )
+            currency_processor.open_short_position_for_cashflow_expense(
+                currency_ledger, event.event_date, event.ibkr_transaction_id,
+                quantity_to_consume, eur_per_unit
+            )
+
+    return results
+
+
+def _collect_historical_currency_event(
+    event: FinancialEvent,
+    historical_currency_events: DefaultDict[str, List[FinancialEvent]]
+) -> None:
+    """
+    Collect a historical event into currency-specific lists for FIFO replay.
+
+    Captures ALL events that affect foreign currency cash balances:
+    - Trades (buy/sell securities in foreign currency, plus commissions)
+    - Currency conversions (explicit FX trades)
+    - Cash flows (dividends, interest, distributions)
+    - Expenses (WHT, fees, Stueckzinsen)
+    """
+    if isinstance(event, CurrencyConversionEvent):
+        if event.from_currency.upper() != "EUR":
+            historical_currency_events[event.from_currency.upper()].append(event)
+        if event.to_currency.upper() != "EUR":
+            historical_currency_events[event.to_currency.upper()].append(event)
+        return
+
+    if isinstance(event, TradeEvent):
+        ccy = (event.local_currency or "").upper()
+        if ccy and ccy != "EUR":
+            historical_currency_events[ccy].append(event)
+        return
+
+    # Cash flow events: dividends, interest, WHT, fees, etc.
+    ccy = getattr(event, 'local_currency', None)
+    if ccy:
+        ccy = ccy.upper()
+        if ccy != "EUR" and event.event_type in [
+            FinancialEventType.DIVIDEND_CASH,
+            FinancialEventType.DISTRIBUTION_FUND,
+            FinancialEventType.INTEREST_RECEIVED,
+            FinancialEventType.INTEREST_PAID_STUECKZINSEN,
+            FinancialEventType.WITHHOLDING_TAX,
+            FinancialEventType.FEE_TRANSACTION,
+            FinancialEventType.CAPITAL_REPAYMENT,
+        ]:
+            historical_currency_events[ccy].append(event)
+
+
+def _replay_historical_currency_events(
+    events: List[FinancialEvent],
+    ledger: 'FifoLedger',
+    currency_code: str,
+    currency_converter: CurrencyConverter,
+    ctx: Context,
+) -> int:
+    """
+    Replay historical events to build currency FIFO lots with correct acquisition dates.
+
+    Processes ALL event types that affect currency balances:
+    - CurrencyConversionEvent: explicit FX trades (only the side matching our currency)
+    - TradeEvent: security buys consume currency, sells produce currency, commissions consume
+    - Income cashflows: dividends, interest, distributions create currency lots
+    - Expense cashflows: WHT, fees, Stueckzinsen consume currency lots
+
+    Returns the number of events successfully replayed.
+    """
+    replayed = 0
+
+    for event in events:
+        try:
+            if isinstance(event, CurrencyConversionEvent):
+                # Handle only the side affecting our currency
+                if event.from_currency.upper() == currency_code:
+                    # Selling this currency
+                    eur_value = _get_historical_eur_value(
+                        event.to_amount, event.to_currency, event.event_date,
+                        currency_converter
+                    )
+                    if eur_value and event.from_amount > Decimal("0"):
+                        eur_per_unit = ctx.divide(eur_value, event.from_amount)
+                        _consume_lots_historical(ledger, event.from_amount, eur_per_unit, event.event_date, ctx)
+                        replayed += 1
+
+                if event.to_currency.upper() == currency_code:
+                    # Buying this currency
+                    eur_value = _get_historical_eur_value(
+                        event.from_amount, event.from_currency, event.event_date,
+                        currency_converter
+                    )
+                    if eur_value and event.to_amount > Decimal("0"):
+                        eur_per_unit = ctx.divide(eur_value, event.to_amount)
+                        _create_lot_historical(
+                            ledger, event.to_amount, eur_per_unit, event.event_date,
+                            event.ibkr_transaction_id, ctx
+                        )
+                        replayed += 1
+
+            elif isinstance(event, TradeEvent):
+                trade_ccy = (event.local_currency or "").upper()
+                if trade_ccy != currency_code:
+                    continue
+
+                foreign_amount = event.gross_amount_foreign_currency
+                eur_amount = event.gross_amount_eur
+
+                if foreign_amount and eur_amount and foreign_amount > Decimal("0") and eur_amount > Decimal("0"):
+                    eur_per_unit = ctx.divide(eur_amount, foreign_amount)
+
+                    if event.event_type in [FinancialEventType.TRADE_BUY_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER]:
+                        # Buying security = spending currency
+                        _consume_lots_historical(ledger, foreign_amount, eur_per_unit, event.event_date, ctx)
+                        replayed += 1
+                    elif event.event_type in [FinancialEventType.TRADE_SELL_LONG, FinancialEventType.TRADE_SELL_SHORT_OPEN]:
+                        # Selling security = receiving currency
+                        _create_lot_historical(
+                            ledger, foreign_amount, eur_per_unit, event.event_date,
+                            event.ibkr_transaction_id, ctx
+                        )
+                        replayed += 1
+
+                # Commission (always an outflow, typically same currency as trade)
+                comm = event.commission_foreign_currency
+                comm_ccy = (event.commission_currency or "").upper()
+                comm_eur = event.commission_eur
+                if comm and comm_ccy == currency_code and comm_eur:
+                    comm_abs = comm.copy_abs()
+                    comm_eur_abs = comm_eur.copy_abs()
+                    if comm_abs > Decimal("0") and comm_eur_abs > Decimal("0"):
+                        comm_eur_per_unit = ctx.divide(comm_eur_abs, comm_abs)
+                        _consume_lots_historical(ledger, comm_abs, comm_eur_per_unit, event.event_date, ctx)
+
+            else:
+                # Cash flow event
+                ccy = (getattr(event, 'local_currency', None) or "").upper()
+                if ccy != currency_code:
+                    continue
+
+                foreign_amount = getattr(event, 'gross_amount_foreign_currency', None)
+                eur_amount = getattr(event, 'gross_amount_eur', None)
+
+                if foreign_amount is None or eur_amount is None:
+                    continue
+
+                fa_abs = foreign_amount.copy_abs()
+                ea_abs = eur_amount.copy_abs()
+
+                if fa_abs <= Decimal("0") or ea_abs <= Decimal("0"):
+                    continue
+
+                eur_per_unit = ctx.divide(ea_abs, fa_abs)
+
+                if event.event_type in [
+                    FinancialEventType.DIVIDEND_CASH, FinancialEventType.DISTRIBUTION_FUND,
+                    FinancialEventType.INTEREST_RECEIVED, FinancialEventType.CAPITAL_REPAYMENT,
+                ]:
+                    # Income: receive currency
+                    _create_lot_historical(
+                        ledger, fa_abs, eur_per_unit, event.event_date,
+                        getattr(event, 'ibkr_transaction_id', None), ctx
+                    )
+                    replayed += 1
+                elif event.event_type in [
+                    FinancialEventType.WITHHOLDING_TAX, FinancialEventType.FEE_TRANSACTION,
+                    FinancialEventType.INTEREST_PAID_STUECKZINSEN,
+                ]:
+                    # Expense: consume currency
+                    _consume_lots_historical(ledger, fa_abs, eur_per_unit, event.event_date, ctx)
+                    replayed += 1
+
+        except Exception as e:
+            logger.debug(f"Historical currency replay: skipped event {event.event_id}: {e}")
+
+    return replayed
+
+
+def _get_historical_eur_value(
+    amount: Decimal, currency: str, event_date: str,
+    currency_converter: CurrencyConverter
+) -> Optional[Decimal]:
+    """Convert amount to EUR for historical replay. Returns None if conversion fails."""
+    if currency.upper() == "EUR":
+        return amount
+    date_obj = parse_ibkr_date(event_date)
+    if date_obj is None:
+        return None
+    return currency_converter.convert_to_eur(amount, currency, date_obj)
+
+
+def _consume_lots_historical(
+    ledger: 'FifoLedger', quantity: Decimal, eur_per_unit: Decimal,
+    event_date: str, ctx: Context
+) -> None:
+    """Consume currency lots during historical replay (no RGL generation)."""
+    from .fifo_manager import ShortFifoLot
+
+    remaining = quantity
+    lots_to_remove: List[int] = []
+
+    for i, lot in enumerate(ledger.lots):
+        if remaining <= Decimal("0"):
+            break
+        qty_from_lot = min(lot.quantity, remaining)
+        if lot.quantity <= remaining:
+            lots_to_remove.append(i)
+        else:
+            lot.quantity = ctx.subtract(lot.quantity, qty_from_lot)
+            lot.total_cost_basis_eur = ctx.multiply(lot.quantity, lot.unit_cost_basis_eur)
+        remaining = ctx.subtract(remaining, qty_from_lot)
+
+    for i in reversed(lots_to_remove):
+        del ledger.lots[i]
+
+    # If more consumed than available, open short position
+    if remaining > Decimal("1e-10"):
+        total_proceeds = ctx.multiply(remaining, eur_per_unit)
+        short_lot = ShortFifoLot(
+            opening_date=event_date,
+            quantity_shorted=remaining,
+            unit_sale_proceeds_eur=eur_per_unit,
+            total_sale_proceeds_eur=total_proceeds,
+            source_transaction_id=f"HIST_{event_date}"
+        )
+        ledger.short_lots.append(short_lot)
+        ledger.short_lots.sort(key=lambda l: l.opening_date)
+
+
+def _create_lot_historical(
+    ledger: 'FifoLedger', quantity: Decimal, eur_per_unit: Decimal,
+    event_date: str, transaction_id: Optional[str], ctx: Context
+) -> None:
+    """Create currency lot during historical replay. Covers short lots first."""
+    from .fifo_manager import FifoLot
+
+    remaining = quantity
+    lots_to_remove: List[int] = []
+
+    # Cover short lots first
+    for i, short_lot in enumerate(ledger.short_lots):
+        if remaining <= Decimal("0"):
+            break
+        qty = min(short_lot.quantity_shorted, remaining)
+        if short_lot.quantity_shorted <= remaining:
+            lots_to_remove.append(i)
+        else:
+            short_lot.quantity_shorted = ctx.subtract(short_lot.quantity_shorted, qty)
+            short_lot.total_sale_proceeds_eur = ctx.multiply(
+                short_lot.quantity_shorted, short_lot.unit_sale_proceeds_eur
+            )
+        remaining = ctx.subtract(remaining, qty)
+
+    for i in reversed(lots_to_remove):
+        del ledger.short_lots[i]
+
+    # Create long lot for remaining
+    if remaining > Decimal("1e-10"):
+        total_cost = ctx.multiply(remaining, eur_per_unit)
+        lot = FifoLot(
+            acquisition_date=event_date,
+            quantity=remaining,
+            unit_cost_basis_eur=eur_per_unit,
+            total_cost_basis_eur=total_cost,
+            source_transaction_id=f"HIST_{transaction_id or event_date}"
+        )
+        ledger.lots.append(lot)
+        ledger.lots.sort(key=lambda l: l.acquisition_date)
+
+
+def _reconcile_currency_soy(
+    ledger: 'FifoLedger', asset: CashBalance, tax_year: int,
+    exchange_rate_provider, ctx: Context
+) -> None:
+    """
+    Reconcile currency FIFO ledger against SOY reported balance.
+
+    When used as SOY fallback (no historical events), creates initial lots
+    using the provided cost basis from CashBalance asset if available,
+    otherwise falls back to ECB rate at SOY date.
+
+    Supports both positive (long) and negative (short) SOY positions.
+    """
+    from .fifo_manager import FifoLot, ShortFifoLot
+    from datetime import date as date_type
+
+    reported_soy = asset.soy_quantity
+    if reported_soy is None or reported_soy == Decimal("0"):
+        return
+
+    long_qty = sum(lot.quantity for lot in ledger.lots)
+    short_qty = sum(lot.quantity_shorted for lot in ledger.short_lots)
+    fifo_qty = long_qty - short_qty
+
+    diff = reported_soy - fifo_qty
+
+    if abs(diff) <= Decimal("0.01"):
+        return
+
+    fallback_date = date_type(tax_year - 1, 12, 31)
+    fallback_date_str = fallback_date.isoformat()
+
+    ecb_rate = exchange_rate_provider.get_rate(fallback_date, asset.currency)
+    if ecb_rate is None or ecb_rate == Decimal("0"):
+        logger.warning(f"Currency {asset.currency}: No ECB rate for SOY reconciliation, using 1:1")
+        ecb_rate = Decimal("1")
+
+    # Default EUR per unit from ECB rate
+    default_unit_eur = ctx.divide(Decimal("1"), ecb_rate)
+
+    if diff > Decimal("0"):
+        # FIFO < SOY: need more currency, create adjustment long lot
+        # Use provided cost basis if available and this is the full SOY amount
+        if (asset.soy_cost_basis_amount and asset.soy_cost_basis_amount > Decimal("0")
+                and abs(diff - reported_soy) <= Decimal("0.01")):
+            # Full SOY amount missing - use the provided total cost basis
+            total_cost = asset.soy_cost_basis_amount
+            unit_eur = ctx.divide(total_cost, diff)
+            logger.debug(f"Currency {asset.currency}: Using provided SOY cost basis: {total_cost:.2f} EUR")
+        else:
+            unit_eur = default_unit_eur
+            total_cost = ctx.multiply(diff, unit_eur)
+
+        lot = FifoLot(
+            acquisition_date=fallback_date_str,
+            quantity=diff,
+            unit_cost_basis_eur=unit_eur,
+            total_cost_basis_eur=total_cost,
+            source_transaction_id=f"SOY_RECONCILIATION_{asset.currency}"
+        )
+        ledger.lots.append(lot)
+        ledger.lots.sort(key=lambda l: l.acquisition_date)
+        logger.info(f"Currency {asset.currency}: SOY reconciliation +{diff:.2f} "
+                    f"(FIFO={fifo_qty:.2f}, SOY={reported_soy:.2f})")
+    else:
+        # FIFO > SOY: too much currency, consume excess from long lots
+        excess = diff.copy_abs()
+
+        # For negative SOY (short position), create short lot with provided proceeds
+        if reported_soy < Decimal("0") and fifo_qty <= Decimal("0.01"):
+            # Pure short position from SOY
+            soy_abs = reported_soy.copy_abs()
+            if hasattr(asset, 'soy_short_proceeds_eur') and asset.soy_short_proceeds_eur:
+                total_proceeds = asset.soy_short_proceeds_eur
+                unit_proceeds = ctx.divide(total_proceeds, soy_abs)
+            else:
+                unit_proceeds = default_unit_eur
+                total_proceeds = ctx.multiply(soy_abs, unit_proceeds)
+
+            short_lot = ShortFifoLot(
+                opening_date=fallback_date_str,
+                quantity_shorted=soy_abs,
+                unit_sale_proceeds_eur=unit_proceeds,
+                total_sale_proceeds_eur=total_proceeds,
+                source_transaction_id=f"SOY_RECONCILIATION_SHORT_{asset.currency}"
+            )
+            ledger.short_lots.append(short_lot)
+            ledger.short_lots.sort(key=lambda l: l.opening_date)
+            logger.info(f"Currency {asset.currency}: SOY reconciliation SHORT {soy_abs:.2f} "
+                        f"(FIFO={fifo_qty:.2f}, SOY={reported_soy:.2f})")
+            return
+
+        remaining = excess
+        lots_to_remove: List[int] = []
+
+        for i, lot in enumerate(ledger.lots):
+            if remaining <= Decimal("0"):
+                break
+            qty = min(lot.quantity, remaining)
+            if lot.quantity <= remaining:
+                lots_to_remove.append(i)
+            else:
+                lot.quantity = ctx.subtract(lot.quantity, qty)
+                lot.total_cost_basis_eur = ctx.multiply(lot.quantity, lot.unit_cost_basis_eur)
+            remaining = ctx.subtract(remaining, qty)
+
+        for i in reversed(lots_to_remove):
+            del ledger.lots[i]
+
+        # If still excess after consuming all longs, create short lot
+        if remaining > Decimal("1e-10"):
+            total_proceeds = ctx.multiply(remaining, default_unit_eur)
+            short_lot = ShortFifoLot(
+                opening_date=fallback_date_str,
+                quantity_shorted=remaining,
+                unit_sale_proceeds_eur=default_unit_eur,
+                total_sale_proceeds_eur=total_proceeds,
+                source_transaction_id=f"SOY_RECONCILIATION_SHORT_{asset.currency}"
+            )
+            ledger.short_lots.append(short_lot)
+            ledger.short_lots.sort(key=lambda l: l.opening_date)
+
+        logger.info(f"Currency {asset.currency}: SOY reconciliation -{excess:.2f} "
+                    f"(FIFO={fifo_qty:.2f}, SOY={reported_soy:.2f})")

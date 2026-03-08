@@ -71,6 +71,8 @@ class ExpectedRealizedGainLoss:
         elif identifier_type == "SYMBOL":
             if asset.ibkr_symbol == identifier_value: asset_matched = True
             elif any(alias == f"SYMBOL:{identifier_value}" for alias in asset.aliases): asset_matched = True
+        elif identifier_type == "CASH_BALANCE":
+            if any(alias == f"CASH_BALANCE:{identifier_value}" for alias in asset.aliases): asset_matched = True
 
         if not asset_matched and str(actual_rgl.asset_internal_id) == self.asset_identifier:
             asset_matched = True
@@ -83,12 +85,11 @@ class ExpectedRealizedGainLoss:
 
         date_match = str(actual_rgl.realization_date) == self.realization_date
         qty_match = actual_rgl.quantity_realized.compare(self.quantity_realized) == Decimal("0")
-        
+
         actual_cost_quantized = actual_rgl.total_cost_basis_eur.quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
         actual_proceeds_quantized = actual_rgl.total_realization_value_eur.quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
         actual_gain_quantized = actual_rgl.gross_gain_loss_eur.quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
 
-        # Comparison now correctly uses self.total_cost_basis_eur which holds the expected value
         cost_match = actual_cost_quantized.compare(self.total_cost_basis_eur) == Decimal("0")
         proceeds_match = actual_proceeds_quantized.compare(self.total_realization_value_eur) == Decimal("0")
         gain_match = actual_gain_quantized.compare(self.gross_gain_loss_eur) == Decimal("0")

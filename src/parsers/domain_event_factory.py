@@ -437,8 +437,16 @@ class DomainEventFactory:
             # For simplicity, and to align with existing TradeEvent creation, let's use absolute amount + type.
 
             event_amount_for_storage = raw_amount # Keep sign for some events.
-            if event_type_str_upper in ["DIVIDEND", "INTEREST", "PAYMENT IN LIEU"] or \
-               code_upper in ["DI", "IN", "PO"]: # Types that are generally income
+            is_income_type = (
+                event_type_str_upper in ["DIVIDEND", "INTEREST", "PAYMENT IN LIEU"] or
+                "DIVIDEND" in event_type_str_upper or
+                "INTEREST" in event_type_str_upper or
+                "PAYMENT IN LIEU" in event_type_str_upper or
+                code_upper in ["DI", "IN", "PO"]
+            )
+            if is_income_type:
+                # For types that can be both income (positive) and expense (negative),
+                # preserve abs value — the sign-based classification happens below
                 event_amount_for_storage = raw_amount.copy_abs()
 
             event_params_kw = {
@@ -451,8 +459,12 @@ class DomainEventFactory:
 
             if "DIVIDEND" in event_type_str_upper or \
                (code_upper == "DI" and asset_for_event.asset_category != AssetCategory.CASH_BALANCE and "INTEREST" not in desc_upper):
-                # Check for tax-free capital repayment
-                if "EXEMPT FROM WITHHOLDING" in desc_upper:
+                if raw_amount < Decimal(0) and "PAYMENT IN LIEU" in event_type_str_upper:
+                    # Negative Payment In Lieu = you pay (short stock lending fee)
+                    # This is a cash outflow, classify as FEE_TRANSACTION
+                    evt_type = FinancialEventType.FEE_TRANSACTION
+                    event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
+                elif "EXEMPT FROM WITHHOLDING" in desc_upper:
                     evt_type = FinancialEventType.CAPITAL_REPAYMENT
                 elif isinstance(asset_for_event, InvestmentFund):
                     evt_type = FinancialEventType.DISTRIBUTION_FUND
@@ -481,21 +493,18 @@ class DomainEventFactory:
 
                 if is_stueckzinsen_paid:
                     evt_type = FinancialEventType.INTEREST_PAID_STUECKZINSEN
-                    # For INTERES_PAID_STUECKZINSEN, gross_amount_foreign_currency should represent the cost (positive number)
                     event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                elif is_stueckzinsen_received : # If handled as a separate cash event
-                     evt_type = FinancialEventType.INTEREST_RECEIVED # Or a more specific type if needed
-                     event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                else: # Regular interest received or paid (e.g. on cash balances, margin loans)
+                elif is_stueckzinsen_received:
                     evt_type = FinancialEventType.INTEREST_RECEIVED
-                    # If raw_amount is negative (e.g., debit interest), it should be stored as such
-                    # or handled based on event type. For INTEREST_RECEIVED, expect positive.
-                    # Let's assume event_params_kw['gross_amount_foreign_currency'] is already set
-                    # (it was raw_amount.copy_abs() if it was income type)
-                    # This implies interest received will always be positive in event_params_kw.
-                    # If debit interest (negative raw_amount) should be stored as negative, change here.
-                    # For now, INTEREST_RECEIVED events will have positive gross_amount_foreign_currency.
-                    # If debit interest is common, a new event type like INTEREST_PAID_DEBIT might be better.
+                    event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
+                elif raw_amount < Decimal(0):
+                    # Debit interest / margin interest (negative amount = cash outflow)
+                    # Classify as FEE_TRANSACTION so currency impact treats it as expense
+                    evt_type = FinancialEventType.FEE_TRANSACTION
+                    event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
+                else:
+                    # Credit interest (positive amount = cash inflow)
+                    evt_type = FinancialEventType.INTEREST_RECEIVED
 
                 domain_event_instance = CashFlowEvent(
                     asset_for_event.internal_asset_id, event_date_str, event_type=evt_type,

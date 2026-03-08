@@ -2,39 +2,12 @@
 
 from decimal import Decimal # Added for Decimal type hint
 
-# File paths for IBKR Flex Query reports
-""" TRADES_FILE_PATH = "data/trades_2023.csv"
-CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions_2023.csv"
-POSITIONS_START_FILE_PATH = "data/positions_start_of_year_2023.csv"
-POSITIONS_END_FILE_PATH = "data/positions_end_of_year_2023.csv"
-CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_2023.csv" # e.g. corpact*.csv
-# Tax year being processed
-TAX_YEAR = 2024 """
-
-# TRADES_FILE_PATH = "data/Gemini_Trades.csv"
-# CASH_TRANSACTIONS_FILE_PATH = "data/Gemini_Cash_Transactions.csv"
-# POSITIONS_START_FILE_PATH = "data/Gemini_Positions_2024_Start.csv"
-# POSITIONS_END_FILE_PATH = "data/Gemini_Positions_2024_End.csv"
-# CORPORATE_ACTIONS_FILE_PATH = "data/Gemini_Corporate_Actions.csv" # e.g. corpact*.csv
-# # Tax year being processed
-# TAX_YEAR = 2024
-
-TRADES_FILE_PATH = "data/trades.csv"
-CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions.csv"
-POSITIONS_START_FILE_PATH = "data/positions_start_of_year.csv"
-POSITIONS_END_FILE_PATH = "data/positions_end_of_year.csv"
-CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions.csv" # e.g. corpact*.csv
-CASH_BALANCE_FILE_PATH = "data/Gemini_Cash_Balance.csv"
 # Tax year being processed
 TAX_YEAR = 2024
 
-# TRADES_FILE_PATH = "data/trades_uebber.csv"
-# CASH_TRANSACTIONS_FILE_PATH = "data/cash_transactions_uebber.csv"
-# POSITIONS_START_FILE_PATH = "data/positions_start_of_year_uebber.csv"
-# POSITIONS_END_FILE_PATH = "data/positions_end_of_year_uebber.csv"
-# CORPORATE_ACTIONS_FILE_PATH = "data/corporate_actions_uebber.csv" # e.g. corpact*.csv
-# # Tax year being processed
-# TAX_YEAR = 2023
+# Input/output directories
+IMPORT_DIR = "data_import"  # Read-only source CSVs (never modified by the application)
+WORKING_DIR = "data"        # Working copies prepared by data_preparation module
 
 # Cache file for user classifications
 CLASSIFICATION_CACHE_FILE_PATH = "cache/user_classifications.json" # Renamed from CLASSIFICATION_CACHE_FILE
@@ -63,6 +36,23 @@ PRECISION_QUANTITY: Decimal = Decimal("0.00000001") # Example for quantities, us
 MAX_FALLBACK_DAYS_EXCHANGE_RATES = 7
 # Currency code mapping for ECB (Example)
 CURRENCY_CODE_MAPPING_ECB: dict[str, str] = {"CNH": "CNY"}
+
+# IBKR Flex Web Service
+FLEX_TOKEN_ENV_VAR = "IBKR_FLEX_TOKEN"
+FLEX_TOKEN_FILE = "~/.ibkr_flex_token"  # fallback
+
+# Flex Query IDs — user sets these after creating queries in IBKR portal
+# Can also be set via environment variables: IBKR_FLEX_QUERY_TRADES, etc.
+FLEX_QUERY_IDS: dict[str, int | None] = {
+    "trades": 1212943,            # e.g., 123456
+    "cash_transactions": 1212969,
+    "positions": 1212973,         # Used for both SOY and EOY with date overrides
+    "corporate_actions": 1213973,
+    "cash_balance": 1372852,
+}
+
+# Cache directory for downloaded Flex Query CSVs
+FLEX_CACHE_DIR = "data/flex_cache"
 
 # Configuration for Loss Offsetting Engine (NEW)
 # Determines if the conceptual summary for net derivative losses should apply the 20k EUR cap.

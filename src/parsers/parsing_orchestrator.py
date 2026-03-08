@@ -362,6 +362,84 @@ class ParsingOrchestrator:
         isin_match = re.search(r'\(([A-Z]{2}[A-Z0-9]{10})\)', description)
         return isin_match.group(1) if isin_match else None
 
+    def _process_cash_balance_positions(self, tax_year: Optional[int] = None):
+        """
+        Process cash balance records to set SOY/EOY quantities on CashBalance assets.
+        Filters out tiny balances and EUR (base currency).
+        Validates that cash balance dates match the configured tax year.
+
+        Supports both positive (long) and negative (short) currency positions.
+        Negative positions occur with margin trading.
+        """
+        MIN_BALANCE_THRESHOLD = Decimal("0.01")  # Filter tiny balances
+
+        logger.info("Processing cash balance positions for SOY/EOY quantities...")
+        balances_processed = 0
+        balances_skipped = 0
+
+        # Validate cash balance dates against tax year (check first record)
+        if tax_year and self.raw_cash_balances:
+            first = self.raw_cash_balances[0]
+            try:
+                from_year = int(first.from_date[:4]) if first.from_date else None
+                to_year = int(first.to_date[:4]) if first.to_date else None
+                if from_year and to_year:
+                    if from_year != tax_year and to_year != tax_year:
+                        logger.error(
+                            f"CASH BALANCE DATE MISMATCH: Cash balance CSV covers "
+                            f"{first.from_date}–{first.to_date} but tax year is {tax_year}. "
+                            f"SOY/EOY currency balances will be WRONG. "
+                            f"Please provide a cash balance report for tax year {tax_year}."
+                        )
+                    elif from_year != tax_year:
+                        logger.warning(
+                            f"Cash balance CSV starts in {from_year} (FromDate={first.from_date}) "
+                            f"but tax year is {tax_year}. Verify that StartingCash represents "
+                            f"the SOY balance for {tax_year}."
+                        )
+            except (ValueError, TypeError):
+                pass  # malformed date, skip validation
+
+        for raw_balance in self.raw_cash_balances:
+            # Skip EUR (base currency) - no currency gain/loss on base currency
+            if raw_balance.currency_primary and raw_balance.currency_primary.upper() == "EUR":
+                logger.debug(f"Skipping EUR cash balance (base currency)")
+                balances_skipped += 1
+                continue
+
+            # Skip tiny balances (below threshold)
+            if (abs(raw_balance.starting_cash) < MIN_BALANCE_THRESHOLD and
+                abs(raw_balance.ending_cash) < MIN_BALANCE_THRESHOLD):
+                logger.debug(f"Skipping tiny cash balance {raw_balance.currency_primary}: "
+                           f"SOY={raw_balance.starting_cash}, EOY={raw_balance.ending_cash}")
+                balances_skipped += 1
+                continue
+
+            # Get or create CashBalance asset
+            cash_asset = self.asset_resolver.get_or_create_asset(
+                raw_isin=None,
+                raw_conid=None,
+                raw_symbol=raw_balance.currency_primary,
+                raw_currency=raw_balance.currency_primary,
+                raw_ibkr_asset_class="CASH",
+                raw_description=f"Cash Balance {raw_balance.currency_primary}",
+                description_source_type="cash_balance_csv"
+            )
+
+            # Set SOY/EOY quantities (can be negative for short positions)
+            cash_asset.soy_quantity = raw_balance.starting_cash
+            cash_asset.eoy_quantity = raw_balance.ending_cash
+
+            position_type = "LONG" if raw_balance.starting_cash >= Decimal("0") else "SHORT"
+            eoy_position_type = "LONG" if raw_balance.ending_cash >= Decimal("0") else "SHORT"
+
+            logger.debug(f"Cash {raw_balance.currency_primary}: "
+                        f"SOY={raw_balance.starting_cash} ({position_type}), "
+                        f"EOY={raw_balance.ending_cash} ({eoy_position_type})")
+            balances_processed += 1
+
+        logger.info(f"Processed {balances_processed} cash balance positions, skipped {balances_skipped}")
+
     def _ensure_soy_quantities_are_set(self):
         # ... (implementation is the same)
         logger.info("Ensuring all non-cash assets have Start-of-Year (SOY) quantities initialized...")
@@ -486,7 +564,8 @@ class ParsingOrchestrator:
                              positions_start_file: Optional[str] = None,
                              positions_end_file: Optional[str] = None,
                              corporate_actions_file: Optional[str] = None,
-                             cash_balance_file: Optional[str] = None
+                             cash_balance_file: Optional[str] = None,
+                             tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
         logger.info("Starting parsing pipeline...")
         try:
@@ -499,6 +578,7 @@ class ParsingOrchestrator:
                 cash_balance_file=cash_balance_file
             )
             self.process_positions()
+            self._process_cash_balance_positions(tax_year=tax_year)
             self.discover_assets_from_transactions()
             self.asset_resolver.link_derivatives()
             self.finalize_asset_classifications()

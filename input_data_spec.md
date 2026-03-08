@@ -2,6 +2,7 @@
 - **CSV Encoding:** All input CSV files are expected to be `utf-8-sig` encoded.
 - **Decimal Parsing:** Numerical monetary values and quantities are parsed into Python's `Decimal` type, preserving precision from the string representation. Empty strings or unparsable numeric values typically default to `None` or `Decimal("0.0")` based on field definition and parsing logic (`safe_decimal` utility).
 - **Date Parsing:** Date strings are parsed from various common formats (e.g., YYYY-MM-DD, YYYYMMDD) into Python `datetime.date` or `datetime.datetime` objects.
+- **Column Validation:** Each parser validates that the CSV header row contains exactly the columns defined in `src/parsers/column_validator.py`. Missing or unexpected columns cause a `ValueError` before any rows are parsed. This ensures the IBKR Flex Query export configuration matches what the engine expects.
 
 ---
 
@@ -49,7 +50,6 @@
 
 | CSV Header         | Model Field Name (Pydantic) | Model Data Type   | Description                                                                          | Notes (Optionality, Example, Parsing Detail)                                                                                                |
 |--------------------|-----------------------------|-------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
-| `(index)`          | (Ignored by model)          | N/A               | Row index from pandas DataFrame export, if present.                                  | Ignored by `RawCashTransactionRecord` due to `Config.extra = 'ignore'`.                                                                     |
 | `ClientAccountID`  | `client_account_id`         | `Optional[str]`   | The client's account identifier.                                                     | Optional. Example: "U7542366"                                                                                                               |
 | `CurrencyPrimary`  | `currency_primary`          | `str`             | The currency of the cash transaction.                                                | Required. Example: "CAD", "JPY", "EUR"                                                                                                      |
 | `AssetClass`       | `asset_class`               | `Optional[str]`   | Asset class related to the cash transaction (e.g., STK, BOND). Can be empty/null.    | Optional. Example: "STK", "BOND", or empty.                                                                                                 |
@@ -63,6 +63,26 @@
 | `UnderlyingConid`  | `underlying_conid`          | `Optional[str]`   | IBKR Conid of the underlying for derivative-related cash flows. Can be empty/null.   | Optional. Empty in sample.                                                                                                                  |
 | `ISIN`             | `isin`                      | `Optional[str]`   | ISIN of the related instrument. Can be empty/null.                                   | Optional. Example: "CA0641491075", or empty.                                                                                               |
 | `IssuerCountryCode`| `issuer_country_code`       | `Optional[str]`   | ISO country code of the issuer or tax authority.                                     | Optional. Example: "CA", "JP", or empty. Used for WHT source country.                                                                       |
+| `TransactionID`    | `transaction_id`            | `Optional[str]`   | IBKR's unique identifier for the transaction.                                        | Optional, but highly recommended. Example: "2865449245"                                                                                     |
+
+**Required IBKR Transaction Types (Flex Query Configuration):**
+
+The Flex Query must include **all** of the following transaction types to ensure complete currency balance tracking:
+
+| Transaction Type              | Engine Classification                       | Currency Impact                            |
+|-------------------------------|---------------------------------------------|--------------------------------------------|
+| Dividends                     | `DIVIDEND_CASH` (income)                    | Creates currency lot                       |
+| Withholding Tax               | `WITHHOLDING_TAX` (expense)                 | Consumes currency lot                      |
+| Broker Interest Received      | `INTEREST_RECEIVED` (income)                | Creates currency lot                       |
+| Broker Interest Paid          | `FEE_TRANSACTION` (expense)                 | Consumes currency lot                      |
+| Payment In Lieu Of Dividends  | `DIVIDEND_CASH` or `FEE_TRANSACTION`        | Creates or consumes lot (sign-based)       |
+| Bond Interest Received        | `INTEREST_RECEIVED` (income)                | Creates currency lot                       |
+| Bond Interest Paid            | `INTEREST_PAID_STUECKZINSEN` (expense)      | Consumes currency lot                      |
+| Other Fees                    | `FEE_TRANSACTION` (expense)                 | Consumes currency lot                      |
+| Deposits/Withdrawals          | Handled by sign-based classification        | Creates or consumes lot                    |
+| Commission Adjustments        | `FEE_TRANSACTION` (expense)                 | Consumes currency lot                      |
+
+Missing transaction types cause currency EOY balance mismatches (FIFO-tracked balance diverges from IBKR-reported balance).
 
 ---
 

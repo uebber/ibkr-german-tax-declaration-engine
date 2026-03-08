@@ -4,6 +4,7 @@ from typing import List
 from pydantic import ValidationError
 
 from .raw_models import RawTradeRecord
+from .column_validator import validate_csv_columns, TRADES_COLUMNS
 from src.utils.type_utils import parse_ibkr_datetime # For trade_time if needed to combine with date
 
 def parse_trades_csv(file_path: str, encoding='utf-8-sig') -> List[RawTradeRecord]:
@@ -11,6 +12,7 @@ def parse_trades_csv(file_path: str, encoding='utf-8-sig') -> List[RawTradeRecor
     try:
         with open(file_path, mode='r', encoding=encoding) as csvfile:
             reader = csv.DictReader(csvfile)
+            validate_csv_columns(reader.fieldnames or [], TRADES_COLUMNS, f"Trades ({file_path})")
             for i, row_dict in enumerate(reader):
                 try:
                     # Pydantic will use Field aliases for mapping

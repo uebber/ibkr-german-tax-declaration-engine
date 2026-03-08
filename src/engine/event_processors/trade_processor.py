@@ -1,6 +1,6 @@
 # src/engine/event_processors/trade_processor.py
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 import uuid
 from decimal import Decimal
 
@@ -9,8 +9,11 @@ from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger
 from src.domain.enums import FinancialEventType, AssetCategory
 from src.identification.asset_resolver import AssetResolver # Added
-from src.domain.assets import Option, Asset # Added Option and Asset
+from src.domain.assets import Option, Asset, CashBalance # Added Option, Asset, and CashBalance
 from .base_processor import EventProcessor
+
+if TYPE_CHECKING:
+    from .currency_conversion_processor import CurrencyConversionProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -225,5 +228,323 @@ class TradeProcessor(EventProcessor):
             )
             raise e
 
+        # Phase 5a: Process implicit currency consumption/acquisition from security trades
+        currency_rgls = self._process_trade_currency_impact(event, context)
+        realized_gains_losses.extend(currency_rgls)
 
         return realized_gains_losses
+
+    def _process_trade_currency_impact(
+        self,
+        event: TradeEvent,
+        context: Dict[str, Any]
+    ) -> List[RealizedGainLoss]:
+        """
+        Handle implicit currency consumption (BUY) or acquisition (SELL) from security trades.
+
+        When buying a security in foreign currency:
+          - You consume currency from your cash balance
+          - This triggers FX gain/loss on the consumed currency
+
+        When selling a security in foreign currency:
+          - You receive currency into your cash balance
+          - This creates a new currency lot (no immediate FX gain/loss)
+          - Exception: If short currency lots exist, receiving currency covers them (realizes FX gain/loss)
+
+        The EUR value used MUST match gross_amount_eur from enrichment for consistency.
+
+        Cross-currency trades (Phase 5b):
+          When the asset's denomination currency differs from the settlement currency
+          (e.g., buy GBP stock with USD), we process based on the SETTLEMENT currency
+          because that's what you actually pay/receive. The EUR bridge valuation
+          comes from gross_amount_eur (ECB rate conversion during enrichment).
+
+        Returns:
+            List of RealizedGainLoss records for any FX gains/losses
+        """
+        results: List[RealizedGainLoss] = []
+
+        # Skip EUR-denominated trades - no currency impact
+        trade_currency = event.local_currency
+        if not trade_currency or trade_currency.upper() == "EUR":
+            return results
+
+        # Get currency infrastructure from context
+        asset_resolver: Optional[AssetResolver] = context.get('asset_resolver')
+        currency_fifo_ledgers: Optional[Dict[uuid.UUID, FifoLedger]] = context.get('currency_fifo_ledgers')
+        currency_processor = context.get('currency_processor')
+
+        if not asset_resolver or not currency_processor:
+            logger.debug(f"Trade {event.event_id}: Currency processing infrastructure not available, skipping implicit FX")
+            return results
+
+        if currency_fifo_ledgers is None:
+            logger.debug(f"Trade {event.event_id}: No currency FIFO ledgers available, skipping implicit FX")
+            return results
+
+        # Get the currency's CashBalance asset and ledger
+        currency_asset = asset_resolver.get_cash_balance_asset(trade_currency.upper())
+        if not currency_asset:
+            logger.debug(f"Trade {event.event_id}: No CashBalance asset for {trade_currency}, skipping implicit FX")
+            return results
+
+        currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+        if not currency_ledger:
+            logger.debug(f"Trade {event.event_id}: No currency ledger for {trade_currency}, skipping implicit FX")
+            return results
+
+        # Use gross_amount_foreign_currency which already includes the multiplier
+        # (e.g., for options: qty * price * 100)
+        foreign_amount = event.gross_amount_foreign_currency
+        eur_amount = event.gross_amount_eur
+
+        if foreign_amount is None or foreign_amount <= Decimal("0"):
+            logger.debug(f"Trade {event.event_id}: Missing or zero gross_amount_foreign_currency, skipping implicit FX")
+            return results
+
+        if eur_amount is None or eur_amount <= Decimal("0"):
+            logger.warning(f"Trade {event.event_id}: Missing or zero gross_amount_eur ({eur_amount}), skipping implicit FX")
+            return results
+
+        # Phase 5b: Cross-currency trade detection
+        # Check if asset denomination currency differs from settlement currency
+        traded_asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
+        if traded_asset and traded_asset.currency:
+            asset_currency = traded_asset.currency.upper()
+            settlement_currency = trade_currency.upper()
+
+            if asset_currency != "EUR" and settlement_currency != "EUR" and asset_currency != settlement_currency:
+                # Cross-currency trade: asset is denominated in one foreign currency,
+                # but settlement is in a different foreign currency.
+                # Example: Buying a GBP stock with USD settlement
+                # We process based on SETTLEMENT currency (what you actually pay/receive).
+                # The EUR bridge valuation is already in gross_amount_eur from enrichment.
+                logger.info(
+                    f"Trade {event.event_id}: Cross-currency trade detected "
+                    f"(asset: {asset_currency}, settlement: {settlement_currency}). "
+                    f"Processing FX impact on {settlement_currency} (settlement currency)."
+                )
+
+        # Calculate EUR per unit of foreign currency
+        eur_per_unit = eur_amount / foreign_amount
+
+        # Determine direction based on trade type
+        if event.event_type in [FinancialEventType.TRADE_BUY_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER]:
+            # BUYING security → CONSUMING foreign currency
+            results = self._consume_currency_for_purchase(
+                event, currency_ledger, currency_asset,
+                foreign_amount, eur_per_unit, currency_processor
+            )
+        elif event.event_type in [FinancialEventType.TRADE_SELL_LONG, FinancialEventType.TRADE_SELL_SHORT_OPEN]:
+            # SELLING security → RECEIVING foreign currency (may cover shorts)
+            results = self._acquire_currency_from_sale(
+                event, currency_ledger, currency_asset,
+                foreign_amount, eur_per_unit, currency_processor
+            )
+
+        # Process commission as currency consumption
+        commission_rgls = self._process_commission_currency_impact(event, context)
+        results.extend(commission_rgls)
+
+        return results
+
+    def _consume_currency_for_purchase(
+        self,
+        event: TradeEvent,
+        currency_ledger: FifoLedger,
+        currency_asset: CashBalance,
+        foreign_amount: Decimal,
+        eur_per_unit: Decimal,
+        processor: 'CurrencyConversionProcessor'
+    ) -> List[RealizedGainLoss]:
+        """
+        Consume currency from FIFO ledger when buying a security.
+
+        This is equivalent to selling currency (from_currency=USD, to_currency=EUR)
+        but triggered implicitly by a stock purchase.
+        """
+        results: List[RealizedGainLoss] = []
+        quantity_to_consume = foreign_amount
+
+        # Check available long quantity
+        available_long_qty = sum(lot.quantity for lot in currency_ledger.lots)
+
+        if available_long_qty > Decimal("0"):
+            qty_to_consume_from_longs = min(quantity_to_consume, available_long_qty)
+
+            # Realize FX gain/loss on consumed lots
+            long_results = processor.realize_long_lots_for_security_trade(
+                currency_ledger,
+                currency_asset.internal_asset_id,
+                event.event_date,
+                event.event_id,
+                event.ibkr_transaction_id,
+                qty_to_consume_from_longs,
+                eur_per_unit
+            )
+            results.extend(long_results)
+
+            if long_results:
+                total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in long_results)
+                logger.info(
+                    f"Trade {event.event_id}: Implicit FX from consuming {qty_to_consume_from_longs:.2f} {currency_asset.currency} "
+                    f"for security purchase. FX gain/loss: {total_fx_gl:.2f} EUR"
+                )
+
+            quantity_to_consume -= qty_to_consume_from_longs
+
+        # If consuming more than available, open short currency position
+        if quantity_to_consume > Decimal("1e-10"):
+            logger.info(
+                f"Trade {event.event_id}: Opening implicit SHORT {currency_asset.currency} position: "
+                f"{quantity_to_consume:.2f} (security purchase exceeds currency balance)"
+            )
+            processor.open_short_position_for_security_trade(
+                currency_ledger,
+                event.event_date,
+                event.ibkr_transaction_id,
+                quantity_to_consume,
+                eur_per_unit
+            )
+
+        return results
+
+    def _process_commission_currency_impact(
+        self,
+        event: TradeEvent,
+        context: Dict[str, Any]
+    ) -> List[RealizedGainLoss]:
+        """
+        Consume trade commission from the currency FIFO ledger.
+
+        Commissions paid in foreign currency reduce the cash balance and
+        must be tracked as currency consumption for FX gain/loss purposes.
+        """
+        results: List[RealizedGainLoss] = []
+
+        commission_amount = event.commission_foreign_currency
+        if commission_amount is None or commission_amount == Decimal("0"):
+            return results
+
+        commission_currency = (event.commission_currency or "").upper()
+        if not commission_currency or commission_currency == "EUR":
+            return results
+
+        commission_eur = event.commission_eur
+        if commission_eur is None:
+            return results
+
+        comm_abs = commission_amount.copy_abs()
+        comm_eur_abs = commission_eur.copy_abs()
+
+        if comm_abs <= Decimal("0") or comm_eur_abs <= Decimal("0"):
+            return results
+
+        asset_resolver: Optional[AssetResolver] = context.get('asset_resolver')
+        currency_fifo_ledgers: Optional[Dict] = context.get('currency_fifo_ledgers')
+        currency_processor = context.get('currency_processor')
+
+        if not asset_resolver or not currency_processor or currency_fifo_ledgers is None:
+            return results
+
+        currency_asset = asset_resolver.get_cash_balance_asset(commission_currency)
+        if not currency_asset:
+            return results
+
+        currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+        if not currency_ledger:
+            return results
+
+        eur_per_unit = comm_eur_abs / comm_abs
+
+        # Consume from long lots (commission is a cash outflow)
+        available_long_qty = sum(lot.quantity for lot in currency_ledger.lots)
+
+        if available_long_qty > Decimal("0"):
+            qty_to_consume = min(comm_abs, available_long_qty)
+            long_results = currency_processor.realize_long_lots_for_cashflow_expense(
+                currency_ledger, currency_asset.internal_asset_id,
+                event.event_date, event.event_id, event.ibkr_transaction_id,
+                qty_to_consume, eur_per_unit
+            )
+            results.extend(long_results)
+
+            if long_results:
+                total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in long_results)
+                logger.info(
+                    f"Trade {event.event_id}: Commission FX from consuming {qty_to_consume:.2f} "
+                    f"{commission_currency}. FX gain/loss: {total_fx_gl:.2f} EUR"
+                )
+
+            comm_abs -= qty_to_consume
+
+        # If insufficient balance, open short
+        if comm_abs > Decimal("1e-10"):
+            currency_processor.open_short_position_for_cashflow_expense(
+                currency_ledger, event.event_date, event.ibkr_transaction_id,
+                comm_abs, eur_per_unit
+            )
+
+        return results
+
+    def _acquire_currency_from_sale(
+        self,
+        event: TradeEvent,
+        currency_ledger: FifoLedger,
+        currency_asset: CashBalance,
+        foreign_amount: Decimal,
+        eur_per_unit: Decimal,
+        processor: 'CurrencyConversionProcessor'
+    ) -> List[RealizedGainLoss]:
+        """
+        Acquire currency into FIFO ledger when selling a security.
+
+        This creates a new currency lot. No immediate FX gain/loss -
+        the gain/loss is realized when this currency is later spent or converted.
+        Exception: If short currency lots exist, receiving currency covers them.
+        """
+        results: List[RealizedGainLoss] = []
+        quantity_to_acquire = foreign_amount
+
+        # Check if there are short lots to cover first
+        available_short_qty = sum(lot.quantity_shorted for lot in currency_ledger.short_lots)
+
+        if available_short_qty > Decimal("0"):
+            qty_to_cover = min(quantity_to_acquire, available_short_qty)
+
+            # Cover short positions (this DOES realize gain/loss)
+            short_cover_results = processor.cover_short_lots_for_security_trade(
+                currency_ledger,
+                currency_asset.internal_asset_id,
+                event.event_date,
+                event.event_id,
+                event.ibkr_transaction_id,
+                qty_to_cover,
+                eur_per_unit
+            )
+            results.extend(short_cover_results)
+
+            if short_cover_results:
+                total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in short_cover_results)
+                logger.info(
+                    f"Trade {event.event_id}: Implicit FX from covering {qty_to_cover:.2f} {currency_asset.currency} "
+                    f"short position with security sale proceeds. FX gain/loss: {total_fx_gl:.2f} EUR"
+                )
+
+            quantity_to_acquire -= qty_to_cover
+
+        # Create new long lot for remaining quantity
+        if quantity_to_acquire > Decimal("1e-10"):
+            processor.create_long_lot_for_security_trade(
+                currency_ledger,
+                event.event_date,
+                event.ibkr_transaction_id,
+                quantity_to_acquire,
+                eur_per_unit
+            )
+            logger.debug(
+                f"Trade {event.event_id}: Created {currency_asset.currency} lot from security sale: "
+                f"{quantity_to_acquire:.2f} @ {eur_per_unit:.6f} EUR per unit"
+            )
+
+        return results

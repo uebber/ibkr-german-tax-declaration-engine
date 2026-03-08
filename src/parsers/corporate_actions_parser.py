@@ -4,12 +4,14 @@ from typing import List
 from pydantic import ValidationError
 
 from .raw_models import RawCorporateActionRecord
+from .column_validator import validate_csv_columns, CORPORATE_ACTIONS_COLUMNS
 
 def parse_corporate_actions_csv(file_path: str, encoding='utf-8-sig') -> List[RawCorporateActionRecord]:
     raw_corporate_actions: List[RawCorporateActionRecord] = []
     try:
         with open(file_path, mode='r', encoding=encoding) as csvfile:
             reader = csv.DictReader(csvfile)
+            validate_csv_columns(reader.fieldnames or [], CORPORATE_ACTIONS_COLUMNS, f"Corporate Actions ({file_path})")
             for i, row_dict in enumerate(reader):
                 try:
                     # Pydantic handles the alias mapping defined in RawCorporateActionRecord

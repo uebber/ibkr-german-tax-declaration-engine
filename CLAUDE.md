@@ -79,10 +79,10 @@ uv run pytest tests/test_group6_loss_offsetting.py -v
 ## Configuration
 
 Edit `src/config.py` before running:
-- `TAX_YEAR` - Year to process
+- `TAX_YEAR` - Default year to process (can be overridden with `--tax-year`)
 - `TAXPAYER_NAME`, `ACCOUNT_ID` - For PDF reports
-- File paths for trades, cash transactions, positions (SOY/EOY), corporate actions
 - `IS_INTERACTIVE_CLASSIFICATION` - Enable/disable interactive asset classification
+- `FLEX_QUERY_IDS` - IBKR Flex Query IDs for automatic download
 
 ## Numerical Precision
 
@@ -102,6 +102,31 @@ amount = Decimal(123.45)
 
 ## Input Data
 
-CSV files from IBKR Flex Query reports. Critical requirement: Trades file **must** include `Open/CloseIndicator` column ('O'/'C') for accurate trade classification.
+CSV files from IBKR Flex Query reports are placed in the `data_import/` directory using a standardized naming scheme. The application reads from `data_import/` and prepares working copies in `data/`.
+
+**IMPORTANT: Files in `data_import/` must NEVER be modified by the application. It is a read-only source directory.**
+
+### Naming Scheme (`data_import/`)
+
+```
+Trades-{YYYY}.csv               # One file per year
+Cash_Transactions-{YYYY}.csv    # One file per year
+Corporate_Actions-{YYYY}.csv    # One file per year
+Cash_Balance-{YYYY}.csv         # One file per year
+Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
+Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
+```
+
+Transaction files (Trades, Cash_Transactions, Corporate_Actions) for all years up to and including the tax year are concatenated automatically to provide full historical FIFO cost basis. Position and Cash Balance files are used only for the selected tax year.
+
+Critical requirement: Trades file **must** include `Open/CloseIndicator` column ('O'/'C') for accurate trade classification.
 
 See `input_data_spec.md` for detailed column specifications.
+
+## Ground Rules
+
+After modifying or extending application code: Never change pre-existing tests without asking the user and explaining why this is, without doubt, necessary!!
+
+After modifying or extending test code: Never change pre-existing application code without asking the user and explaining why this is, without doubt, necessary!!
+
+Never fit tests to the application, always fit them to the requirements, ask the user in case of ambiguity, don't just try to make tests pass for the sake of it.

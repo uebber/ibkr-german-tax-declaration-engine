@@ -51,7 +51,8 @@ def run_core_processing_pipeline(
     corporate_actions_file_path: str,
     interactive_classification_mode: bool,
     tax_year_to_process: int = config.TAX_YEAR, # Allow override for testing
-    custom_rate_provider: Optional[ExchangeRateProvider] = None # For testing ECB mock
+    custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
+    cash_balance_file_path: Optional[str] = None  # For currency FIFO processing
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -75,7 +76,9 @@ def run_core_processing_pipeline(
             cash_transactions_file=cash_transactions_file_path,
             positions_start_file=positions_start_file_path,
             positions_end_file=positions_end_file_path,
-            corporate_actions_file=corporate_actions_file_path
+            corporate_actions_file=corporate_actions_file_path,
+            cash_balance_file=cash_balance_file_path,
+            tax_year=tax_year_to_process
         )
     except ValueError as e:
         logger.critical(f"Parsing pipeline failed: {e}. Check input data and configuration.")

@@ -8,6 +8,9 @@ import os # For path operations if needed for PDF output
 import src.config as config
 from src.cli import parse_arguments
 
+# Data preparation
+from src.data_preparation import prepare_data_for_tax_year
+
 # Core pipeline runner
 from src.pipeline_runner import run_core_processing_pipeline, ProcessingOutput
 
@@ -41,7 +44,7 @@ def setup_decimal_context():
     if rounding_mode_to_set not in valid_rounding_modes:
         logger.warning(f"Invalid DECIMAL_ROUNDING_MODE '{rounding_mode_to_set}' in config. Using ROUND_HALF_UP as fallback.")
         rounding_mode_to_set = "ROUND_HALF_UP"
-    
+
     getcontext().rounding = rounding_mode_to_set
     logger.info(f"Global decimal precision set to {getcontext().prec}, rounding mode to {getcontext().rounding}.")
 
@@ -52,19 +55,42 @@ def main_application():
     Parses arguments, runs processing, and generates reports.
     """
     args = parse_arguments()
+    tax_year = args.tax_year
     setup_decimal_context()
 
-    logger.info("Starting IBKR German Tax Declaration Engine...")
+    logger.info("Starting IBKR German Tax Declaration Engine for tax year %d...", tax_year)
+
+    # Download from IBKR Flex Web Service if requested
+    if args.download or args.download_only:
+        from src.flex_downloader import download_and_merge
+        download_and_merge(
+            tax_year=tax_year,
+            query_ids=config.FLEX_QUERY_IDS,
+            cache_dir=config.FLEX_CACHE_DIR,
+            force=args.force_download,
+        )
+        if args.download_only:
+            logger.info("Download complete. Exiting (--download-only).")
+            return
+
+    # Prepare working data files from data_import/
+    logger.info("Preparing data files from data_import/ for tax year %d...", tax_year)
+    try:
+        data_paths = prepare_data_for_tax_year(tax_year)
+    except FileNotFoundError as e:
+        logger.critical("Data preparation failed: %s", e)
+        sys.exit(1)
 
     try:
         processing_results: ProcessingOutput = run_core_processing_pipeline(
-            trades_file_path=args.trades,
-            cash_transactions_file_path=args.cash,
-            positions_start_file_path=args.pos_start,
-            positions_end_file_path=args.pos_end,
-            corporate_actions_file_path=args.corp_actions,
+            trades_file_path=data_paths["trades"],
+            cash_transactions_file_path=data_paths["cash_transactions"],
+            positions_start_file_path=data_paths["positions_start"],
+            positions_end_file_path=data_paths["positions_end"],
+            corporate_actions_file_path=data_paths["corporate_actions"],
             interactive_classification_mode=args.interactive,
-            tax_year_to_process=config.TAX_YEAR 
+            tax_year_to_process=tax_year,
+            cash_balance_file_path=data_paths.get("cash_balance", "")
         )
     except Exception as e:
         logger.critical(f"Core processing pipeline failed: {e}. Exiting.", exc_info=True)
@@ -80,16 +106,15 @@ def main_application():
                 # THE FIX IS HERE: Use processed_income_events instead of all_financial_events_enriched
                 current_year_financial_events=processing_results.processed_income_events,
                 asset_resolver=processing_results.asset_resolver,
-                tax_year=config.TAX_YEAR,
+                tax_year=tax_year,
                 apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
             )
             loss_offsetting_summary = loss_engine.calculate_reporting_figures()
             logger.info("Loss offsetting calculation completed.")
         except Exception as e:
             logger.error(f"Loss offsetting calculation failed: {e}. Tax reports might be incomplete or inaccurate.", exc_info=True)
-            
+
     asset_resolver = processing_results.asset_resolver
-    tax_year = config.TAX_YEAR 
 
     if args.group_by_type:
         print_assets_by_category_diagnostic(asset_resolver)
@@ -119,7 +144,7 @@ def main_application():
                 realized_gains_losses=processing_results.realized_gains_losses,
                 vorabpauschale_items=processing_results.vorabpauschale_items,
                 # The console reporter uses this list and filters it itself for its detailed views
-                all_financial_events=processing_results.all_financial_events_enriched, 
+                all_financial_events=processing_results.all_financial_events_enriched,
                 asset_resolver=asset_resolver,
                 tax_year=tax_year,
                 eoy_mismatch_count=processing_results.eoy_mismatch_error_count,
@@ -128,17 +153,17 @@ def main_application():
         else:
             logger.error("Console tax declaration report cannot be generated because loss offsetting calculation failed or was skipped.")
 
-    if args.pdf_output_file: 
+    if args.pdf_output_file:
         if loss_offsetting_summary:
             logger.info(f"Generating PDF report to {args.pdf_output_file}...")
-            eoy_mismatch_details_for_pdf = [] 
+            eoy_mismatch_details_for_pdf = []
             if processing_results.eoy_mismatch_error_count > 0 and not eoy_mismatch_details_for_pdf:
                  logger.warning(f"EOY mismatch count is {processing_results.eoy_mismatch_error_count}, but detailed mismatch data is not available for the PDF report. The PDF section will be limited.")
 
             pdf_generator = PdfReportGenerator(
                 loss_offsetting_result=loss_offsetting_summary,
                 # The PDF report should also use correctly filtered events for income sections
-                all_financial_events=processing_results.processed_income_events, 
+                all_financial_events=processing_results.processed_income_events,
                 realized_gains_losses=processing_results.realized_gains_losses,
                 vorabpauschale_items=processing_results.vorabpauschale_items,
                 assets_by_id=asset_resolver.assets_by_internal_id,
@@ -155,7 +180,7 @@ def main_application():
         generate_stock_trade_report_for_symbol(
             stock_symbol_arg=args.report_stock_trades_details,
             # This report filters events itself, so passing all enriched is fine
-            all_financial_events=processing_results.all_financial_events_enriched, 
+            all_financial_events=processing_results.all_financial_events_enriched,
             rgl_items=processing_results.realized_gains_losses,
             asset_resolver=asset_resolver,
             tax_year=tax_year

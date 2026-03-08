@@ -1,0 +1,322 @@
+# Test Group 9: Variable FX Rate Verification
+#
+# Revision: 2026-03-08
+# PRD Coverage: §2.4 (FIFO), §20 Abs. 4 EStG
+#
+# Objective: Verify that security gain/loss calculations produce correct EUR
+# values when ECB rates differ between acquisition and sale dates.
+#
+# Groups 1-5 use a constant FX rate of 2.0 for ALL dates. This means they
+# never test the interaction between trade-date-specific ECB rates and
+# FIFO cost basis / proceeds calculations. This group closes that gap.
+#
+# All tests use USD with explicit fx_rates schedules. The fx_rates section
+# under inputs defines foreign_to_eur rates (1 USD = X EUR) per date.
+# The test runner extracts these to build variable-rate mock providers.
+#
+# Commission: $1 USD per trade (consistent with Groups 1-5)
+
+metadata:
+  group: 9
+  name: Variable FX Rate Verification
+  prd_section: "2.4"
+  revision: "2026-03-08"
+  commission_usd: 1.00
+
+tests:
+  # ===========================================================================
+  # Variable FX Long Positions (VFX_L_*)
+  # ===========================================================================
+
+  - id: VFX_L_001
+    description: "USD strengthens between buy and sell - amplified EUR gain"
+    notes: >
+      Buy 10@$100 when 1 USD = 0.80 EUR (weak dollar).
+      Sell 10@$110 when 1 USD = 1.00 EUR (strong dollar).
+      Foreign gain: $99 ($1099 proceeds - $1001 cost). But EUR gain is much
+      larger because USD appreciated: 298.20 EUR.
+      This verifies the enrichment layer uses trade-date-specific rates.
+    inputs:
+      asset:
+        symbol: ASSET.VFX001.USD
+        isin: TESTISINVFX001USD
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-03-15"
+          qty: 10
+          price: 100.00
+          currency: USD
+        - type: SL
+          date: "2023-09-20"
+          qty: 10
+          price: 110.00
+          currency: USD
+      # foreign_to_eur rates (1 USD = X EUR) - extracted by test runner
+      fx_rates:
+        USD:
+          "2023-03-15": "0.80"
+          "2023-09-20": "1.00"
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-03-15"
+          realization_date: "2023-09-20"
+          # Buy: gross=10*100/1.25=800, comm=1/1.25=0.80, cost=800.80
+          # Sell: gross=10*110/1.00=1100, comm=1/1.00=1.00, proceeds=1099.00
+          total_cost_basis_eur: 800.80
+          total_proceeds_eur: 1099.00
+          gain_loss_eur: 298.20
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: VFX_L_002
+    description: "USD weakens between buy and sell - foreign gain becomes EUR loss"
+    notes: >
+      Buy 10@$100 when 1 USD = 1.25 EUR (strong dollar).
+      Sell 10@$110 when 1 USD = 0.80 EUR (weak dollar).
+      Foreign gain: $99. But EUR LOSS of -372.05 because USD depreciated.
+      This is the critical case: a profitable trade in foreign currency
+      produces a loss in EUR for the German tax declaration.
+    inputs:
+      asset:
+        symbol: ASSET.VFX002.USD
+        isin: TESTISINVFX002USD
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-02-10"
+          qty: 10
+          price: 100.00
+          currency: USD
+        - type: SL
+          date: "2023-11-05"
+          qty: 10
+          price: 110.00
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-02-10": "1.25"
+          "2023-11-05": "0.80"
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-02-10"
+          realization_date: "2023-11-05"
+          # Buy: gross=10*100/0.80=1250, comm=1/0.80=1.25, cost=1251.25
+          # Sell: gross=10*110/1.25=880, comm=1/1.25=0.80, proceeds=879.20
+          total_cost_basis_eur: 1251.25
+          total_proceeds_eur: 879.20
+          gain_loss_eur: -372.05
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: VFX_L_003
+    description: "Multi-lot FIFO: sell first lot only, verify correct lot attribution"
+    notes: >
+      Buy lot 1: 10@$100 when 1 USD = 0.80 EUR (cost 800.80 EUR).
+      Buy lot 2: 10@$100 when 1 USD = 1.25 EUR (cost 1251.25 EUR).
+      Sell 10@$120 when 1 USD = 1.00 EUR.
+      FIFO takes from lot 1 (cheaper EUR cost). Lot 2 remains at EOY.
+      Verifies FIFO lot attribution carries acquisition-date EUR cost.
+    inputs:
+      asset:
+        symbol: ASSET.VFX003.USD
+        isin: TESTISINVFX003USD
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-01-20"
+          qty: 10
+          price: 100.00
+          currency: USD
+        - type: BL
+          date: "2023-05-10"
+          qty: 10
+          price: 100.00
+          currency: USD
+        - type: SL
+          date: "2023-10-15"
+          qty: 10
+          price: 120.00
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-01-20": "0.80"
+          "2023-05-10": "1.25"
+          "2023-10-15": "1.00"
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-01-20"
+          realization_date: "2023-10-15"
+          # Lot 1 cost: gross=1000/1.25=800, comm=1/1.25=0.80 → 800.80 EUR
+          # Sell: gross=10*120/1.00=1200, comm=1/1.00=1.00 → 1199.00 EUR
+          total_cost_basis_eur: 800.80
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 398.20
+      eoy_state:
+        quantity: 10
+      errors: 0
+
+  - id: VFX_L_004
+    description: "Multi-lot FIFO: sell spanning two lots with different acquisition rates"
+    notes: >
+      Buy lot 1: 10@$100 when 1 USD = 0.80 EUR (cost 800.80 EUR).
+      Buy lot 2: 10@$100 when 1 USD = 1.25 EUR (cost 1251.25 EUR).
+      Sell all 20@$120 when 1 USD = 1.00 EUR.
+      Same foreign price for both lots, but lot 1 has lower EUR cost (bought
+      when USD was weak) and lot 2 has higher EUR cost (bought when USD was
+      strong). Lot 1 produces a gain, lot 2 produces a loss.
+    inputs:
+      asset:
+        symbol: ASSET.VFX004.USD
+        isin: TESTISINVFX004USD
+        category: STOCK
+      intra_year_trades:
+        - type: BL
+          date: "2023-01-20"
+          qty: 10
+          price: 100.00
+          currency: USD
+        - type: BL
+          date: "2023-05-10"
+          qty: 10
+          price: 100.00
+          currency: USD
+        - type: SL
+          date: "2023-10-15"
+          qty: 20
+          price: 120.00
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-01-20": "0.80"
+          "2023-05-10": "1.25"
+          "2023-10-15": "1.00"
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-01-20"
+          realization_date: "2023-10-15"
+          # Lot 1 cost: 800.80 EUR
+          # Proceeds: 10/20 * (20*120/1.00 - 1/1.00) = 10/20 * 2399 = 1199.50
+          total_cost_basis_eur: 800.80
+          total_proceeds_eur: 1199.50
+          gain_loss_eur: 398.70
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2023-05-10"
+          realization_date: "2023-10-15"
+          # Lot 2 cost: 1251.25 EUR
+          # Proceeds: 10/20 * 2399 = 1199.50
+          total_cost_basis_eur: 1251.25
+          total_proceeds_eur: 1199.50
+          gain_loss_eur: -51.75
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Variable FX Short Position (VFX_S_*)
+  # ===========================================================================
+
+  - id: VFX_S_001
+    description: "Short position with variable FX between open and cover"
+    notes: >
+      SSO 10@$120 when 1 USD = 1.00 EUR (proceeds 1199.00 EUR).
+      BSC 10@$100 when 1 USD = 0.80 EUR (cost 800.80 EUR).
+      Both foreign price gain ($20/share) and FX movement contribute.
+    inputs:
+      asset:
+        symbol: ASSET.VFX005.USD
+        isin: TESTISINVFX005USD
+        category: STOCK
+      intra_year_trades:
+        - type: SSO
+          date: "2023-02-01"
+          qty: 10
+          price: 120.00
+          currency: USD
+        - type: BSC
+          date: "2023-08-01"
+          qty: 10
+          price: 100.00
+          currency: USD
+      fx_rates:
+        USD:
+          "2023-02-01": "1.00"
+          "2023-08-01": "0.80"
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 10
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-08-01"
+          # SSO: gross=10*120/1.00=1200, comm=1/1.00=1.00, proceeds=1199.00
+          # BSC: gross=10*100/1.25=800, comm=1/1.25=0.80, cost=800.80
+          total_cost_basis_eur: 800.80
+          total_proceeds_eur: 1199.00
+          gain_loss_eur: 398.20
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  # ===========================================================================
+  # Variable FX Multi-Year (VFX_MY_*)
+  # ===========================================================================
+
+  - id: VFX_MY_001
+    description: "Multi-year: historical buy at different FX rate than current year sale"
+    notes: >
+      Historical BL 10@$80 in 2022 when 1 USD = 0.80 EUR.
+      Sell 10@$120 in 2023 when 1 USD = 1.25 EUR.
+      Verifies that the engine uses the historical trade date's rate for
+      cost basis and the current year trade date's rate for proceeds.
+    inputs:
+      asset:
+        symbol: ASSET.VFX006.USD
+        isin: TESTISINVFX006USD
+        category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-06-15"
+          qty: 10
+          price: 80.00
+          currency: USD
+      positions_soy:
+        quantity: 10
+        cost_basis: 801.00
+        currency: USD
+      intra_year_trades:
+        - type: SL
+          date: "2023-07-20"
+          qty: 10
+          price: 120.00
+          currency: USD
+      positions_eoy_report:
+        quantity: 0
+      fx_rates:
+        USD:
+          "2022-06-15": "0.80"
+          "2023-07-20": "1.25"
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 10
+          acquisition_date: "2022-06-15"
+          realization_date: "2023-07-20"
+          # Buy: gross=10*80/1.25=640, comm=1/1.25=0.80, cost=640.80
+          # Sell: gross=10*120/0.80=1500, comm=1/0.80=1.25, proceeds=1498.75
+          total_cost_basis_eur: 640.80
+          total_proceeds_eur: 1498.75
+          gain_loss_eur: 857.95
+      eoy_state:
+        quantity: 0
+      errors: 0

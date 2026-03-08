@@ -54,6 +54,18 @@ class RealizationType(Enum):
     # cost basis/proceeds and do not typically create a separate RGL for the option itself,
     # unless the option is traded out before exercise/assignment.
 
+    # Currency/FX realization types (Phase 1-4: Explicit FX trades)
+    FX_CONVERSION_SALE = auto()              # Long currency sold via explicit FX conversion
+    FX_CONVERSION_SHORT_COVER = auto()       # Short currency position covered via explicit FX conversion
+
+    # Currency/FX realization types (Phase 5a: Implicit currency from security trades)
+    FX_IMPLICIT_SECURITY_PURCHASE = auto()   # Currency consumed to buy security (implicit FX disposal)
+    FX_IMPLICIT_SECURITY_SALE = auto()       # Short currency covered by security sale proceeds
+
+    # Currency/FX realization types (Phase 5c: Implicit currency from cash flows)
+    FX_IMPLICIT_CASHFLOW_EXPENSE = auto()    # Currency consumed to pay fees/WHT (implicit FX disposal)
+    FX_IMPLICIT_CASHFLOW_INCOME = auto()     # Short currency covered by dividend/interest receipt
+
 class TaxReportingCategory(Enum):
     ANLAGE_KAP_AKTIEN_GEWINN = auto()
     ANLAGE_KAP_AKTIEN_VERLUST = auto()

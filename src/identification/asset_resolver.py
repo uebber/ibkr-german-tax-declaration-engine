@@ -24,6 +24,11 @@ class AssetResolver:
         """Retrieves an asset by one of its alias strings."""
         return self.alias_map.get(alias_key)
 
+    def get_cash_balance_asset(self, currency: str) -> Optional[Asset]:
+        """Retrieves the CashBalance asset for a given currency code."""
+        alias_key = f"CASH_BALANCE:{currency.strip().upper()}"
+        return self.alias_map.get(alias_key)
+
     def _generate_aliases(self,
                           isin: Optional[str],
                           conid: Optional[str],

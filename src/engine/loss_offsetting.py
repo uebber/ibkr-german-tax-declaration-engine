@@ -99,6 +99,14 @@ class LossOffsettingEngine:
                 if rgl.is_taxable_under_section_23:
                     p23_net_total = self.ctx.add(p23_net_total, gross_gl_eur)
 
+            elif cat == AssetCategory.CASH_BALANCE:
+                # FX gains/losses go to "Other Capital Income" under Section 20 EStG
+                # Per BMF circular May 2022 (para. 131): IBKR FX reserves are interest-bearing
+                if gross_gl_eur > Decimal('0'):
+                    kap_other_income_positive = self.ctx.add(kap_other_income_positive, gross_gl_eur)
+                else:
+                    kap_other_losses_abs = self.ctx.add(kap_other_losses_abs, gross_gl_eur.copy_abs())
+
         stueckzinsen_paid_sum = self.ctx.create_decimal(Decimal('0')) # Only used for logging/future explicit handling
 
         for event in self.current_year_financial_events:

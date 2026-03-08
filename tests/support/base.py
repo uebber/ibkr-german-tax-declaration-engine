@@ -16,7 +16,8 @@ from src.classification.asset_classifier import AssetClassifier
 # Test helpers
 from tests.support.csv_creators import (
     create_trades_csv_string, create_positions_csv_string,
-    create_cash_transactions_csv_string, create_corporate_actions_csv_string
+    create_cash_transactions_csv_string, create_corporate_actions_csv_string,
+    create_cash_balance_csv_string
 )
 from tests.support.expected import ScenarioExpectedOutput
 
@@ -55,8 +56,9 @@ class FifoTestCaseBase:
                       positions_end_data: Optional[List[List[Any]]] = None,
                       cash_transactions_data: Optional[List[List[Any]]] = None,
                       corporate_actions_data: Optional[List[List[Any]]] = None,
+                      cash_balance_data: Optional[List[List[Any]]] = None,
                       custom_rate_provider: Optional[ExchangeRateProvider] = None,
-                      tax_year: int = 2023, 
+                      tax_year: int = 2023,
                       monkeypatch_global_tax_year: bool = True
                       ) -> ProcessingOutput:
         """
@@ -97,6 +99,7 @@ class FifoTestCaseBase:
             paths["pos_end"]: (positions_end_data, create_positions_csv_string),
             paths["cash"]: (cash_transactions_data, create_cash_transactions_csv_string),
             paths["corp_actions"]: (corporate_actions_data, create_corporate_actions_csv_string),
+            paths["cash_balance"]: (cash_balance_data, create_cash_balance_csv_string),
         }
 
         for path, (data, creator_func) in file_map.items():
@@ -130,9 +133,10 @@ class FifoTestCaseBase:
                 positions_start_file_path=paths["pos_start"],
                 positions_end_file_path=paths["pos_end"],
                 corporate_actions_file_path=paths["corp_actions"],
-                interactive_classification_mode=False, 
-                tax_year_to_process=tax_year, 
-                custom_rate_provider=custom_rate_provider
+                interactive_classification_mode=False,
+                tax_year_to_process=tax_year,
+                custom_rate_provider=custom_rate_provider,
+                cash_balance_file_path=paths["cash_balance"]
             )
             mp_interactive.undo() # Manually undo if not tied to fixture lifecycle
             return results

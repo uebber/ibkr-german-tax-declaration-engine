@@ -4,6 +4,14 @@ import csv
 from decimal import Decimal
 from typing import List, Dict, Any, Union
 
+from src.parsers.column_validator import (
+    TRADES_COLUMNS,
+    CASH_TRANSACTIONS_COLUMNS,
+    POSITIONS_COLUMNS,
+    CORPORATE_ACTIONS_COLUMNS,
+    CASH_BALANCE_COLUMNS,
+)
+
 def create_csv_string(headers: List[str], data_rows: List[List[Union[str, Decimal, int, float, None]]]) -> str:
     """
     Generates a CSV formatted string from headers and data rows.
@@ -28,43 +36,24 @@ def create_csv_string(headers: List[str], data_rows: List[List[Union[str, Decima
         writer.writerow(processed_row)
     return output.getvalue()
 
-# --- Trades CSV ---
-TRADES_FILE_HEADERS = [
-    "ClientAccountID", "CurrencyPrimary", "AssetClass", "SubCategory", "Symbol",
-    "Description", "ISIN", "Strike", "Expiry", "Put/Call", "TradeDate", "Quantity",
-    "TradePrice", "IBCommission", "IBCommissionCurrency", "Buy/Sell",
-    "TransactionID", "Notes/Codes", "UnderlyingSymbol", "Conid", "UnderlyingConid",
-    "Multiplier", "Open/CloseIndicator"
-]
+# Column headers imported from canonical source (src/parsers/column_validator.py)
+TRADES_FILE_HEADERS = list(TRADES_COLUMNS)
+POSITIONS_FILE_HEADERS = list(POSITIONS_COLUMNS)
+CASH_TRANSACTIONS_HEADERS = list(CASH_TRANSACTIONS_COLUMNS)
+CORPORATE_ACTIONS_HEADERS = list(CORPORATE_ACTIONS_COLUMNS)
+CASH_BALANCE_HEADERS = list(CASH_BALANCE_COLUMNS)
 
 def create_trades_csv_string(data_rows: List[List[Any]]) -> str:
     return create_csv_string(TRADES_FILE_HEADERS, data_rows)
 
-# --- Positions CSV (Start/End of Year) ---
-POSITIONS_FILE_HEADERS = [
-    "ClientAccountID", "CurrencyPrimary", "AssetClass", "SubCategory", "Symbol",
-    "Description", "ISIN", "Quantity", "PositionValue", "MarkPrice",
-    "CostBasisMoney", "UnderlyingSymbol", "Conid", "UnderlyingConid", "Multiplier"
-]
-
 def create_positions_csv_string(data_rows: List[List[Any]]) -> str:
     return create_csv_string(POSITIONS_FILE_HEADERS, data_rows)
 
-# --- Cash Transactions CSV ---
-CASH_TRANSACTIONS_HEADERS = [
-    "ClientAccountID", "CurrencyPrimary", "AssetClass", "SubCategory", "Symbol",
-    "Description", "SettleDate", "Amount", "Type", "Conid", "UnderlyingConid",
-    "ISIN", "IssuerCountryCode", "TransactionID"
-]
 def create_cash_transactions_csv_string(data_rows: List[List[Any]]) -> str:
     return create_csv_string(CASH_TRANSACTIONS_HEADERS, data_rows)
 
-
-# --- Corporate Actions CSV ---
-CORPORATE_ACTIONS_HEADERS = [
-    "ClientAccountID", "Symbol", "Description", "ISIN", "Report Date", "Code",
-    "Type", "ActionID", "Conid", "UnderlyingConid", "UnderlyingSymbol",
-    "CurrencyPrimary", "Amount", "Proceeds", "Value", "Quantity"
-]
 def create_corporate_actions_csv_string(data_rows: List[List[Any]]) -> str:
     return create_csv_string(CORPORATE_ACTIONS_HEADERS, data_rows)
+
+def create_cash_balance_csv_string(data_rows: List[List[Any]]) -> str:
+    return create_csv_string(CASH_BALANCE_HEADERS, data_rows)
