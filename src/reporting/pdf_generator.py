@@ -419,6 +419,16 @@ class PdfReportGenerator:
             f"Verwendung von `Decimal`-Arithmetik mit interner Arbeitspräzision von {app_config.INTERNAL_CALCULATION_PRECISION} Stellen und Rundungsmodus '{app_config.DECIMAL_ROUNDING_MODE}'. Endbeträge werden für die Berichterstattung quantisiert.",
             f"Teilfreistellung gemäß deutschem Steuerrecht für {self.tax_year} (keine Alt-Anteile berücksichtigt).",
             f"Vorabpauschale für {self.tax_year} beträgt 0,00 EUR.",
+            ("Leerverkäufe (Short Sales) werden der Einfachheit halber zum Zeitpunkt der Glattstellung "
+             "(Eindeckung) steuerlich erfasst, nicht zum Zeitpunkt der Eröffnung des Leerverkaufs. "
+             "Nach Auffassung des Steuerpflichtigen ergibt sich hieraus keine Änderung der Steuerlast, "
+             "da lediglich eine zeitliche Verschiebung zwischen den Veranlagungszeiträumen erfolgt, "
+             "die sich über die Gesamtlaufzeit der Position ausgleicht. "
+             "Sollte die Finanzverwaltung eine Zuordnung zum Eröffnungszeitpunkt gemäß "
+             "§\u00a043a Abs.\u00a02 Satz\u00a07 EStG i.\u00a0V.\u00a0m. BMF-Schreiben Rz.\u00a0196 "
+             "für erforderlich halten — einschließlich der Anwendung einer Ersatzbemessungsgrundlage "
+             "bei jahresübergreifenden Positionen und entsprechender Korrekturen für Vorjahre nach "
+             "§\u00a0175 Abs.\u00a01 Satz\u00a01 Nr.\u00a02 AO — wird um entsprechende Mitteilung gebeten."),
         ]
         for note in notes:
             self.story.append(Paragraph(f"• {note}", self.styles['BodyText']))
