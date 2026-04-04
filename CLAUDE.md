@@ -135,6 +135,23 @@ Critical requirement: Trades file **must** include `Open/CloseIndicator` column 
 
 See `input_data_spec.md` for detailed column specifications.
 
+## Tax Law Reference Library
+
+The `reference/` directory contains curated, authoritative German tax and legal sources that serve as ground truth for this engine. See `reference/INDEX.md` for the full directory.
+
+**When writing or modifying tax logic, tests, or form mappings:**
+1. Consult the relevant reference file BEFORE implementing. Read it — don't assume.
+2. If a reference file covers the topic, treat it as authoritative over general knowledge.
+3. Key files by area:
+   - Loss offsetting / form lines: `reference/tax-law/estg-20-abs6-verlustverrechnung.md`, `reference/tax-forms/anlage-kap-zeilen.md`
+   - Investment funds: `reference/investment-tax-law/` (InvStG 16, 18, 19, 20)
+   - Private sales (Gold ETC, Crypto): `reference/tax-law/estg-23-private-veraeusserung.md`
+   - Options / derivatives: `reference/tax-law/estg-20-kapitalvermoegen.md` (Abs. 1 Nr. 11, Abs. 2 Nr. 3)
+   - FX / currency gains: `reference/bmf-guidance/fremdwaehrung-konten.md`
+   - Vorabpauschale / Basiszins: `reference/investment-tax-law/invstg-18-vorabpauschale.md`, `reference/bmf-guidance/basiszins-vorabpauschale.md`
+4. The coverage matrix at `reference/research/coverage-matrix.md` maps every supported event/asset to its legal source.
+5. If a conflict arises between engine code and reference files, flag it to the user — do not silently follow the code.
+
 ## Ground Rules
 
 After modifying or extending application code: Never change pre-existing tests without asking the user and explaining why this is, without doubt, necessary!!
