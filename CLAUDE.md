@@ -47,25 +47,36 @@ uv run pytest tests/test_fifo_groups.py -v
 
 # Run loss offsetting tests (Group 6)
 uv run pytest tests/test_group6_loss_offsetting.py -v
+
+# Run currency FIFO tests (Group 7)
+uv run pytest tests/test_group7_currency_fifo.py -v
+
+# Run stock merger FIFO lot transfer tests
+uv run pytest tests/test_stock_merger_fifo.py -v
+
+# Run options lifecycle tests
+uv run pytest tests/test_options_lifecycle.py -v
 ```
 
 ## Architecture
 
 ### Core Processing Flow
 
-1. **Parsing Layer** (`src/parsers/`) - Parses IBKR CSV files, builds asset alias map via `AssetResolver`
-2. **Domain Layer** (`src/domain/`) - Data structures for assets, events, and calculation results
-3. **Enrichment** (`src/processing/enrichment.py`) - Currency conversion to EUR using ECB rates
-4. **Classification** (`src/classification/`) - Categorizes assets (STOCK, INVESTMENT_FUND, OPTION, etc.)
-5. **Calculation Engine** (`src/engine/`) - FIFO ledger management, gain/loss calculations, corporate action processing
-6. **Loss Offsetting** (`src/engine/loss_offsetting.py`) - Aggregates figures for tax form lines
-7. **Reporting** (`src/reporting/`) - Console and PDF report generation
+1. **Data Preparation** (`src/data_preparation.py`) - Resolves and concatenates files from `data_import/` by tax year
+2. **Parsing Layer** (`src/parsers/`) - Parses IBKR CSV files, builds asset alias map via `AssetResolver`
+3. **Domain Layer** (`src/domain/`) - Data structures for assets, events, and calculation results
+4. **Enrichment** (`src/processing/enrichment.py`) - Currency conversion to EUR using ECB rates
+5. **Classification** (`src/classification/`) - Categorizes assets (STOCK, INVESTMENT_FUND, OPTION, etc.)
+6. **Calculation Engine** (`src/engine/`) - FIFO ledger management, gain/loss calculations, corporate action processing
+7. **Loss Offsetting** (`src/engine/loss_offsetting.py`) - Aggregates figures for tax form lines
+8. **Reporting** (`src/reporting/`) - Console and PDF report generation
 
 ### Key Modules
 
 - `src/identification/asset_resolver.py` - Global alias map maintaining unique Asset objects across all input files
-- `src/engine/fifo_manager.py` - FIFO lot tracking for long/short positions
-- `src/engine/calculation_engine.py` - Main calculation orchestration
+- `src/engine/fifo_manager.py` - FIFO lot tracking for long/short positions, including drain/receive for stock mergers and position flip splitting
+- `src/engine/calculation_engine.py` - Main calculation orchestration with three-pass historical replay for mergers
+- `src/engine/event_processors/` - Processors for trades, corporate actions, options, and currency conversions
 - `src/processing/option_trade_linker.py` - Links option exercises/assignments to stock trades
 - `src/pipeline_runner.py` - Orchestrates the full processing pipeline
 
@@ -113,11 +124,12 @@ Trades-{YYYY}.csv               # One file per year
 Cash_Transactions-{YYYY}.csv    # One file per year
 Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
+Options_EAE-{YYYY}.csv          # One file per year (optional, for cash-settled index options)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
 
-Transaction files (Trades, Cash_Transactions, Corporate_Actions) for all years up to and including the tax year are concatenated automatically to provide full historical FIFO cost basis. Position and Cash Balance files are used only for the selected tax year.
+Transaction files (Trades, Cash_Transactions, Corporate_Actions, Options_EAE) for all years up to and including the tax year are concatenated automatically to provide full historical FIFO cost basis. Position and Cash Balance files are used only for the selected tax year.
 
 Critical requirement: Trades file **must** include `Open/CloseIndicator` column ('O'/'C') for accurate trade classification.
 

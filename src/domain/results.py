@@ -18,11 +18,15 @@ logger = logging.getLogger(__name__)
 class LossOffsettingResult:
     form_line_values: Dict[TaxReportingCategory | str, Decimal] = field(default_factory=lambda: defaultdict(Decimal))
     conceptual_net_stocks: Decimal = Decimal('0')
-    conceptual_net_other_income: Decimal = Decimal('0') 
+    conceptual_net_other_income: Decimal = Decimal('0')
     conceptual_net_derivatives_uncapped: Decimal = Decimal('0')
     conceptual_net_derivatives_capped: Decimal = Decimal('0')
     conceptual_net_p23_estg: Decimal = Decimal('0')
-    conceptual_fund_income_net_taxable: Decimal = Decimal('0') 
+    conceptual_fund_income_net_taxable: Decimal = Decimal('0')
+    # Raw component values (always populated regardless of form year rules)
+    raw_derivative_gains_gross: Decimal = Decimal('0')
+    raw_derivative_losses_abs: Decimal = Decimal('0')
+    raw_other_losses_abs: Decimal = Decimal('0')
 
 
 @dataclass

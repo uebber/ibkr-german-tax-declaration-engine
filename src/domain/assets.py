@@ -28,6 +28,11 @@ class Asset:
     soy_cost_basis_amount: Optional[Decimal] = None # Renamed from initial_cost_basis_money_soy
     soy_cost_basis_currency: Optional[str] = None # Renamed from initial_cost_basis_currency_soy
 
+    # Start of Year (SOY) market price data (from IBKR positions_start_file, for Vorabpauschale)
+    soy_market_price: Optional[Decimal] = None
+    soy_position_value: Optional[Decimal] = None
+    soy_mark_price_currency: Optional[str] = None
+
     # End of Year (EOY) position data (from IBKR positions_end_file, for Vorabpauschale, reconciliation)
     eoy_quantity: Optional[Decimal] = None
     eoy_mark_price_currency: Optional[str] = None # Currency of the EOY mark price

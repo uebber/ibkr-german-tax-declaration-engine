@@ -56,13 +56,17 @@ class ECBExchangeRateProvider(ExchangeRateProvider):
                  api_url_template_override: Optional[str] = None,
                  max_fallback_days_override: Optional[int] = None,
                  currency_code_mapping_override: Optional[Dict[str, str]] = None,
-                 request_timeout_seconds_override: Optional[int] = None):
+                 request_timeout_seconds_override: Optional[int] = None,
+                 pegged_currency_rates: Optional[Dict[str, Tuple[str, str]]] = None):
         super().__init__() # Call to parent constructor if ExchangeRateProvider had one
         self.cache_file_path = cache_file_path
         self.api_url_template = api_url_template_override or DEFAULT_ECB_API_URL_TEMPLATE
         self.max_fallback_days = max_fallback_days_override if max_fallback_days_override is not None else DEFAULT_MAX_FALLBACK_DAYS
         self.currency_code_mapping = currency_code_mapping_override if currency_code_mapping_override is not None else DEFAULT_CURRENCY_CODE_MAPPING.copy()
         self.request_timeout_seconds = request_timeout_seconds_override or DEFAULT_REQUEST_TIMEOUT_SECONDS
+        # Pegged currencies: maps currency code to (base_currency, peg_factor_str)
+        # e.g. {"SAR": ("USD", "3.75")} means SAR/EUR = USD/EUR * 3.75
+        self.pegged_currency_rates: Dict[str, Tuple[str, str]] = pegged_currency_rates or {}
         
         self.rates_cache: Dict[str, Dict[str, Optional[str]]] = {} # Date string -> {Currency Code -> Rate String or None for failure}
         self._load_cache()
@@ -192,6 +196,21 @@ class ECBExchangeRateProvider(ExchangeRateProvider):
         original_currency_code_upper = currency_code.upper()
         if original_currency_code_upper == "EUR":
             return Decimal("1.0")
+
+        # Check if this is a pegged currency (e.g. SAR pegged to USD)
+        if original_currency_code_upper in self.pegged_currency_rates:
+            base_currency, peg_factor_str = self.pegged_currency_rates[original_currency_code_upper]
+            peg_factor = Decimal(peg_factor_str)
+            base_rate = self.get_rate(date_of_conversion, base_currency)
+            if base_rate is not None:
+                derived_rate = base_rate * peg_factor
+                logger.info(f"Derived rate for {original_currency_code_upper} via {base_currency} peg "
+                           f"(factor {peg_factor}): {derived_rate} on {date_of_conversion}")
+                return derived_rate
+            else:
+                logger.error(f"Cannot derive rate for pegged currency {original_currency_code_upper}: "
+                            f"base currency {base_currency} rate unavailable for {date_of_conversion}")
+                return None
 
         effective_currency_code_for_ecb = self._get_effective_currency_code(original_currency_code_upper)
         original_date_str = date_of_conversion.strftime("%Y-%m-%d")

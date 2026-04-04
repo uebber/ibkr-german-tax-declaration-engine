@@ -10,6 +10,7 @@ from src.domain.enums import AssetCategory, FinancialEventType, InvestmentFundTy
 from src.domain.assets import Asset, InvestmentFund
 from src.identification.asset_resolver import AssetResolver
 from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
+from src.reporting.form_rules import get_form_rules
 import src.config as global_config
 
 logger = logging.getLogger(__name__)
@@ -45,11 +46,11 @@ class LossOffsettingEngine:
 
         tf_rate = get_teilfreistellung_rate_for_fund_type(asset.fund_type)
 
-        tf_amount = Decimal('0')
-        if gross_dist_eur > Decimal('0'):
-             tf_amount = self.ctx.multiply(gross_dist_eur, tf_rate)
-
-        net_dist_eur = self.ctx.subtract(gross_dist_eur, tf_amount)
+        tf_amount = self.ctx.multiply(gross_dist_eur.copy_abs(), tf_rate)
+        if gross_dist_eur >= Decimal('0'):
+            net_dist_eur = self.ctx.subtract(gross_dist_eur, tf_amount)
+        else:
+            net_dist_eur = self.ctx.add(gross_dist_eur, tf_amount)
 
         return net_dist_eur.quantize(self.TWO_PLACES, context=self.ctx)
 
@@ -143,6 +144,7 @@ class LossOffsettingEngine:
                  # Excess amounts are now handled as separate DIVIDEND_CASH events
                  pass
 
+        vp_gross_total_for_z55 = self.ctx.create_decimal(Decimal('0'))
         for vp_item in self.vorabpauschale_items:
             if vp_item.tax_year == self.tax_year:
                 net_vp_eur = vp_item.net_taxable_vorabpauschale_eur
@@ -152,7 +154,14 @@ class LossOffsettingEngine:
 
                 fund_income_net_taxable = self.ctx.add(fund_income_net_taxable, net_vp_eur)
 
+                # Accumulate gross VP for Z55 (all VP from foreign broker = no German WHT withheld)
+                gross_vp = vp_item.gross_vorabpauschale_eur if vp_item.gross_vorabpauschale_eur is not None else Decimal('0')
+                vp_gross_total_for_z55 = self.ctx.add(vp_gross_total_for_z55, gross_vp)
+
         result.conceptual_fund_income_net_taxable = fund_income_net_taxable.quantize(self.TWO_PLACES, context=self.ctx)
+
+        # Z55: Sum of all gross Vorabpauschale for deduction on disposal
+        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55] = vp_gross_total_for_z55.quantize(self.TWO_PLACES, context=self.ctx)
 
         # Calculate foreign tax paid (Zeile 41)
         foreign_tax_total = self.ctx.create_decimal(Decimal('0'))
@@ -161,21 +170,41 @@ class LossOffsettingEngine:
                 tax_amount = event.gross_amount_eur if event.gross_amount_eur is not None else self.ctx.create_decimal(Decimal('0'))
                 foreign_tax_total = self.ctx.add(foreign_tax_total, tax_amount)
 
-        # Anlage KAP Line Calculations (as per PRD Sec 2.7)
+        # Store raw component values for reporters (always available regardless of form year)
+        result.raw_derivative_gains_gross = derivative_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)
+        result.raw_derivative_losses_abs = derivative_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
+        result.raw_other_losses_abs = kap_other_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
+
+        # Year-specific form rules
+        form_rules = get_form_rules(self.tax_year)
+
+        # Anlage KAP Line Calculations (as per PRD Sec 2.7, year-dependent)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN] = stock_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST] = stock_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
-        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN] = derivative_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)
-        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST] = derivative_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE] = kap_other_income_positive.quantize(self.TWO_PLACES, context=self.ctx)
-        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE] = kap_other_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID] = foreign_tax_total.quantize(self.TWO_PLACES, context=self.ctx)
+
+        if form_rules.separate_derivative_lines:
+            # <= 2024: Separate Z21 (derivative gains) and Z24 (derivative losses)
+            result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN] = derivative_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)
+            result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST] = derivative_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
+            # Z22: only non-stock, non-derivative losses
+            result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE] = kap_other_losses_abs.quantize(self.TWO_PLACES, context=self.ctx)
+        else:
+            # >= 2025: No separate derivative lines; derivative losses fold into Z22
+            result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN] = Decimal('0.00')
+            result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST] = Decimal('0.00')
+            z22_combined = self.ctx.add(kap_other_losses_abs, derivative_losses_abs)
+            result.form_line_values[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE] = z22_combined.quantize(self.TWO_PLACES, context=self.ctx)
 
         # Zeile 19 Calculation
         zeile_19_amount = self.ctx.add(stock_gains_gross, derivative_gains_gross)
         zeile_19_amount = self.ctx.add(zeile_19_amount, kap_other_income_positive)
         zeile_19_amount = self.ctx.subtract(zeile_19_amount, stock_losses_abs)
-        # Note: derivative_losses_abs are NOT subtracted here for Z19 per PRD.
         zeile_19_amount = self.ctx.subtract(zeile_19_amount, kap_other_losses_abs)
+        if form_rules.z19_subtracts_derivative_losses:
+            # >= 2025: Derivative losses are no longer restricted, subtract them in Z19
+            zeile_19_amount = self.ctx.subtract(zeile_19_amount, derivative_losses_abs)
         result.form_line_values[TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT] = zeile_19_amount.quantize(self.TWO_PLACES, context=self.ctx)
 
 
@@ -230,7 +259,7 @@ class LossOffsettingEngine:
         net_derivatives_uncapped = self.ctx.subtract(derivative_gains_gross, derivative_losses_abs)
         result.conceptual_net_derivatives_uncapped = net_derivatives_uncapped.quantize(self.TWO_PLACES, context=self.ctx)
 
-        if self.apply_conceptual_derivative_loss_capping and net_derivatives_uncapped < Decimal('0'):
+        if form_rules.derivative_loss_cap_applies and self.apply_conceptual_derivative_loss_capping and net_derivatives_uncapped < Decimal('0'):
             capped_net_derivative_loss = max(net_derivatives_uncapped, self.ctx.create_decimal(Decimal('-20000')))
             result.conceptual_net_derivatives_capped = capped_net_derivative_loss.quantize(self.TWO_PLACES, context=self.ctx)
         else:

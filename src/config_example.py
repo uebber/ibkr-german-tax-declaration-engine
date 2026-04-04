@@ -41,6 +41,14 @@ CURRENCY_CODE_MAPPING_ECB: dict[str, str] = {"CNH": "CNY"}
 FLEX_TOKEN_ENV_VAR = "IBKR_FLEX_TOKEN"
 FLEX_TOKEN_FILE = "~/.ibkr_flex_token"
 
+# Pegged currency rates: currencies not published by ECB that are pegged to an ECB currency.
+# Format: {currency_code: (base_currency_code, peg_factor)}
+# The rate is derived as: pegged_currency/EUR = base_currency/EUR * peg_factor
+# Example: SAR is pegged to USD at 3.75 SAR = 1 USD
+PEGGED_CURRENCY_RATES: dict[str, tuple[str, str]] = {
+    "SAR": ("USD", "3.75"),
+}
+
 # Flex Query IDs — set these after creating queries in IBKR portal
 FLEX_QUERY_IDS: dict[str, int | None] = {
     "trades": None,
@@ -48,10 +56,20 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "positions": None,
     "corporate_actions": None,
     "cash_balance": None,
+    "options_eae": None,         # Optional: for cash-settled index options (e.g. SPX, ESTX50)
 }
 
 # Cache directory for downloaded Flex Query CSVs
 FLEX_CACHE_DIR = "data/flex_cache"
 
+# Basiszins for Vorabpauschale calculation (§ 18 InvStG)
+# Values as strings for Decimal precision. Source: Deutsche Bundesbank.
+BASISZINS_BY_YEAR: dict[int, str] = {
+    2024: "2.29",
+    2025: "2.53",
+}
+
 # Configuration for Loss Offsetting Engine
+# Determines if the conceptual summary for net derivative losses should apply the 20k EUR cap.
+# Form reporting of derivative losses (Anlage KAP Zeile 24) is always gross and un-capped.
 APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING: bool = True

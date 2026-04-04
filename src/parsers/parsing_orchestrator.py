@@ -106,6 +106,9 @@ class ParsingOrchestrator:
             asset.soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0)) # Changed from initial_quantity_soy
             asset.soy_cost_basis_amount = safe_decimal(raw_pos.cost_basis_money) # Changed from initial_cost_basis_money_soy
             asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
+            asset.soy_market_price = safe_decimal(raw_pos.mark_price)
+            asset.soy_position_value = safe_decimal(raw_pos.position_value)
+            asset.soy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
 
         logger.info("Processing end-of-year positions...")

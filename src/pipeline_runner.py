@@ -100,7 +100,8 @@ def run_core_processing_pipeline(
         rate_provider = ECBExchangeRateProvider(
             cache_file_path=config.ECB_RATES_CACHE_FILE_PATH, # Renamed from ECB_RATES_CACHE_FILE
             max_fallback_days_override=config.MAX_FALLBACK_DAYS_EXCHANGE_RATES,
-            currency_code_mapping_override=config.CURRENCY_CODE_MAPPING_ECB
+            currency_code_mapping_override=config.CURRENCY_CODE_MAPPING_ECB,
+            pegged_currency_rates=config.PEGGED_CURRENCY_RATES
         )
         try:
             logger.info("ECB exchange rates provider initialized.")

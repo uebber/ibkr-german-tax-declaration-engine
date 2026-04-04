@@ -98,6 +98,8 @@ class TaxReportingCategory(Enum):
     ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO = auto() # Added
     ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO = auto() # Added
 
+    ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55 = auto()  # Z55: previously taxed VP deducted on disposal
+
     SECTION_23_ESTG_TAXABLE_GAIN = auto()
     SECTION_23_ESTG_TAXABLE_LOSS = auto()
     SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET = auto() # For record keeping

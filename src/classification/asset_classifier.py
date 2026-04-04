@@ -1,7 +1,10 @@
 # src/classification/asset_classifier.py
 import json
+import logging
 import os
 from typing import Dict, Optional, Tuple, List
+
+logger = logging.getLogger(__name__)
 
 from src.domain.assets import (
     Asset, InvestmentFund, Stock, Bond, Option, Cfd, PrivateSaleAsset, CashBalance # Changed Section23EstgAsset to PrivateSaleAsset
@@ -257,31 +260,31 @@ class AssetClassifier:
 
         elif asset.asset_category == AssetCategory.UNKNOWN :
             if is_likely_fx_pair_instrument:
-                target_asset_cat = AssetCategory.UNKNOWN 
+                target_asset_cat = AssetCategory.UNKNOWN
                 target_fund_type = InvestmentFundType.NONE
                 target_user_notes = "Auto-classified as UNKNOWN (likely FX Pair instrument)."
-            elif asset.ibkr_asset_class_raw == "CASH" and asset.ibkr_symbol == asset.currency: 
+            elif asset.ibkr_asset_class_raw == "CASH" and asset.ibkr_symbol == asset.currency:
                  target_asset_cat = AssetCategory.CASH_BALANCE
                  target_fund_type = InvestmentFundType.NONE
                  target_user_notes = "Auto-defaulted to CASH_BALANCE from UNKNOWN (matched symbol/currency)."
-            else: 
+            else:
                 target_asset_cat = AssetCategory.STOCK
                 target_fund_type = InvestmentFundType.NONE
                 target_user_notes = "Auto-defaulted from UNKNOWN to STOCK (non-special, non-FX-pair)."
-            self.classifications_cache[asset_key] = (target_asset_cat.name, target_fund_type.name, target_user_notes)
-        
-        else: 
+            # Do NOT cache auto-classifications — only user-confirmed entries belong in cache
+
+        else:
             target_asset_cat = asset.asset_category
             if isinstance(asset, InvestmentFund) and asset.fund_type:
                 target_fund_type = asset.fund_type
-            elif target_asset_cat == AssetCategory.INVESTMENT_FUND: 
-                 target_fund_type = InvestmentFundType.SONSTIGE_FONDS 
+            elif target_asset_cat == AssetCategory.INVESTMENT_FUND:
+                 target_fund_type = InvestmentFundType.SONSTIGE_FONDS
             else:
                 target_fund_type = InvestmentFundType.NONE
-            
-            if not target_user_notes: 
+
+            if not target_user_notes:
                 target_user_notes = "Auto-classified based on heuristics."
-            self.classifications_cache[asset_key] = (target_asset_cat.name, target_fund_type.name, target_user_notes)
+            # Do NOT cache auto-classifications — only user-confirmed entries belong in cache
 
         needs_type_replacement = False
         expected_python_type = self._get_python_type_for_category(target_asset_cat)
@@ -306,13 +309,13 @@ class AssetClassifier:
                 else:
                     target_fund_type = InvestmentFundType.NONE
                 target_user_notes = notes_from_cache
-                
+
                 is_likely_fx_pair_instrument_from_key = False
-                if asset.ibkr_asset_class_raw == "CASH" and asset.ibkr_symbol and '.' in asset.ibkr_symbol: 
+                if asset.ibkr_asset_class_raw == "CASH" and asset.ibkr_symbol and '.' in asset.ibkr_symbol:
                      parts = asset.ibkr_symbol.split('.')
                      if len(parts) == 2 and len(parts[0]) == 3 and len(parts[1]) == 3:
                         is_likely_fx_pair_instrument_from_key = True
-                
+
                 if is_likely_fx_pair_instrument_from_key and target_asset_cat == AssetCategory.CASH_BALANCE:
                     print(f"Warning: Cached classification for {asset_key} is CashBalance, but asset appears to be an FX Pair. Overriding to UNKNOWN.")
                     target_asset_cat = AssetCategory.UNKNOWN
@@ -328,5 +331,5 @@ class AssetClassifier:
             except KeyError:
                  print(f"Warning: Invalid classification names in cache for {asset_key}. Re-classifying.")
                  self.classifications_cache.pop(asset_key)
-        
+
         return self._determine_classification_interactively_or_heuristically(asset, asset_key, interactive_mode)

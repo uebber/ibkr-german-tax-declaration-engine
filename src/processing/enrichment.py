@@ -4,8 +4,8 @@ from decimal import Decimal, getcontext, Context
 from typing import List
 
 from src.domain.events import (
-    FinancialEvent, TradeEvent, CorpActionStockDividend, CorpActionMergerCash,
-    OptionCashSettlementEvent, FinancialEventType
+    FinancialEvent, TradeEvent, CashFlowEvent, CorpActionStockDividend,
+    CorpActionMergerCash, OptionCashSettlementEvent, FinancialEventType
 )
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.type_utils import parse_ibkr_date
@@ -206,4 +206,57 @@ def enrich_financial_events(
     logger.info(f"Commission to EUR: {eur_commission_conversions_success} succeeded, {eur_commission_conversions_failed} failed/skipped.")
     logger.info(f"CA Detail Conversion to EUR: {eur_corp_action_detail_conversions_success} succeeded, {eur_corp_action_detail_conversions_failed} failed/skipped.")
     logger.info("Data enrichment phase completed.")
+
+    validate_enrichment(financial_events)
+
     return financial_events
+
+
+def validate_enrichment(financial_events: List[FinancialEvent]) -> None:
+    """
+    Validates that all financial events requiring EUR conversion have been
+    successfully enriched. Raises ValueError if any critical EUR fields are
+    missing, since such events cannot be correctly processed for tax reporting.
+    """
+    failures: List[str] = []
+
+    for event in financial_events:
+        if isinstance(event, TradeEvent):
+            if event.net_proceeds_or_cost_basis_eur is None:
+                failures.append(
+                    f"TradeEvent {event.event_id}: missing net_proceeds_or_cost_basis_eur "
+                    f"(date={event.event_date}, currency={event.local_currency}, "
+                    f"txID={event.ibkr_transaction_id or 'N/A'})"
+                )
+        elif isinstance(event, CorpActionMergerCash):
+            if event.cash_per_share_eur is None:
+                failures.append(
+                    f"CorpActionMergerCash {event.event_id}: missing cash_per_share_eur "
+                    f"(date={event.event_date}, currency={event.local_currency})"
+                )
+        elif isinstance(event, CorpActionStockDividend):
+            if event.fmv_per_new_share_foreign_currency is not None and event.fmv_per_new_share_eur is None:
+                failures.append(
+                    f"CorpActionStockDividend {event.event_id}: missing fmv_per_new_share_eur "
+                    f"(date={event.event_date}, currency={event.local_currency})"
+                )
+        elif isinstance(event, OptionCashSettlementEvent):
+            if event.gross_amount_foreign_currency is not None and event.gross_amount_eur is None:
+                failures.append(
+                    f"OptionCashSettlementEvent {event.event_id}: missing gross_amount_eur "
+                    f"(date={event.event_date}, currency={event.local_currency})"
+                )
+        elif isinstance(event, CashFlowEvent):
+            if event.gross_amount_foreign_currency is not None and event.gross_amount_eur is None:
+                failures.append(
+                    f"CashFlowEvent {event.event_id}: missing gross_amount_eur "
+                    f"(date={event.event_date}, type={event.event_type.name}, "
+                    f"currency={event.local_currency})"
+                )
+
+    if failures:
+        failure_report = "\n  ".join(failures)
+        raise ValueError(
+            f"Enrichment validation failed: {len(failures)} event(s) missing required EUR conversion. "
+            f"This is typically caused by missing ECB exchange rates.\n  {failure_report}"
+        )

@@ -17,6 +17,7 @@ from src.domain.events import FinancialEvent, CashFlowEvent, WithholdingTaxEvent
 from src.domain.assets import Asset, InvestmentFund, Stock, Bond, Derivative
 from src.domain.enums import AssetCategory, InvestmentFundType, FinancialEventType, RealizationType, TaxReportingCategory
 from src.reporting.reporting_utils import _q, _q_price, _q_qty, format_date_german
+from src.reporting.form_rules import get_form_rules
 import src.config as app_config 
 from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
@@ -45,6 +46,37 @@ class PdfReportGenerator:
         self.story: List[Any] = []
         self.prepared_wht_details_for_table: Optional[Dict[str, Dict[str, Decimal]]] = None
 
+    def _has_cross_year_short_positions(self) -> bool:
+        """Check if any short positions cross tax year boundaries.
+
+        Returns True if:
+        - A short position opened in a prior year was covered in the tax year, OR
+        - A short position was opened in the tax year but not fully covered by EOY.
+        """
+        tax_year_str = str(self.tax_year)
+
+        # Track short covers and short opens for the tax year
+        covered_assets: set = set()
+        opened_assets: set = set()
+
+        for rgl in self.realized_gains_losses:
+            if rgl.realization_type == RealizationType.SHORT_POSITION_COVER:
+                acq_year = rgl.acquisition_date[:4] if rgl.acquisition_date else None
+                real_year = rgl.realization_date[:4] if rgl.realization_date else None
+                # Short opened in prior year, covered this year
+                if real_year == tax_year_str and acq_year and acq_year < tax_year_str:
+                    return True
+                if real_year == tax_year_str:
+                    covered_assets.add(rgl.asset_internal_id)
+
+        for event in self.all_financial_events:
+            if (event.event_type == FinancialEventType.TRADE_SELL_SHORT_OPEN
+                    and event.event_date[:4] == tax_year_str):
+                opened_assets.add(event.asset_internal_id)
+
+        # Short opened this year with no cover at all → still open at EOY
+        uncovered = opened_assets - covered_assets
+        return len(uncovered) > 0
 
     def _generate_styles(self):
         styles = getSampleStyleSheet()
@@ -222,14 +254,20 @@ class PdfReportGenerator:
 
     def _add_declared_values_summary(self):
         self.story.append(Paragraph("1 Zusammenfassung der erklärten Werte", self.styles['H2']))
-        
+
+        form_rules = get_form_rules(self.tax_year)
         data = [["Steuerformular Zeile", "Wert (EUR)"]]
+
+        if form_rules.z22_includes_derivative_losses:
+            z22_label = "Anlage KAP Zeile 22 (Verluste ohne Aktien, inkl. Termingeschäfte)"
+        else:
+            z22_label = "Anlage KAP Zeile 22 (Sonstige Verluste)"
 
         kap_lines_map = {
             "ANLAGE_KAP_ZEILE_19": "Anlage KAP Zeile 19 (Ausl. Kapitalerträge n. Sald.)",
             "ANLAGE_KAP_ZEILE_20": "Anlage KAP Zeile 20 (Gewinne Aktienveräußerungen)",
             "ANLAGE_KAP_ZEILE_21": "Anlage KAP Zeile 21 (Gewinne Termingeschäfte)",
-            "ANLAGE_KAP_ZEILE_22": "Anlage KAP Zeile 22 (Sonstige Verluste)",
+            "ANLAGE_KAP_ZEILE_22": z22_label,
             "ANLAGE_KAP_ZEILE_23": "Anlage KAP Zeile 23 (Verluste Aktienveräußerungen)",
             "ANLAGE_KAP_ZEILE_24": "Anlage KAP Zeile 24 (Verluste Termingeschäfte)",
             "ANLAGE_KAP_ZEILE_41": "Anlage KAP Zeile 41 (Anrech. ausl. Steuern)"
@@ -247,6 +285,10 @@ class PdfReportGenerator:
             "ANLAGE_KAP_INV_ZEILE_26_SONSTIGE_FONDS_GEWINN_VERLUST_GROSS": "KAP-INV Z26 (Brutto G/V Sonstige Fonds)",
             "ANLAGE_KAP_INV_ZEILE_9_AKTIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z9 (Brutto VOP Aktienfonds)",
             "ANLAGE_KAP_INV_ZEILE_10_MISCHFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z10 (Brutto VOP Mischfonds)",
+            "ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z11 (Brutto VOP Immofonds)",
+            "ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z12 (Brutto VOP Ausl. Immofonds)",
+            "ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z13 (Brutto VOP Sonstige Fonds)",
+            "ANLAGE_KAP_INV_ZEILE_55_VORABPAUSCHALE_ABZUG": "KAP-INV Z55 (Anzurechnende Vorabpauschalen)",
         }
         so_lines_map = {
              "ANLAGE_SO_Z54_NET_GV": "Anlage SO Zeile 54 (G/V §23 EStG)"
@@ -255,10 +297,13 @@ class PdfReportGenerator:
         declared_values_map = {
             TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT: kap_lines_map["ANLAGE_KAP_ZEILE_19"],
             TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN: kap_lines_map["ANLAGE_KAP_ZEILE_20"],
-            TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN: kap_lines_map["ANLAGE_KAP_ZEILE_21"],
             TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE: kap_lines_map["ANLAGE_KAP_ZEILE_22"],
             TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST: kap_lines_map["ANLAGE_KAP_ZEILE_23"],
-            TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST: kap_lines_map["ANLAGE_KAP_ZEILE_24"],
+        }
+        if form_rules.separate_derivative_lines:
+            declared_values_map[TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN] = kap_lines_map["ANLAGE_KAP_ZEILE_21"]
+            declared_values_map[TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST] = kap_lines_map["ANLAGE_KAP_ZEILE_24"]
+        declared_values_map.update({
             TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_AUSSCHUETTUNG_GROSS: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_4_AKTIENFONDS_AUSSCHUETTUNG_GROSS"],
             TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_AUSSCHUETTUNG_GROSS: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_5_MISCHFONDS_AUSSCHUETTUNG_GROSS"],
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_6_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS"],
@@ -271,19 +316,29 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_26_SONSTIGE_FONDS_GEWINN_VERLUST_GROSS"],
             TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_9_AKTIENFONDS_VORABPAUSCHALE_BRUTTO"],
             TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_10_MISCHFONDS_VORABPAUSCHALE_BRUTTO"],
+            TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
+            TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
+            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO"],
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_55_VORABPAUSCHALE_ABZUG"],
             "ANLAGE_SO_Z54_NET_GV": so_lines_map["ANLAGE_SO_Z54_NET_GV"],
             "TOTAL_ANRECHENBARE_AUSL_STEUERN": kap_lines_map["ANLAGE_KAP_ZEILE_41"]
-        }
-        
+        })
+
         form_values = self.loss_offsetting_result.form_line_values
         # Order by line numbers (KAP 19-24, then KAP 41, then KAP-INV 4-26, then SO 54)
         key_order = [
             TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT,  # Zeile 19
             TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN,  # Zeile 20
-            TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN,  # Zeile 21
+        ]
+        if form_rules.separate_derivative_lines:
+            key_order.append(TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN)  # Zeile 21
+        key_order += [
             TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE,  # Zeile 22
             TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST,  # Zeile 23
-            TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST,  # Zeile 24
+        ]
+        if form_rules.separate_derivative_lines:
+            key_order.append(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST)  # Zeile 24
+        key_order += [
             "TOTAL_ANRECHENBARE_AUSL_STEUERN",  # Zeile 41
             TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 4
             TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 5
@@ -292,11 +347,15 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_AUSSCHUETTUNG_GROSS,  # KAP-INV Zeile 8
             TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,  # KAP-INV Zeile 9
             TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO,  # KAP-INV Zeile 10
+            TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO,  # KAP-INV Zeile 11
+            TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO,  # KAP-INV Zeile 12
+            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO,  # KAP-INV Zeile 13
             TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 14
             TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_GEWINN_GROSS,  # KAP-INV Zeile 17
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 20
             TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 23
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS,  # KAP-INV Zeile 26
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55,  # KAP-INV Zeile 55
             "ANLAGE_SO_Z54_NET_GV"  # SO Zeile 54
         ]
 
@@ -348,41 +407,50 @@ class PdfReportGenerator:
         ))
         
         # Create breakdown table with actual values from existing calculations
+        form_rules = get_form_rules(self.tax_year)
         breakdown_data = [["Komponente", "Betrag (EUR)", "Verweis"]]
-        
-        # Get individual component values from form_line_values
+
+        # Get individual component values — use raw values for breakdown accuracy
         stock_gains = form_values.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN, Decimal('0.00'))
-        derivative_gains = form_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN, Decimal('0.00'))
+        derivative_gains = self.loss_offsetting_result.raw_derivative_gains_gross
         other_income_positive = form_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE, Decimal('0.00'))
         stock_losses = form_values.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST, Decimal('0.00'))
-        other_losses = form_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, Decimal('0.00'))
-        
+        derivative_losses = self.loss_offsetting_result.raw_derivative_losses_abs
+        other_losses = self.loss_offsetting_result.raw_other_losses_abs
+
         # Add all positive components (even if 0)
         breakdown_data.append([
             "Gewinne aus Aktienveräußerungen",
             self._format_decimal(stock_gains).replace('.', ','),
             "siehe Abschnitt 2.1"
         ])
-        
+
         breakdown_data.append([
             "Gewinne aus Termingeschäften",
             self._format_decimal(derivative_gains).replace('.', ','),
             "siehe Abschnitt 2.2"
         ])
-        
+
         breakdown_data.append([
             "Sonstige Kapitalerträge (Zinsen, Dividenden, etc.)",
             self._format_decimal(other_income_positive).replace('.', ','),
             "siehe Abschnitt 2.3"
         ])
-        
+
         # Add all negative components (even if 0) - losses are subtracted
         breakdown_data.append([
             "Verluste aus Aktienveräußerungen (Abzug)",
             f"-{self._format_decimal(stock_losses).replace('.', ',')}",
             "siehe Abschnitt 2.1"
         ])
-        
+
+        if form_rules.z19_subtracts_derivative_losses:
+            breakdown_data.append([
+                "Verluste aus Termingeschäften (Abzug)",
+                f"-{self._format_decimal(derivative_losses).replace('.', ',')}",
+                "siehe Abschnitt 2.2"
+            ])
+
         breakdown_data.append([
             "Sonstige Verluste (Abzug)",
             f"-{self._format_decimal(other_losses).replace('.', ',')}",
@@ -400,12 +468,21 @@ class PdfReportGenerator:
         table = self._create_styled_table(breakdown_data, col_widths=[8*cm, 3*cm, 4*cm])
         self.story.append(table)
         
-        self.story.append(Paragraph(
-            "Die Berechnung erfolgt durch Summierung aller positiven ausländischen Kapitalerträge "
-            "abzüglich der negativen Komponenten (Verluste werden separat in anderen Zeilen ausgewiesen). "
-            "Detaillierte Einzelpositionen finden Sie in den entsprechenden Abschnitten weiter unten.",
-            self.styles['BodyText']
-        ))
+        if form_rules.z19_subtracts_derivative_losses:
+            z19_explanation = (
+                "Die Berechnung erfolgt durch Summierung aller positiven ausländischen Kapitalerträge "
+                "abzüglich aller negativen Komponenten einschließlich Termingeschäfteverluste "
+                "(Verlustverrechnungsbeschränkung ab 2025 aufgehoben). "
+                "Detaillierte Einzelpositionen finden Sie in den entsprechenden Abschnitten weiter unten."
+            )
+        else:
+            z19_explanation = (
+                "Die Berechnung erfolgt durch Summierung aller positiven ausländischen Kapitalerträge "
+                "abzüglich der negativen Komponenten (Verluste aus Termingeschäften werden separat "
+                "in Zeile 24 ausgewiesen). "
+                "Detaillierte Einzelpositionen finden Sie in den entsprechenden Abschnitten weiter unten."
+            )
+        self.story.append(Paragraph(z19_explanation, self.styles['BodyText']))
         
         self.story.append(Spacer(1, 0.3*cm))
 
@@ -418,18 +495,21 @@ class PdfReportGenerator:
             "Tägliche EZB-Wechselkurse für Währungsumrechnungen.",
             f"Verwendung von `Decimal`-Arithmetik mit interner Arbeitspräzision von {app_config.INTERNAL_CALCULATION_PRECISION} Stellen und Rundungsmodus '{app_config.DECIMAL_ROUNDING_MODE}'. Endbeträge werden für die Berichterstattung quantisiert.",
             f"Teilfreistellung gemäß deutschem Steuerrecht für {self.tax_year} (keine Alt-Anteile berücksichtigt).",
-            f"Vorabpauschale für {self.tax_year} beträgt 0,00 EUR.",
-            ("Leerverkäufe (Short Sales) werden der Einfachheit halber zum Zeitpunkt der Glattstellung "
-             "(Eindeckung) steuerlich erfasst, nicht zum Zeitpunkt der Eröffnung des Leerverkaufs. "
-             "Nach Auffassung des Steuerpflichtigen ergibt sich hieraus keine Änderung der Steuerlast, "
-             "da lediglich eine zeitliche Verschiebung zwischen den Veranlagungszeiträumen erfolgt, "
-             "die sich über die Gesamtlaufzeit der Position ausgleicht. "
-             "Sollte die Finanzverwaltung eine Zuordnung zum Eröffnungszeitpunkt gemäß "
-             "§\u00a043a Abs.\u00a02 Satz\u00a07 EStG i.\u00a0V.\u00a0m. BMF-Schreiben Rz.\u00a0196 "
-             "für erforderlich halten — einschließlich der Anwendung einer Ersatzbemessungsgrundlage "
-             "bei jahresübergreifenden Positionen und entsprechender Korrekturen für Vorjahre nach "
-             "§\u00a0175 Abs.\u00a01 Satz\u00a01 Nr.\u00a02 AO — wird um entsprechende Mitteilung gebeten."),
+            f"Vorabpauschale für {self.tax_year} berechnet gemäß § 18 InvStG.",
         ]
+        if self._has_cross_year_short_positions():
+            notes.append(
+                "Leerverkäufe (Short Sales) werden der Einfachheit halber zum Zeitpunkt der Glattstellung "
+                "(Eindeckung) steuerlich erfasst, nicht zum Zeitpunkt der Eröffnung des Leerverkaufs. "
+                "Nach Auffassung des Steuerpflichtigen ergibt sich hieraus keine Änderung der Steuerlast, "
+                "da lediglich eine zeitliche Verschiebung zwischen den Veranlagungszeiträumen erfolgt, "
+                "die sich über die Gesamtlaufzeit der Position ausgleicht. "
+                "Sollte die Finanzverwaltung eine Zuordnung zum Eröffnungszeitpunkt gemäß "
+                "§\u00a043a Abs.\u00a02 Satz\u00a07 EStG i.\u00a0V.\u00a0m. BMF-Schreiben Rz.\u00a0196 "
+                "für erforderlich halten — einschließlich der Anwendung einer Ersatzbemessungsgrundlage "
+                "bei jahresübergreifenden Positionen und entsprechender Korrekturen für Vorjahre nach "
+                "§\u00a0175 Abs.\u00a01 Satz\u00a01 Nr.\u00a02 AO — wird um entsprechende Mitteilung gebeten."
+            )
         for note in notes:
             self.story.append(Paragraph(f"• {note}", self.styles['BodyText']))
 
@@ -882,8 +962,15 @@ class PdfReportGenerator:
                 if rgl.gross_gain_loss_eur > 0: total_gains += rgl.gross_gain_loss_eur
                 else: total_losses_abs += rgl.gross_gain_loss_eur.copy_abs()
             
-            data.append([Paragraph("Summe Gewinne (Zeile 21):", self.styles['TableHeader']), "", "", "", "", Paragraph(self._format_decimal(total_gains).replace('.',','), self.styles['TableCellRight']), ""])
-            data.append([Paragraph("Summe Verluste (Zeile 24):", self.styles['TableHeader']), "", "", "", "", Paragraph(self._format_decimal(total_losses_abs).replace('.',','), self.styles['TableCellRight']), ""])
+            form_rules = get_form_rules(self.tax_year)
+            if form_rules.separate_derivative_lines:
+                gains_label = "Summe Gewinne (Zeile 21):"
+                losses_label = "Summe Verluste (Zeile 24):"
+            else:
+                gains_label = "Summe Gewinne Termingeschäfte:"
+                losses_label = "Summe Verluste Termingeschäfte (in Zeile 22 enthalten):"
+            data.append([Paragraph(gains_label, self.styles['TableHeader']), "", "", "", "", Paragraph(self._format_decimal(total_gains).replace('.',','), self.styles['TableCellRight']), ""])
+            data.append([Paragraph(losses_label, self.styles['TableHeader']), "", "", "", "", Paragraph(self._format_decimal(total_losses_abs).replace('.',','), self.styles['TableCellRight']), ""])
             # Adjusted quantity col width
             table = self._create_styled_table(data, col_widths=[3.5*cm, 2.5*cm, 1.8*cm, 2.5*cm, 1.5*cm, 2.2*cm, 2*cm])
             self.story.append(KeepTogether(table))

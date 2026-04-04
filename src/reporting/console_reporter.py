@@ -14,9 +14,56 @@ import src.config as config
 from src.utils.type_utils import parse_ibkr_date
 from src.engine.loss_offsetting import LossOffsettingResult
 from src.reporting.reporting_utils import _q, _q_qty, _q_price, get_kap_inv_category_for_reporting
+from src.reporting.form_rules import get_form_rules
 
 
 logger = logging.getLogger(__name__)
+
+
+_ASSET_CATEGORY_LABELS = {
+    AssetCategory.STOCK: ("Aktienveräußerungen", "Aktienbezeichnung"),
+    AssetCategory.OPTION: ("Termingeschäfte (Optionen)", "Optionsbezeichnung"),
+    AssetCategory.CFD: ("Termingeschäfte (CFDs)", "CFD-Bezeichnung"),
+    AssetCategory.BOND: ("Anleihenveräußerungen", "Anleihenbezeichnung"),
+    AssetCategory.INVESTMENT_FUND: ("Investmentfondsveräußerungen", "Fondsbezeichnung"),
+    AssetCategory.PRIVATE_SALE_ASSET: ("Private Veräußerungsgeschäfte (§23 EStG)", "Bezeichnung"),
+}
+
+
+def _print_per_asset_breakdown(
+    current_year_rgls: List[RealizedGainLoss],
+    asset_resolver: AssetResolver,
+    category: AssetCategory,
+):
+    """Print a per-asset gross G/L table for the given asset category."""
+    labels = _ASSET_CATEGORY_LABELS.get(category)
+    if not labels:
+        return
+    section_label, col_label = labels
+
+    g_l_per_asset: Dict[uuid.UUID, Dict[str, object]] = defaultdict(
+        lambda: {'description': 'Unknown Asset', 'total_gross_gain_loss': Decimal(0)}
+    )
+    for rgl in current_year_rgls:
+        if rgl.asset_category_at_realization == category:
+            asset = asset_resolver.get_asset_by_id(rgl.asset_internal_id)
+            asset_desc = asset.description if asset and asset.description else f"Asset ID: {rgl.asset_internal_id}"
+            g_l_per_asset[rgl.asset_internal_id]['description'] = asset_desc
+            current_total = g_l_per_asset[rgl.asset_internal_id]['total_gross_gain_loss']
+            if isinstance(current_total, Decimal):
+                g_l_per_asset[rgl.asset_internal_id]['total_gross_gain_loss'] = current_total + (rgl.gross_gain_loss_eur or Decimal(0))
+
+    print(f"\n  Detaillierte Aufschlüsselung: Gewinne/Verluste aus {section_label} pro Position (Brutto, vor Verrechnung)")
+    print("  " + "-" * 80)
+    print(f"  {col_label:<50} | {'Gesamt G/V (EUR)':>25}")
+    print("  " + "-" * 80)
+    if g_l_per_asset:
+        sorted_items = sorted(g_l_per_asset.items(), key=lambda item: str(item[1]['description']))
+        for _, data in sorted_items:
+            print(f"  {str(data['description']):<50} | {_q(data['total_gross_gain_loss'] if isinstance(data['total_gross_gain_loss'], Decimal) else Decimal(0)):>25}")
+    else:
+        print(f"  Keine {section_label} in diesem Zeitraum erfasst.")
+    print("  " + "-" * 80)
 
 
 def generate_console_tax_report(
@@ -54,13 +101,22 @@ def generate_console_tax_report(
         current_year_rgls = list(realized_gains_losses) # Fallback
 
     # --- Anlage KAP (from LossOffsettingResult) ---
+    form_rules = get_form_rules(tax_year)
     print("\nAnlage KAP (Einkünfte aus Kapitalvermögen)")
-    print(f"  Zeile 19 (Ausländische Kapitalerträge nach Saldierung, ohne Fonds & Derivatverluste): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, Decimal(0)))}")
+    if form_rules.z19_subtracts_derivative_losses:
+        print(f"  Zeile 19 (Ausländische Kapitalerträge nach Saldierung, ohne Fonds): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, Decimal(0)))}")
+    else:
+        print(f"  Zeile 19 (Ausländische Kapitalerträge nach Saldierung, ohne Fonds & Derivatverluste): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, Decimal(0)))}")
     print(f"  Zeile 20 (Gewinne aus Aktienveräußerungen): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN, Decimal(0)))}")
-    print(f"  Zeile 21 (Einkünfte Stillhalterprämien & Gewinne Termingeschäfte): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN, Decimal(0)))}")
-    print(f"  Zeile 22 (Verluste Kapitalerträge ohne Aktien & Termingeschäfte): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, Decimal(0)))}")
+    if form_rules.separate_derivative_lines:
+        print(f"  Zeile 21 (Einkünfte Stillhalterprämien & Gewinne Termingeschäfte): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN, Decimal(0)))}")
+    if form_rules.z22_includes_derivative_losses:
+        print(f"  Zeile 22 (Verluste Kapitalerträge ohne Aktien, inkl. Termingeschäfte): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, Decimal(0)))}")
+    else:
+        print(f"  Zeile 22 (Verluste Kapitalerträge ohne Aktien & Termingeschäfte): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, Decimal(0)))}")
     print(f"  Zeile 23 (Verluste aus Aktienveräußerungen): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST, Decimal(0)))}")
-    print(f"  Zeile 24 (Verluste aus Termingeschäften): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))}")
+    if form_rules.separate_derivative_lines:
+        print(f"  Zeile 24 (Verluste aus Termingeschäften): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))}")
 
     # --- WHT (From centralized calculation) ---
     wht_total_eur = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal(0))
@@ -85,30 +141,13 @@ def generate_console_tax_report(
             print(f"    └─ WARNUNG: {len(unlinked_wht_events)} Quellensteuer-Ereignisse konnten nicht mit Erträgen verknüpft werden")
 
 
-    # --- Detailed Stock G/L (Gross, for transparency) ---
-    stock_g_l_per_asset: Dict[uuid.UUID, Dict[str, Any]] = defaultdict( 
-        lambda: {'description': 'Unknown Asset', 'total_gross_gain_loss': Decimal(0), 'realizations': []}
-    )
-    for rgl in current_year_rgls: # Use filtered list
-        if rgl.asset_category_at_realization == AssetCategory.STOCK:
-            asset = asset_resolver.get_asset_by_id(rgl.asset_internal_id)
-            asset_desc = asset.description if asset and asset.description else f"Asset ID: {rgl.asset_internal_id}"
-            stock_g_l_per_asset[rgl.asset_internal_id]['description'] = asset_desc
-            current_total = stock_g_l_per_asset[rgl.asset_internal_id]['total_gross_gain_loss']
-            if isinstance(current_total, Decimal):
-                 stock_g_l_per_asset[rgl.asset_internal_id]['total_gross_gain_loss'] = current_total + (rgl.gross_gain_loss_eur or Decimal(0))
-
-    print("\n  Detaillierte Aufschlüsselung: Gewinne/Verluste aus Aktienveräußerungen pro Aktie (Brutto, vor Verrechnung)")
-    print("  " + "-"*80)
-    print(f"  {'Aktienbezeichnung':<50} | {'Gesamt G/V (EUR)':>25}")
-    print("  " + "-"*80)
-    if stock_g_l_per_asset:
-        sorted_stock_g_l = sorted(stock_g_l_per_asset.items(), key=lambda item: str(item[1]['description'])) 
-        for _, data in sorted_stock_g_l:
-            print(f"  {str(data['description']):<50} | {_q(data['total_gross_gain_loss'] if isinstance(data['total_gross_gain_loss'], Decimal) else Decimal(0)):>25}")
-    else:
-        print("  Keine Aktienveräußerungen in diesem Zeitraum erfasst.")
-    print("  " + "-"*80)
+    # --- Detailed per-asset G/L breakdowns (Gross, for transparency) ---
+    # Determine which categories have realizations in this year
+    categories_with_rgls = set(rgl.asset_category_at_realization for rgl in current_year_rgls)
+    for category in [AssetCategory.STOCK, AssetCategory.OPTION, AssetCategory.CFD,
+                     AssetCategory.BOND, AssetCategory.INVESTMENT_FUND, AssetCategory.PRIVATE_SALE_ASSET]:
+        if category in categories_with_rgls:
+            _print_per_asset_breakdown(current_year_rgls, asset_resolver, category)
 
 
     # --- Anlage KAP-INV (Gross figures) ---
@@ -135,7 +174,7 @@ def generate_console_tax_report(
     print(f"    Zeile 7 (Auslands-Immobilienfonds): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS, Decimal(0)))}")
     print(f"    Zeile 8 (Sonstige Investmentfonds): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_AUSSCHUETTUNG_GROSS, Decimal(0)))}")
 
-    print("  Vorabpauschale (Brutto, vor Teilfreistellung) - für 2023: 0 EUR")
+    print("  Vorabpauschale (Brutto, vor Teilfreistellung):")
     vp_gross_by_fund_type: Dict[InvestmentFundType, Decimal] = defaultdict(Decimal)
     for vp_item in vorabpauschale_items: # Already filtered by engine for tax year in generation
         if vp_item.tax_year == tax_year: # Double check, though vp_items should be for tax_year
@@ -155,6 +194,10 @@ def generate_console_tax_report(
     print(f"    Zeile 23 (Auslands-Immobilienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 26 (Sonstige Investmentfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS, Decimal(0)))}")
 
+    # Z55: Vorabpauschale deduction on disposal
+    z55_value = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal(0))
+    print(f"  Zeile 55 (Anzurechnende Vorabpauschalen): {_q(z55_value)}")
+
     # --- Anlage SO (from LossOffsettingResult) ---
     print("\nAnlage SO (Sonstige Einkünfte - §23 EStG Private Sales)")
     so_z54_value = loss_offsetting_summary.form_line_values.get("ANLAGE_SO_Z54_NET_GV", Decimal(0)) 
@@ -166,12 +209,17 @@ def generate_console_tax_report(
     print("\n--- Zusammenfassung: Saldo der konzeptionellen Steuertöpfe (vor Anwendung Sparer-Pauschbetrag etc.) ---")
     print(f"  Saldo Aktien: {_q(loss_offsetting_summary.conceptual_net_stocks)}")
     
-    print(f"  Saldo Termingeschäfte (konzeptionell, nach Verrechnung und ggf. Verlustbegrenzung): {_q(loss_offsetting_summary.conceptual_net_derivatives_capped)}")
-    if loss_offsetting_summary.conceptual_net_derivatives_uncapped != loss_offsetting_summary.conceptual_net_derivatives_capped:
-        print(f"     (Saldo Termingeschäfte vor konzeptioneller Verlustbegrenzung: {_q(loss_offsetting_summary.conceptual_net_derivatives_uncapped)})")
-    print(f"     (Für Anlage KAP Zeile 24 deklarierte Verluste (Brutto, unbegrenzt): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))})")
+    if form_rules.derivative_loss_cap_applies:
+        print(f"  Saldo Termingeschäfte (konzeptionell, nach Verrechnung und ggf. Verlustbegrenzung): {_q(loss_offsetting_summary.conceptual_net_derivatives_capped)}")
+        if loss_offsetting_summary.conceptual_net_derivatives_uncapped != loss_offsetting_summary.conceptual_net_derivatives_capped:
+            print(f"     (Saldo Termingeschäfte vor konzeptioneller Verlustbegrenzung: {_q(loss_offsetting_summary.conceptual_net_derivatives_uncapped)})")
+        print(f"     (Für Anlage KAP Zeile 24 deklarierte Verluste (Brutto, unbegrenzt): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))})")
+    else:
+        print(f"  Saldo Termingeschäfte (konzeptionell, nach Verrechnung, ohne Verlustbegrenzung): {_q(loss_offsetting_summary.conceptual_net_derivatives_uncapped)}")
+        print(f"     (Verlustverrechnungsbeschränkung für Termingeschäfte ab {tax_year} aufgehoben)")
     
-    print(f"  Saldo Sonstige Kapitalerträge (nicht Fonds) & Investmentfonds (Netto, nach TF): {_q(loss_offsetting_summary.conceptual_net_other_income)}")
+    print(f"  Saldo Sonstige Kapitalerträge (nicht Fonds): {_q(loss_offsetting_summary.conceptual_net_other_income)}")
+    print(f"  Saldo Investmentfonds (Netto, nach TF, inkl. Vorabpauschale): {_q(loss_offsetting_summary.conceptual_fund_income_net_taxable)}")
 
     # --- NEW DETAILED BREAKDOWN FOR Sonstige Kapitalerträge (nicht Fonds) - POSITIVE PART ---
     print(f"    Detaillierte positive Komponenten für 'Sonstige Kapitalerträge (nicht Fonds)' (Beitrag zu Anlage KAP Zeile 19):")
