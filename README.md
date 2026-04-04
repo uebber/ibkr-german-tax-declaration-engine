@@ -296,7 +296,37 @@ The download uses a two-step API workflow:
 1. **SendRequest** -- triggers report generation, returns a reference code.
 2. **GetStatement** -- polls with the reference code until the CSV is ready.
 
-Date ranges are overridden per query to cover the exact calendar year. The `User-Agent` header is required by IBKR's API.
+Date ranges are overridden per query to cover the exact calendar year.
+
+**Important limitation:** The IBKR Flex Web Service API only retains approximately the last 2 calendar years of data. Requests for older years return error 1003 ("Statement is not available"). This means the automatic download can only fetch recent data -- it cannot retrieve the full trading history needed for accurate FIFO cost basis calculations. For older years, you must download data manually (see below).
+
+### Manual Download (Required for Older Years)
+
+Since the Flex Web Service API only serves ~2 years of history, you need to manually export older years from the IBKR Client Portal using Activity Statements, which have a longer retention window.
+
+**Step-by-step:**
+
+1. Log into the [IBKR Client Portal](https://www.interactivebrokers.com/portal).
+2. Navigate to **Performance & Reports > Flex Queries**.
+3. For each Flex Query you created (Trades, Cash Transactions, etc.), click the **Run** (arrow) icon.
+4. Set the **Period** to **Custom Date Range** and enter the desired calendar year (e.g., 2021-01-01 to 2021-12-31).
+5. Click **Run** and download the resulting CSV file.
+6. Rename the downloaded file to match the naming scheme and place it in `data_import/`:
+
+   | Query | Filename |
+   |-------|----------|
+   | Trades | `Trades-{YYYY}.csv` |
+   | Cash Transactions | `Cash_Transactions-{YYYY}.csv` |
+   | Corporate Actions | `Corporate_Actions-{YYYY}.csv` |
+   | Cash Balance | `Cash_Balance-{YYYY}.csv` |
+   | Options EAE | `Options_EAE-{YYYY}.csv` |
+   | Positions (Jan 1) | `Positions-{YYYY}-SoY.csv` |
+   | Positions (Dec 31) | `Positions-{YYYY}-EoY.csv` |
+
+7. For **Positions**, run the same query twice per year: once with the date set to **January 1** (SoY) and once with **December 31** (EoY).
+8. Repeat for each historical year back to your first year of trading at IBKR.
+
+**Example:** If your tax year is 2025 and you started trading in 2021, you need files for 2021-2025. The automatic download may cover 2024-2025, so you must manually export 2021-2023.
 
 ## Configuration
 
@@ -398,6 +428,7 @@ uv run pytest tests/test_group7_currency_fifo.py -v   # Currency FIFO
 
 ## Known Limitations
 
+*   **IBKR API history:** The Flex Web Service API only retains ~2 calendar years of data. Older years must be exported manually from the IBKR Client Portal (see [Manual Download](#manual-download-required-for-older-years)).
 *   **No "Alt-Anteile":** Assumes all investment fund shares were acquired on or after January 1, 2018.
 *   **Foreign WHT:** Aggregates WHT paid (Anlage KAP Zeile 41) but does not calculate creditable WHT.
 *   **No loss carry-forward/backward:** Calculations are limited to the specified tax year.
