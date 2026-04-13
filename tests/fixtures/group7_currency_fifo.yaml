@@ -2593,15 +2593,16 @@ tests:
   # ===========================================================================
 
   - id: CFX_ERR_001
-    description: "Missing ECB rate - graceful error handling"
+    description: "Missing trade rate - DataIntegrityError"
     notes: |
-      Bug Detection: Verify system handles missing ECB rates gracefully.
+      Bug Detection: Verify system rejects FX trades with missing rates.
 
-      When ecb_rate is null (missing), the CSV row has no valid trade rate.
-      The parser skips the event, so no FIFO lot is consumed and no RGL
-      is generated. The SOY balance remains unchanged at EOY.
+      When ecb_rate is null (missing), the CSV row has TradePrice=0.
+      The parser raises DataIntegrityError because a zero rate indicates
+      corrupt input data that cannot be processed for tax reporting.
+    expect_pipeline_error: true
     inputs:
-      currency: XYZ  # Exotic currency with no ECB rate
+      currency: XYZ  # Exotic currency with no rate
       soy_balance: "1000.00"
       fx_trades:
         - type: SELL_FOREIGN
@@ -2610,11 +2611,11 @@ tests:
           from_amount: "500.00"
           to_currency: EUR
           to_amount: "450.00"
-          ecb_rate: null  # Missing rate - parser will skip this trade
-      eoy_balance_expected: "1000.00"  # Unchanged - trade was skipped
+          ecb_rate: null  # Missing rate - parser will raise DataIntegrityError
+      eoy_balance_expected: "1000.00"
     expected:
-      rgls: []  # No RGL - trade skipped due to missing rate
-      errors: 0  # No EOY mismatch
+      rgls: []
+      errors: 0
 
   - id: CFX_ERR_002
     description: "Negative quantity in FX trade - error handling"

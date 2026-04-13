@@ -856,6 +856,19 @@ class TestCurrencyFifoRGLs(FifoTestCaseBase):
         # Use mock rate provider with spec-defined rates
         mock_rate_provider = CurrencyTestRateProvider(spec)
 
+        # Tests that expect a pipeline error (e.g., DataIntegrityError for corrupt data)
+        if spec.expect_pipeline_error:
+            with pytest.raises(pytest.fail.Exception, match="data integrity"):
+                self._run_pipeline(
+                    trades_data=trades_data,
+                    positions_start_data=positions_start,
+                    positions_end_data=positions_end,
+                    cash_balance_data=cash_balance_data,
+                    custom_rate_provider=mock_rate_provider,
+                    tax_year=tax_year,
+                )
+            return
+
         actual = self._run_pipeline(
             trades_data=trades_data,
             positions_start_data=positions_start,

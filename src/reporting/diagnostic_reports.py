@@ -347,9 +347,10 @@ def print_asset_pl_summary_debug(
         AssetCategory.INVESTMENT_FUND: 3,
         AssetCategory.OPTION: 4,
         AssetCategory.CFD: 5,
-        AssetCategory.PRIVATE_SALE_ASSET: 6,
-        AssetCategory.CASH_BALANCE: 7,
-        AssetCategory.UNKNOWN: 8,
+        AssetCategory.FUTURE: 6,
+        AssetCategory.PRIVATE_SALE_ASSET: 7,
+        AssetCategory.CASH_BALANCE: 8,
+        AssetCategory.UNKNOWN: 9,
     }
 
     # Define fund type sort order (for sub-sorting within INVESTMENT_FUND)

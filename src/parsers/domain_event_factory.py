@@ -20,6 +20,7 @@ from src.parsers.raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord,
     RawOptionsEAERecord
 )
+from src.domain.exceptions import DataIntegrityError
 from src.utils.type_utils import parse_ibkr_date, parse_ibkr_datetime, safe_decimal
 
 logger = logging.getLogger(__name__)
@@ -198,13 +199,14 @@ class DomainEventFactory:
         all_created_events: List[FinancialEvent] = []
         candidate_option_lifecycle_events: List[OptionLifecycleEvent] = []
         candidate_stock_trades_for_linking: List[TradeEvent] = []
+        data_errors: List[str] = []
 
         self.processed_ibkr_trade_ids_for_options.clear()
 
         for rt in raw_trades:
             tx_id_primary = rt.transaction_id or rt.trade_id
             if not tx_id_primary:
-                 logger.error(f"Trade record for Symbol: {rt.symbol}, Date: {rt.trade_date}, Qty: {rt.quantity} lacks both transaction_id and trade_id. Skipping.")
+                 data_errors.append(f"Trade record for Symbol: {rt.symbol}, Date: {rt.trade_date}, Qty: {rt.quantity} lacks both transaction_id and trade_id.")
                  continue
 
             asset = self.asset_resolver.get_or_create_asset(
@@ -225,7 +227,7 @@ class DomainEventFactory:
                 report_date_str=rt.report_date
             )
             if not event_date_str_or_none:
-                 logger.error(f"Could not determine a valid event date for trade: {tx_id_primary}, Symbol: {rt.symbol}. Skipping event creation.")
+                 data_errors.append(f"Trade {tx_id_primary}, Symbol: {rt.symbol}: could not determine a valid event date.")
                  continue
             event_date_str = event_date_str_or_none
 
@@ -269,7 +271,7 @@ class DomainEventFactory:
                         base_monetary_value = calculated_second_leg_amount.copy_abs()
 
                     if trade_quantity_val == Decimal(0):
-                        logger.error(f"FX Pair trade {tx_id_primary} of {asset.ibkr_symbol} has zero quantity. Cannot determine direction/amounts.")
+                        data_errors.append(f"FX Pair trade {tx_id_primary} of {asset.ibkr_symbol} has zero quantity. Cannot determine direction/amounts.")
                         continue
 
                     if trade_quantity_val > 0: # Buying curr1 (e.g., EUR in EUR.USD)
@@ -295,13 +297,13 @@ class DomainEventFactory:
                             logger.warning(f"FX Pair trade {tx_id_primary}: Using calculated rate {calculated_rate:.6f} instead of reported rate {rate:.6f} due to discrepancy.")
                             rate = calculated_rate
                         elif rate == Decimal(0): # Both reported and calculable rates are zero/invalid
-                            logger.error(f"FX Pair trade {tx_id_primary}: Reported rate is {rate}, and could not calculate a valid rate from amounts (From: {from_amt_val} {from_curr}, To: {to_amt_val} {to_curr}). Cannot determine rate.")
+                            data_errors.append(f"FX Pair trade {tx_id_primary}: Reported rate is {rate}, and could not calculate a valid rate from amounts (From: {from_amt_val} {from_curr}, To: {to_amt_val} {to_curr}).")
                             continue
                         elif rate != Decimal(0) and (calculated_rate is None or calculated_rate == Decimal(0)):
                              logger.warning(f"FX Pair trade {tx_id_primary}: Could not calculate a valid rate from amounts, but reported rate is {rate:.6f}. Proceeding with reported rate.")
 
                     if not from_curr or not to_curr or from_amt_val <= Decimal(0) or to_amt_val <= Decimal(0) or (rate is None or rate <= Decimal(0)):
-                        logger.error(f"Could not determine valid amounts/currencies/rate for FX Pair trade {tx_id_primary} of {asset.ibkr_symbol}. From: {from_amt_val} {from_curr}, To: {to_amt_val} {to_curr}, Rate: {rate}. Skipping CurrencyConversionEvent.")
+                        data_errors.append(f"FX Pair trade {tx_id_primary} of {asset.ibkr_symbol}: invalid amounts/currencies/rate. From: {from_amt_val} {from_curr}, To: {to_amt_val} {to_curr}, Rate: {rate}.")
                         continue
 
                     target_cash_balance_asset = self.asset_resolver.get_or_create_asset(
@@ -326,7 +328,7 @@ class DomainEventFactory:
                 try:
                     event_type, is_position_flip = self._determine_trade_event_type(rt)
                 except ValueError as e:
-                    logger.error(f"Skipping trade ID {tx_id_primary} due to error determining type: {e}")
+                    data_errors.append(f"Trade {tx_id_primary}: error determining type: {e}")
                     continue
 
                 trade_quantity_val = safe_decimal(rt.quantity, default=Decimal('0'))
@@ -403,17 +405,27 @@ class DomainEventFactory:
                 all_created_events.append(trade_event)
                 logger.debug(f"Created TradeEvent: {trade_event.event_type.name} for {asset.get_classification_key()}, Qty: {trade_event.quantity}, Price: {trade_event.price_foreign_currency}, Gross: {trade_event.gross_amount_foreign_currency} {trade_event.local_currency}")
 
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} trade record(s) have data integrity issues:\n  " + "\n  ".join(data_errors)
+            )
         logger.info(f"Finished initial processing of {len(raw_trades)} raw trade records. Generated {len(all_created_events)} domain events. Linking deferred.")
         logger.info(f"Collected {len(candidate_option_lifecycle_events)} candidate option lifecycle events and {len(candidate_stock_trades_for_linking)} candidate stock trades for linking.")
         return all_created_events, candidate_option_lifecycle_events, candidate_stock_trades_for_linking
 
+    # Cash transaction types that are legitimately non-tax-relevant and can be skipped.
+    _KNOWN_IGNORABLE_CASH_TX_TYPES = {
+        "DEPOSITS/WITHDRAWALS",
+    }
+
     def create_events_from_cash_transactions(self, raw_cash_transactions: List[RawCashTransactionRecord]) -> List[FinancialEvent]:
         logger.info(f"Processing {len(raw_cash_transactions)} raw cash transaction records into domain events...")
         domain_events: List[FinancialEvent] = []
+        data_errors: List[str] = []
         for rct in raw_cash_transactions:
             tx_id_for_event = rct.transaction_id
             if not tx_id_for_event:
-                logger.error(f"Cash transaction (Type: {rct.type}, Desc: {rct.description}, Date: {rct.settle_date or rct.date_time or rct.report_date}) lacks a transaction ID. Skipping event.")
+                data_errors.append(f"Cash transaction (Type: {rct.type}, Desc: {rct.description}, Date: {rct.settle_date or rct.date_time or rct.report_date}) lacks a transaction ID.")
                 continue
 
             is_instrument_specific_ct = bool(
@@ -445,7 +457,7 @@ class DomainEventFactory:
                 report_date_str=rct.report_date
             )
             if not event_date_str_or_none:
-                logger.error(f"Could not determine a valid event date for cash transaction: {rct.transaction_id}, Type: {rct.type}, Desc: {rct.description}. Skipping event creation.")
+                data_errors.append(f"Cash transaction {rct.transaction_id}, Type: {rct.type}, Desc: {rct.description}: could not determine a valid event date.")
                 continue
             event_date_str = event_date_str_or_none
 
@@ -571,23 +583,53 @@ class DomainEventFactory:
                 event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
                 domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
 
+            # Commission adjustments sometimes arrive as "Deposits/Withdrawals" type.
+            # Detect these before the ignorable-type check so they affect the currency ledger.
+            if domain_event_instance is None and event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper:
+                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
+                if raw_amount >= Decimal(0):
+                    # Positive = commission refund (cash inflow)
+                    domain_event_instance = CashFlowEvent(
+                        asset_for_event.internal_asset_id, event_date_str,
+                        event_type=FinancialEventType.CAPITAL_REPAYMENT,
+                        source_country_code=None, **event_params_kw
+                    )
+                else:
+                    # Negative = additional commission charge (cash outflow)
+                    domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
+                logger.info(
+                    f"Commission adjustment in Deposits/Withdrawals (TxID: {rct.transaction_id}): "
+                    f"{raw_amount} {rct.currency_primary} → {domain_event_instance.event_type.name}"
+                )
+
             if domain_event_instance:
                 logger.debug(f"Created {type(domain_event_instance).__name__} (Type: {domain_event_instance.event_type.name}) for asset {asset_for_event.get_classification_key()} from cash tx ID {rct.transaction_id}, Amt: {event_params_kw['gross_amount_foreign_currency']} {event_params_kw['local_currency']}")
                 domain_events.append(domain_event_instance)
             else:
-                logger.debug(f"Cash transaction type '{rct.type}' (Desc: '{rct.description}') for asset {asset_for_event.get_classification_key()} did not map to a specific domain event. Skipping.")
+                if event_type_str_upper in self._KNOWN_IGNORABLE_CASH_TX_TYPES:
+                    logger.debug(f"Cash transaction type '{rct.type}' (TxID: {rct.transaction_id}) is a known non-tax-relevant type. Skipping.")
+                else:
+                    data_errors.append(
+                        f"Cash transaction type '{rct.type}' (TxID: {rct.transaction_id}, Desc: '{rct.description}') "
+                        f"for asset {asset_for_event.get_classification_key()} is not recognized and not in the known-ignorable list."
+                    )
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} cash transaction record(s) have data integrity issues:\n  " + "\n  ".join(data_errors)
+            )
         return domain_events
 
 
     def create_events_from_corporate_actions(self, raw_corporate_actions: List[RawCorporateActionRecord]) -> List[CorporateActionEvent]:
         logger.info(f"Processing {len(raw_corporate_actions)} raw corporate action records into domain events...")
         domain_ca_events: List[CorporateActionEvent] = []
+        data_errors: List[str] = []
 
         for idx, rca in enumerate(raw_corporate_actions):
             logger.debug(f"CA Record {idx+1}/{len(raw_corporate_actions)}: Data: Symbol='{rca.symbol}', Desc='{rca.description}', Type='{rca.type_ca}', ActionID='{rca.action_id_ibkr}'")
 
             if not rca.symbol or not rca.description or not rca.type_ca:
-                logger.warning(f"CA Record {idx+1}: Skipping due to missing Symbol, Description, or Type. Data: {rca}")
+                data_errors.append(f"CA Record {idx+1}: missing Symbol, Description, or Type. ActionID: {rca.action_id_ibkr}, Data: Symbol='{rca.symbol}', Desc='{rca.description}', Type='{rca.type_ca}'.")
                 continue
             logger.debug(f"CA Record {idx+1}: Passed initial essential field check.")
 
@@ -607,7 +649,7 @@ class DomainEventFactory:
                 continue
 
             if not affected_asset.ibkr_symbol and affected_asset.asset_category != AssetCategory.CASH_BALANCE:
-                logger.error(f"CA Record {idx+1}: Corporate action (ActionID: {rca.action_id_ibkr}, Type: {rca.type_ca}, CSV Date: {rca.report_date or rca.pay_date or rca.ex_date}) affects asset {affected_asset.internal_asset_id} which lacks an 'ibkr_symbol'. Skipping event.")
+                data_errors.append(f"CA Record {idx+1}: Corporate action (ActionID: {rca.action_id_ibkr}, Type: {rca.type_ca}, CSV Date: {rca.report_date or rca.pay_date or rca.ex_date}) affects asset {affected_asset.internal_asset_id} which lacks an 'ibkr_symbol'.")
                 continue
             logger.debug(f"CA Record {idx+1}: Asset has ibkr_symbol ('{affected_asset.ibkr_symbol}') or is CashBalance.")
 
@@ -618,7 +660,7 @@ class DomainEventFactory:
             )
             logger.debug(f"CA Record {idx+1}: Prioritized date determined: '{event_date_str_or_none}' (Pay: {rca.pay_date}, Report: {rca.report_date}, Ex: {rca.ex_date})")
             if not event_date_str_or_none:
-                 logger.error(f"CA Record {idx+1}: Could not determine a valid event date for corporate action: {rca.action_id_ibkr}, Type: {rca.type_ca}, Symbol: {rca.symbol}. Skipping event creation.")
+                 data_errors.append(f"CA Record {idx+1}: Could not determine a valid event date for corporate action: {rca.action_id_ibkr}, Type: {rca.type_ca}, Symbol: {rca.symbol}.")
                  continue
             event_date_str = event_date_str_or_none
             logger.debug(f"CA Record {idx+1}: Using event date: {event_date_str}")
@@ -774,6 +816,7 @@ class DomainEventFactory:
                              logger.info(f"CA Record {idx+1} (TC-Stock): Skipping receive-side row "
                                          f"for stock merger {rca.action_id_ibkr} (qty={quantity_ca}). "
                                          f"Lot transfer handled by dispose-side event.")
+                             continue  # Intentional skip — not a data integrity issue
                          else:
                              new_asset = self.asset_resolver.get_or_create_asset(
                                  raw_isin=None, raw_conid=None,
@@ -831,22 +874,14 @@ class DomainEventFactory:
                 logger.info(f"CA Record {idx+1}: Successfully created {type(domain_ca_event_instance).__name__} (Type: {domain_ca_event_instance.event_type.name}) for asset {affected_asset.get_classification_key()} from CA ID {rca.action_id_ibkr}, Gross Amt: {common_ca_params_kw_base.get('gross_amount_foreign_currency')} {common_ca_params_kw_base.get('local_currency')}")
                 domain_ca_events.append(domain_ca_event_instance)
             else:
-                 logger.warning(f"CA Record {idx+1}: Corporate action type '{ca_type_from_file}' (Desc: '{ca_desc_from_file}') for asset {affected_asset.get_classification_key()} did not map to a specific domain event type or parsing failed. Creating generic CorporateActionEvent.")
-                 common_ca_params_kw_base["gross_amount_foreign_currency"] = gross_amount_ca
-                 common_ca_params_kw = {k: v for k, v in common_ca_params_kw_base.items() if v is not None}
-
-                 fallback_event_type = FinancialEventType.CORP_STOCK_DIVIDEND
-                 if ca_type_from_file == "RS": fallback_event_type = FinancialEventType.CORP_SPLIT_FORWARD
-                 elif ca_type_from_file == "TC": fallback_event_type = FinancialEventType.CORP_MERGER_CASH
-
-                 generic_event = CorporateActionEvent(
-                     asset_internal_id=affected_asset.internal_asset_id,
-                     event_date=event_date_str,
-                     event_type=fallback_event_type,
-                     **common_ca_params_kw
+                 data_errors.append(
+                     f"CA Record {idx+1}: Corporate action type '{ca_type_from_file}' (ActionID: {rca.action_id_ibkr}, Desc: '{ca_desc_from_file}') "
+                     f"for asset {affected_asset.get_classification_key()} could not be mapped to a specific domain event type."
                  )
-                 domain_ca_events.append(generic_event)
-                 logger.info(f"CA Record {idx+1}: Created generic CorporateActionEvent for fallback. Type assigned: {fallback_event_type.name}, Gross: {gross_amount_ca}")
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} corporate action record(s) have data integrity issues:\n  " + "\n  ".join(data_errors)
+            )
         return domain_ca_events
 
     def create_events_from_options_eae(
@@ -864,6 +899,7 @@ class DomainEventFactory:
         """
         logger.info(f"Processing {len(raw_records)} raw OptionEAE records...")
         cash_settlement_events: List[OptionCashSettlementEvent] = []
+        data_errors: List[str] = []
 
         # Group records by (conid, date) to pair Assignment/Exercise with Cash Settlement
         from collections import defaultdict
@@ -905,7 +941,7 @@ class DomainEventFactory:
 
                 event_date = self._get_prioritized_date(trade_date_str=settle_row.date)
                 if not event_date:
-                    logger.error(f"OptionEAE: Cannot determine date for Cash Settlement of {settle_row.symbol}. Skipping.")
+                    data_errors.append(f"OptionEAE: Cannot determine date for Cash Settlement of {settle_row.symbol} (Conid: {settle_row.conid}).")
                     continue
 
                 # Get quantity and commission from the companion Assignment/Exercise row
@@ -940,5 +976,9 @@ class DomainEventFactory:
                            f"on {event_date}: proceeds={proceeds} {settle_row.currency_primary}, "
                            f"qty={qty_contracts} contracts, commission={commission}")
 
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} OptionEAE record(s) have data integrity issues:\n  " + "\n  ".join(data_errors)
+            )
         logger.info(f"Created {len(cash_settlement_events)} OptionCashSettlementEvents from OptionEAE data.")
         return cash_settlement_events

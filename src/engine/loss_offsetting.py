@@ -8,6 +8,7 @@ from src.domain.results import RealizedGainLoss, VorabpauschaleData, LossOffsett
 from src.domain.events import FinancialEvent, CashFlowEvent, WithholdingTaxEvent
 from src.domain.enums import AssetCategory, FinancialEventType, InvestmentFundType, TaxReportingCategory
 from src.domain.assets import Asset, InvestmentFund
+from src.domain.exceptions import ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 from src.reporting.form_rules import get_form_rules
@@ -78,7 +79,7 @@ class LossOffsettingEngine:
                     stock_gains_gross = self.ctx.add(stock_gains_gross, gross_gl_eur)
                 else:
                     stock_losses_abs = self.ctx.add(stock_losses_abs, gross_gl_eur.copy_abs())
-            elif cat in [AssetCategory.OPTION, AssetCategory.CFD]:
+            elif cat in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                 if gross_gl_eur > Decimal('0'):
                     derivative_gains_gross = self.ctx.add(derivative_gains_gross, gross_gl_eur)
                 else:
@@ -113,8 +114,7 @@ class LossOffsettingEngine:
         for event in self.current_year_financial_events:
             asset_resolved = self.asset_resolver.get_asset_by_id(event.asset_internal_id)
             if not asset_resolved:
-                logger.warning(f"Could not resolve asset ID {event.asset_internal_id} for financial event {event.event_id}. Skipping for LossOffsettingEngine income aggregation.")
-                continue
+                raise ProcessingError(f"LossOffsettingEngine: could not resolve asset ID {event.asset_internal_id} for financial event {event.event_id} ({event.event_type.name}).")
 
             event_gross_eur = event.gross_amount_eur if event.gross_amount_eur is not None else self.ctx.create_decimal(Decimal('0'))
 

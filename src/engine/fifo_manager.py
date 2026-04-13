@@ -8,7 +8,8 @@ from datetime import date as date_obj, datetime
 from src.domain.assets import Asset, Option 
 from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock
 from src.domain.results import RealizedGainLoss
-from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType 
+from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
+from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
@@ -512,8 +513,7 @@ class FifoLedger:
         lot_qty_contracts_or_units = trade_event.quantity.quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
 
         if lot_qty_contracts_or_units == Decimal(0):
-            logger.warning(f"TradeEvent {trade_event.ibkr_transaction_id} (BUY_LONG) has zero quantity after quantization, skipping lot creation.")
-            return
+            raise DataIntegrityError(f"TradeEvent {trade_event.ibkr_transaction_id} (BUY_LONG) has zero quantity after quantization. Original quantity: {trade_event.quantity}.")
         cost_basis_eur_per_unit = self.ctx.divide(total_cost_basis_eur, lot_qty_contracts_or_units)
 
         new_lot = FifoLot(
@@ -531,8 +531,7 @@ class FifoLedger:
         if trade_event.event_type != FinancialEventType.TRADE_SELL_SHORT_OPEN: return
         if trade_event.quantity is None or trade_event.quantity >= Decimal(0): return
         if trade_event.net_proceeds_or_cost_basis_eur is None:
-            logger.error(f"Cannot add short lot for trade {trade_event.ibkr_transaction_id} - net_proceeds_or_cost_basis_eur is None. Event must be enriched before FIFO processing.")
-            return
+            raise DataIntegrityError(f"Cannot add short lot for trade {trade_event.ibkr_transaction_id} - net_proceeds_or_cost_basis_eur is None. Event must be enriched before FIFO processing.")
         if not trade_event.ibkr_transaction_id:
             raise ValueError(f"Missing ibkr_transaction_id for trade {trade_event.event_id} needed for Short FIFO lot creation.")
 
@@ -540,8 +539,7 @@ class FifoLedger:
         lot_qty_shorted_contracts_or_units = trade_event.quantity.copy_abs().quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
 
         if lot_qty_shorted_contracts_or_units == Decimal(0):
-            logger.warning(f"TradeEvent {trade_event.ibkr_transaction_id} (SELL_SHORT_OPEN) has zero quantity after quantization, skipping lot creation.")
-            return
+            raise DataIntegrityError(f"TradeEvent {trade_event.ibkr_transaction_id} (SELL_SHORT_OPEN) has zero quantity after quantization. Original quantity: {trade_event.quantity}.")
         sale_proceeds_eur_per_unit = self.ctx.divide(total_sale_proceeds_eur, lot_qty_shorted_contracts_or_units)
 
         new_short_lot = ShortFifoLot(
@@ -614,7 +612,7 @@ class FifoLedger:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
                 elif self.asset_category == AssetCategory.BOND:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
-                elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD]:
+                elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
                 elif self.asset_category == AssetCategory.INVESTMENT_FUND:
                     rgl_fund_type = self.fund_type
@@ -635,8 +633,7 @@ class FifoLedger:
                     elif rgl_fund_type in [InvestmentFundType.SONSTIGE_FONDS, InvestmentFundType.NONE]:
                         tax_cat = TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS
                     else: 
-                        logger.error(f"Unhandled fund type '{rgl_fund_type}' for KAP-INV tax category. Asset {self.asset_internal_id}, Event {sale_event.event_id}.")
-                        tax_cat = TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS 
+                        raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {sale_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
                     if holding_period_days is not None and holding_period_days <= 365:
@@ -738,7 +735,7 @@ class FifoLedger:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
                 elif self.asset_category == AssetCategory.BOND:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
-                elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD]:
+                elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
                     if self.asset_category == AssetCategory.OPTION and gross_gain_loss >= Decimal(0):
                         is_stillhalter_income_flag = True # Renamed
@@ -761,8 +758,7 @@ class FifoLedger:
                     elif rgl_fund_type in [InvestmentFundType.SONSTIGE_FONDS, InvestmentFundType.NONE]:
                         tax_cat = TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS
                     else: 
-                        logger.error(f"Unhandled fund type '{rgl_fund_type}' for KAP-INV tax category. Asset {self.asset_internal_id}, Event {cover_event.event_id}.")
-                        tax_cat = TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS 
+                        raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {cover_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
                     if holding_period_days is not None and holding_period_days <= 365:
@@ -886,7 +882,7 @@ class FifoLedger:
                 tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
             elif self.asset_category == AssetCategory.BOND:
                  tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
-            elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD]:
+            elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                  tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
             elif self.asset_category == AssetCategory.INVESTMENT_FUND:
                 rgl_fund_type = self.fund_type
@@ -907,8 +903,7 @@ class FifoLedger:
                 elif rgl_fund_type in [InvestmentFundType.SONSTIGE_FONDS, InvestmentFundType.NONE]:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS
                 else: 
-                    logger.error(f"Unhandled fund type '{rgl_fund_type}' for KAP-INV tax category. Asset {self.asset_internal_id}, Event {event.event_id}.")
-                    tax_cat = TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS
+                    raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {event.event_id}. Tax category mapping must be updated.")
 
             elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
                 if holding_period_days is not None and holding_period_days <= 365:

@@ -8,6 +8,7 @@ from src.domain.events import TradeEvent
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger
 from src.domain.enums import FinancialEventType, AssetCategory
+from src.domain.exceptions import ProcessingError
 from src.identification.asset_resolver import AssetResolver # Added
 from src.domain.assets import Option, Asset, CashBalance # Added Option, Asset, and CashBalance
 from .base_processor import EventProcessor
@@ -27,8 +28,7 @@ class TradeProcessor(EventProcessor):
         realized_gains_losses: List[RealizedGainLoss] = []
 
         if not isinstance(event, TradeEvent):
-             logger.error(f"TradeProcessor received non-TradeEvent: {type(event).__name__} (ID: {event.event_id}). Skipping.")
-             return []
+             raise ProcessingError(f"TradeProcessor received non-TradeEvent: {type(event).__name__} (ID: {event.event_id}).")
 
         if not ledger:
              # Option assets might not have a ledger if they are only ever bought to exercise or sold to assign
@@ -43,15 +43,10 @@ class TradeProcessor(EventProcessor):
                  if isinstance(asset_obj_check, Option):
                      is_option_asset = True
             
-             if not is_option_asset: # Only error if it's not an option trade without a ledger
-                 logger.error(f"TradeProcessor received event {event.event_id} ({event.event_type.name}) for non-option asset {event.asset_internal_id} but no ledger exists. Skipping.")
-                 return []
-             else: # It's an option asset, but not an exercise/assignment/expiration.
-                  # This means it's a regular trade of an option.
-                  # The FifoLedger for this Option asset should have been created.
-                  # If it's None here, it's an issue.
-                  logger.error(f"TradeProcessor received trade for Option asset {event.asset_internal_id} (Event {event.event_id}, Type {event.event_type.name}), but no ledger was found. This is unexpected for option trades. Skipping.")
-                  return []
+             if not is_option_asset:
+                 raise ProcessingError(f"TradeProcessor: event {event.event_id} ({event.event_type.name}) for non-option asset {event.asset_internal_id} has no FIFO ledger.")
+             else:
+                  raise ProcessingError(f"TradeProcessor: Option trade {event.event_id} ({event.event_type.name}) for asset {event.asset_internal_id} has no FIFO ledger.")
 
 
         asset_resolver: Optional[AssetResolver] = context.get('asset_resolver')
@@ -211,7 +206,7 @@ class TradeProcessor(EventProcessor):
                          else: # No long position, or already short; this is opening/adding to short.
                               ledger.add_short_lot(event)
                 else:
-                    logger.warning(f"TradeProcessor received unexpected event type: {event.event_type.name} for asset category {ledger.asset_category.name} (Event ID: {event.event_id}). Ignoring.")
+                    raise ProcessingError(f"TradeProcessor: unexpected event type {event.event_type.name} for asset category {ledger.asset_category.name} (Event ID: {event.event_id}).")
 
         except ValueError as e:
             logger.critical(

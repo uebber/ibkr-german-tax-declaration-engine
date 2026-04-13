@@ -937,7 +937,7 @@ class PdfReportGenerator:
             self.story.append(Paragraph("Keine Aktienveräußerungen in diesem Steuerjahr.", self.styles['BodyText']))
 
         self.story.append(Paragraph("2.2 Gewinne/Verluste aus Termingeschäften (§20 Abs. 2 S. 1 Nr. 3 EStG)", self.styles['H3']))
-        derivative_rgls = [rgl for rgl in self.realized_gains_losses if rgl.asset_category_at_realization in [AssetCategory.OPTION, AssetCategory.CFD]]
+        derivative_rgls = [rgl for rgl in self.realized_gains_losses if rgl.asset_category_at_realization in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]]
         if derivative_rgls:
             data = [["Instrument", "Underlying", "Real. Datum", "Real. Typ", "Menge", "G/V Brutto EUR", "Stillhalter?"]]
             total_gains = Decimal(0)

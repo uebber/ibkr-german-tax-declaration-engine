@@ -7,6 +7,7 @@ class AssetCategory(Enum):
     INVESTMENT_FUND = auto()
     OPTION = auto()
     CFD = auto()
+    FUTURE = auto()
     PRIVATE_SALE_ASSET = auto() # Renamed from SECTION_23_ESTG_ASSET
     CASH_BALANCE = auto()
     UNKNOWN = auto() # For assets that couldn't be definitively categorized initially

@@ -7,9 +7,10 @@ from typing import Dict, Optional, Tuple, List
 logger = logging.getLogger(__name__)
 
 from src.domain.assets import (
-    Asset, InvestmentFund, Stock, Bond, Option, Cfd, PrivateSaleAsset, CashBalance # Changed Section23EstgAsset to PrivateSaleAsset
+    Asset, InvestmentFund, Stock, Bond, Option, Cfd, Future, PrivateSaleAsset, CashBalance
 )
 from src.domain.enums import AssetCategory, InvestmentFundType
+from src.domain.exceptions import DataIntegrityError
 from src import config as app_config # Added import
 
 class AssetClassifier:
@@ -30,6 +31,7 @@ class AssetClassifier:
             ("Aktie (Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE),
             ("Anleihe (Anlage KAP)", AssetCategory.BOND, InvestmentFundType.NONE),
             ("Option/Termingeschäft (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
+            ("Future/Termingeschäft (Anlage KAP)", AssetCategory.FUTURE, InvestmentFundType.NONE),
             ("CFD (Anlage KAP)", AssetCategory.CFD, InvestmentFundType.NONE),
             ("Cash / Währungssaldo (ECHT)", AssetCategory.CASH_BALANCE, InvestmentFundType.NONE), # Clarified for interactive prompt
             ("Devisenhandelspaar (z.B. EUR.USD) - wird als UNKNOWN klassifiziert", AssetCategory.UNKNOWN, InvestmentFundType.NONE), # Added for clarity if interactive
@@ -84,7 +86,7 @@ class AssetClassifier:
             if len(parts) == 2 and len(parts[0]) == 3 and len(parts[1]) == 3: # Basic CCY.CCY check
                 return True # Needs review, even if it becomes UNKNOWN
 
-        if asset.asset_category in [AssetCategory.OPTION, AssetCategory.CFD]:
+        if asset.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
             return False # These are usually clear.
         if asset.asset_category in [AssetCategory.STOCK, AssetCategory.BOND]:
              if asset.asset_category == AssetCategory.STOCK and ("ETF" in desc_upper or "FUND" in desc_upper): # Stock that looks like a fund
@@ -131,6 +133,8 @@ class AssetClassifier:
             return AssetCategory.OPTION, InvestmentFundType.NONE
         if cat_raw == "CFD":
             return AssetCategory.CFD, InvestmentFundType.NONE
+        if cat_raw == "FUT":
+            return AssetCategory.FUTURE, InvestmentFundType.NONE
 
         # Handle Stocks and Bonds
         if cat_raw == "STK" or sub_cat_raw == "COMMON" or sub_cat_raw == "PREFERRED":
@@ -169,6 +173,7 @@ class AssetClassifier:
         if category == AssetCategory.BOND: return Bond
         if category == AssetCategory.OPTION: return Option
         if category == AssetCategory.CFD: return Cfd
+        if category == AssetCategory.FUTURE: return Future
         if category == AssetCategory.PRIVATE_SALE_ASSET: return PrivateSaleAsset # Changed from SECTION_23_ESTG_ASSET and Section23EstgAsset
         if category == AssetCategory.CASH_BALANCE: return CashBalance
         return Asset # Fallback for UNKNOWN or other non-specific types
@@ -268,9 +273,11 @@ class AssetClassifier:
                  target_fund_type = InvestmentFundType.NONE
                  target_user_notes = "Auto-defaulted to CASH_BALANCE from UNKNOWN (matched symbol/currency)."
             else:
-                target_asset_cat = AssetCategory.STOCK
-                target_fund_type = InvestmentFundType.NONE
-                target_user_notes = "Auto-defaulted from UNKNOWN to STOCK (non-special, non-FX-pair)."
+                raise DataIntegrityError(
+                    f"Asset '{asset_key}' (Symbol: {asset.ibkr_symbol}, ISIN: {getattr(asset, 'isin', 'N/A')}, "
+                    f"AssetClass: {asset.ibkr_asset_class_raw}) has category UNKNOWN and cannot be auto-classified. "
+                    f"Run with --interactive to classify it manually, or add it to the classification cache."
+                )
             # Do NOT cache auto-classifications — only user-confirmed entries belong in cache
 
         else:

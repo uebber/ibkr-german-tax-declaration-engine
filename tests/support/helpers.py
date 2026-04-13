@@ -344,6 +344,8 @@ def _get_asset_class_and_desc_for_category(spec: FifoTestSpec) -> tuple:
         return "OPT", f"{spec.asset_symbol} Option"
     elif category == "CFD":
         return "CFD", f"{spec.asset_symbol} CFD"
+    elif category == "FUTURE":
+        return "FUT", f"{spec.asset_symbol} Future"
     elif category == "BOND":
         return "BOND", f"{spec.asset_symbol} Bond"
     else:
@@ -483,6 +485,7 @@ def _get_asset_category_enum_name(category_str: str) -> str:
         "INVESTMENT_FUND": AssetCategory.INVESTMENT_FUND.name,
         "OPTION": AssetCategory.OPTION.name,
         "CFD": AssetCategory.CFD.name,
+        "FUTURE": AssetCategory.FUTURE.name,
         "BOND": AssetCategory.BOND.name,
     }
     return category_map.get(category_str, AssetCategory.STOCK.name)

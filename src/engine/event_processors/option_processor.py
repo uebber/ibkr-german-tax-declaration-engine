@@ -12,7 +12,8 @@ from src.domain.assets import Option, Asset
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger, ConsumedLotDetail
-from src.identification.asset_resolver import AssetResolver 
+from src.domain.exceptions import ProcessingError
+from src.identification.asset_resolver import AssetResolver
 from .base_processor import EventProcessor
 import src.config as global_config # For precisions if needed
 from src.utils.type_utils import parse_ibkr_date # For holding period calculation
@@ -39,8 +40,7 @@ class OptionExerciseProcessor(EventProcessor):
         option_asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
 
         if not isinstance(option_asset, Option):
-            logger.error(f"Event {event.event_id} (Exercise) references asset {event.asset_internal_id} which is not an Option type ({type(option_asset).__name__}). Skipping adjustment storage.")
-            return [] 
+            raise ProcessingError(f"OptionExerciseProcessor: event {event.event_id} references asset {event.asset_internal_id} which is {type(option_asset).__name__}, not Option.")
 
         if option_asset.underlying_asset_internal_id is None:
             logger.info(f"Option asset {option_asset.get_classification_key()} (ID: {option_asset.internal_asset_id}) "
@@ -49,8 +49,7 @@ class OptionExerciseProcessor(EventProcessor):
             return []
 
         if option_asset.option_type not in ['C', 'P']:
-            logger.error(f"Option asset {option_asset.internal_asset_id} has invalid option_type '{option_asset.option_type}' for exercise event {event.event_id}.")
-            return [] 
+            raise ProcessingError(f"OptionExerciseProcessor: option asset {option_asset.internal_asset_id} has invalid option_type '{option_asset.option_type}' for exercise event {event.event_id}.")
 
         try:
             logger.info(f"Processing {event.event_type.name} for option {ledger.asset_internal_id} on {event.event_date} (ID: {event.event_id}). Qty Contracts: {event.quantity_contracts}")
@@ -94,8 +93,7 @@ class OptionAssignmentProcessor(EventProcessor):
         option_asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
 
         if not isinstance(option_asset, Option):
-            logger.error(f"Event {event.event_id} (Assignment) references asset {event.asset_internal_id} which is not an Option type ({type(option_asset).__name__}). Skipping adjustment storage.")
-            return []
+            raise ProcessingError(f"OptionAssignmentProcessor: event {event.event_id} references asset {event.asset_internal_id} which is {type(option_asset).__name__}, not Option.")
 
         if option_asset.underlying_asset_internal_id is None:
             logger.info(f"Option asset {option_asset.get_classification_key()} (ID: {option_asset.internal_asset_id}) "
@@ -104,8 +102,7 @@ class OptionAssignmentProcessor(EventProcessor):
             return []
 
         if option_asset.option_type not in ['C', 'P']:
-             logger.error(f"Option asset {option_asset.internal_asset_id} has invalid option_type '{option_asset.option_type}' for assignment event {event.event_id}.")
-             return []
+             raise ProcessingError(f"OptionAssignmentProcessor: option asset {option_asset.internal_asset_id} has invalid option_type '{option_asset.option_type}' for assignment event {event.event_id}.")
 
         try:
             logger.info(f"Processing {event.event_type.name} for option {ledger.asset_internal_id} on {event.event_date} (ID: {event.event_id}). Qty Contracts: {event.quantity_contracts}")

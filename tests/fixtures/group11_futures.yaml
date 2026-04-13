@@ -1,0 +1,192 @@
+# Test Group 11: Futures FIFO and Tax Routing
+#
+# Revision: 2026-04-13
+# PRD Coverage: Futures as Termingeschäfte (§20 Abs. 2 Nr. 3 EStG)
+#
+# Objective: Verify that futures contracts are:
+# - Classified as AssetCategory.FUTURE
+# - Routed to Termingeschäfte tax lines (Zeile 21/24 Anlage KAP)
+# - Processed through standard FIFO mechanics
+# - Handled correctly for long and short positions
+#
+# Common assumptions:
+# - TAX_YEAR = 2023
+# - Commission = 1 EUR per trade
+# - EUR currency (no FX conversion)
+# - FUTURE category
+
+metadata:
+  group: 11
+  name: Futures FIFO and Tax Routing
+  prd_section: "Termingeschäfte"
+  revision: "2026-04-13"
+  commission_eur: 1.00
+
+tests:
+  # ===========================================================================
+  # Long Futures Position Tests (FUT_L_*)
+  # ===========================================================================
+
+  - id: FUT_L_001
+    description: "Simple long future: Buy 1 @ 4000, Sell 1 @ 4100"
+    inputs:
+      asset:
+        symbol: ESZ3.EUR
+        isin: TESTISINFUTEUR
+        category: FUTURE
+      intra_year_trades:
+        - type: BL
+          date: "2023-03-01"
+          qty: 1
+          price: 4000.00
+          currency: EUR
+        - type: SL
+          date: "2023-06-15"
+          qty: 1
+          price: 4100.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 1
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-06-15"
+          total_cost_basis_eur: 4001.00
+          total_proceeds_eur: 4099.00
+          gain_loss_eur: 98.00
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: FUT_L_002
+    description: "Long future with loss: Buy 2 @ 4000, Sell 2 @ 3800"
+    inputs:
+      asset:
+        symbol: NQZ3.EUR
+        isin: TESTISINFUT002
+        category: FUTURE
+      intra_year_trades:
+        - type: BL
+          date: "2023-02-01"
+          qty: 2
+          price: 4000.00
+          currency: EUR
+        - type: SL
+          date: "2023-08-01"
+          qty: 2
+          price: 3800.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 2
+          acquisition_date: "2023-02-01"
+          realization_date: "2023-08-01"
+          total_cost_basis_eur: 8001.00
+          total_proceeds_eur: 7599.00
+          gain_loss_eur: -402.00
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: FUT_L_003
+    description: "Partial close of long future: Buy 3 @ 5000, Sell 1 @ 5200"
+    inputs:
+      asset:
+        symbol: YMZ3.EUR
+        isin: TESTISINFUT003
+        category: FUTURE
+      intra_year_trades:
+        - type: BL
+          date: "2023-04-01"
+          qty: 3
+          price: 5000.00
+          currency: EUR
+        - type: SL
+          date: "2023-09-01"
+          qty: 1
+          price: 5200.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: SOLD_LONG
+          quantity: 1
+          acquisition_date: "2023-04-01"
+          realization_date: "2023-09-01"
+          total_cost_basis_eur: 5000.33
+          total_proceeds_eur: 5199.00
+          gain_loss_eur: 198.67
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      eoy_state:
+        quantity: 2
+      errors: 0
+
+  # ===========================================================================
+  # Short Futures Position Tests (FUT_S_*)
+  # ===========================================================================
+
+  - id: FUT_S_001
+    description: "Simple short future: Sell short 1 @ 4200, Buy cover 1 @ 4000"
+    inputs:
+      asset:
+        symbol: ESH3.EUR
+        isin: TESTISINFUT004
+        category: FUTURE
+      intra_year_trades:
+        - type: SSO
+          date: "2023-01-15"
+          qty: 1
+          price: 4200.00
+          currency: EUR
+        - type: BSC
+          date: "2023-05-15"
+          qty: 1
+          price: 4000.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 1
+          acquisition_date: "2023-01-15"
+          realization_date: "2023-05-15"
+          total_cost_basis_eur: 4001.00
+          total_proceeds_eur: 4199.00
+          gain_loss_eur: 198.00
+          tax_category: ANLAGE_KAP_TERMIN_GEWINN
+      eoy_state:
+        quantity: 0
+      errors: 0
+
+  - id: FUT_S_002
+    description: "Short future with loss: Sell short 1 @ 3900, Buy cover 1 @ 4100"
+    inputs:
+      asset:
+        symbol: ESM3.EUR
+        isin: TESTISINFUT005
+        category: FUTURE
+      intra_year_trades:
+        - type: SSO
+          date: "2023-03-01"
+          qty: 1
+          price: 3900.00
+          currency: EUR
+        - type: BSC
+          date: "2023-07-01"
+          qty: 1
+          price: 4100.00
+          currency: EUR
+    expected:
+      rgls:
+        - realization_type: COV_SHORT
+          quantity: 1
+          acquisition_date: "2023-03-01"
+          realization_date: "2023-07-01"
+          total_cost_basis_eur: 4101.00
+          total_proceeds_eur: 3899.00
+          gain_loss_eur: -202.00
+          tax_category: ANLAGE_KAP_TERMIN_VERLUST
+      eoy_state:
+        quantity: 0
+      errors: 0

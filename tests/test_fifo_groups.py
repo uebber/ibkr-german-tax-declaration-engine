@@ -53,6 +53,7 @@ def load_all_fifo_specs() -> List[Tuple[str, FifoTestSpec]]:
         ("group3", "group3_eoy_validation.yaml"),
         ("group4", "group4_multi_year.yaml"),
         ("group5", "group5_complex_sequences.yaml"),
+        ("group11", "group11_futures.yaml"),
     ]
 
     all_specs = []
@@ -157,7 +158,7 @@ class TestFifoSpecsLoaded:
 
     def test_total_spec_count(self):
         """Verify total number of specs across all groups."""
-        assert len(ALL_FIFO_SPECS) == 42, f"Expected 42 total specs, got {len(ALL_FIFO_SPECS)}"
+        assert len(ALL_FIFO_SPECS) == 47, f"Expected 47 total specs, got {len(ALL_FIFO_SPECS)}"
 
     def test_group1_count(self):
         """Verify Group 1 has 10 specs."""

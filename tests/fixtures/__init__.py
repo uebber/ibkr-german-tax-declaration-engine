@@ -569,6 +569,8 @@ class CurrencyFifoTestSpec:
     notes: Optional[str] = None
     # Whether rgls were explicitly specified in YAML (even if empty list)
     has_explicit_rgl_expectations: bool = True
+    # Whether the pipeline is expected to raise an error (e.g., DataIntegrityError)
+    expect_pipeline_error: bool = False
     # Skip flag for tests that test unimplemented features
     skip: bool = False
     skip_reason: Optional[str] = None
@@ -850,6 +852,7 @@ def parse_currency_fifo_tests(spec_data: Dict[str, Any]) -> List[CurrencyFifoTes
             expected_warnings=expected.get("warnings", 0),
             has_explicit_rgl_expectations=has_explicit_rgl_expectations,
             notes=test_dict.get("notes"),
+            expect_pipeline_error=test_dict.get("expect_pipeline_error", False),
             skip=test_dict.get("skip", False),
             skip_reason=test_dict.get("skip_reason"),
         ))

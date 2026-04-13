@@ -19,6 +19,7 @@ from src.identification.asset_resolver import AssetResolver
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.domain.enums import FinancialEventType, InvestmentFundType 
 from src.utils.sorting_utils import get_event_sort_key
+from src.domain.exceptions import ProcessingError
 from src.utils.type_utils import parse_ibkr_date
 
 from .fifo_manager import FifoLedger
@@ -421,8 +422,7 @@ def run_main_calculations(
     for event_idx, event in enumerate(current_year_events):
         asset_object = asset_resolver.get_asset_by_id(event.asset_internal_id)
         if not asset_object:
-            logger.error(f"Event {event.event_id} ({event.event_type.name}) references unknown asset {event.asset_internal_id}. Skipping processing.")
-            continue
+            raise ProcessingError(f"Event {event.event_id} ({event.event_type.name}) references unknown asset {event.asset_internal_id}. Asset resolution failure.")
 
         ledger = fifo_ledgers.get(asset_object.internal_asset_id)
         processor = event_processor_map.get(event.event_type)
@@ -438,8 +438,7 @@ def run_main_calculations(
             if not ledger and asset_object.asset_category == AssetCategory.OPTION:
                 logger.warning(f"Option event {event.event_id} ({event.event_type.name}) occurred, but no FIFO ledger exists. Processor will handle.")
             elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:
-                logger.warning(f"Non-option/non-cash event {event.event_id} ({event.event_type.name}) requires ledger, but none found for asset {asset_object.get_classification_key()}. Skipping processor.")
-                continue
+                raise ProcessingError(f"Event {event.event_id} ({event.event_type.name}) for asset {asset_object.get_classification_key()} requires a FIFO ledger but none was found.")
 
             try:
                 context: Dict[str, Any] = {
@@ -474,11 +473,13 @@ def run_main_calculations(
                 logger.critical(f"Fatal error processing event {event.event_id} ({event.event_type.name}) for asset {asset_object.get_classification_key()} via {type(processor).__name__}: {e}. Aborting.")
                 raise e
             except TypeError as e:
-                logger.error(f"Type error processing event {event.event_id} ({event.event_type.name}) with {type(processor).__name__}: {e}. Skipping.", exc_info=True)
-                continue
+                raise ProcessingError(
+                    f"Type error processing event {event.event_id} ({event.event_type.name}) with {type(processor).__name__}: {e}"
+                ) from e
             except NotImplementedError:
-                logger.warning(f"Processor {type(processor).__name__} indicated logic for event type {event.event_type.name} (ID: {event.event_id}) is not yet implemented.")
-                continue
+                raise ProcessingError(
+                    f"Processor {type(processor).__name__} does not implement handling for event type {event.event_type.name} (ID: {event.event_id})."
+                )
 
         elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:
             # No security FIFO ledger, but cash flow events still affect currency ledgers

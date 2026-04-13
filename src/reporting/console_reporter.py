@@ -24,6 +24,7 @@ _ASSET_CATEGORY_LABELS = {
     AssetCategory.STOCK: ("Aktienveräußerungen", "Aktienbezeichnung"),
     AssetCategory.OPTION: ("Termingeschäfte (Optionen)", "Optionsbezeichnung"),
     AssetCategory.CFD: ("Termingeschäfte (CFDs)", "CFD-Bezeichnung"),
+    AssetCategory.FUTURE: ("Termingeschäfte (Futures)", "Future-Bezeichnung"),
     AssetCategory.BOND: ("Anleihenveräußerungen", "Anleihenbezeichnung"),
     AssetCategory.INVESTMENT_FUND: ("Investmentfondsveräußerungen", "Fondsbezeichnung"),
     AssetCategory.PRIVATE_SALE_ASSET: ("Private Veräußerungsgeschäfte (§23 EStG)", "Bezeichnung"),
@@ -144,7 +145,7 @@ def generate_console_tax_report(
     # --- Detailed per-asset G/L breakdowns (Gross, for transparency) ---
     # Determine which categories have realizations in this year
     categories_with_rgls = set(rgl.asset_category_at_realization for rgl in current_year_rgls)
-    for category in [AssetCategory.STOCK, AssetCategory.OPTION, AssetCategory.CFD,
+    for category in [AssetCategory.STOCK, AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE,
                      AssetCategory.BOND, AssetCategory.INVESTMENT_FUND, AssetCategory.PRIVATE_SALE_ASSET]:
         if category in categories_with_rgls:
             _print_per_asset_breakdown(current_year_rgls, asset_resolver, category)

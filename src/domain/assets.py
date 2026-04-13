@@ -184,6 +184,17 @@ class Cfd(Derivative):
         self.asset_category = AssetCategory.CFD
 
 
+@dataclass(eq=False) # Inherit __eq__ and __hash__ from Asset (via Derivative)
+class Future(Derivative):
+    # Futures contracts — Termingeschäfte like options/CFDs for German tax purposes
+    def __init__(self, **kwargs_for_parents):
+        super().__init__(asset_category=kwargs_for_parents.pop('asset_category', AssetCategory.FUTURE), **kwargs_for_parents)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.asset_category = AssetCategory.FUTURE
+
+
 @dataclass(eq=False) # Inherit __eq__ and __hash__ from Asset
 class PrivateSaleAsset(Asset): # Renamed from Section23EstgAsset
     # Specific attributes for §23 EStG assets

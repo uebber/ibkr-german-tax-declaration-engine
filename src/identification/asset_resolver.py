@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Dict, Set, Optional, Tuple, Any
 
 from src.domain.assets import (
-    Asset, Stock, Bond, InvestmentFund, Option, Cfd, PrivateSaleAsset, CashBalance, Derivative # Changed Section23EstgAsset to PrivateSaleAsset
+    Asset, Stock, Bond, InvestmentFund, Option, Cfd, Future, PrivateSaleAsset, CashBalance, Derivative
 )
 from src.domain.enums import AssetCategory, InvestmentFundType
 from src.classification.asset_classifier import AssetClassifier # Dependency
@@ -109,6 +109,14 @@ class AssetResolver:
             )
         elif new_category == AssetCategory.CFD:
             new_asset = Cfd(
+                underlying_ibkr_conid=common_kwargs.pop("underlying_ibkr_conid", None),
+                underlying_ibkr_symbol=common_kwargs.pop("underlying_ibkr_symbol", None),
+                underlying_asset_internal_id=common_kwargs.pop("underlying_asset_internal_id", None),
+                multiplier=common_kwargs.pop("multiplier", Decimal("1")),
+                **common_kwargs
+            )
+        elif new_category == AssetCategory.FUTURE:
+            new_asset = Future(
                 underlying_ibkr_conid=common_kwargs.pop("underlying_ibkr_conid", None),
                 underlying_ibkr_symbol=common_kwargs.pop("underlying_ibkr_symbol", None),
                 underlying_asset_internal_id=common_kwargs.pop("underlying_asset_internal_id", None),
@@ -222,6 +230,12 @@ class AssetResolver:
                     multiplier=multiplier_val if multiplier_val is not None else Decimal("1"),
                     **asset_args
                 )
+            elif prelim_cat == AssetCategory.FUTURE:
+                asset_instance = Future(
+                    underlying_ibkr_conid=underlying_conid_val, underlying_ibkr_symbol=underlying_symbol_val,
+                    multiplier=multiplier_val if multiplier_val is not None else Decimal("1"),
+                    **asset_args
+                )
             elif prelim_cat == AssetCategory.STOCK:
                 asset_instance = Stock(**asset_args)
             elif prelim_cat == AssetCategory.BOND:
@@ -245,6 +259,7 @@ class AssetResolver:
                 0 if isinstance(a, InvestmentFund) else 1, 
                 0 if isinstance(a, Option) else 1,
                 0 if isinstance(a, Cfd) else 1,
+                0 if isinstance(a, Future) else 1,
                 0 if isinstance(a, Stock) else 1,
                 0 if isinstance(a, Bond) else 1,
                 0 if isinstance(a, PrivateSaleAsset) else 1, # Changed from Section23EstgAsset
