@@ -24,7 +24,16 @@ Also applies to foreign currency gains on non-interest-bearing accounts (see bmf
 ### Speculation Period Calculation
 - Period runs from acquisition date to sale date
 - Per BFH case law: the dates of the binding contracts (obligatorische Vertraege) are decisive
-- **Engine implementation:** 365-day threshold in `FifoManager` (holding_period_days <= 365)
+- The Jahresfrist is computed per **§108 AO i.V.m. §§187 Abs. 1, 188 Abs. 2 BGB**: it ends
+  with the expiry of the **anniversary day** of the acquisition in the following year. A sale
+  ON the anniversary day is still within the period (taxable); the first exempt day is the
+  day after. Acquisition on 29 February: the period ends with the last day of February of the
+  following year (§188 Abs. 3 BGB).
+- NOT a calendar-day count: across a leap day the anniversary lies 366 days after acquisition
+  and the sale is still taxable.
+- **Engine implementation:** `is_within_section23_speculation_period()` in
+  `src/tax_law/holding_period.py` (anniversary-date comparison; `holding_period_days` is
+  kept on the RGL as informational only).
 
 ### Inherited Assets (Unentgeltlicher Erwerb)
 For assets acquired without consideration (gift, inheritance), the acquirer inherits the original acquisition date of the predecessor for purposes of this provision.
