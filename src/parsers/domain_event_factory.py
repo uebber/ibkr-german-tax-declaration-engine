@@ -636,9 +636,9 @@ class DomainEventFactory:
         return domain_events
 
 
-    def create_events_from_corporate_actions(self, raw_corporate_actions: List[RawCorporateActionRecord]) -> List[CorporateActionEvent]:
+    def create_events_from_corporate_actions(self, raw_corporate_actions: List[RawCorporateActionRecord]) -> List[FinancialEvent]:
         logger.info(f"Processing {len(raw_corporate_actions)} raw corporate action records into domain events...")
-        domain_ca_events: List[CorporateActionEvent] = []
+        domain_ca_events: List[FinancialEvent] = []
         data_errors: List[str] = []
 
         for idx, rca in enumerate(raw_corporate_actions):
@@ -885,6 +885,44 @@ class DomainEventFactory:
                         fmv_per_new_share_foreign_currency=fmv_per_share,
                         **common_ca_params_kw
                     )
+
+            elif ca_type_from_file == "BM":
+                # Bond maturity (Fälligkeit) — redemption of a capital claim under
+                # §20 Abs. 2 Satz 1 Nr. 7 EStG (Einlösung gilt als Veräußerung).
+                # Economically a disposal of the entire position at par. Modelled as a
+                # synthetic TRADE_SELL_LONG so it reuses the bond FIFO + FX path and is
+                # replayed historically like any other trade. There is no IBKR trade
+                # record for the maturity itself; the proceeds come from the CA record.
+                maturity_quantity = quantity_ca          # negative = bonds removed
+                maturity_proceeds = gross_amount_ca      # total cash received (not a %)
+                if maturity_quantity is None or maturity_quantity >= Decimal(0) or maturity_proceeds is None:
+                    data_errors.append(
+                        f"CA Record {idx+1}: Bond maturity (BM) for asset {affected_asset.get_classification_key()} "
+                        f"(ActionID: {rca.action_id_ibkr}) has invalid quantity ({rca.quantity}) or proceeds ({rca.proceeds})."
+                    )
+                    continue
+                price_per_bond = maturity_proceeds / maturity_quantity.copy_abs()
+                maturity_currency = rca.currency_primary or affected_asset.currency
+                logger.info(
+                    f"CA Record {idx+1} (BM): Creating synthetic TRADE_SELL_LONG for bond maturity of "
+                    f"{affected_asset.get_classification_key()} (ActionID: {rca.action_id_ibkr}). "
+                    f"Qty: {maturity_quantity}, Proceeds: {maturity_proceeds} {maturity_currency}."
+                )
+                bm_event = TradeEvent(
+                    asset_internal_id=affected_asset.internal_asset_id,
+                    event_date=event_date_str,
+                    event_type=FinancialEventType.TRADE_SELL_LONG,
+                    quantity=maturity_quantity,
+                    price_foreign_currency=price_per_bond,
+                    commission_foreign_currency=Decimal('0.0'),
+                    commission_currency=maturity_currency,
+                    local_currency=maturity_currency,
+                    gross_amount_foreign_currency=maturity_proceeds.copy_abs(),
+                    ibkr_transaction_id=rca.transaction_id or f"BM-{rca.action_id_ibkr}",
+                    ibkr_activity_description=rca.action_description or rca.description,
+                )
+                domain_ca_events.append(bm_event)
+                continue
 
             if domain_ca_event_instance:
                 logger.info(f"CA Record {idx+1}: Successfully created {type(domain_ca_event_instance).__name__} (Type: {domain_ca_event_instance.event_type.name}) for asset {affected_asset.get_classification_key()} from CA ID {rca.action_id_ibkr}, Gross Amt: {common_ca_params_kw_base.get('gross_amount_foreign_currency')} {common_ca_params_kw_base.get('local_currency')}")
