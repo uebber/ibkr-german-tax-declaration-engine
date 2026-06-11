@@ -129,6 +129,48 @@ def _format_asset_info(asset_obj) -> str:
     symbol = asset_obj.ibkr_symbol or "N/A"
     return f"'{desc}' (Symbol: {symbol})"
 
+def _replay_historical_merger(merger_event, fifo_ledgers, asset_resolver) -> None:
+    """Apply ONE historical stock-for-stock merger (§20 Abs. 4a EStG,
+    tax-neutral lot transfer) — the per-event unit the unified replayer
+    streams in the MERGERS phase."""
+    source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
+    target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
+
+    if source_ledger is None:
+        logger.warning(f"Historical merger {merger_event.event_id}: No source ledger for {merger_event.asset_internal_id}. Skipping.")
+        return
+    if target_ledger is None:
+        logger.error(f"Historical merger {merger_event.event_id}: No target ledger for {merger_event.new_asset_internal_id}. Cannot transfer lots.")
+        raise ValueError(f"Target ledger missing for historical merger {merger_event.event_id}")
+
+    source_long_lots = source_ledger.drain_all_long_lots()
+    source_short_lots = source_ledger.drain_all_short_lots()
+    if not source_long_lots and not source_short_lots:
+        logger.debug(f"Historical merger {merger_event.event_id}: Source ledger {merger_event.asset_internal_id} has no lots. Skipping.")
+        return
+
+    try:
+        target_ledger.receive_all_lots_from_merger(
+            source_long_lots, source_short_lots,
+            merger_event.new_shares_received_per_old, merger_event
+        )
+    except Exception as e:
+        # Rollback source
+        source_ledger.lots.extend(source_long_lots)
+        source_ledger.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
+        source_ledger.short_lots.extend(source_short_lots)
+        source_ledger.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
+        logger.error(f"Historical merger {merger_event.event_id}: Failed to transfer lots. Rolled back. Error: {e}")
+        raise
+
+    assert len(source_ledger.lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no long lots after historical merger"
+    assert len(source_ledger.short_lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no short lots after historical merger"
+
+    logger.info(f"Historical merger: Transferred {len(source_long_lots)} long + {len(source_short_lots)} "
+                 f"short lots from {merger_event.asset_internal_id} to {merger_event.new_asset_internal_id} "
+                 f"(ratio: {merger_event.new_shares_received_per_old})")
+
+
 def run_main_calculations(
     financial_events: List[FinancialEvent],
     asset_resolver: AssetResolver,
@@ -219,9 +261,14 @@ def run_main_calculations(
     fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip
     currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip  # Separate dict for currency ledgers
 
-    # === Three-pass SOY initialization ===
-    # Pass 1: Create ledgers and simulate historical events (trades, splits, stock dividends)
-    logger.info("Pass 1: Creating FIFO ledgers and simulating historical events...")
+    # === Unified historical replay (AR5) ===
+    # ONE ordered stream rebuilds all pre-tax-year ledger state — securities
+    # AND currencies — under the documented phase contract (see engine/replay.py):
+    # LEDGER_EVENTS (chronological) -> MERGERS (chronological) -> RECONCILE.
+    from src.engine.replay import ReplayStream, Phase
+    stream = ReplayStream()
+
+    logger.info("Building unified historical replay stream (securities, mergers, currencies)...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if asset_obj.asset_category != AssetCategory.CASH_BALANCE:
             asset_multiplier_val: Optional[Decimal] = None
@@ -252,79 +299,54 @@ def run_main_calculations(
                     logger.critical(f"Fatal error sorting historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Cannot guarantee deterministic order for FIFO init. Aborting.")
                     raise e
 
-            try:
-                ledger.simulate_historical_events(
-                    asset=asset_obj,
-                    all_historical_events_for_asset=asset_historical_events_for_soy_init,
-                    tax_year=tax_year
+            ledger.begin_historical_simulation(asset_obj)
+            ledger.announce_historical_simulation(asset_obj, len(asset_historical_events_for_soy_init))
+            for hist_event in asset_historical_events_for_soy_init:
+                stream.add(
+                    Phase.LEDGER_EVENTS,
+                    get_event_sort_key(hist_event, asset_resolver),
+                    (lambda l=ledger, a=asset_obj, e=hist_event:
+                        l.apply_historical_event(a, e, tax_year)),
+                    label=f"sec:{asset_obj.get_classification_key()}",
                 )
-            except ValueError as e:
-                logger.critical(f"Fatal error simulating historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
-                raise e
 
             fifo_ledgers[(DEFAULT_ACCOUNT, asset_id)] = ledger
+    securities_ledger_count = len(fifo_ledgers)
 
-    # Pass 2: Replay historical mergers in chronological order
     if historical_merger_events:
         logger.info(f"Pass 2: Replaying {len(historical_merger_events)} historical stock merger(s)...")
-        try:
-            sorted_mergers = sorted(historical_merger_events, key=lambda e: get_event_sort_key(e, asset_resolver))
-        except ValueError as e:
-            logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
-            raise e
-
-        for merger_event in sorted_mergers:
-            source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
-            target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
-
-            if source_ledger is None:
-                logger.warning(f"Historical merger {merger_event.event_id}: No source ledger for {merger_event.asset_internal_id}. Skipping.")
-                continue
-            if target_ledger is None:
-                logger.error(f"Historical merger {merger_event.event_id}: No target ledger for {merger_event.new_asset_internal_id}. Cannot transfer lots.")
-                raise ValueError(f"Target ledger missing for historical merger {merger_event.event_id}")
-
-            source_long_lots = source_ledger.drain_all_long_lots()
-            source_short_lots = source_ledger.drain_all_short_lots()
-            if not source_long_lots and not source_short_lots:
-                logger.debug(f"Historical merger {merger_event.event_id}: Source ledger {merger_event.asset_internal_id} has no lots. Skipping.")
-                continue
-
+        for merger_event in historical_merger_events:
             try:
-                target_ledger.receive_all_lots_from_merger(
-                    source_long_lots, source_short_lots,
-                    merger_event.new_shares_received_per_old, merger_event
-                )
-            except Exception as e:
-                # Rollback source
-                source_ledger.lots.extend(source_long_lots)
-                source_ledger.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
-                source_ledger.short_lots.extend(source_short_lots)
-                source_ledger.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
-                logger.error(f"Historical merger {merger_event.event_id}: Failed to transfer lots. Rolled back. Error: {e}")
-                raise
-
-            assert len(source_ledger.lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no long lots after historical merger"
-            assert len(source_ledger.short_lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no short lots after historical merger"
-
-            logger.info(f"Historical merger: Transferred {len(source_long_lots)} long + {len(source_short_lots)} "
-                         f"short lots from {merger_event.asset_internal_id} to {merger_event.new_asset_internal_id} "
-                         f"(ratio: {merger_event.new_shares_received_per_old})")
+                merger_key = get_event_sort_key(merger_event, asset_resolver)
+            except ValueError as e:
+                logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
+                raise e
+            stream.add(
+                Phase.MERGERS, merger_key,
+                (lambda m=merger_event: _replay_historical_merger(m, fifo_ledgers, asset_resolver)),
+                label="merger",
+            )
     else:
         logger.info("Pass 2: No historical stock mergers to replay.")
 
-    # Pass 3: Reconcile all ledgers against SoY positions (after merger lots are in place)
+    # Reconcile phase: securities ledgers against SoY positions (after merger
+    # lots are in place). Items are added for the SECURITIES ledgers existing
+    # now — currency ledgers reconcile against cash balances separately below.
     logger.info("Pass 3: Reconciling ledgers with SoY positions...")
+    def _reconcile_security_soy(ledger, asset_obj):
+        try:
+            ledger.reconcile_with_soy_position(asset_obj, tax_year)
+        except ValueError as e:
+            logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_obj.internal_asset_id}): {e}. Aborting.")
+            raise e
     for (ledger_account, asset_id), ledger in fifo_ledgers.items():
         asset_obj = asset_resolver.get_asset_by_id(asset_id)
         if asset_obj:
-            try:
-                ledger.reconcile_with_soy_position(asset_obj, tax_year)
-            except ValueError as e:
-                logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
-                raise e
-
-    logger.info(f"Initialized {len(fifo_ledgers)} FIFO ledgers (three-pass).")
+            stream.add(
+                Phase.RECONCILE, (0,),
+                (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
+                label=f"reconcile-sec:{asset_obj.get_classification_key()}",
+            )
 
     # Initialize currency FIFO ledgers with comprehensive historical replay
     logger.info("Initializing currency FIFO ledgers for foreign currency positions...")
@@ -339,8 +361,10 @@ def run_main_calculations(
             if ccy != "EUR":
                 currencies_to_init.add(ccy)
 
+    currency_replay_counts: Dict[str, list] = {}
     for currency_code in sorted(currencies_to_init):
-        # Ensure CashBalance asset and ledger exist
+        # Ensure CashBalance asset and ledger exist (creation is unordered
+        # setup, not stream work — the stream replays EVENTS).
         _ensure_currency_ledger_exists(
             currency_code, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
             currency_converter, exchange_rate_provider,
@@ -356,31 +380,48 @@ def run_main_calculations(
         if not currency_ledger:
             continue
 
-        # Replay ALL historical events to build FIFO lots with correct acquisition dates
+        # Stream every historical event with a currency impact; per-currency
+        # relative order = get_event_sort_key (ties: insertion seq), exactly
+        # the previous per-currency sorted replay. Events of different
+        # currencies commute (one ledger each).
         hist_events = historical_currency_events.get(currency_code, [])
         if hist_events:
-            try:
-                sort_key_func = lambda e: get_event_sort_key(e, asset_resolver)
-                sorted_hist = sorted(hist_events, key=sort_key_func)
-            except ValueError as e:
-                logger.error(f"Could not sort historical events for {currency_code}: {e}")
-                sorted_hist = hist_events
+            currency_replay_counts[currency_code] = [0, len(hist_events)]
 
-            replayed = _replay_historical_currency_events(
-                sorted_hist, currency_ledger, currency_code,
-                currency_converter, ctx
-            )
-            logger.info(f"Currency {currency_code}: Replayed {replayed}/{len(hist_events)} historical events")
+            def _apply_ccy_event(event, led=currency_ledger, ccy=currency_code):
+                currency_replay_counts[ccy][0] += _apply_historical_currency_event(
+                    event, led, ccy, currency_converter, ctx
+                )
+
+            for hist_event in hist_events:
+                try:
+                    hist_key = get_event_sort_key(hist_event, asset_resolver)
+                except ValueError as e:
+                    logger.error(f"Could not sort historical events for {currency_code}: {e}")
+                    hist_key = (date.min, ())  # keep insertion order via seq
+                stream.add(
+                    Phase.LEDGER_EVENTS, hist_key,
+                    (lambda e=hist_event, f=_apply_ccy_event: f(e)),
+                    label=f"ccy:{currency_code}",
+                )
 
         # SOY quantity is authoritative - always reconcile to match it.
         # Historical replay provides accurate lot-level cost basis,
         # but the total quantity MUST match the reported SOY balance.
         if isinstance(currency_asset, CashBalance):
-            _reconcile_currency_soy(
-                currency_ledger, currency_asset, tax_year,
-                exchange_rate_provider, ctx
+            stream.add(
+                Phase.RECONCILE, (0,),
+                (lambda l=currency_ledger, a=currency_asset:
+                    _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx)),
+                label=f"reconcile-ccy:{currency_code}",
             )
 
+    # === Run the unified historical replay ===
+    stream.run()
+
+    logger.info(f"Initialized {securities_ledger_count} FIFO ledgers (unified replay).")
+    for ccy, (done, total) in currency_replay_counts.items():
+        logger.info(f"Currency {ccy}: Replayed {done}/{total} historical events")
     logger.info(f"Initialized {len(currency_fifo_ledgers)} currency FIFO ledgers.")
 
     logger.info("Initializing event processors...")
@@ -1135,27 +1176,29 @@ def _collect_historical_currency_event(
             historical_currency_events[ccy].append(event)
 
 
-def _replay_historical_currency_events(
-    events: List[FinancialEvent],
+def _apply_historical_currency_event(
+    event: FinancialEvent,
     ledger: 'FifoLedger',
     currency_code: str,
     currency_converter: CurrencyConverter,
     ctx: Context,
 ) -> int:
-    """
-    Replay historical events to build currency FIFO lots with correct acquisition dates.
+    """Apply ONE historical event's currency impact to a currency ledger —
+    the per-event unit the unified replayer streams (AR5). Mutates lot state
+    only (no current-year RGLs). Returns 1 if the event affected the ledger.
 
-    Processes ALL event types that affect currency balances:
+    Handles every event type that moves currency:
     - CurrencyConversionEvent: explicit FX trades (only the side matching our currency)
     - TradeEvent: security buys consume currency, sells produce currency, commissions consume
+    - CorpActionMergerCash: cash proceeds create a currency lot
     - Income cashflows: dividends, interest, distributions create currency lots
     - Expense cashflows: WHT, fees, Stueckzinsen consume currency lots
-
-    Returns the number of events successfully replayed.
     """
     replayed = 0
-
-    for event in events:
+    # Single-iteration loop: the body is kept VERBATIM from the previous batch
+    # loop (its `continue` statements mean "this event does not affect this
+    # currency" and skip to the return).
+    for _ in (0,):
         try:
             if isinstance(event, CurrencyConversionEvent):
                 # Handle only the side affecting our currency
@@ -1293,6 +1336,21 @@ def _replay_historical_currency_events(
             logger.debug(f"Historical currency replay: skipped event {event.event_id}: {e}")
 
     return replayed
+
+
+def _replay_historical_currency_events(
+    events: List[FinancialEvent],
+    ledger: 'FifoLedger',
+    currency_code: str,
+    currency_converter: CurrencyConverter,
+    ctx: Context,
+) -> int:
+    """Batch wrapper over _apply_historical_currency_event (kept for direct
+    callers/tests; the engine streams per event). Returns events replayed."""
+    return sum(
+        _apply_historical_currency_event(event, ledger, currency_code, currency_converter, ctx)
+        for event in events
+    )
 
 
 def _get_historical_eur_value(
