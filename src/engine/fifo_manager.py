@@ -221,13 +221,11 @@ class FifoLedger:
         self.simulate_historical_events(asset, all_historical_events_for_asset, tax_year)
         self.reconcile_with_soy_position(asset, tax_year)
 
-    def simulate_historical_events(self,
-                                    asset: Asset,
-                                    all_historical_events_for_asset: List[FinancialEvent],
-                                    tax_year: int):
-        """Pass 1: Replay trades, splits, stock dividends to build lot state.
-        Does NOT reconcile against SoY position yet."""
-
+    def begin_historical_simulation(self, asset: Asset):
+        """Prepare the ledger for historical replay (unified replayer, AR5):
+        resolve the fund type from the asset, clear lot state, reset the
+        inconsistency flag. Apply events afterwards via
+        apply_historical_event(); reconcile via reconcile_with_soy_position()."""
         if self.asset_category == AssetCategory.INVESTMENT_FUND:
             asset_fund_type = getattr(asset, 'fund_type', None)
             if isinstance(asset_fund_type, InvestmentFundType) and asset_fund_type != InvestmentFundType.NONE:
@@ -242,42 +240,60 @@ class FifoLedger:
         self.short_lots.clear()
         self._historical_simulation_inconsistent = False
 
+    def announce_historical_simulation(self, asset: Asset, event_count: int):
+        """Log the per-asset simulation header (kept here so the log line is
+        byte-identical to the pre-AR5 batch implementation)."""
         logger.info(f"Asset {asset.get_classification_key()} (ID: {asset.internal_asset_id}): Simulating "
-                    f"{len(all_historical_events_for_asset)} historical events.")
+                    f"{event_count} historical events.")
 
+    def apply_historical_event(self, asset: Asset, hist_event: FinancialEvent, tax_year: int):
+        """Apply ONE historical (pre-tax-year) event to the ledger — the
+        per-event unit the unified replayer streams. Mutates lot state only;
+        emits no current-year RGLs. Inconsistencies (e.g. selling more than
+        reconstructed) set the flag consumed by reconcile_with_soy_position."""
+        event_date_obj = parse_ibkr_date(hist_event.event_date)
+        if not event_date_obj or event_date_obj >= date_obj(tax_year, 1, 1):
+            logger.warning(f"Historical event {hist_event.event_id} for asset {asset.internal_asset_id} "
+                           f"has date {hist_event.event_date} which is not before tax year {tax_year}. Skipping for SOY init.")
+            return
+
+        try:
+            if isinstance(hist_event, TradeEvent):
+                # Split position flip events (C;O / O;C) using current ledger state
+                if hist_event.is_position_flip:
+                    avail_long = sum(lot.quantity for lot in self.lots) if self.lots else Decimal(0)
+                    avail_short = sum(lot.quantity_shorted for lot in self.short_lots) if self.short_lots else Decimal(0)
+                    sub_events = split_position_flip_event(hist_event, avail_long, avail_short)
+                else:
+                    sub_events = [hist_event]
+
+                for sub in sub_events:
+                    if sub.event_type == FinancialEventType.TRADE_BUY_LONG:
+                        self.add_long_lot(sub)
+                    elif sub.event_type == FinancialEventType.TRADE_SELL_LONG:
+                        self.consume_long_lots_for_sale(sub, is_historical_simulation=True)
+                    elif sub.event_type == FinancialEventType.TRADE_SELL_SHORT_OPEN:
+                        self.add_short_lot(sub)
+                    elif sub.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
+                        self.consume_short_lots_for_cover(sub, is_historical_simulation=True)
+            elif isinstance(hist_event, CorpActionSplitForward):
+                self.adjust_lots_for_split(hist_event)
+            elif isinstance(hist_event, CorpActionStockDividend):
+                 self.add_lot_for_stock_dividend(hist_event)
+        except UserWarning as uw:
+            logger.warning(f"Historical simulation warning for asset {asset.internal_asset_id} processing event {hist_event.event_id}: {uw}")
+            self._historical_simulation_inconsistent = True
+
+    def simulate_historical_events(self,
+                                    asset: Asset,
+                                    all_historical_events_for_asset: List[FinancialEvent],
+                                    tax_year: int):
+        """Batch wrapper over begin_historical_simulation + apply_historical_event
+        (kept for direct callers/tests; the engine streams per event)."""
+        self.begin_historical_simulation(asset)
+        self.announce_historical_simulation(asset, len(all_historical_events_for_asset))
         for hist_event in all_historical_events_for_asset:
-            event_date_obj = parse_ibkr_date(hist_event.event_date)
-            if not event_date_obj or event_date_obj >= date_obj(tax_year, 1, 1):
-                logger.warning(f"Historical event {hist_event.event_id} for asset {asset.internal_asset_id} "
-                               f"has date {hist_event.event_date} which is not before tax year {tax_year}. Skipping for SOY init.")
-                continue
-
-            try:
-                if isinstance(hist_event, TradeEvent):
-                    # Split position flip events (C;O / O;C) using current ledger state
-                    if hist_event.is_position_flip:
-                        avail_long = sum(lot.quantity for lot in self.lots) if self.lots else Decimal(0)
-                        avail_short = sum(lot.quantity_shorted for lot in self.short_lots) if self.short_lots else Decimal(0)
-                        sub_events = split_position_flip_event(hist_event, avail_long, avail_short)
-                    else:
-                        sub_events = [hist_event]
-
-                    for sub in sub_events:
-                        if sub.event_type == FinancialEventType.TRADE_BUY_LONG:
-                            self.add_long_lot(sub)
-                        elif sub.event_type == FinancialEventType.TRADE_SELL_LONG:
-                            self.consume_long_lots_for_sale(sub, is_historical_simulation=True)
-                        elif sub.event_type == FinancialEventType.TRADE_SELL_SHORT_OPEN:
-                            self.add_short_lot(sub)
-                        elif sub.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
-                            self.consume_short_lots_for_cover(sub, is_historical_simulation=True)
-                elif isinstance(hist_event, CorpActionSplitForward):
-                    self.adjust_lots_for_split(hist_event)
-                elif isinstance(hist_event, CorpActionStockDividend):
-                     self.add_lot_for_stock_dividend(hist_event)
-            except UserWarning as uw:
-                logger.warning(f"Historical simulation warning for asset {asset.internal_asset_id} processing event {hist_event.event_id}: {uw}")
-                self._historical_simulation_inconsistent = True
+            self.apply_historical_event(asset, hist_event, tax_year)
 
     def reconcile_with_soy_position(self, asset: Asset, tax_year: int):
         """Pass 3: Compare reconstructed lots against SoY position and apply fallback if needed."""
