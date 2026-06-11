@@ -165,34 +165,45 @@ class TestIssueA_SoyRateFallback:
 # =============================================================================
 
 class TestIssueD_SignConventionGuard:
-    """domain_event_factory raises ValueError for negative gross_amount_foreign_currency."""
+    """Sign convention: gross_amount_foreign_currency on a TradeEvent is ALWAYS
+    non-negative — direction is encoded in event_type. The factory normalizes
+    the sign (a SELL row's negative qty*price becomes a positive gross) and
+    carries a fail-fast guard against negative gross slipping through."""
 
-    def test_trade_event_rejects_negative_gross_amount(self):
-        """TradeEvent creation via factory must reject negative gross amounts."""
+    def test_factory_normalizes_sell_row_to_positive_gross(self):
+        """A SELL trade row (negative quantity, hence negative computed
+        qty*price) must yield a TradeEvent with POSITIVE gross — the actual
+        sign-convention contract, exercised through the real factory path.
+        (The previous version of this test constructed a positive event by
+        hand and asserted it was positive — it tested nothing.)"""
+        from src.parsers.trades_parser import parse_trades_csv
+        from src.parsers.domain_event_factory import DomainEventFactory
+        from src.identification.asset_resolver import AssetResolver
+        from src.classification.asset_classifier import AssetClassifier
         from src.domain.events import TradeEvent
+        from tests.support.csv_creators import create_trades_csv_string
+        import tempfile, os
 
-        # Direct construction with negative gross — the guard is in the factory,
-        # not the dataclass, so we test the factory path.
-        # But we can also test that the factory guard works by importing it.
-        # For a unit test, verify the dataclass allows it (no guard there)
-        # and the factory rejects it.
-        # The assertion is in domain_event_factory.py after TradeEvent construction.
-        # We test it indirectly by checking the factory raises.
+        sell_row = [
+            "U_TEST", "USD", "STK", "COMMON", "ABC", "ABC Inc", "US000000ABC1",
+            "", "", "", "20230615", "-100", "50.00", "1.00", "USD",
+            "SELL", "T_SELL_1", "", "", "CONABC", "", "1", "C",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "trades.csv")
+            with open(path, "w", encoding="utf-8-sig") as fh:
+                fh.write(create_trades_csv_string([sell_row]))
+            raw = parse_trades_csv(path)
+            resolver = AssetResolver(asset_classifier=AssetClassifier(
+                cache_file_path=os.path.join(tmp, "cls.json")))
+            events, _candidates, _stock = DomainEventFactory(resolver).create_events_from_trades(raw)
 
-        # For a direct unit test of the guard logic:
-        trade_event = TradeEvent(
-            asset_internal_id=uuid.uuid4(),
-            event_date="2023-06-15",
-            event_type=FinancialEventType.TRADE_BUY_LONG,
-            quantity=Decimal("100"),
-            price_foreign_currency=Decimal("50.00"),
-            commission_foreign_currency=Decimal("1.00"),
-            commission_currency="USD",
-            local_currency="USD",
-            gross_amount_foreign_currency=Decimal("5000"),  # positive — OK
-            ibkr_transaction_id="T001",
-        )
-        assert trade_event.gross_amount_foreign_currency == Decimal("5000")
+        trades = [e for e in events if isinstance(e, TradeEvent)]
+        assert len(trades) == 1
+        ev = trades[0]
+        assert ev.event_type == FinancialEventType.TRADE_SELL_LONG  # direction lives here
+        assert ev.quantity < Decimal("0")                            # signed quantity kept
+        assert ev.gross_amount_foreign_currency == Decimal("5000.00")  # |qty| * price, POSITIVE
 
     def test_historical_replay_warns_on_negative_foreign_amount(self, caplog):
         """Historical replay logs warning for negative gross_amount_foreign_currency."""

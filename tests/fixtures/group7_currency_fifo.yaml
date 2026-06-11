@@ -2618,13 +2618,20 @@ tests:
       errors: 0
 
   - id: CFX_ERR_002
-    description: "Negative quantity in FX trade - error handling"
+    description: "Zero-quantity FX trade row - rejected fail-fast (DataIntegrityError)"
     notes: |
-      Bug Detection: Verify system rejects invalid negative quantities.
+      Bug Detection: a degenerate FX row with zero amounts must reach the
+      ENGINE (not be filtered by test plumbing). The factory rejects it
+      fail-fast with DataIntegrityError ("zero quantity. Cannot determine
+      direction/amounts") - corrupt input must never be silently dropped from
+      a tax computation.
 
-      When from_amount is negative, the trade is invalid and should be
-      skipped during CSV row creation. No FIFO lot is consumed, no RGL
-      is generated, and the SOY balance remains unchanged.
+      (The previous version of this spec used a negative from_amount that the
+      test-support row builder silently dropped before the engine ever saw it
+      - it tested nothing. Negative amounts in specs now raise at row-creation
+      time: real IBKR FX-pair rows encode direction in the sign of the EUR-leg
+      quantity, so spec amounts are absolute by definition.)
+    expect_pipeline_error: true
     inputs:
       currency: USD
       soy_balance: "1000.00"
@@ -2632,14 +2639,14 @@ tests:
         - type: SELL_FOREIGN
           date: "2023-06-01"
           from_currency: USD
-          from_amount: "-500.00"  # Invalid negative - trade will be skipped
+          from_amount: "0.00"   # degenerate zero-quantity row, reaches the engine
           to_currency: EUR
-          to_amount: "450.00"
+          to_amount: "0.00"
           ecb_rate: "1.11"
-      eoy_balance_expected: "1000.00"  # Unchanged - invalid trade skipped
+      eoy_balance_expected: "1000.00"
     expected:
-      rgls: []  # No RGL - invalid trade skipped
-      errors: 0  # No EOY mismatch
+      rgls: []
+      errors: 0
 
   - id: CFX_ERR_003
     description: "Consume from empty lot - short position handling"

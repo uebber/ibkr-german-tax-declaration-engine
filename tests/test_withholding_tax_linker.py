@@ -219,24 +219,30 @@ class TestWithholdingTaxLinker:
         assert len(links) == 0
         assert len(unlinked) == 1
     
-    def test_multiple_wht_events_best_match(self):
-        """Test that the best matching WHT event is selected when multiple candidates exist."""
-        dividend_event = self.create_dividend_event()
-        
-        # Create two WHT events, one with sequential ID (better match)
-        wht_event_1 = self.create_withholding_tax_event(transaction_id="1633925901")  # Sequential
-        wht_event_2 = self.create_withholding_tax_event(transaction_id="9999999")    # Non-sequential
-        
-        events = [dividend_event, wht_event_1, wht_event_2]
+    def test_two_dividends_each_wht_pairs_with_its_own(self):
+        """Realistic multi-candidate case: TWO dividends, TWO WHT events — each
+        WHT must link to ITS OWN dividend (sequential transaction ids decide).
+        (The previous version of this test used one dividend and blessed BOTH
+        WHT events linking to it — double-linking that would overstate
+        creditable foreign tax if links were ever summed per income event.)"""
+        dividend_a = self.create_dividend_event(amount=Decimal("206.00"), transaction_id="1633925900")
+        dividend_b = self.create_dividend_event(amount=Decimal("100.00"), transaction_id="1633926900")
+        wht_a = self.create_withholding_tax_event(amount=Decimal("30.90"), transaction_id="1633925901")
+        wht_b = self.create_withholding_tax_event(amount=Decimal("15.00"), transaction_id="1633926901")
+
+        events = [dividend_a, dividend_b, wht_a, wht_b]
         links, unlinked = self.linker.link_withholding_tax_events(events)
-        
-        assert len(links) == 2  # Both should be linked to same dividend (in real scenario, you'd have 2 dividends)
-        # But let's test that the sequential one gets higher confidence
-        
-        # Find the link with higher confidence
-        high_confidence_link = max(links, key=lambda x: x.link_confidence_score)
-        assert high_confidence_link.link_confidence_score == 100
-        assert high_confidence_link.withholding_tax_event_id == wht_event_1.event_id
+
+        assert len(links) == 2
+        assert len(unlinked) == 0
+        by_wht = {l.withholding_tax_event_id: l for l in links}
+        assert by_wht[wht_a.event_id].linked_income_event_id == dividend_a.event_id
+        assert by_wht[wht_b.event_id].linked_income_event_id == dividend_b.event_id
+        # Both are exact matches via sequential ids
+        assert by_wht[wht_a.event_id].link_confidence_score == 100
+        assert by_wht[wht_b.event_id].link_confidence_score == 100
+        # No double-link: two distinct income events are referenced
+        assert len({l.linked_income_event_id for l in links}) == 2
     
     def test_is_sequential_transaction_id(self):
         """Test the sequential transaction ID logic."""

@@ -471,18 +471,18 @@ class TestCashflowMixedScenarios(FifoTestCaseBase):
             if rgl.asset_category_at_realization == AssetCategory.CASH_BALANCE
         ]
 
-        # WHT on same day as dividend → same rate → FX gain/loss = 0
+        # WHT on same day as dividend → same rate → the disposal still happens,
+        # with exactly zero FX gain/loss. Pin ONE outcome: the RGL must exist
+        # (the WHT consumed 30 USD from the dividend lot — a disposal under the
+        # BMF FX rules) and its gain must be exactly 0.00. (The previous
+        # accept-0-or-1 soft assertion could not catch a dropped-RGL regression.)
         from src import config as app_config
-        if len(currency_rgls) == 1:
-            rgl = currency_rgls[0]
-            assert rgl.quantity_realized == Decimal("30")
-            assert rgl.gross_gain_loss_eur.quantize(app_config.OUTPUT_PRECISION_AMOUNTS) == Decimal("0.00")
-            assert rgl.realization_type == RealizationType.FX_IMPLICIT_CASHFLOW_EXPENSE
-        elif len(currency_rgls) == 0:
-            # Zero gain/loss might be filtered - acceptable
-            pass
-        else:
-            pytest.fail(f"Expected 0-1 currency RGLs, got {len(currency_rgls)}: {currency_rgls}")
+        assert len(currency_rgls) == 1, \
+            f"Expected exactly 1 currency RGL (zero-gain disposal), got {len(currency_rgls)}: {currency_rgls}"
+        rgl = currency_rgls[0]
+        assert rgl.quantity_realized == Decimal("30")
+        assert rgl.gross_gain_loss_eur.quantize(app_config.OUTPUT_PRECISION_AMOUNTS) == Decimal("0.00")
+        assert rgl.realization_type == RealizationType.FX_IMPLICIT_CASHFLOW_EXPENSE
 
     def test_soy_lot_then_wht_with_fx_gain(self, mock_config_paths):
         """

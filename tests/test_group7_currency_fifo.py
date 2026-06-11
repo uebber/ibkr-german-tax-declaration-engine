@@ -121,13 +121,14 @@ def create_fx_trade_csv_row(
       - Negative = sell EUR (buy foreign)
     - TradePrice: Exchange rate (foreign per EUR)
     """
-    # Validate inputs - skip trades with invalid amounts or missing rates
+    # Negative amounts are a SPEC-AUTHORING error, not a real IBKR data shape:
+    # IBKR FX-pair rows encode direction in the SIGN of the EUR-leg quantity,
+    # amounts in specs are absolute. Fail loudly instead of silently dropping
+    # the row (a silent skip made CFX_ERR_002 test nothing for years).
     if foreign_amount is not None and foreign_amount < Decimal("0"):
-        logger.warning(f"FX trade {transaction_id}: Skipping - negative foreign_amount {foreign_amount}")
-        return None
+        raise ValueError(f"FX trade {transaction_id}: negative foreign_amount {foreign_amount} in spec")
     if eur_amount is not None and eur_amount < Decimal("0"):
-        logger.warning(f"FX trade {transaction_id}: Skipping - negative eur_amount {eur_amount}")
-        return None
+        raise ValueError(f"FX trade {transaction_id}: negative eur_amount {eur_amount} in spec")
 
     symbol = f"EUR.{foreign_currency}"
 
