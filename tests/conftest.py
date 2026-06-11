@@ -135,3 +135,20 @@ def mock_config_paths(temp_data_dir, monkeypatch):
 def default_tax_year():
     """Returns the default tax year for tests."""
     return 2023
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _global_config_leak_tripwire():
+    """AR1 guard: no test may leak a mutated global config value past its own
+    teardown. The F1 incident: a leaked src.config.TAX_YEAR made group-6
+    results depend on which modules ran before it. Patches via pytest's
+    monkeypatch are auto-reverted; anything else trips this wire."""
+    from src import config as app_config
+    before = app_config.TAX_YEAR
+    yield
+    after = app_config.TAX_YEAR
+    assert after == before, (
+        f"GLOBAL CONFIG LEAK: src.config.TAX_YEAR changed from {before} to "
+        f"{after} during the test session — some test mutated it without "
+        f"teardown (use the monkeypatch fixture)."
+    )

@@ -55,7 +55,12 @@ def main_application():
     Parses arguments, runs processing, and generates reports.
     """
     args = parse_arguments()
-    tax_year = args.tax_year
+    # AR1 boundary: construct the immutable per-run context HERE (the only
+    # place user config is read for run-defining values); below this point
+    # everything receives explicit parameters, never ambient globals.
+    from src.run_context import RunContext
+    run_ctx = RunContext.from_config(tax_year=args.tax_year, interactive=args.interactive)
+    tax_year = run_ctx.tax_year
     setup_decimal_context()
 
     logger.info("Starting IBKR German Tax Declaration Engine for tax year %d...", tax_year)
@@ -88,7 +93,7 @@ def main_application():
             positions_start_file_path=data_paths["positions_start"],
             positions_end_file_path=data_paths["positions_end"],
             corporate_actions_file_path=data_paths["corporate_actions"],
-            interactive_classification_mode=args.interactive,
+            interactive_classification_mode=run_ctx.interactive,
             tax_year_to_process=tax_year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
             options_eae_file_path=data_paths.get("options_eae", "") or None

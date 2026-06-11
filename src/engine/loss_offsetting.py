@@ -23,7 +23,11 @@ class LossOffsettingEngine:
                  current_year_financial_events: List[FinancialEvent],
                  asset_resolver: AssetResolver,
                  tax_year: int,
-                 apply_conceptual_derivative_loss_capping: bool = global_config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING):
+                 apply_conceptual_derivative_loss_capping: Optional[bool] = None):
+        # None -> read the user config AT CALL TIME (the previous module-global
+        # default was bound at import time — ambient mutable state, AR1).
+        if apply_conceptual_derivative_loss_capping is None:
+            apply_conceptual_derivative_loss_capping = global_config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
         self.realized_gains_losses = realized_gains_losses
         self.vorabpauschale_items = vorabpauschale_items
         self.current_year_financial_events = current_year_financial_events
