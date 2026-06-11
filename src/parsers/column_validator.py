@@ -55,21 +55,23 @@ def validate_csv_columns(
     actual_headers: Sequence[str],
     expected_columns: Sequence[str],
     file_description: str,
+    allow_extra: bool = False,
 ) -> None:
-    """Validate that CSV headers match expected columns exactly.
+    """Validate that CSV headers contain all required columns.
 
-    Raises ValueError if there are missing or unexpected columns.
+    Raises ValueError if required columns are missing, or if unexpected columns
+    are present and allow_extra is False.
     """
     expected_set = set(expected_columns)
     actual_set = set(actual_headers)
     missing = expected_set - actual_set
     extra = actual_set - expected_set
 
-    if missing or extra:
+    if missing or (extra and not allow_extra):
         parts = [f"CSV column mismatch in {file_description}:"]
         if missing:
             parts.append(f"  Missing columns: {sorted(missing)}")
-        if extra:
+        if extra and not allow_extra:
             parts.append(f"  Unexpected columns: {sorted(extra)}")
         parts.append(f"  Expected columns: {sorted(expected_columns)}")
         raise ValueError("\n".join(parts))
