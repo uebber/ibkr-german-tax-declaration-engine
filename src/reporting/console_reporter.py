@@ -276,6 +276,13 @@ def generate_console_tax_report(
     print("  Verlustvorträge über Steuerjahre hinweg sind nicht implementiert.")
     print("  Die endgültige Steuerlast (Sparer-Pauschbetrag, Steuersätze, Soli, KiSt) wird nicht berechnet.")
     print("  Alle Angaben ohne Gewähr. Bitte überprüfen Sie alle Zahlen sorgfältig und konsultieren Sie ggf. einen Steuerberater.")
+    # AR7 legal-position register: every declaration states which contested
+    # legal readings it relies on (unsettled questions; see
+    # src/tax_law/legal_positions.py for alternatives and sources).
+    from src.tax_law.legal_positions import render_console_section
+    for line in render_console_section():
+        print(line)
+
     # AR6 data-gap channel: surface every recorded gap as an explicit report
     # section — the user reviews them here, not in a log file. Printed only
     # when gaps exist (clean runs are unchanged).
