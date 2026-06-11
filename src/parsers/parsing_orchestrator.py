@@ -410,9 +410,9 @@ class ParsingOrchestrator:
                 pass  # malformed date, skip validation
 
         for raw_balance in self.raw_cash_balances:
-            # Skip EUR (base currency) - no currency gain/loss on base currency
-            if raw_balance.currency_primary and raw_balance.currency_primary.upper() == "EUR":
-                logger.debug(f"Skipping EUR cash balance (base currency)")
+            # Skip EUR (base currency) and BASE_SUMMARY (IBKR aggregate row)
+            if raw_balance.currency_primary and raw_balance.currency_primary.upper() in ("EUR", "BASE_SUMMARY"):
+                logger.debug(f"Skipping cash balance row: {raw_balance.currency_primary}")
                 balances_skipped += 1
                 continue
 

@@ -64,6 +64,8 @@ def _concatenate_csvs(paths: list[Path], output_path: Path) -> None:
                 if header is None:
                     header = row
                 continue
+            if row == header:  # skip repeated header rows IBKR inserts mid-file
+                continue
             if row:  # skip empty rows
                 rows.append(row)
 
@@ -81,9 +83,24 @@ def _concatenate_csvs(paths: list[Path], output_path: Path) -> None:
 
 
 def _copy_file(src: Path, dest: Path) -> None:
-    """Copy a file to the working directory."""
+    """Copy a CSV file to the working directory, stripping duplicate header rows."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(src.read_bytes())
+    content = src.read_text(encoding="utf-8-sig")
+    reader = csv.reader(io.StringIO(content))
+    header = None
+    rows = []
+    for i, row in enumerate(reader):
+        if i == 0:
+            header = row
+            rows.append(row)
+            continue
+        if row == header:
+            continue
+        if row:
+            rows.append(row)
+    with open(dest, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
+        writer.writerows(rows)
     logger.info("Copied %s -> %s", src, dest)
 
 

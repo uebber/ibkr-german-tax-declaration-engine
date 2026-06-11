@@ -261,12 +261,17 @@ class DomainEventFactory:
                     trade_quantity_val = safe_decimal(rt.quantity, default=Decimal(0))
 
                     if base_monetary_value == Decimal(0) and trade_quantity_val != Decimal(0) and rate != Decimal(0):
+                        # Expected path: the IBKR trades export (TRADES_COLUMNS) does not carry
+                        # TradeMoney/Proceeds, so the second leg is reconstructed from the FX pair's
+                        # Quantity (base-currency amount) × TradePrice (the exchange rate). This is
+                        # the exact conversion (the rate reconciliation below confirms consistency),
+                        # so it is normal operation, not a warning.
                         calculated_second_leg_amount = trade_quantity_val.copy_abs() * rate
-                        logger.warning(
+                        logger.debug(
                             f"FX Pair trade {tx_id_primary} ({asset.ibkr_symbol}): "
-                            f"TradeMoney/Proceeds was missing or zero (Original base_monetary_value_raw: '{base_monetary_value_raw}'). "
-                            f"Calculating the second leg amount from Quantity ({trade_quantity_val} {curr1}) and Rate ({rate} {curr2}/{curr1}). "
-                            f"Calculated second leg: {calculated_second_leg_amount:.4f} {curr2}."
+                            f"TradeMoney/Proceeds not in export; reconstructing the second leg from "
+                            f"Quantity ({trade_quantity_val} {curr1}) × Rate ({rate} {curr2}/{curr1}) "
+                            f"= {calculated_second_leg_amount:.4f} {curr2}."
                         )
                         base_monetary_value = calculated_second_leg_amount.copy_abs()
 
