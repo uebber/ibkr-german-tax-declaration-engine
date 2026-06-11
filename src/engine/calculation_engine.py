@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime, date
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
+from src.processing.data_gaps import DataGapCollector, GapSeverity
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,
@@ -180,7 +181,8 @@ def run_main_calculations(
     exchange_rate_provider: ECBExchangeRateProvider,
     tax_year: int,
     internal_calculation_precision: int, # Renamed from internal_working_precision
-    decimal_rounding_mode: str
+    decimal_rounding_mode: str,
+    data_gap_collector: Optional["DataGapCollector"] = None
 ) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]: 
     """
     Runs the main calculation logic:
@@ -674,12 +676,26 @@ def run_main_calculations(
                     f"Difference: {calculated_eoy_qty - reported_eoy_qty}"
                 )
                 eoy_mismatch_errors += 1
+                if data_gap_collector is not None:
+                    data_gap_collector.record(
+                        code="EOY_QTY_MISMATCH",
+                        subject=asset_obj.description or asset_obj.get_classification_key(),
+                        detail=(f"Berechnete EoY-Stückzahl {calculated_eoy_qty} weicht von der im "
+                                f"Broker-Report gemeldeten ({reported_eoy_qty}) ab."),
+                    )
         elif abs(calculated_eoy_qty) > comparison_tolerance: 
             logger.error( 
                 f"EOY MISMATCH for {asset_obj.description or asset_obj.get_classification_key()} (ID: {asset_id}): "
                 f"Calculated EOY Qty: {calculated_eoy_qty}, but asset NOT found in EOY positions report (implying reported EOY Qty is 0)."
             )
             eoy_mismatch_errors += 1 
+            if data_gap_collector is not None:
+                data_gap_collector.record(
+                    code="EOY_QTY_MISMATCH",
+                    subject=asset_obj.description or asset_obj.get_classification_key(),
+                    detail=(f"Berechnete EoY-Stückzahl {calculated_eoy_qty}, aber das Asset fehlt "
+                            f"im EoY-Positionsreport (impliziert 0)."),
+                )
 
     if eoy_mismatch_errors > 0:
         logger.error(f"EOY Quantity Validation FAILED with {eoy_mismatch_errors} critical mismatches. Processing will continue, but results may be inaccurate.")

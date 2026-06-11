@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import List, Dict, Tuple, Optional 
 import uuid 
 
+from src.processing.data_gaps import DataGap
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.domain.events import FinancialEvent, WithholdingTaxEvent, CashFlowEvent, TradeEvent
 from src.domain.enums import AssetCategory, InvestmentFundType, FinancialEventType, TaxReportingCategory, RealizationType
@@ -74,7 +75,8 @@ def generate_console_tax_report(
     asset_resolver: AssetResolver,
     tax_year: int,
     eoy_mismatch_count: int,
-    loss_offsetting_summary: LossOffsettingResult 
+    loss_offsetting_summary: LossOffsettingResult,
+    data_gaps: Optional[List["DataGap"]] = None
 ):
     logger.info(f"Generating console tax declaration summary for tax year {tax_year}...")
     print(f"\n--- Tax Declaration Summary for Year {tax_year} (All amounts in EUR) ---")
@@ -279,6 +281,16 @@ def generate_console_tax_report(
     print("  Verlustvorträge über Steuerjahre hinweg sind nicht implementiert.")
     print("  Die endgültige Steuerlast (Sparer-Pauschbetrag, Steuersätze, Soli, KiSt) wird nicht berechnet.")
     print("  Alle Angaben ohne Gewähr. Bitte überprüfen Sie alle Zahlen sorgfältig und konsultieren Sie ggf. einen Steuerberater.")
+    # AR6 data-gap channel: surface every recorded gap as an explicit report
+    # section — the user reviews them here, not in a log file. Printed only
+    # when gaps exist (clean runs are unchanged).
+    if data_gaps:
+        print("\n--- DATENLÜCKEN / HINWEISE ---")
+        print("  Die folgenden Punkte konnten aus den Eingabedaten nicht vollständig")
+        print("  abgeleitet werden und sollten geprüft werden:")
+        for gap in data_gaps:
+            print(f"  [{gap.code}] {gap.subject}: {gap.detail}")
+
     print("--- Ende des Steuererklärungs-Summaries ---")
 
 def generate_stock_trade_report_for_symbol(
