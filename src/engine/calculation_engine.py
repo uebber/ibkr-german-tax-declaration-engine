@@ -719,12 +719,11 @@ def _calculate_vorabpauschale(
     """
     from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
-    basiszins_str = config.BASISZINS_BY_YEAR.get(tax_year)
-    if basiszins_str is None:
-        logger.info(f"No Basiszins configured for tax year {tax_year}. Skipping Vorabpauschale calculation.")
+    from src.tax_law.registry import basiszins_pct
+    basiszins = basiszins_pct(tax_year)  # None -> loud warning inside the registry
+    if basiszins is None:
         return []
 
-    basiszins = Decimal(basiszins_str)
     base_return_rate = ctx.multiply(basiszins, Decimal("0.01"))  # Convert percentage to factor
     factor_70 = Decimal("0.7")
 

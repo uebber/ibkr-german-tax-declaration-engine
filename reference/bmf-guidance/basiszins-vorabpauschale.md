@@ -42,12 +42,16 @@ Per InvStG 18 Abs. 4:
 
 ## Engine Configuration
 
-In `src/config.py`:
-```python
-BASISZINS_BY_YEAR = {
-    2024: Decimal("0.0229"),
-    2025: Decimal("0.0253"),
-}
-```
+In the law-as-data registry `src/tax_law/registry.py` — the COMPLETE published
+table 2016-2026, values in percent as Decimals (`BASISZINS_PCT`). The registry
+is the single source the engine AND the tests read; it is law, not user
+configuration (it no longer lives in `src/config.py`).
 
-**Maintenance:** Update this dictionary annually after the BMF publishes the new Basiszins (typically in January). The 2026 rate (3.20%) should be added when processing tax year 2026.
+A tax year MISSING from the table makes the engine skip the Vorabpauschale with
+a WARNING (it cannot invent a rate); for a year with a positive published
+Basiszins that skip would understate deemed income — keep the table complete.
+`tests/test_vorabpauschale.py::TestBasiszinsTable` and
+`tests/test_tax_law_registry.py` assert the registry matches this document.
+
+**Maintenance:** Add the new rate annually after the BMF publication (typically
+January), here AND in `src/tax_law/registry.py`.

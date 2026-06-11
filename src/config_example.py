@@ -62,12 +62,9 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
 # Cache directory for downloaded Flex Query CSVs
 FLEX_CACHE_DIR = "data/flex_cache"
 
-# Basiszins for Vorabpauschale calculation (§ 18 InvStG)
-# Values as strings for Decimal precision. Source: Deutsche Bundesbank.
-BASISZINS_BY_YEAR: dict[int, str] = {
-    2024: "2.29",
-    2025: "2.53",
-}
+# Basiszins (§18 InvStG): lives in the law-as-data registry —
+# src/tax_law/registry.py (source: reference/bmf-guidance/
+# basiszins-vorabpauschale.md). Not user configuration.
 
 # Configuration for Loss Offsetting Engine
 # Determines if the conceptual summary for net derivative losses should apply the 20k EUR cap.

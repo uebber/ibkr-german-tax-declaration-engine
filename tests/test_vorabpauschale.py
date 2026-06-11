@@ -189,11 +189,39 @@ class TestVorabpauschaleCalculation:
         results = _run_vp(fund)
         assert len(results) == 0
 
-    def test_no_basiszins_configured(self):
-        """Tax year without basiszins -> no VP."""
+    def test_unconfigured_basiszins_year_skips_with_loud_warning(self, caplog):
+        """A tax year with NO configured Basiszins must skip VP computation
+        with a WARNING (skipping silently could understate income — the VP is
+        deemed income under §18 InvStG). 1999 predates the InvStG 2018 regime
+        and is never configured. (Previously this used 2020, which HAS a
+        published positive Basiszins of 0.07% — see BMF table — and logged
+        only at INFO level.)"""
+        import logging
+        fund = _make_fund()
+        with caplog.at_level(logging.WARNING):
+            results = _run_vp(fund, tax_year=1999)
+        assert len(results) == 0
+        assert any("Basiszins" in r.message and r.levelname == "WARNING" for r in caplog.records), \
+            "missing Basiszins must be surfaced as a WARNING, not silently skipped"
+
+    def test_2020_positive_basiszins_yields_vp(self):
+        """2020 had a POSITIVE Basiszins (0.07%, BMF) — a fund held through
+        2020 owes VP: 10000 * 0.0007 * 0.7 = 4.90 (cap 1000 not binding)."""
         fund = _make_fund()
         results = _run_vp(fund, tax_year=2020)
+        assert len(results) == 1
+        assert results[0].gross_vorabpauschale_eur == Decimal("4.90")
+
+    def test_2021_negative_basiszins_yields_zero_vp_not_skip(self, caplog):
+        """2021 Basiszins was NEGATIVE (-0.45%, BMF): the correct result is a
+        COMPUTED zero (negative Basisertrag -> no VP), not a config-gap skip."""
+        import logging
+        fund = _make_fund()
+        with caplog.at_level(logging.INFO):
+            results = _run_vp(fund, tax_year=2021)
         assert len(results) == 0
+        assert not any("No Basiszins configured" in r.message for r in caplog.records), \
+            "2021 must be configured (negative rate), not treated as a config gap"
 
     def test_teilfreistellung_applied_aktienfonds(self):
         """TF rate of 30% applied for Aktienfonds."""
@@ -413,3 +441,30 @@ class TestZ55VorabpauschaleAbzug:
         )
         result = engine.calculate_reporting_figures()
         assert result.conceptual_fund_income_net_taxable == Decimal("112.21")
+
+
+# ---------------------------------------------------------------------------
+# Tests: the shipped Basiszins table is complete (2016-2026, BMF-published)
+# ---------------------------------------------------------------------------
+
+class TestBasiszinsTable:
+    """The InvStG-2018 regime starts 2018 (Basisertrag formula identical since
+    2016 publications). All BMF-published rates must be configured so that no
+    historical tax year silently produces zero Vorabpauschale.
+    Source: reference/bmf-guidance/basiszins-vorabpauschale.md (BStBl I)."""
+
+    PUBLISHED = {
+        2016: "1.10", 2017: "0.59", 2018: "0.87", 2019: "0.52", 2020: "0.07",
+        2021: "-0.45", 2022: "-0.05", 2023: "2.55", 2024: "2.29", 2025: "2.53",
+        2026: "3.20",
+    }
+
+    def test_all_published_rates_configured(self):
+        from decimal import Decimal as D
+        from src.tax_law import registry
+        missing = {y: v for y, v in self.PUBLISHED.items()
+                   if registry.BASISZINS_PCT.get(y) != D(v)}
+        assert not missing, (
+            f"tax_law registry Basiszins missing/incorrect for {missing} — "
+            "update src/tax_law/registry.py from the BMF table in "
+            "reference/bmf-guidance/basiszins-vorabpauschale.md")
