@@ -13,7 +13,8 @@ from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
-from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type 
+from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
+from src.tax_law.holding_period import is_within_section23_speculation_period 
 import src.config as global_config
 
 logger = logging.getLogger(__name__)
@@ -598,8 +599,10 @@ class FifoLedger:
                 acq_date_obj = parse_ibkr_date(current_lot.acquisition_date)
                 real_date_obj = parse_ibkr_date(sale_event.event_date)
                 holding_period_days: Optional[int] = None
+                within_speculation_period: Optional[bool] = None
                 if acq_date_obj and real_date_obj and real_date_obj >= acq_date_obj :
                     holding_period_days = (real_date_obj - acq_date_obj).days
+                    within_speculation_period = is_within_section23_speculation_period(acq_date_obj, real_date_obj)
 
                 tax_cat: Optional[TaxReportingCategory] = None
                 is_stillhalter_income_flag = False # Renamed from is_premium_gain
@@ -636,7 +639,7 @@ class FifoLedger:
                         raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {sale_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                    if holding_period_days is not None and holding_period_days <= 365:
+                    if within_speculation_period:  # §23 Jahresfrist: anniversary rule (§§187 f. BGB), NOT a 365-day count; None (unparseable dates) falls through to exempt as before
                         is_taxable_under_section_23_flag = True # Renamed
                         tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                     else: 
@@ -721,8 +724,10 @@ class FifoLedger:
                 open_date_obj = parse_ibkr_date(current_short_lot.opening_date)
                 cover_date_obj = parse_ibkr_date(cover_event.event_date)
                 holding_period_days: Optional[int] = None
+                within_speculation_period: Optional[bool] = None
                 if open_date_obj and cover_date_obj and cover_date_obj >= open_date_obj:
                     holding_period_days = (cover_date_obj - open_date_obj).days
+                    within_speculation_period = is_within_section23_speculation_period(open_date_obj, cover_date_obj)
 
                 tax_cat: Optional[TaxReportingCategory] = None
                 is_stillhalter_income_flag = False # Renamed
@@ -761,7 +766,7 @@ class FifoLedger:
                         raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {cover_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                    if holding_period_days is not None and holding_period_days <= 365:
+                    if within_speculation_period:  # §23 Jahresfrist: anniversary rule (§§187 f. BGB), NOT a 365-day count; None (unparseable dates) falls through to exempt as before
                         is_taxable_under_section_23_flag = True # Renamed
                         tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                     else: 
@@ -867,8 +872,10 @@ class FifoLedger:
             acq_date_obj = parse_ibkr_date(current_lot.acquisition_date)
             real_date_obj = parse_ibkr_date(event.event_date)
             holding_period_days: Optional[int] = None
+            within_speculation_period: Optional[bool] = None
             if acq_date_obj and real_date_obj and real_date_obj >= acq_date_obj :
                 holding_period_days = (real_date_obj - acq_date_obj).days
+                within_speculation_period = is_within_section23_speculation_period(acq_date_obj, real_date_obj)
 
             tax_cat: Optional[TaxReportingCategory] = None
             is_stillhalter_income_flag = False # Renamed
@@ -906,7 +913,7 @@ class FifoLedger:
                     raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {event.event_id}. Tax category mapping must be updated.")
 
             elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                if holding_period_days is not None and holding_period_days <= 365:
+                if within_speculation_period:  # §23 Jahresfrist: anniversary rule (§§187 f. BGB), NOT a 365-day count; None (unparseable dates) falls through to exempt as before
                     is_taxable_under_section_23_flag = True # Renamed
                     tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                 else: 
