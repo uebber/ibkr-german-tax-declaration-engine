@@ -154,7 +154,8 @@ def main_application():
                 asset_resolver=asset_resolver,
                 tax_year=tax_year,
                 eoy_mismatch_count=processing_results.eoy_mismatch_error_count,
-                loss_offsetting_summary=loss_offsetting_summary
+                loss_offsetting_summary=loss_offsetting_summary,
+                data_gaps=processing_results.data_gaps
             )
         else:
             logger.error("Console tax declaration report cannot be generated because loss offsetting calculation failed or was skipped.")
