@@ -11,7 +11,9 @@ Objective:
 
 Key Principles:
 - Form Line Reporting: Gross amounts, derivative losses un-capped
-- Conceptual Summaries: Net balances, €20k derivative cap configurable
+- Conceptual Summaries: Net balances; the former €20k derivative-loss cap
+  (§20 Abs. 6 S. 5 a.F.) was abolished RETROACTIVELY for all open cases by
+  JStG 2024 (§52 Abs. 28 EStG n.F.), so capped == uncapped for every year
 - Fund income: Separate pot, NOT in Z19 or "Other Capital Income"
 
 LAW YEAR: LOSS_OFFSETTING_TESTS encodes the VZ <= 2024 Anlage KAP form structure
@@ -245,7 +247,7 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
     LossOffsettingTestCase(
         id="LO_TERM_004",
         description="Derivatives - losses > 20k (exceeds threshold)",
-        notes="Net loss exceeds €20k cap - capped value should be limited to -20000",
+        notes="Loss above the former €20k threshold - NO cap (JStG 2024, retroactive for all open cases)",
         prd_references=["2.8"],
         inputs=GrossPotComponents(term_v=D("30000")),
         expected=ExpectedReportingFigures(
@@ -259,7 +261,7 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("0.00"),
             conceptual_net_stocks=D("0.00"),
             conceptual_net_derivatives_uncapped=D("-30000.00"),
-            conceptual_net_derivatives_capped=D("-20000.00"),  # Capped!
+            conceptual_net_derivatives_capped=D("-30000.00"),  # cap repealed (JStG 2024)
             conceptual_net_p23_estg=D("0.00"),
             conceptual_fund_income_net_taxable=D("0.00"),
         ),
@@ -323,7 +325,7 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("0.00"),
             conceptual_net_stocks=D("0.00"),
             conceptual_net_derivatives_uncapped=D("-25000.00"),  # 5000 - 30000
-            conceptual_net_derivatives_capped=D("-20000.00"),    # Capped
+            conceptual_net_derivatives_capped=D("-25000.00"),    # cap repealed (JStG 2024)
             conceptual_net_p23_estg=D("0.00"),
             conceptual_fund_income_net_taxable=D("0.00"),
         ),
@@ -599,7 +601,7 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("1000.00"),  # 1500 - 500
             conceptual_net_stocks=D("-1500.00"),  # 500 - 2000
             conceptual_net_derivatives_uncapped=D("-29000.00"),  # 1000 - 30000
-            conceptual_net_derivatives_capped=D("-20000.00"),  # Capped!
+            conceptual_net_derivatives_capped=D("-29000.00"),  # cap repealed (JStG 2024)
             conceptual_net_p23_estg=D("-600.00"),
             conceptual_fund_income_net_taxable=D("0.00"),
         ),
@@ -651,7 +653,7 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("-500.00"),
             conceptual_net_stocks=D("-1000.00"),
             conceptual_net_derivatives_uncapped=D("-25000.00"),
-            conceptual_net_derivatives_capped=D("-20000.00"),
+            conceptual_net_derivatives_capped=D("-25000.00"),  # cap repealed (JStG 2024)
             conceptual_net_p23_estg=D("-300.00"),
             conceptual_fund_income_net_taxable=D("0.00"),
         ),

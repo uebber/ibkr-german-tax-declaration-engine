@@ -313,13 +313,14 @@ class TestFuturesLossOffsetting:
         z21 = result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN, Decimal("0"))
         assert z21 == Decimal("1000.00")  # 800 + 200
 
-    def test_future_loss_cap_2024(self):
-        """In 2024, derivative loss cap (20k) should apply to futures."""
+    def test_future_no_loss_cap_2024_retroactive_repeal(self):
+        """VZ 2024: the €20k cap (§20 Abs. 6 S. 5 a.F.) was abolished
+        RETROACTIVELY for all open cases (JStG 2024, §52 Abs. 28 EStG n.F.) —
+        a 2024 return prepared today must NOT cap the conceptual net."""
         rgl = create_future_rgl(Decimal("-25000.00"))
         result = self._run_loss_offsetting([rgl], tax_year=2024)
 
-        # Conceptual capped should be -20000
-        assert result.conceptual_net_derivatives_capped == Decimal("-20000.00")
+        assert result.conceptual_net_derivatives_capped == Decimal("-25000.00")
         assert result.conceptual_net_derivatives_uncapped == Decimal("-25000.00")
 
     def test_future_no_loss_cap_2025(self):
