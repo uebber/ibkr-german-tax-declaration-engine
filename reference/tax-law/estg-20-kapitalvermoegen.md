@@ -57,9 +57,9 @@ Gains from derivatives/forward transactions.
 **Engine mapping:** `OPTION_TRADE_CLOSE_LONG/SHORT`, `OPTION_EXPIRED_LONG`, `OPTION_CASH_SETTLED_LONG/SHORT` -> `ANLAGE_KAP_TERMIN_GEWINN` (<=2024) or `ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT` (>=2025)
 
 ### Satz 1 Nr. 7 -- Gains from capital claims
-Gains from redemption/sale of capital claims (Kapitalforderungen jeder Art).
+Gains from redemption/sale of capital claims (Kapitalforderungen jeder Art). Redemption at maturity (Einlösung) is explicitly treated as a disposal (Veräußerung) per Abs. 2 Satz 2.
 
-**Engine mapping:** Bond sales, FX gains on interest-bearing accounts
+**Engine mapping:** Bond sales; bond maturities (IBKR corporate action `Type="BM"`, mapped to a synthetic `TRADE_SELL_LONG` so it reuses the bond FIFO/FX path); FX gains on interest-bearing accounts. Positive G/L -> Anlage KAP Zeile 19, negative -> Zeile 22.
 
 ---
 
@@ -75,6 +75,21 @@ Special benefits or advantages granted in addition to or in place of income unde
 Key principle: FIFO method applies per asset per depot unless specific identification is possible.
 
 **Engine implementation:** `FifoManager` with lot-level tracking.
+
+**Known limitation — account-agnostic (merged) FIFO.** The engine keys FIFO ledgers by security
+(and by currency for FX), *merging across the person's accounts*, rather than running a separate
+FIFO per depot. This is correct for single-account holdings and for inter-account transfers (the
+merged queue carries cost basis/acquisition date across a move). It is imprecise only when the
+**same security, or the same foreign currency, is co-held in two accounts simultaneously and
+disposed from one** — the merged queue may match the disposal to a lot acquired in the other
+account, yielding a different gain than the strict per-Depot computation.
+- Securities: rare; the parser emits a per-security WARNING when it detects co-holding in a
+  position snapshot (`parsing_orchestrator._warn_if_co_held`).
+- Currencies: structural and often the normal state (e.g. USD held in two accounts); surfaced once
+  as a summary WARNING. The per-account-vs-aggregated question for foreign-currency gains
+  (§23/§20, Fremdwährungskonten) is itself legally unsettled, so the merge is a documented,
+  defensible simplification. A full per-Depot FIFO (per-account ledgers + transfer modelling) is a
+  deferred larger change.
 
 ### Abs. 4a -- Corporate Actions (Kapitalmasnahmen)
 

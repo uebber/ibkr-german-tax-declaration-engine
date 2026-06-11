@@ -134,6 +134,9 @@ class RawCashTransactionRecord(RawBaseRecord):
 
 class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
     account_id: Optional[str] = Field(None, alias="AccountId")
+    # The positions CSV uses "ClientAccountID" (not "AccountId"); parse it so per-account
+    # co-holding can be detected (merged FIFO is account-agnostic — see process_positions).
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
     acct_alias: Optional[str] = Field(None, alias="AcctAlias")
     model: Optional[str] = Field(None, alias="Model")
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed for consistency
