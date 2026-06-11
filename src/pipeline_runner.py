@@ -50,7 +50,11 @@ def run_core_processing_pipeline(
     positions_end_file_path: str,
     corporate_actions_file_path: str,
     interactive_classification_mode: bool,
-    tax_year_to_process: int = config.TAX_YEAR, # Allow override for testing
+    # REQUIRED — no global default: a run's tax year must be explicit at the
+    # boundary (src/main.py via CLI/config). A silent module-global default made
+    # behavior depend on ambient, monkeypatchable state (finding F1). See
+    # src/run_context.py (AR1).
+    tax_year_to_process: int,
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
     options_eae_file_path: Optional[str] = None  # For cash-settled option processing
