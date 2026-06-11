@@ -15,6 +15,7 @@ from decimal import Decimal, Context
 from typing import List, Dict, Any, Optional
 import uuid
 
+from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
 from src.domain.events import CurrencyConversionEvent
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, TaxReportingCategory, RealizationType
@@ -84,7 +85,7 @@ class CurrencyConversionProcessor:
         if event.from_currency.upper() != "EUR":
             from_asset = asset_resolver.get_cash_balance_asset(event.from_currency)
             if from_asset:
-                ledger = fifo_ledgers.get(from_asset.internal_asset_id)
+                ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, from_asset.internal_asset_id))
                 if not ledger:
                     logger.warning(f"No ledger for currency {event.from_currency}, skipping FX event {event.event_id}")
                 else:
@@ -99,7 +100,7 @@ class CurrencyConversionProcessor:
         if event.to_currency.upper() != "EUR":
             to_asset = asset_resolver.get_cash_balance_asset(event.to_currency)
             if to_asset:
-                ledger = fifo_ledgers.get(to_asset.internal_asset_id)
+                ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, to_asset.internal_asset_id))
                 if not ledger:
                     logger.warning(f"No ledger for currency {event.to_currency}, skipping FX event {event.event_id}")
                 else:
