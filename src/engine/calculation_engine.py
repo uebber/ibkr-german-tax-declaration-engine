@@ -6,6 +6,7 @@ from decimal import Decimal, getcontext, Context
 from collections import defaultdict
 from datetime import datetime, date
 
+from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,
@@ -215,8 +216,8 @@ def run_main_calculations(
     logger.info(f"Separated events: {sum(len(v) for v in historical_events_by_asset.values())} relevant historical events for SOY FIFO reconstruction, "
                 f"{len(current_year_events)} current tax year events.")
 
-    fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}
-    currency_fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}  # Separate dict for currency ledgers
+    fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip  # Separate dict for currency ledgers
 
     # === Three-pass SOY initialization ===
     # Pass 1: Create ledgers and simulate historical events (trades, splits, stock dividends)
@@ -261,7 +262,7 @@ def run_main_calculations(
                 logger.critical(f"Fatal error simulating historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
                 raise e
 
-            fifo_ledgers[asset_id] = ledger
+            fifo_ledgers[(DEFAULT_ACCOUNT, asset_id)] = ledger
 
     # Pass 2: Replay historical mergers in chronological order
     if historical_merger_events:
@@ -273,8 +274,8 @@ def run_main_calculations(
             raise e
 
         for merger_event in sorted_mergers:
-            source_ledger = fifo_ledgers.get(merger_event.asset_internal_id)
-            target_ledger = fifo_ledgers.get(merger_event.new_asset_internal_id)
+            source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
+            target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
 
             if source_ledger is None:
                 logger.warning(f"Historical merger {merger_event.event_id}: No source ledger for {merger_event.asset_internal_id}. Skipping.")
@@ -314,7 +315,7 @@ def run_main_calculations(
 
     # Pass 3: Reconcile all ledgers against SoY positions (after merger lots are in place)
     logger.info("Pass 3: Reconciling ledgers with SoY positions...")
-    for asset_id, ledger in fifo_ledgers.items():
+    for (ledger_account, asset_id), ledger in fifo_ledgers.items():
         asset_obj = asset_resolver.get_asset_by_id(asset_id)
         if asset_obj:
             try:
@@ -351,7 +352,7 @@ def run_main_calculations(
         if not currency_asset:
             continue
 
-        currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+        currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
         if not currency_ledger:
             continue
 
@@ -424,7 +425,7 @@ def run_main_calculations(
         if not asset_object:
             raise ProcessingError(f"Event {event.event_id} ({event.event_type.name}) references unknown asset {event.asset_internal_id}. Asset resolution failure.")
 
-        ledger = fifo_ledgers.get(asset_object.internal_asset_id)
+        ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, asset_object.internal_asset_id))
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):
@@ -588,7 +589,7 @@ def run_main_calculations(
         if asset_obj.asset_category == AssetCategory.CASH_BALANCE:
             continue
 
-        ledger = fifo_ledgers.get(asset_id)
+        ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, asset_id))
         calculated_eoy_qty: Decimal
 
         if ledger:
@@ -641,7 +642,7 @@ def run_main_calculations(
         if reported_eoy is None:
             continue
 
-        ledger = currency_fifo_ledgers.get(asset_id)
+        ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, asset_id))
         if ledger:
             long_qty = sum(lot.quantity for lot in ledger.lots)
             short_qty = sum(lot.quantity_shorted for lot in ledger.short_lots)
@@ -889,7 +890,7 @@ def _ensure_currency_ledger_exists(
     existing_asset = asset_resolver.get_cash_balance_asset(currency_code.upper())
     if existing_asset:
         # Asset exists; ensure ledger also exists
-        if existing_asset.internal_asset_id not in fifo_ledgers:
+        if (DEFAULT_ACCOUNT, existing_asset.internal_asset_id) not in fifo_ledgers:
             new_ledger = FifoLedger(
                 asset_internal_id=existing_asset.internal_asset_id,
                 asset_category=AssetCategory.CASH_BALANCE,
@@ -899,8 +900,8 @@ def _ensure_currency_ledger_exists(
                 internal_working_precision=internal_calculation_precision,
                 decimal_rounding_mode=decimal_rounding_mode,
             )
-            currency_fifo_ledgers[existing_asset.internal_asset_id] = new_ledger
-            fifo_ledgers[existing_asset.internal_asset_id] = new_ledger
+            currency_fifo_ledgers[(DEFAULT_ACCOUNT, existing_asset.internal_asset_id)] = new_ledger
+            fifo_ledgers[(DEFAULT_ACCOUNT, existing_asset.internal_asset_id)] = new_ledger
             logger.info(f"{context_label}: Created currency ledger for existing {currency_code} asset")
         return
 
@@ -921,8 +922,8 @@ def _ensure_currency_ledger_exists(
             internal_working_precision=internal_calculation_precision,
             decimal_rounding_mode=decimal_rounding_mode,
         )
-        currency_fifo_ledgers[new_asset.internal_asset_id] = new_ledger
-        fifo_ledgers[new_asset.internal_asset_id] = new_ledger
+        currency_fifo_ledgers[(DEFAULT_ACCOUNT, new_asset.internal_asset_id)] = new_ledger
+        fifo_ledgers[(DEFAULT_ACCOUNT, new_asset.internal_asset_id)] = new_ledger
         logger.info(f"{context_label}: Created CashBalance asset and ledger for {currency_code}")
 
 
@@ -986,7 +987,7 @@ def _process_cashflow_currency_impact(
             logger.debug(f"Cashflow {event.event_id}: Could not create CashBalance asset for {cash_currency}")
             return results
 
-    currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+    currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
     if not currency_ledger:
         # Create ledger on-the-fly (no prior balance, first cash flow in this currency)
         ledger_kwargs = dict(
@@ -999,9 +1000,9 @@ def _process_cashflow_currency_impact(
             decimal_rounding_mode=decimal_rounding_mode,
         )
         currency_ledger = FifoLedger(**ledger_kwargs)
-        currency_fifo_ledgers[currency_asset.internal_asset_id] = currency_ledger
+        currency_fifo_ledgers[(DEFAULT_ACCOUNT, currency_asset.internal_asset_id)] = currency_ledger
         if fifo_ledgers is not None:
-            fifo_ledgers[currency_asset.internal_asset_id] = currency_ledger
+            fifo_ledgers[(DEFAULT_ACCOUNT, currency_asset.internal_asset_id)] = currency_ledger
         logger.info(f"Cashflow {event.event_id}: Created currency ledger for {cash_currency} (first cash flow)")
 
     eur_per_unit = eur_amount / foreign_amount

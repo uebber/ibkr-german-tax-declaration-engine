@@ -4,6 +4,7 @@ import uuid
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
 
+from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
 from src.domain.events import (
     CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock,
     CorporateActionEvent, FinancialEvent, CorpActionExpireDividendRights
@@ -102,7 +103,7 @@ class MergerCashProcessor(EventProcessor):
         if not currency_asset:
             return results
 
-        currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+        currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
         if not currency_ledger:
             return results
 
@@ -175,8 +176,12 @@ class MergerStockProcessor(EventProcessor):
             return []
 
         # 1. Get target ledger
+        # Keys are normally (account, asset_id) tuples; tolerate bare asset_id
+        # keys (used by some unit tests passing hand-built ledger dicts).
         fifo_ledgers = context.get('fifo_ledgers', {})
-        target_ledger = fifo_ledgers.get(event.new_asset_internal_id)
+        target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, event.new_asset_internal_id))
+        if target_ledger is None:
+            target_ledger = fifo_ledgers.get(event.new_asset_internal_id)
         if target_ledger is None:
             logger.error(f"No FIFO ledger for target asset {event.new_asset_internal_id}. "
                          f"Cannot transfer lots for merger event {event.event_id}.")
