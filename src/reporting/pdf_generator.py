@@ -994,9 +994,98 @@ class PdfReportGenerator:
             self.story.append(Paragraph("Keine Realisierungen aus Termingeschäften in diesem Steuerjahr.", self.styles['BodyText']))
 
         self.story.append(Paragraph("2.3 Sonstige Kapitalerträge (Zinsen, Dividenden, etc.)", self.styles['H3']))
-        
+
         all_other_income_positive_components = []
-        all_other_income_negative_components_abs = [] 
+        all_other_income_negative_components_abs = []
+
+        # Pre-compute component totals for summary table
+        _interest_positive = sum(
+            (ev.gross_amount_eur or Decimal(0))
+            for ev in self.all_financial_events
+            if isinstance(ev, CashFlowEvent) and ev.event_type == FinancialEventType.INTEREST_RECEIVED
+            and (ev.gross_amount_eur or Decimal(0)) > 0
+        )
+        _dividends_total = sum(
+            (ev.gross_amount_eur or Decimal(0))
+            for ev in self.all_financial_events
+            if isinstance(ev, CashFlowEvent) and ev.event_type == FinancialEventType.DIVIDEND_CASH
+            and self.assets_by_id.get(ev.asset_internal_id)
+            and self.assets_by_id[ev.asset_internal_id].asset_category == AssetCategory.STOCK
+            and (ev.gross_amount_eur or Decimal(0)) > 0
+        )
+        _stock_div_total = sum(
+            (ev.gross_amount_eur or Decimal(0))
+            for ev in self.all_financial_events
+            if isinstance(ev, CorpActionStockDividend)
+            and (ev.gross_amount_eur or Decimal(0)) > 0
+        )
+        _bond_gains_total = sum(
+            (rgl.gross_gain_loss_eur or Decimal(0))
+            for rgl in self.realized_gains_losses
+            if rgl.asset_category_at_realization == AssetCategory.BOND
+            and (rgl.gross_gain_loss_eur or Decimal(0)) > 0
+        )
+        _fx_gains_total = sum(
+            (rgl.gross_gain_loss_eur or Decimal(0))
+            for rgl in self.realized_gains_losses
+            if rgl.asset_category_at_realization == AssetCategory.CASH_BALANCE
+            and (rgl.gross_gain_loss_eur or Decimal(0)) > 0
+        )
+        _kap_other_total = self.loss_offsetting_result.form_line_values.get(
+            TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE, Decimal('0.00')
+        )
+        _bond_losses_total = sum(
+            (rgl.gross_gain_loss_eur or Decimal(0)).copy_abs()
+            for rgl in self.realized_gains_losses
+            if rgl.asset_category_at_realization == AssetCategory.BOND
+            and (rgl.gross_gain_loss_eur or Decimal(0)) < 0
+        )
+        _fx_losses_total = sum(
+            (rgl.gross_gain_loss_eur or Decimal(0)).copy_abs()
+            for rgl in self.realized_gains_losses
+            if rgl.asset_category_at_realization == AssetCategory.CASH_BALANCE
+            and (rgl.gross_gain_loss_eur or Decimal(0)) < 0
+        )
+        _stueckzinsen_total = sum(
+            (ev.gross_amount_eur or Decimal(0)).copy_abs()
+            for ev in self.all_financial_events
+            if isinstance(ev, CashFlowEvent) and ev.event_type == FinancialEventType.INTEREST_PAID_STUECKZINSEN
+        )
+        _kap_losses_total = self.loss_offsetting_result.form_line_values.get(
+            TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, Decimal('0.00')
+        )
+
+        summary_data = [
+            [Paragraph("Komponente", self.styles['TableHeader']),
+             Paragraph("Betrag (EUR)", self.styles['TableHeader']),
+             Paragraph("Verweis", self.styles['TableHeader'])],
+            ["Zinserträge", self._format_decimal(_interest_positive).replace('.', ','), "siehe 2.3.1"],
+            ["Dividenden (Nicht-Fonds)", self._format_decimal(_dividends_total).replace('.', ','), "siehe 2.3.2"],
+            ["Steuerpflichtige Stock-Dividenden", self._format_decimal(_stock_div_total).replace('.', ','), "siehe 2.3.3"],
+            ["Anleihengewinne", self._format_decimal(_bond_gains_total).replace('.', ','), "siehe 2.3.4"],
+            ["FX-Gewinne (Währungspositionen)", self._format_decimal(_fx_gains_total).replace('.', ','), "siehe 2.3.5"],
+            [Paragraph("Summe → Anlage KAP Zeile 19", self.styles['TableHeader']),
+             Paragraph(self._format_decimal(_kap_other_total).replace('.', ','), self.styles['TableCellRight']),
+             ""],
+        ]
+        summary_table = self._create_styled_table(summary_data, col_widths=[8*cm, 4*cm, 3.5*cm])
+        self.story.append(KeepTogether(summary_table))
+        self.story.append(Spacer(1, 0.2*cm))
+
+        losses_summary_data = [
+            [Paragraph("Komponente", self.styles['TableHeader']),
+             Paragraph("Betrag (EUR)", self.styles['TableHeader']),
+             Paragraph("Verweis", self.styles['TableHeader'])],
+            ["Anleihenverluste", self._format_decimal(_bond_losses_total).replace('.', ','), "siehe 2.3.4"],
+            ["FX-Verluste (Währungspositionen)", self._format_decimal(_fx_losses_total).replace('.', ','), "siehe 2.3.5"],
+            ["Stückzinsen (gezahlt)", self._format_decimal(_stueckzinsen_total).replace('.', ','), "siehe 2.3.6"],
+            [Paragraph("Summe → Anlage KAP Zeile 22", self.styles['TableHeader']),
+             Paragraph(self._format_decimal(_kap_losses_total).replace('.', ','), self.styles['TableCellRight']),
+             ""],
+        ]
+        losses_summary_table = self._create_styled_table(losses_summary_data, col_widths=[8*cm, 4*cm, 3.5*cm])
+        self.story.append(KeepTogether(losses_summary_table))
+        self.story.append(Spacer(1, 0.3*cm))
 
         self.story.append(Paragraph("2.3.1 Zinserträge", self.styles['SmallText']))
         interest_events = [ev for ev in self.all_financial_events if isinstance(ev, CashFlowEvent) and ev.event_type == FinancialEventType.INTEREST_RECEIVED]
@@ -1133,7 +1222,47 @@ class PdfReportGenerator:
         else:
             self.story.append(Paragraph("Keine Anleihenveräußerungen in diesem Steuerjahr.", self.styles['BodyText']))
         
-        self.story.append(Paragraph("2.3.5 Stückzinsen", self.styles['SmallText']))
+        self.story.append(Paragraph("2.3.5 FX-Gewinne/-Verluste (Währungspositionen)", self.styles['SmallText']))
+        fx_rgls = [rgl for rgl in self.realized_gains_losses if rgl.asset_category_at_realization == AssetCategory.CASH_BALANCE]
+        if fx_rgls:
+            data = [["Währung / Asset", "Verk. Datum", "Menge", "Erlös EUR", "Ansch. Datum", "Kosten EUR", "G/V Brutto EUR"]]
+            total_fx_gains = Decimal(0)
+            total_fx_losses_abs = Decimal(0)
+            for rgl in sorted(fx_rgls, key=lambda x: (self._get_asset_details(x.asset_internal_id)[0], x.realization_date)):
+                name, isin_symbol, _ = self._get_asset_details(rgl.asset_internal_id)
+                display_name = name if name else isin_symbol
+                gross_gl = rgl.gross_gain_loss_eur or Decimal(0)
+                data.append([
+                    display_name,
+                    format_date_german(rgl.realization_date),
+                    self._format_decimal(rgl.quantity_realized, "integer_quantity"),
+                    self._format_decimal(rgl.total_realization_value_eur).replace('.', ','),
+                    format_date_german(rgl.acquisition_date),
+                    self._format_decimal(rgl.total_cost_basis_eur).replace('.', ','),
+                    self._format_decimal(gross_gl).replace('.', ','),
+                ])
+                if gross_gl > 0:
+                    total_fx_gains += gross_gl
+                    all_other_income_positive_components.append(gross_gl)
+                elif gross_gl < 0:
+                    total_fx_losses_abs += gross_gl.copy_abs()
+                    all_other_income_negative_components_abs.append(gross_gl.copy_abs())
+            data.append([
+                Paragraph("Summe FX-Gewinne (→ Zeile 19):", self.styles['TableHeader']),
+                "", "", "", "", "",
+                Paragraph(self._format_decimal(total_fx_gains).replace('.', ','), self.styles['TableCellRight']),
+            ])
+            data.append([
+                Paragraph("Summe FX-Verluste (→ Zeile 22):", self.styles['TableHeader']),
+                "", "", "", "", "",
+                Paragraph(self._format_decimal(total_fx_losses_abs).replace('.', ','), self.styles['TableCellRight']),
+            ])
+            table = self._create_styled_table(data, col_widths=[3*cm, 2*cm, 1.8*cm, 2*cm, 2*cm, 2*cm, 2.2*cm])
+            self.story.append(KeepTogether(table))
+        else:
+            self.story.append(Paragraph("Keine FX-Gewinne/-Verluste in diesem Steuerjahr.", self.styles['BodyText']))
+
+        self.story.append(Paragraph("2.3.6 Stückzinsen", self.styles['SmallText']))
         accrued_interest_events = [ev for ev in self.all_financial_events if isinstance(ev, CashFlowEvent) and ev.event_type == FinancialEventType.INTEREST_PAID_STUECKZINSEN]
         
         stueckzinsen_data_exists = False
@@ -1158,51 +1287,6 @@ class PdfReportGenerator:
         else:
             self.story.append(Paragraph("Keine expliziten Stückzinsen-Transaktionen (gezahlt/erhalten) erfasst.", self.styles['BodyText']))
 
-        self.story.append(Paragraph("2.3.6 Nettoerträge aus Investmentfonds (nach 30% Teilfreistellung, als Komponente sonst. Erträge)", self.styles['SmallText']))
-        fund_net_income_data_rows = []
-        
-        fund_distributions_for_kap = [
-            event for event in self.all_financial_events 
-            if isinstance(event, CashFlowEvent) and event.event_type == FinancialEventType.DISTRIBUTION_FUND
-        ]
-        fund_rgls_for_kap = [
-            rgl for rgl in self.realized_gains_losses 
-            if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND
-        ]
-        fund_vop_for_kap = [vp for vp in self.vorabpauschale_items if vp.tax_year == self.tax_year]
-
-        for dist_event in fund_distributions_for_kap:
-            asset_id = dist_event.asset_internal_id
-            asset_name, asset_isin_symbol, fund_type_enum = self._get_asset_details(asset_id)
-            tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type_enum)
-            gross_eur = dist_event.gross_amount_eur or Decimal(0)
-            tf_amount_eur = (gross_eur.copy_abs() * tf_rate).quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
-            net_taxable_eur = gross_eur - tf_amount_eur if gross_eur >= Decimal(0) else gross_eur + tf_amount_eur
-            if net_taxable_eur !=0:
-                fund_net_income_data_rows.append([asset_name, asset_isin_symbol, "Ausschüttung (Netto)", self._format_decimal(net_taxable_eur).replace('.',',')])
-
-        for rgl in fund_rgls_for_kap:
-            asset_name, asset_isin_symbol, _ = self._get_asset_details(rgl.asset_internal_id)
-            net_gl = rgl.net_gain_loss_after_teilfreistellung_eur or Decimal(0)
-            if net_gl != 0:
-                fund_net_income_data_rows.append([asset_name, asset_isin_symbol, "Veräußerung G/V (Netto)", self._format_decimal(net_gl).replace('.',',')])
-
-        for vp_item in fund_vop_for_kap:
-            if vp_item.net_taxable_vorabpauschale_eur != Decimal(0): 
-                asset_name, asset_isin_symbol, _ = self._get_asset_details(vp_item.asset_internal_id)
-                net_vp = vp_item.net_taxable_vorabpauschale_eur
-                fund_net_income_data_rows.append([asset_name, asset_isin_symbol, "Vorabpauschale (Netto)", self._format_decimal(net_vp).replace('.',',')])
-
-        if fund_net_income_data_rows:
-            data = [["Fonds Name", "ISIN/Symbol", "Typ", "Netto Steuerpfl. Betrag (EUR)"]] + sorted(fund_net_income_data_rows, key=lambda x: (x[0], x[2]))
-            # Calculate sum based on the already formatted strings by converting back to Decimal
-            total_net_fund_income_display = sum(Decimal(row[3].replace(',','.')) for row in data[1:])
-            data.append([Paragraph("Summe Netto Investmenterträge (für Verrechnung):", self.styles['TableHeader']), "", "", Paragraph(self._format_decimal(total_net_fund_income_display).replace('.',','), self.styles['TableCellRight'])])
-            table = self._create_styled_table(data, col_widths=[5*cm, 3*cm, 4*cm, 3.5*cm])
-            self.story.append(KeepTogether(table))
-            self.story.append(Paragraph("Hinweis: Diese Netto-Investmenterträge werden gemäß InvStG versteuert und fließen in die Gesamtverrechnung ein; die Bruttozahlen sind in KAP-INV zu deklarieren.", self.styles['SmallText']))
-        else:
-            self.story.append(Paragraph("Keine Nettoerträge aus Investmentfonds für 'Sonstige Kapitalerträge'.", self.styles['BodyText']))
 
 
 
