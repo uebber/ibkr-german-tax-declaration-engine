@@ -42,6 +42,13 @@ CASH_BALANCE_COLUMNS = (
     "StartingCash", "EndingCash",
 )
 
+# Transfers (Depotübertragung) export. Validated with allow_extra=True (the export carries
+# ~33 columns); only the fields the engine uses are required here.
+TRANSFERS_COLUMNS = (
+    "ClientAccountID", "CurrencyPrimary", "AssetClass", "Symbol", "ISIN", "Conid",
+    "Date", "Type", "Direction", "TransferAccount", "Quantity", "CashTransfer", "TransactionID",
+)
+
 OPTIONS_EAE_COLUMNS = (
     "ClientAccountID", "CurrencyPrimary", "FXRateToBase", "AssetClass",
     "Symbol", "Description", "Conid", "ISIN", "UnderlyingConid",

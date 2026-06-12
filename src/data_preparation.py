@@ -141,6 +141,7 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
     # Optional transaction types (no error if missing)
     optional_transaction_types = {
         "options_eae": "Options_EAE",
+        "transfers": "Transfers",   # internal Depotübertragungen (per-Depot FIFO + transfers)
     }
 
     for file_key, prefix in transaction_types.items():

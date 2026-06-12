@@ -290,3 +290,39 @@ class RawCashBalanceRecord(RawBaseRecord):
 
     class Config:
         extra = 'ignore'
+
+
+class RawTransferRecord(RawBaseRecord):
+    """Raw record for an IBKR Transfers (Depotübertragung) row.
+
+    Each transfer leg is exported twice: a position-bearing row (with TransactionID and
+    SettleDate) and a 'ST' settlement-marker row (empty TransactionID). The parser keeps only
+    the position-bearing rows; the OUT leg of an INTERNAL transfer defines a move
+    source=client_account_id -> target=transfer_account (TransferPrice is 0; the cost basis
+    comes from the drained FIFO lots).
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: Optional[str] = Field(None, alias="CurrencyPrimary")
+    asset_class: Optional[str] = Field(None, alias="AssetClass")
+    sub_category: Optional[str] = Field(None, alias="SubCategory")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    underlying_conid: Optional[str] = Field(None, alias="UnderlyingConid")
+    underlying_symbol: Optional[str] = Field(None, alias="UnderlyingSymbol")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    date: Optional[str] = Field(None, alias="Date")
+    settle_date: Optional[str] = Field(None, alias="SettleDate")
+    transfer_type: Optional[str] = Field(None, alias="Type")          # e.g. "INTERNAL"
+    direction: Optional[str] = Field(None, alias="Direction")          # "IN" / "OUT"
+    transfer_account: Optional[str] = Field(None, alias="TransferAccount")
+    quantity: Optional[Decimal] = Field(None, alias="Quantity")
+    transfer_price: Optional[Decimal] = Field(None, alias="TransferPrice")
+    position_amount: Optional[Decimal] = Field(None, alias="PositionAmount")
+    cash_transfer: Optional[Decimal] = Field(None, alias="CashTransfer")
+    code: Optional[str] = Field(None, alias="Code")
+    transaction_id: Optional[str] = Field(None, alias="TransactionID")
+
+    class Config:
+        extra = 'ignore'
