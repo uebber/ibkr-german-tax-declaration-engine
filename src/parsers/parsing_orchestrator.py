@@ -115,6 +115,44 @@ class ParsingOrchestrator:
             self._warn_if_co_held(asset, agg, "EoY")
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
 
+        # Per-Depot FIFO: also record positions per (account, asset) for per-account ledgers.
+        self._record_per_account_positions()
+
+    def _record_per_account_positions(self):
+        """Build {(account_key, asset_id): {soy_*/eoy_* position fields}} for per-Depot FIFO.
+        The aggregated values stay on the Asset (used by VP, EoY validation, reporting totals);
+        this is the per-account view used to seed per-(account, asset) ledgers."""
+        from src.utils.account_utils import account_key
+        pba: dict = {}
+
+        def fill(raw_positions, prefix):
+            for raw_pos in raw_positions:
+                asset = self.asset_resolver.get_or_create_asset(
+                    raw_isin=raw_pos.isin, raw_conid=raw_pos.conid, raw_symbol=raw_pos.symbol,
+                    raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
+                    raw_description=raw_pos.description, description_source_type="position",
+                    raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
+                    raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+                    raw_underlying_conid=raw_pos.underlying_conid,
+                    raw_underlying_symbol=raw_pos.underlying_symbol,
+                )
+                key = (account_key(raw_pos.client_account_id), asset.internal_asset_id)
+                st = pba.setdefault(key, {})
+                st[f"{prefix}_quantity"] = st.get(f"{prefix}_quantity", Decimal(0)) + safe_decimal(raw_pos.position, default=Decimal(0))
+                cost = safe_decimal(raw_pos.cost_basis_money)
+                if cost is not None:
+                    st[f"{prefix}_cost_basis_amount"] = st.get(f"{prefix}_cost_basis_amount", Decimal(0)) + cost
+                value = safe_decimal(raw_pos.position_value)
+                if value is not None:
+                    st[f"{prefix}_position_value"] = st.get(f"{prefix}_position_value", Decimal(0)) + value
+                st[f"{prefix}_market_price"] = safe_decimal(raw_pos.mark_price)
+                st[f"{prefix}_currency"] = raw_pos.currency_primary
+
+        fill(self.raw_positions_start, "soy")
+        fill(self.raw_positions_end, "eoy")
+        self.asset_resolver.positions_by_account = pba
+        logger.info(f"Recorded per-account positions for {len(pba)} (account, asset) pair(s).")
+
     def _warn_if_co_held(self, asset, agg, snapshot_label):
         """German FIFO is per-Depot, but this engine merges accounts into one FIFO queue per
         security. If a security is held with a non-zero quantity in more than one account in the
