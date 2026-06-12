@@ -42,6 +42,7 @@ class FinancialEventType(Enum):
     WITHHOLDING_TAX = auto()
     FEE_TRANSACTION = auto()
     CURRENCY_CONVERSION = auto() # From FX trades or explicit conversions
+    INTERNAL_TRANSFER = auto() # Internal Depotübertragung between a person's own custody accounts (tax-neutral)
 
 class RealizationType(Enum):
     """Defines how a gain or loss was realized."""

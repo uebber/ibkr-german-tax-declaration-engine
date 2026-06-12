@@ -76,20 +76,36 @@ Key principle: FIFO method applies per asset per depot unless specific identific
 
 **Engine implementation:** `FifoManager` with lot-level tracking.
 
-**Known limitation — account-agnostic (merged) FIFO.** The engine keys FIFO ledgers by security
-(and by currency for FX), *merging across the person's accounts*, rather than running a separate
-FIFO per depot. This is correct for single-account holdings and for inter-account transfers (the
-merged queue carries cost basis/acquisition date across a move). It is imprecise only when the
-**same security, or the same foreign currency, is co-held in two accounts simultaneously and
-disposed from one** — the merged queue may match the disposal to a lot acquired in the other
-account, yielding a different gain than the strict per-Depot computation.
-- Securities: rare; the parser emits a per-security WARNING when it detects co-holding in a
-  position snapshot (`parsing_orchestrator._warn_if_co_held`).
-- Currencies: structural and often the normal state (e.g. USD held in two accounts); surfaced once
-  as a summary WARNING. The per-account-vs-aggregated question for foreign-currency gains
-  (§23/§20, Fremdwährungskonten) is itself legally unsettled, so the merge is a documented,
-  defensible simplification. A full per-Depot FIFO (per-account ledgers + transfer modelling) is a
-  deferred larger change.
+**Per-Depot FIFO.** The engine runs a **separate FIFO ledger per (custody account, asset)** — both
+for securities and for foreign currency (FX) — matching §20 Abs. 4 S. 7 (FIFO per Depot). Events
+carry their IBKR `ClientAccountID`; a disposal from one account consumes only that account's lots,
+so a security or currency co-held in two accounts and sold from one yields the correct per-Depot
+gain. Per-account SoY/EoY positions and cash balances drive the reconstruction; the aggregate
+across accounts is still used for VP (per person), EoY validation, and the tax-return totals.
+Events/exports without an account id collapse to a single default ledger (unchanged single-account
+behaviour).
+
+**Internal transfers (Depotübertragung).** An internal move of a security or non-EUR cash between
+two of the same person's accounts is parsed from the IBKR *Transfers* export and modelled as a
+tax-neutral `InternalTransferEvent` (§43 Abs. 1 S. 5 / Fußstapfentheorie): no gain is realised, and
+the FIFO lots carry over unchanged — for a **long** position the acquisition date and EUR cost
+basis, for a transferred **short** position the opening date and EUR sale proceeds (so the later
+cover in the receiving Depot realises the correct gain). The historical (pre-tax-year) SoY
+reconstruction replays each account's trades AND the inter-account transfers in a single
+chronological stream, so a security bought, transferred between Depots, and (partly) sold all within
+the historical window is rebuilt lot-exactly (the carried basis/date survive); current-year
+transfers are applied in event order. Where the trade history predates the available files the
+ledger still reconciles to the reported SoY position. **Non-EUR cash transfers are treated the same
+way**: an internal move of foreign currency between the person's own accounts is not a Veräußerung
+(no change of ownership), so it is tax-neutral and the moved currency keeps the sender's acquisition
+date and EUR cost basis. The currency SoY reconstruction replays each account's currency-affecting
+events AND the inter-account cash transfers in their own chronological stream, so the receiving
+Depot's FX gain on later spending that currency is measured from the original acquisition rate — not
+reset to the start-of-year rate. (EUR is the base currency and is not FIFO-tracked.)
+
+Note on FX per-Depot: the per-account-vs-aggregated question for foreign-currency gains
+(§23/§20, Fremdwährungskonten) is itself legally unsettled; the engine now tracks FX per Depot for
+consistency with securities, but the aggregate result is what flows to Anlage KAP.
 
 ### Abs. 4a -- Corporate Actions (Kapitalmasnahmen)
 

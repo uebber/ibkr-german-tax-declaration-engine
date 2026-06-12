@@ -20,7 +20,7 @@ import src.config as global_config
 
 from .raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawPositionRecord, RawCorporateActionRecord,
-    RawCashBalanceRecord, RawOptionsEAERecord
+    RawCashBalanceRecord, RawOptionsEAERecord, RawTransferRecord
 )
 from .trades_parser import parse_trades_csv
 from .cash_transactions_parser import parse_cash_transactions_csv
@@ -28,6 +28,7 @@ from .positions_parser import parse_positions_csv
 from .corporate_actions_parser import parse_corporate_actions_csv
 from .cash_balance_parser import parse_cash_balance_csv
 from .options_eae_parser import parse_options_eae_csv
+from .transfers_parser import parse_transfers_csv
 from .domain_event_factory import DomainEventFactory
 # NEW IMPORTS
 from src.processing.option_trade_linker import perform_option_trade_linking
@@ -49,6 +50,7 @@ class ParsingOrchestrator:
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
         self.raw_options_eae: List[RawOptionsEAERecord] = []
+        self.raw_transfers: List[RawTransferRecord] = []
 
         self.domain_financial_events: List[FinancialEvent] = []
         # NEW: Store collections for linking
@@ -65,7 +67,8 @@ class ParsingOrchestrator:
                            positions_end_file: Optional[str] = None,
                            corporate_actions_file: Optional[str] = None,
                            cash_balance_file: Optional[str] = None,
-                           options_eae_file: Optional[str] = None):
+                           options_eae_file: Optional[str] = None,
+                           transfers_file: Optional[str] = None):
         # ... (implementation is the same)
         if trades_file:
             self.raw_trades = parse_trades_csv(trades_file)
@@ -88,6 +91,10 @@ class ParsingOrchestrator:
         if options_eae_file:
             self.raw_options_eae = parse_options_eae_csv(options_eae_file)
             logger.info(f"Loaded {len(self.raw_options_eae)} raw OptionEAE records.")
+
+        if transfers_file:
+            self.raw_transfers = parse_transfers_csv(transfers_file)
+            logger.info(f"Loaded {len(self.raw_transfers)} raw transfer records.")
 
     def process_positions(self):
         # IBKR emits one position row per account. Assets are resolved account-agnostically
@@ -593,6 +600,7 @@ class ParsingOrchestrator:
         cash_events = event_factory.create_events_from_cash_transactions(self.raw_cash_transactions)
         ca_events = event_factory.create_events_from_corporate_actions(self.raw_corporate_actions)
         options_eae_events = event_factory.create_events_from_options_eae(self.raw_options_eae) if self.raw_options_eae else []
+        transfer_events = event_factory.create_events_from_transfers(self.raw_transfers) if self.raw_transfers else []
 
         # Populate the main list of events
         self.domain_financial_events.clear() # Clear if run multiple times (though not typical)
@@ -600,6 +608,7 @@ class ParsingOrchestrator:
         self.domain_financial_events.extend(cash_events)
         self.domain_financial_events.extend(ca_events)
         self.domain_financial_events.extend(options_eae_events)
+        self.domain_financial_events.extend(transfer_events)
 
         logger.info(f"DomainEventFactory created {len(self.domain_financial_events)} total financial events initially.")
         logger.info(f"Collected {len(self.candidate_option_lifecycle_events)} candidate option lifecycle events for linking.")
@@ -675,6 +684,7 @@ class ParsingOrchestrator:
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
+                             transfers_file: Optional[str] = None,
                              tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
         logger.info("Starting parsing pipeline...")
@@ -686,7 +696,8 @@ class ParsingOrchestrator:
                 positions_end_file=positions_end_file,
                 corporate_actions_file=corporate_actions_file,
                 cash_balance_file=cash_balance_file,
-                options_eae_file=options_eae_file
+                options_eae_file=options_eae_file,
+                transfers_file=transfers_file
             )
             self.process_positions()
             self._process_cash_balance_positions(tax_year=tax_year)

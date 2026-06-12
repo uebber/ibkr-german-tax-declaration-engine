@@ -98,6 +98,7 @@ def main_application():
             cash_balance_file_path=data_paths.get("cash_balance", ""),
             options_eae_file_path=data_paths.get("options_eae", "") or None,
             positions_prior_start_file_path=data_paths.get("positions_prior_start", "") or None,
+            transfers_file_path=data_paths.get("transfers", "") or None,
         )
     except Exception as e:
         logger.critical(f"Core processing pipeline failed: {e}. Exiting.", exc_info=True)

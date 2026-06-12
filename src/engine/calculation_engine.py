@@ -15,7 +15,7 @@ from src.domain.events import (
     CorpActionExpireDividendRights, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
-    WithholdingTaxEvent, CurrencyConversionEvent
+    WithholdingTaxEvent, CurrencyConversionEvent, InternalTransferEvent
 )
 from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance
 from src.identification.asset_resolver import AssetResolver
@@ -230,6 +230,47 @@ def _replay_historical_merger(merger_event, fifo_ledgers, asset_resolver) -> Non
                  f"(ratio: {merger_event.new_shares_received_per_old})")
 
 
+def _order_current_year_events_for_merger_deps(events: List[FinancialEvent]) -> List[FinancialEvent]:
+    """Resolve a same-day ordering dependency between an internal transfer and a stock merger.
+
+    A merger event carries the account it happens in. If a security is transferred A->B and then
+    merges in B on the SAME day, the merger consumes the just-transferred lots, so the transfer MUST
+    run before the merger. The default intra-day sort places corporate actions (mergers) before
+    trades/transfers, which would run the merger against an empty target ledger. Because the merger's
+    account unambiguously identifies where the merge happens, detect a transfer whose
+    (target account, source asset) matches the merger's (account, source asset) on the same date and
+    move it to immediately before that merger. Other cases (e.g. transferring the merger OUTPUT) are
+    unaffected — the merger correctly precedes them.
+    """
+    if not (any(isinstance(e, CorpActionMergerStock) for e in events)
+            and any(isinstance(e, InternalTransferEvent) for e in events)):
+        return events
+    ordered = list(events)
+    for _ in range(len(ordered)):  # bounded passes; handles multiple dependencies
+        moved = False
+        for mi, m in enumerate(ordered):
+            if not isinstance(m, CorpActionMergerStock):
+                continue
+            m_acct = account_key(m.account_id)
+            for ti in range(mi + 1, len(ordered)):
+                t = ordered[ti]
+                if (isinstance(t, InternalTransferEvent)
+                        and t.event_date == m.event_date
+                        and t.asset_internal_id == m.asset_internal_id
+                        and account_key(t.target_account_id) == m_acct):
+                    ordered.insert(mi, ordered.pop(ti))  # move transfer to just before its merger
+                    logger.info(f"Ordering: moved same-day internal transfer {t.event_id} before "
+                                f"dependent merger {m.event_id} (transfer delivers the merged asset "
+                                f"into account {m_acct}).")
+                    moved = True
+                    break
+            if moved:
+                break
+        if not moved:
+            break
+    return ordered
+
+
 def run_main_calculations(
     financial_events: List[FinancialEvent],
     asset_resolver: AssetResolver,
@@ -260,6 +301,8 @@ def run_main_calculations(
     historical_events_by_asset: DefaultDict[Any, List[FinancialEvent]] = defaultdict(list)
     historical_merger_events: List[CorpActionMergerStock] = []
     historical_currency_events: DefaultDict[Any, List[FinancialEvent]] = defaultdict(list)
+    historical_transfer_events: List[InternalTransferEvent] = []
+    all_transfer_events: List[InternalTransferEvent] = []  # historical + current (for ledger combos)
     current_year_events: List[FinancialEvent] = []
 
     pending_option_adjustments: Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]] = {}
@@ -285,6 +328,20 @@ def run_main_calculations(
         except ValueError as e:
             logger.error(f"Event {event.event_id} has invalid date or identifier ({e}). Cannot process.")
             continue 
+
+        if isinstance(event, InternalTransferEvent):
+            # Internal Depotübertragung: tax-neutral lot move. Historical ones are replayed inside
+            # the unified historical stream (securities AND non-EUR cash share the one handler);
+            # current-year ones in the main loop. Either way they define (account, asset) ledger
+            # combos that must exist on both sides.
+            all_transfer_events.append(event)
+            if event_date_obj < tax_year_start_date_obj:
+                historical_transfer_events.append(event)
+            elif event_date_obj <= tax_year_end_date_obj:
+                current_year_events.append(event)
+            else:
+                filtered_events_count += 1
+            continue
 
         if event_date_obj < tax_year_start_date_obj:
             if isinstance(event, CorpActionMergerStock):
@@ -346,6 +403,66 @@ def run_main_calculations(
             decimal_rounding_mode=decimal_rounding_mode, fund_type=ftype,
         )
 
+    def _apply_internal_transfer(event: InternalTransferEvent) -> None:
+        """Move FIFO lots from the source account ledger to the target account ledger for an
+        internal Depotübertragung — tax-neutral, basis and acquisition date preserved. Used for
+        both historical (SoY reconstruction) and current-year transfers."""
+        src = account_key(event.account_id)
+        tgt = account_key(event.target_account_id)
+        asset_id = event.asset_internal_id
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
+
+        src_ledger = fifo_ledgers.get((src, asset_id))
+        src_long = sum((l.quantity for l in src_ledger.lots), Decimal(0)) if src_ledger else Decimal(0)
+        src_short = sum((l.quantity_shorted for l in src_ledger.short_lots), Decimal(0)) if src_ledger else Decimal(0)
+        if src_ledger is None or (src_long <= Decimal("1e-9") and src_short <= Decimal("1e-9")):
+            logger.warning(f"Internal transfer {event.event_id}: source ledger ({src}) for "
+                           f"{asset_obj.get_classification_key() if asset_obj else asset_id} is "
+                           f"empty/missing; nothing to move.")
+            return
+
+        # A position is either net long or net short. Move whichever the source holds (a transferred
+        # short position carries its open-short proceeds + opening date, same Fußstapfentheorie).
+        try:
+            if src_short > Decimal("1e-9") and src_long <= Decimal("1e-9"):
+                is_short = True
+                drained = src_ledger.transfer_out_short_lots(event.quantity, str(event.event_id))
+            else:
+                is_short = False
+                drained = src_ledger.transfer_out_long_lots(event.quantity, str(event.event_id))
+        except ValueError as e:
+            logger.error(f"Internal transfer {event.event_id}: {e}")
+            return
+        if not drained:
+            return
+
+        tgt_ledger = fifo_ledgers.get((tgt, asset_id))
+        if tgt_ledger is None:
+            if isinstance(asset_obj, CashBalance) and asset_obj.currency:
+                _ensure_currency_ledger_exists(
+                    asset_obj.currency, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
+                    currency_converter, exchange_rate_provider,
+                    internal_calculation_precision, decimal_rounding_mode,
+                    f"Transfer target {event.event_id}", account=tgt)
+                tgt_ledger = fifo_ledgers.get((tgt, asset_id))
+            elif asset_obj is not None:
+                tgt_ledger = _build_security_ledger(asset_obj)
+                fifo_ledgers[(tgt, asset_id)] = tgt_ledger
+        if tgt_ledger is None:
+            logger.error(f"Internal transfer {event.event_id}: could not obtain target ledger "
+                         f"({tgt}); transferred lots dropped.")
+            return
+
+        if is_short:
+            tgt_ledger.receive_transferred_short_lots(drained)
+            moved = sum((l.quantity_shorted for l in drained), Decimal(0))
+        else:
+            tgt_ledger.receive_transferred_lots(drained)
+            moved = sum((l.quantity for l in drained), Decimal(0))
+        logger.info(f"Internal transfer {event.event_id}: moved {moved} {'SHORT' if is_short else 'long'} of "
+                    f"{asset_obj.get_classification_key() if asset_obj else asset_id} from {src} "
+                    f"to {tgt} (proceeds/cost basis and date preserved, tax-neutral).")
+
     # The (account, asset) combos needing a security ledger: any with a recorded position, with
     # historical security events, touched by a current-year event, or a merger source/target.
     combos: set = set()
@@ -359,6 +476,10 @@ def run_main_calculations(
         acct_m = account_key(merger_event.account_id)
         combos.add((acct_m, merger_event.asset_internal_id))
         combos.add((acct_m, merger_event.new_asset_internal_id))
+    # Internal transfers: both the source and target account need a ledger for the moved asset.
+    for transfer_event in all_transfer_events:
+        combos.add((account_key(transfer_event.account_id), transfer_event.asset_internal_id))
+        combos.add((account_key(transfer_event.target_account_id), transfer_event.asset_internal_id))
 
     # Pass A: create the per-(account, asset) ledgers, then stream ALL historical (pre-tax-year)
     # trade / split / stock-dividend events chronologically (Phase.LEDGER_EVENTS). Per-Depot:
@@ -391,6 +512,21 @@ def run_main_calculations(
                     l.apply_historical_event(a, e, tax_year)),
                 label=f"sec:{asset_obj.get_classification_key()}",
             )
+    # Historical internal transfers: registered ONCE in the unified stream
+    # (Phase.LEDGER_EVENTS) — securities and non-EUR cash share the same
+    # handler; the chronological interleave with trades reconstructs a
+    # bought-transferred-sold history lot-exactly (carried basis + date).
+    for transfer_event in historical_transfer_events:
+        try:
+            t_key = get_event_sort_key(transfer_event, asset_resolver)
+        except ValueError as e:
+            logger.critical(f"Fatal error sorting historical transfer {transfer_event.event_id}: {e}. Aborting.")
+            raise
+        stream.add(
+            Phase.LEDGER_EVENTS, t_key,
+            (lambda t=transfer_event: _apply_internal_transfer(t)),
+            label="transfer",
+        )
     securities_ledger_count = len(fifo_ledgers)
 
     if historical_merger_events:
@@ -488,6 +624,14 @@ def run_main_calculations(
         for (cc_acct, cc_ccy) in list(historical_currency_events.keys()) + list(current_currency_events.keys()):
             if cc_ccy and cc_ccy.upper() != "EUR":
                 currency_combos.add((cc_acct, cc_ccy.upper()))
+
+    # Cash internal transfers: ensure both source and target accounts have a currency ledger.
+    for transfer_event in all_transfer_events:
+        t_asset = asset_resolver.get_asset_by_id(transfer_event.asset_internal_id)
+        if isinstance(t_asset, CashBalance) and t_asset.currency and t_asset.currency.upper() != "EUR":
+            ccy = t_asset.currency.upper()
+            currency_combos.add((account_key(transfer_event.account_id), ccy))
+            currency_combos.add((account_key(transfer_event.target_account_id), ccy))
 
     # Phase 1: ensure every (account, currency) ledger exists (creation is unordered
     # setup, not stream work — the stream replays EVENTS).
@@ -607,8 +751,18 @@ def run_main_calculations(
         FinancialEventType.OPTION_CASH_SETTLEMENT: option_cash_settlement_processor,
     }
 
+    # Resolve the same-day transfer->merger dependency (a transfer that delivers a security into the
+    # account where it then merges must precede that merger; the merger's account disambiguates).
+    current_year_events = _order_current_year_events_for_merger_deps(current_year_events)
+
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")
     for event_idx, event in enumerate(current_year_events):
+        # Internal Depotübertragung: tax-neutral lot move between the person's own accounts.
+        # Handled directly (no processor, no RGL) — drain source ledger, receive into target.
+        if isinstance(event, InternalTransferEvent):
+            _apply_internal_transfer(event)
+            continue
+
         asset_object = asset_resolver.get_asset_by_id(event.asset_internal_id)
         if not asset_object:
             raise ProcessingError(f"Event {event.event_id} ({event.event_type.name}) references unknown asset {event.asset_internal_id}. Asset resolution failure.")
@@ -736,7 +890,7 @@ def run_main_calculations(
                         fx_currency_code, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
                         currency_converter, exchange_rate_provider,
                         internal_calculation_precision, decimal_rounding_mode,
-                        f"FX trade {event.event_id}"
+                        f"FX trade {event.event_id}", account=event_acct,
                     )
                 fx_rgls = currency_conversion_processor.process(event, fifo_ledgers, asset_resolver)
                 if fx_rgls:

@@ -538,6 +538,102 @@ class FifoLedger:
         self.short_lots.extend(prepared_short_lots)
         self.short_lots.sort(key=lambda l: (parse_ibkr_date(l.opening_date) or datetime.min.date(), l.source_transaction_id))
 
+    def transfer_out_long_lots(self, quantity: Decimal, transfer_event_id: str) -> List[FifoLot]:
+        """Drain `quantity` units of long lots in FIFO order for an internal Depotübertragung.
+
+        Splits the boundary lot if needed. Returns the drained lots (preserving each lot's
+        acquisition_date and unit/total EUR cost basis) so the target account ledger can receive
+        them unchanged — tax-neutral, no gain realised (§43 Abs. 1 S. 5 / Fußstapfentheorie).
+        Raises ValueError if the source has insufficient long quantity.
+        """
+        if quantity <= Decimal(0):
+            return []
+        available = sum((l.quantity for l in self.lots), Decimal(0))
+        tolerance = Decimal("1e-6")
+        if quantity - available > tolerance:
+            raise ValueError(
+                f"Internal transfer {transfer_event_id}: source ledger for {self.asset_internal_id} "
+                f"has insufficient long quantity ({available}) to transfer {quantity}."
+            )
+
+        drained: List[FifoLot] = []
+        remaining = quantity
+        while remaining > tolerance and self.lots:
+            lot = self.lots[0]
+            if lot.quantity <= remaining + tolerance:
+                # Move the whole lot.
+                drained.append(lot)
+                remaining = self.ctx.subtract(remaining, lot.quantity)
+                self.lots.pop(0)
+            else:
+                # Split: move `remaining`, keep the rest in place.
+                moved_total = self.ctx.multiply(remaining, lot.unit_cost_basis_eur)
+                drained.append(FifoLot(
+                    acquisition_date=lot.acquisition_date,
+                    quantity=remaining,
+                    unit_cost_basis_eur=lot.unit_cost_basis_eur,
+                    total_cost_basis_eur=moved_total,
+                    source_transaction_id=lot.source_transaction_id,
+                ))
+                lot.quantity = self.ctx.subtract(lot.quantity, remaining)
+                lot.total_cost_basis_eur = self.ctx.multiply(lot.quantity, lot.unit_cost_basis_eur)
+                remaining = Decimal(0)
+        return drained
+
+    def receive_transferred_lots(self, lots: List[FifoLot]) -> None:
+        """Append lots received from an internal transfer and re-sort by acquisition date.
+        The lots keep their original acquisition date and EUR cost basis (Fußstapfentheorie)."""
+        if not lots:
+            return
+        self.lots.extend(lots)
+        self.lots.sort(key=lambda l: (parse_ibkr_date(l.acquisition_date) or datetime.min.date(), l.source_transaction_id))
+
+    def transfer_out_short_lots(self, quantity: Decimal, transfer_event_id: str) -> List['ShortFifoLot']:
+        """Drain `quantity` units of SHORT lots in FIFO order for an internal Depotübertragung of a
+        short position (the security was sold-to-open in this Depot and the open short is moved to
+        another of the owner's Depots). Tax-neutral — the open short's sale proceeds and opening
+        date carry over, so covering it in the target Depot realises the correct gain. Splits the
+        boundary lot if needed. Raises ValueError if the source has insufficient short quantity."""
+        if quantity <= Decimal(0):
+            return []
+        available = sum((l.quantity_shorted for l in self.short_lots), Decimal(0))
+        tolerance = Decimal("1e-6")
+        if quantity - available > tolerance:
+            raise ValueError(
+                f"Internal transfer {transfer_event_id}: source ledger for {self.asset_internal_id} "
+                f"has insufficient short quantity ({available}) to transfer {quantity}."
+            )
+
+        drained: List['ShortFifoLot'] = []
+        remaining = quantity
+        while remaining > tolerance and self.short_lots:
+            lot = self.short_lots[0]
+            if lot.quantity_shorted <= remaining + tolerance:
+                drained.append(lot)
+                remaining = self.ctx.subtract(remaining, lot.quantity_shorted)
+                self.short_lots.pop(0)
+            else:
+                moved_total = self.ctx.multiply(remaining, lot.unit_sale_proceeds_eur)
+                drained.append(ShortFifoLot(
+                    opening_date=lot.opening_date,
+                    quantity_shorted=remaining,
+                    unit_sale_proceeds_eur=lot.unit_sale_proceeds_eur,
+                    total_sale_proceeds_eur=moved_total,
+                    source_transaction_id=lot.source_transaction_id,
+                ))
+                lot.quantity_shorted = self.ctx.subtract(lot.quantity_shorted, remaining)
+                lot.total_sale_proceeds_eur = self.ctx.multiply(lot.quantity_shorted, lot.unit_sale_proceeds_eur)
+                remaining = Decimal(0)
+        return drained
+
+    def receive_transferred_short_lots(self, lots: List['ShortFifoLot']) -> None:
+        """Append short lots received from an internal transfer and re-sort by opening date.
+        The lots keep their original opening date and EUR sale proceeds (Fußstapfentheorie)."""
+        if not lots:
+            return
+        self.short_lots.extend(lots)
+        self.short_lots.sort(key=lambda l: (parse_ibkr_date(l.opening_date) or datetime.min.date(), l.source_transaction_id))
+
     def add_long_lot(self, trade_event: TradeEvent):
         if trade_event.event_type != FinancialEventType.TRADE_BUY_LONG: return
         if trade_event.quantity is None or trade_event.quantity <= Decimal(0): return

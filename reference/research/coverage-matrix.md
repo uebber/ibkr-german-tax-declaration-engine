@@ -54,11 +54,12 @@
 | Private sale loss rules | EStG 23 Abs. 3 S. 7-8 | SO only | estg-23-private-veraeusserung.md |
 | Fund Teilfreistellung | InvStG 20 | KAP-INV gross | invstg-20-teilfreistellung.md |
 
-## Known Engine Limitations
+## Per-Depot FIFO & Transfers
 
-| Limitation | Scope | Handling | Covered In |
-|------------|-------|----------|------------|
-| Account-agnostic (merged) FIFO instead of per-Depot | securities & FX/currency | Correct for single-account holdings + transfers; imprecise only for a security/currency co-held in 2 accounts and sold from one. Securities: per-snapshot WARNING; currencies: one summary WARNING. Full per-Depot FIFO deferred. | estg-20-kapitalvermoegen.md (Abs. 4) |
+| Feature | Scope | Handling | Covered In |
+|---------|-------|----------|------------|
+| Per-Depot FIFO (per custody account) | securities & FX/currency | Separate FIFO ledger per (account, asset); a disposal consumes only that account's lots (§20 Abs. 4 S. 7). Aggregate across accounts used for VP, EoY validation, return totals. No-account exports collapse to one default ledger. | estg-20-kapitalvermoegen.md (Abs. 4) |
+| Internal transfer (Depotübertragung) | securities (long & short) & non-EUR cash | Parsed from IBKR Transfers export; tax-neutral lot move (cost basis / open-short proceeds + acquisition/opening date carried over, §43 Abs. 1 S. 5). Historical SoY reconstruction replays trades and transfers in a single chronological stream, so a security bought, transferred between Depots and (partly) sold all within the historical window is rebuilt lot-exactly. Non-EUR cash transfers ride a parallel currency-reconstruction stream so the moved foreign currency carries the sender's basis (the receiver's later FX gain is measured from the original rate, not the SoY rate). | estg-20-kapitalvermoegen.md (Abs. 4) |
 
 ## Year-Specific Rules
 

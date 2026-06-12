@@ -414,3 +414,30 @@ class FeeEvent(FinancialEvent):
 
     def __post_init__(self):
         super().__post_init__()
+
+
+@dataclass
+class InternalTransferEvent(FinancialEvent):
+    """An internal Depotübertragung of a security (or foreign-currency cash) between two of the
+    same person's custody accounts. Tax-neutral (§43 Abs. 1 S. 5 / Fußstapfentheorie): the FIFO
+    lots — acquisition date and EUR cost basis — carry over from the source account ledger to the
+    target account ledger; no gain/loss is realised.
+
+    ``account_id`` is the SOURCE account (the OUT leg); ``target_account_id`` the destination.
+    ``quantity`` is the positive number of units (shares; for cash, the currency amount) moved.
+    """
+    _: KW_ONLY
+    target_account_id: str
+    quantity: Decimal
+
+    def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
+                 target_account_id: str, quantity: Decimal,
+                 **kwargs_for_parent_kw_only):
+        super().__init__(asset_internal_id, event_date,
+                         event_type=FinancialEventType.INTERNAL_TRANSFER,
+                         **kwargs_for_parent_kw_only)
+        self.target_account_id = target_account_id
+        self.quantity = quantity
+
+    def __post_init__(self):
+        super().__post_init__()

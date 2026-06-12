@@ -12,13 +12,13 @@ from src.domain.events import (
     CorpActionMergerStock, CorpActionStockDividend, CorpActionExpireDividendRights,
     OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
-    CurrencyConversionEvent, FeeEvent
+    CurrencyConversionEvent, FeeEvent, InternalTransferEvent
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord,
-    RawOptionsEAERecord
+    RawOptionsEAERecord, RawTransferRecord
 )
 from src.domain.exceptions import DataIntegrityError
 from src.utils.type_utils import parse_ibkr_date, parse_ibkr_datetime, safe_decimal
@@ -932,6 +932,78 @@ class DomainEventFactory:
                 f"{len(data_errors)} corporate action record(s) have data integrity issues:\n  " + "\n  ".join(data_errors)
             )
         return domain_ca_events
+
+    def create_events_from_transfers(
+        self, raw_transfers: List[RawTransferRecord]
+    ) -> List[InternalTransferEvent]:
+        """Create tax-neutral InternalTransferEvents from the OUT legs of INTERNAL
+        Depotübertragungen. Each OUT leg moves a security (or non-EUR cash) from
+        client_account_id -> transfer_account; the mirror IN leg is ignored (the OUT leg drives
+        the drain/receive). EUR cash is base currency and not FIFO-tracked, so it is skipped."""
+        events: List[InternalTransferEvent] = []
+        for rt in raw_transfers:
+            if (rt.direction or "").upper() != "OUT":
+                continue
+            if (rt.transfer_type or "").upper() not in ("", "INTERNAL"):
+                # Only internal (same-owner) transfers carry over basis tax-neutrally.
+                logger.info(f"Transfer {rt.transaction_id}: non-INTERNAL type "
+                            f"'{rt.transfer_type}', skipping (not modeled as tax-neutral).")
+                continue
+
+            source = rt.client_account_id
+            target = rt.transfer_account
+            if not source or not target:
+                logger.warning(f"Transfer {rt.transaction_id}: missing source/target account, skipping.")
+                continue
+
+            event_date = self._get_prioritized_date(
+                settle_date_str=rt.settle_date, trade_date_str=rt.date
+            )
+            if not event_date:
+                logger.warning(f"Transfer {rt.transaction_id}: could not determine date, skipping.")
+                continue
+
+            if (rt.asset_class or "").upper() == "CASH":
+                ccy = (rt.currency_primary or "").upper()
+                if not ccy or ccy == "EUR":
+                    continue  # EUR base currency is not FIFO-tracked
+                qty = (rt.cash_transfer or Decimal("0")).copy_abs()
+                if qty <= Decimal("0"):
+                    continue
+                asset = self.asset_resolver.get_or_create_asset(
+                    raw_isin=None, raw_conid=None, raw_symbol=ccy, raw_currency=ccy,
+                    raw_ibkr_asset_class="CASH", raw_description=f"Cash Balance {ccy}",
+                    description_source_type="transfer")
+            else:
+                qty = (rt.quantity or Decimal("0")).copy_abs()
+                if qty <= Decimal("0"):
+                    continue
+                asset = self.asset_resolver.get_or_create_asset(
+                    raw_isin=rt.isin, raw_conid=rt.conid, raw_symbol=rt.symbol,
+                    raw_currency=rt.currency_primary, raw_ibkr_asset_class=rt.asset_class,
+                    raw_description=rt.description, description_source_type="transfer",
+                    raw_multiplier=rt.multiplier,
+                    raw_underlying_conid=rt.underlying_conid,
+                    raw_underlying_symbol=rt.underlying_symbol)
+
+            if asset is None:
+                logger.warning(f"Transfer {rt.transaction_id}: could not resolve asset "
+                               f"({rt.symbol}/{rt.isin}/{rt.conid}), skipping.")
+                continue
+
+            events.append(InternalTransferEvent(
+                asset_internal_id=asset.internal_asset_id,
+                event_date=event_date,
+                target_account_id=target,
+                quantity=qty,
+                account_id=source,
+                local_currency=rt.currency_primary,
+                ibkr_transaction_id=rt.transaction_id,
+                ibkr_activity_description=rt.description,
+            ))
+
+        logger.info(f"Created {len(events)} InternalTransferEvent(s) from {len(raw_transfers)} transfer row(s).")
+        return events
 
     def create_events_from_options_eae(
         self, raw_records: List[RawOptionsEAERecord]

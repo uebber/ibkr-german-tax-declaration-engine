@@ -68,7 +68,8 @@ def run_core_processing_pipeline(
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
     options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
-    positions_prior_start_file_path: Optional[str] = None  # Prior-year SoY for Vorabpauschale
+    positions_prior_start_file_path: Optional[str] = None,  # Prior-year SoY for Vorabpauschale
+    transfers_file_path: Optional[str] = None  # Internal Depotübertragungen (per-Depot FIFO)
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -95,6 +96,7 @@ def run_core_processing_pipeline(
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
+            transfers_file=transfers_file_path,
             tax_year=tax_year_to_process
         )
     except ValueError as e:

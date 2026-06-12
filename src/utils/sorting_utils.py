@@ -7,7 +7,7 @@ from typing import Tuple, Any
 
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, WithholdingTaxEvent, CorporateActionEvent,
-    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent
+    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent, InternalTransferEvent
 )
 from src.identification.asset_resolver import AssetResolver
 from src.domain.assets import Asset
@@ -74,6 +74,15 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
         specific_secondary_elements = (
             event.ibkr_transaction_id or "", 
             asset.asset_category, 
+            event.event_id
+        )
+    elif isinstance(event, InternalTransferEvent):
+        # Internal Depotübertragung: tax-neutral lot move. Sort with trades intra-day; the
+        # event_id tail keeps the key unique.
+        intra_day_order = _INTRA_DAY_SORT_ORDER_TRADE
+        specific_secondary_elements = (
+            event.ibkr_transaction_id or "",
+            asset.asset_category,
             event.event_id
         )
     elif isinstance(event, (CashFlowEvent, WithholdingTaxEvent, FeeEvent)):
