@@ -244,6 +244,8 @@ It must reliably process option exercises (`FinancialEventType.OPTION_EXERCISE`)
   - **If due to Short Call Assignment:** The premium *received* for the call option effectively increases the proceeds from the stock sold (or increases the proceeds recognized from opening a new short stock position).
     - `Adjusted Stock Proceeds (EUR) = Original Stock Proceeds (EUR) + Option Premium Received (EUR)`
   - **If due to Long Put Exercise:** The premium *paid* for the put option effectively decreases the proceeds from the stock sold (or decreases the proceeds recognized from opening a new short stock position).
+
+**Cash-settled options (no stock delivery):** the settlement closes the option position against its FIFO premium lots. For a LONG option the gain/loss is settlement received minus premium paid (one derivative result). For a SHORT option (Stillhalter) the strict split applies (BFH VIII R 55/13): the premium received is Stillhalterprämien-Einkommen (§20 Abs. 1 Nr. 11) and the Barausgleich paid is a SEPARATE Termingeschäft loss (§20 Abs. 2 S. 1 Nr. 3a) — two `RealizedGainLoss` records, never netted into one figure (the gross Zeile-22 declaration carries the full settlement).
     - `Adjusted Stock Proceeds (EUR) = Original Stock Proceeds (EUR) - Option Premium Paid (EUR)`
 
 The `net_proceeds_or_cost_basis_eur` field of the stock `TradeEvent` shall be updated to reflect this adjusted economic value. The original (unadjusted) value is derived from the stock trade's price and quantity, plus commissions. The adjustment then modifies this net value. The temporary storage for the premium is cleared after use.
@@ -513,7 +515,7 @@ Warnings/inconsistencies.
 - **Classification Engine:** (`classification.asset_classifier`) Categorizes unique `Asset` objects (sets `Asset.asset_category`, `InvestmentFund.fund_type`), potentially involving interactive user input.
 
 - **Calculation Engine:**
-  - **FIFO & G/L Module:** Manages ledgers (per `Asset`), FIFO logic, option event processing (including linking and economic adjustments as per Section 2.4), corporate action processing. Generates `RealizedGainLoss` records with appropriate `RealizationType`. Uses `Decimal` with `INTERNAL_CALCULATION_PRECISION` for all financial math.
+  - **FIFO & G/L Module:** Manages ledgers (per (custody account, `Asset`) — FIFO je Depot, §20 Abs. 4 S. 7 EStG), FIFO logic, option event processing (including linking and economic adjustments as per Section 2.4), corporate action processing. Generates `RealizedGainLoss` records with appropriate `RealizationType`. Uses `Decimal` with `INTERNAL_CALCULATION_PRECISION` for all financial math.
   - **Income & Teilfreistellung Module:** Calculates fund distributions, Vorabpauschale (generates `VorabpauschaleData`), Teilfreistellung, other income from `FinancialEvent` data (all from 2023 tax year events), using `INTERNAL_CALCULATION_PRECISION`.
 
 - **Aggregation & Offsetting Layer (`LossOffsettingEngine`):**

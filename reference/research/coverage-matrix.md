@@ -27,7 +27,7 @@
 | Option close (trade) | EStG | 20 Abs. 2 Nr. 3 | KAP Z21/19 | estg-20-kapitalvermoegen.md |
 | Option expiration worthless | EStG | 20 Abs. 2 Nr. 3 | KAP Z21/22/19 | estg-20-kapitalvermoegen.md |
 | Option exercise/assignment | EStG | 20 Abs. 4a (analog) | (cost basis adj.) | estg-20-kapitalvermoegen.md |
-| Option cash settlement | EStG | 20 Abs. 2 Nr. 3a | KAP Z21/19 | estg-20-kapitalvermoegen.md |
+| Option cash settlement | EStG | 20 Abs. 2 Nr. 3a (+ Abs. 1 Nr. 11 for the Stillhalter premium) | long: derivative G/L (Z21/Z19); short: STRICT SPLIT — premium income + full Barausgleich loss (Z22/Z24), per BFH VIII R 55/13 | estg-20-kapitalvermoegen.md |
 | Cash merger | EStG | 20 Abs. 2 Nr. 1 | KAP Z19/20 | estg-20-kapitalvermoegen.md |
 | Stock merger | EStG | 20 Abs. 4a | (steuerneutral) | estg-20-kapitalvermoegen.md |
 | Stock split | EStG | 20 Abs. 4a | (cost adj.) | estg-20-kapitalvermoegen.md |
