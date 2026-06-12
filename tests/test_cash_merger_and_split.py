@@ -88,3 +88,49 @@ class TestCashMerger(_CorpActionBase):
         assert out.eoy_mismatch_error_count == 0
         assert flv[TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST] == Decimal("300.00")
         assert flv.get(TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN, Decimal("0")) == Decimal("0.00")
+
+
+class TestForwardSplit(_CorpActionBase):
+    def test_split_is_tax_neutral_and_preserves_total_basis(self):
+        """100 SSS bought @ 12 (2024, basis 1200); 2025 forward split 2-for-1
+        -> 200 shares, total basis still 1200; sell all 200 @ 8 -> proceeds
+        1600, gain 400,00 on Zeile 20. The split itself must produce NO
+        income and NO realization."""
+        isin = "DE000000SSS1"
+        trades = [
+            _trade(isin, "2024-04-01", "100", "12", "BUY", "O", "T1"),
+            _trade(isin, "2025-09-01", "-200", "8", "SELL", "C", "T2"),
+        ]
+        corp_actions = [
+            [ACCT, "SSS1", f"SSS1({isin}) SPLIT 2 FOR 1",
+             isin, "2025-05-15", "FS", "FS", "900000003",
+             "CON" + isin[8:], "", "", "EUR", "0", "0", "0", "100"],
+        ]
+        pos_soy = [_pos(isin, "100", "12")]
+        out, flv = self._run(trades, corp_actions, pos_soy, [])
+
+        assert out.eoy_mismatch_error_count == 0
+        assert flv[TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN] == Decimal("400.00"), \
+            "split must be tax-neutral: total basis 1200 unchanged, gain = 1600 − 1200"
+        # The split itself produced no income anywhere.
+        assert flv.get(TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT, Decimal("0")) == Decimal("400.00")
+
+    def test_historical_split_carries_into_later_year(self):
+        """Same split, but split AND purchase are in 2024 (historical for the
+        2025 run); sell 200 @ 8 in 2025 -> gain must still be 400,00 (the
+        replayed split must multiply quantity without touching total basis)."""
+        isin = "DE000000TTT1"
+        trades = [
+            _trade(isin, "2024-04-01", "100", "12", "BUY", "O", "T1"),
+            _trade(isin, "2025-09-01", "-200", "8", "SELL", "C", "T2"),
+        ]
+        corp_actions = [
+            [ACCT, "TTT1", f"TTT1({isin}) SPLIT 2 FOR 1",
+             isin, "2024-06-15", "FS", "FS", "900000004",
+             "CON" + isin[8:], "", "", "EUR", "0", "0", "0", "100"],
+        ]
+        pos_soy = [_pos(isin, "200", "6")]
+        out, flv = self._run(trades, corp_actions, pos_soy, [])
+
+        assert out.eoy_mismatch_error_count == 0
+        assert flv[TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN] == Decimal("400.00")
