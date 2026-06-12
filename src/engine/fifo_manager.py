@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from decimal import Decimal, Context, getcontext as get_global_context
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 import uuid
 from datetime import date as date_obj, datetime
 
@@ -14,7 +14,8 @@ from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
 from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
-from src.tax_law.holding_period import is_within_section23_speculation_period 
+from src.tax_law.holding_period import is_within_section23_speculation_period
+from src.processing.vp_disposal_deduction import vp_deduction_for_lot
 import src.config as global_config
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,11 @@ class FifoLedger:
         self.ctx = Context(prec=internal_working_precision, rounding=decimal_rounding_mode)
         self.soy_fallback_lot_source_tx_id = f"SOY_FALLBACK_{asset_internal_id}"
         self.soy_fallback_short_lot_source_tx_id = f"SOY_FALLBACK_SHORT_{asset_internal_id}"
+
+        # §19 Abs. 1 S. 3 InvStG VP-deduction context for fund disposals, populated by the
+        # engine after ledger setup. Empty -> no deduction (default; preserves prior behaviour).
+        self.vp_declared_by_year: Dict[int, Decimal] = {}
+        self.vp_qty_eoy_by_year: Dict[int, Decimal] = {}
 
 
     def initialize_lots_from_soy(self,
@@ -620,6 +626,23 @@ class FifoLedger:
                     holding_period_days = (real_date_obj - acq_date_obj).days
                     within_speculation_period = is_within_section23_speculation_period(acq_date_obj, real_date_obj)
 
+                # §19 Abs. 1 S. 3-4 InvStG: reduce a fund disposal's gain by the gross
+                # Vorabpauschalen declared during the holding period of the sold units
+                # (FIFO, per lot). The reduced value flows to the RGL as gross_gain_loss
+                # (still vor Teilfreistellung); the deducted amount is kept for reporting.
+                vp_deduction_for_lot_eur: Optional[Decimal] = None
+                if self.asset_category == AssetCategory.INVESTMENT_FUND and self.vp_declared_by_year:
+                    raw_vp_deduction = vp_deduction_for_lot(
+                        acquisition_year=int(current_lot.acquisition_date[:4]),
+                        sale_year=int(sale_event.event_date[:4]),
+                        units_sold=quantity_from_this_lot,
+                        declared_vp_by_year=self.vp_declared_by_year,
+                        qty_eoy_by_year=self.vp_qty_eoy_by_year,
+                    )
+                    if raw_vp_deduction > Decimal(0):
+                        vp_deduction_for_lot_eur = raw_vp_deduction
+                        gross_gain_loss = self.ctx.subtract(gross_gain_loss, raw_vp_deduction)
+
                 tax_cat: Optional[TaxReportingCategory] = None
                 is_stillhalter_income_flag = False # Renamed from is_premium_gain
                 is_taxable_under_section_23_flag = True # Renamed from is_taxable_under_rules_for_rgl
@@ -667,17 +690,18 @@ class FifoLedger:
                     asset_category_at_realization=self.asset_category, acquisition_date=current_lot.acquisition_date,
                     realization_date=sale_event.event_date,
                     realization_type=realization_type_for_rgl,
-                    quantity_realized=quantity_from_this_lot, 
+                    quantity_realized=quantity_from_this_lot,
                     unit_cost_basis_eur=current_lot.unit_cost_basis_eur, # Renamed kwarg
                     unit_realization_value_eur=sale_proceeds_eur_per_unit_for_event, # Renamed kwarg
                     total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
                     total_realization_value_eur=realization_value_for_portion,
                     gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
                     is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
-                    tax_reporting_category=tax_cat, 
+                    tax_reporting_category=tax_cat,
                     is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg
                     fund_type_at_sale=rgl_fund_type if self.asset_category == AssetCategory.INVESTMENT_FUND else None,
-                    teilfreistellung_rate_applied=rgl_tf_rate if self.asset_category == AssetCategory.INVESTMENT_FUND else None
+                    teilfreistellung_rate_applied=rgl_tf_rate if self.asset_category == AssetCategory.INVESTMENT_FUND else None,
+                    vp_deduction_eur=vp_deduction_for_lot_eur
                 )
                 realized_gains_losses.append(rgl)
 

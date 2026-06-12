@@ -58,6 +58,12 @@ class Asset:
     vp_prior_soy_nav_currency: Optional[str] = None
     vp_prior_acquisition_month: Optional[int] = None
 
+    # §19 Abs. 1 S. 3 InvStG: gross Vorabpauschale (vor Teilfreistellung) the user declared
+    # for this fund in each prior calendar year (Anlage KAP-INV Zeile 9-13). Resolved
+    # interactively for funds disposed in the tax year (processing/declared_vp_resolution.py)
+    # and used to reduce the disposal gain. {year: declared_gross_vp_eur}.
+    vp_declared_by_year: Optional[Dict[int, Decimal]] = None
+
 
     def __post_init__(self):
         if not isinstance(self.asset_category, AssetCategory):

@@ -16,7 +16,9 @@ from src.parsers.parsing_orchestrator import ParsingOrchestrator
 from src.classification.asset_classifier import AssetClassifier
 from src.processing.enrichment import enrich_financial_events
 from src.processing.vp_nav_resolution import resolve_year_start_navs
+from src.processing.declared_vp_resolution import resolve_declared_vp
 from src.identification.fund_soy_nav_provider import FundSoyNavProvider
+from src.identification.declared_vp_provider import DeclaredVpProvider
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider, ExchangeRateProvider # Added base for custom provider
 from src.processing.data_gaps import DataGap, DataGapCollector, GapSeverity
@@ -149,9 +151,31 @@ def run_core_processing_pipeline(
         prior_year_soy_positions=prior_year_soy_positions,
     )
 
+    # §19 Abs. 1 S. 3 InvStG: for funds disposed this year, resolve the VP declared in prior
+    # years (interactive, cached) so the disposal gain is reduced by the held-period VP.
+    declared_vp_provider = DeclaredVpProvider(cache_file_path=config.DECLARED_VP_CACHE_FILE_PATH)
+    declared_vp_gaps = resolve_declared_vp(
+        asset_resolver=orchestrator.asset_resolver,
+        events=financial_events_enriched,
+        tax_year=tax_year_to_process,
+        interactive=interactive_classification_mode,
+        provider=declared_vp_provider,
+        currency_converter=currency_converter,
+    )
+
     data_gap_collector = DataGapCollector()
     _record_vp_nav_gaps(data_gap_collector, vorabpauschale_gaps,
                         interactive=interactive_classification_mode)
+    # Unlike a missing year-start NAV, a missing DECLARED VP only leaves the
+    # §19 disposal deduction unapplied — the gain is OVERSTATED (taxpayer-safe),
+    # never understated, so this is a WARNING in every mode, never FAIL_FAST.
+    for vp_gap in declared_vp_gaps:
+        data_gap_collector.record(
+            code="VP_DECLARED_MISSING",
+            subject=vp_gap.description,
+            detail=vp_gap.reason,
+            severity=GapSeverity.WARNING,
+        )
 
     logger.info(f"Running calculation engine for tax year {tax_year_to_process}...")
     eoy_mismatch_error_count_calc = 0

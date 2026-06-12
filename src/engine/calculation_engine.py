@@ -24,6 +24,7 @@ from src.domain.enums import FinancialEventType, InvestmentFundType
 from src.utils.sorting_utils import get_event_sort_key
 from src.domain.exceptions import ProcessingError
 from src.utils.type_utils import parse_ibkr_date
+from src.processing.vp_disposal_deduction import year_end_quantities
 
 from .fifo_manager import FifoLedger
 from src.utils.currency_converter import CurrencyConverter
@@ -350,6 +351,18 @@ def run_main_calculations(
                 (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
                 label=f"reconcile-sec:{asset_obj.get_classification_key()}",
             )
+
+    # §19 Abs. 1 S. 3 InvStG: hand each fund ledger the VP-deduction context (declared VP
+    # per year — resolved by the pre-pass and attached to the asset — and the year-end
+    # quantities used as the per-unit denominator), so fund disposals reduce the gain.
+    for (_ledger_account, asset_id), ledger in fifo_ledgers.items():
+        if ledger.asset_category != AssetCategory.INVESTMENT_FUND:
+            continue
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
+        declared = getattr(asset_obj, "vp_declared_by_year", None) if asset_obj else None
+        if declared:
+            ledger.vp_declared_by_year = declared
+            ledger.vp_qty_eoy_by_year = year_end_quantities(financial_events, asset_id, tax_year)
 
     # Initialize currency FIFO ledgers with comprehensive historical replay
     logger.info("Initializing currency FIFO ledgers for foreign currency positions...")

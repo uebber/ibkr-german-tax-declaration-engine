@@ -38,7 +38,7 @@
 | Vorabpauschale (mid-year acquisition) | InvStG | 18 Abs. 2 S. 2 | KAP-INV Z9-13 | invstg-18-vorabpauschale.md |
 | Vorabpauschale (deemed inflow / assessment year = Y+1) | InvStG | 18 Abs. 3 | KAP-INV Z9-13 (prior year's VP) | invstg-18-vorabpauschale.md |
 | Fund sale gain/loss | InvStG | 19 | KAP-INV Z14-26 | invstg-19-veraeusserungsgewinne.md |
-| VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV Z55 | invstg-19-veraeusserungsgewinne.md |
+| VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV Z53 → net Z14-26 | invstg-19-veraeusserungsgewinne.md |
 | FX gain (explicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
 | FX gain (implicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
 | Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 Nr. 2 | SO Z54 | estg-23-private-veraeusserung.md |
