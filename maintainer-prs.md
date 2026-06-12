@@ -16,8 +16,9 @@ real-data output byte-identically (PDF, metadata-stripped) EXCEPT two
 documented engine bugs found red-first after the gate — historical
 Einlagenrückgewähr basis reductions and historical option-premium adjustments
 were lost in SoY reconstruction (cost-only mutations, invisible to quantity
-reconciliation); both understate income, both are fixed and pinned (see
-`parity-log.md` in the fork). Every commit in every PR passes its own suite
+reconciliation); both understate income, both are fixed and pinned (parity
+analysis kept private — it contains real account figures; the red-first
+tests carry the proof with synthetic numbers). Every commit in every PR passes its own suite
 with that commit's `config_example.py` (whole-history sweep, 373→560 tests).
 
 ## Stack mechanics
@@ -76,5 +77,5 @@ After PR 17 the output is byte-identical (PDF, metadata-stripped; all console
 figures) to the `per-depot-fifo` branch on identical real inputs. PRs 20 and
 22 then INTENTIONALLY diverge: they fix two cross-year basis bugs present in
 `main` and `per-depot-fifo` alike (proof: red-first tests with hand-computed
-statutory figures; full analysis in the fork's `parity-log.md`). All other
-PRs are output-neutral or pure coverage.
+statutory figures on synthetic data). All other PRs are output-neutral or
+pure coverage.

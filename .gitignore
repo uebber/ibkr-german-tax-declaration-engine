@@ -123,3 +123,10 @@ PLAN_*.md
 docs/PLAN_*.md
 docs/GROUP7_FIX_PLAN.md
 parity/
+
+# local-only analysis artifacts — contain real account data, never publish
+parity-log.md
+per-depot-fifo-output.md
+tax-engines-update-output.md
+backup/
+exchange/

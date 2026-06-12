@@ -119,8 +119,7 @@ replayer / gap channel where they touch those seams.
 
 ### Phase C — coverage gaps (unchanged from rework-plan; each one issue)
 
-**COMPLETED 2026-06-12** (C1 6179dc3 + strict-split def42f9, C2 bc31379,
-C3 63b7c94, C4 aed9607, C5 ea7b0fc, C6 b3df825, C7 0fa4f73, C8 7b81edc).
+**COMPLETED 2026-06-12** (C1+strict split, C2-C7, C8; see maintainer-prs.md for the PR mapping).
 C2-C7 passed against the existing engine (pure coverage); C8 and the C1
 Stillhalter netting exposed real issues — see parity-log.md and the commit
 messages.
