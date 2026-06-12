@@ -375,6 +375,19 @@ class FifoLedger:
             else:
                  use_fallback = True
 
+        # Surface ANY divergence between the reconstruction and the reported SoY snapshot. The
+        # fallback path below already warns for under-reconstruction / inconsistency; this covers the
+        # remaining case — OVER-reconstruction, where the replay built more than the snapshot reports
+        # (a disposal is evidently missing from the input trades). We keep the more-accurate historical
+        # lots (trimmed to the reported quantity, figures unchanged) but no longer do so silently.
+        if not use_fallback and abs(reconstructed_net_qty - reported_soy_qty) > Decimal('1e-8'):
+            soy_qty_diff = self.ctx.subtract(reconstructed_net_qty, reported_soy_qty)
+            logger.warning(
+                f"Asset {asset.get_classification_key()}: Historical FIFO reconstruction (net "
+                f"{reconstructed_net_qty}) does not match reported SOY Qty ({reported_soy_qty}) "
+                f"(reconstructed - reported = {soy_qty_diff}); a disposal is likely missing from the "
+                f"input trades. Keeping the reconstructed FIFO lots trimmed to the reported quantity."
+            )
 
         if use_fallback:
             self.lots.clear()

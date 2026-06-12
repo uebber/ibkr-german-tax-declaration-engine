@@ -85,7 +85,7 @@ class CurrencyConversionProcessor:
         if event.from_currency.upper() != "EUR":
             from_asset = asset_resolver.get_cash_balance_asset(event.from_currency)
             if from_asset:
-                ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, from_asset.internal_asset_id))
+                ledger = fifo_ledgers.get((account_key(event.account_id), from_asset.internal_asset_id))
                 if not ledger:
                     logger.warning(f"No ledger for currency {event.from_currency}, skipping FX event {event.event_id}")
                 else:
@@ -100,7 +100,7 @@ class CurrencyConversionProcessor:
         if event.to_currency.upper() != "EUR":
             to_asset = asset_resolver.get_cash_balance_asset(event.to_currency)
             if to_asset:
-                ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, to_asset.internal_asset_id))
+                ledger = fifo_ledgers.get((account_key(event.account_id), to_asset.internal_asset_id))
                 if not ledger:
                     logger.warning(f"No ledger for currency {event.to_currency}, skipping FX event {event.event_id}")
                 else:

@@ -103,7 +103,6 @@ class ParsingOrchestrator:
             asset.soy_market_price = agg["price"]
             asset.soy_position_value = agg["value"] if agg["value_seen"] else None
             asset.soy_mark_price_currency = agg["currency"]
-            self._warn_if_co_held(asset, agg, "SoY")
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
 
         logger.info("Processing end-of-year positions...")
@@ -112,7 +111,6 @@ class ParsingOrchestrator:
             asset.eoy_market_price = agg["price"]
             asset.eoy_position_value = agg["value"] if agg["value_seen"] else None
             asset.eoy_mark_price_currency = agg["currency"]
-            self._warn_if_co_held(asset, agg, "EoY")
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
 
         # Per-Depot FIFO: also record positions per (account, asset) for per-account ledgers.
@@ -152,20 +150,6 @@ class ParsingOrchestrator:
         fill(self.raw_positions_end, "eoy")
         self.asset_resolver.positions_by_account = pba
         logger.info(f"Recorded per-account positions for {len(pba)} (account, asset) pair(s).")
-
-    def _warn_if_co_held(self, asset, agg, snapshot_label):
-        """German FIFO is per-Depot, but this engine merges accounts into one FIFO queue per
-        security. If a security is held with a non-zero quantity in more than one account in the
-        same snapshot, a sale from one account may pick the wrong lot vs. a per-account
-        computation. Warn (rare; not a transfer, which shows in only one account per snapshot)."""
-        accounts = agg.get("accounts") or set()
-        if len(accounts) > 1:
-            logger.warning(
-                f"Security {asset.get_classification_key()} is held in multiple accounts "
-                f"({', '.join(sorted(accounts))}) in the {snapshot_label} snapshot. FIFO is "
-                f"computed account-agnostically (merged across accounts), so a gain realised on a "
-                f"sale from one account may differ from the per-Depot (per-account) computation."
-            )
 
     def _aggregate_positions(self, raw_positions):
         """Resolve each raw position row to its account-agnostic asset and sum quantity,
@@ -541,19 +525,27 @@ class ParsingOrchestrator:
 
         logger.info(f"Processed {balances_processed} cash balance positions, skipped {balances_skipped}")
 
-        # Per-Depot FIFO limitation (currencies): a foreign currency held across multiple accounts
-        # is FIFO'd on one merged per-currency ledger, so FX gains may differ from a per-account
-        # computation. This is structural and (unlike securities) often the normal state, so it is
-        # surfaced once as a summary rather than a per-currency warning.
-        multi_account_currencies = sorted(
-            c for c, v in summed_by_currency.items() if len(v[3]) > 1
-        )
-        if multi_account_currencies:
-            logger.warning(
-                f"Foreign currencies held across multiple accounts: {', '.join(multi_account_currencies)}. "
-                f"FX gains use a per-currency FIFO merged across accounts; the per-Depot (per-account) "
-                f"FX result is not modelled (documented limitation)."
-            )
+        # Per-Depot FIFO: record cash balances per (account, currency) so currency ledgers can be
+        # seeded per Depot. The aggregated values above stay on the CashBalance asset for the
+        # account-agnostic paths (EoY validation, reporting totals).
+        from src.utils.account_utils import account_key
+        cash_by_account: dict = {}
+        for raw_balance in self.raw_cash_balances:
+            ccy = (raw_balance.currency_primary or "").upper()
+            if not ccy or ccy in ("EUR", "BASE_SUMMARY"):
+                continue
+            # Only record per-account cash for currencies that passed the dust threshold above
+            # (i.e. already have a CashBalance asset). Don't create assets here, or sub-threshold
+            # currencies the aggregate loop dropped would reappear.
+            cash_asset = self.asset_resolver.get_cash_balance_asset(ccy)
+            if cash_asset is None:
+                continue
+            key = (account_key(raw_balance.client_account_id), cash_asset.internal_asset_id)
+            st = cash_by_account.setdefault(key, {"soy": Decimal("0"), "eoy": Decimal("0"), "currency": ccy})
+            st["soy"] += raw_balance.starting_cash
+            st["eoy"] += raw_balance.ending_cash
+        self.asset_resolver.cash_by_account = cash_by_account
+        logger.info(f"Recorded per-account cash for {len(cash_by_account)} (account, currency) pair(s).")
 
     def _ensure_soy_quantities_are_set(self):
         # ... (implementation is the same)

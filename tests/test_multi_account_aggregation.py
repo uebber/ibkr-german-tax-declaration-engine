@@ -196,64 +196,59 @@ class TestSecurityPositionMultiAccount:
 #    Must NOT fire for a transfer (same ISIN in only one account per snapshot).
 # ---------------------------------------------------------------------------
 
-class TestCoHoldingDetection:
+class TestPerDepotRecording:
+    """Per-Depot FIFO: positions and cash are also recorded per (account, asset) so the engine
+    can run an independent FIFO ledger per custody account (§20 Abs. 4 EStG), while the aggregate
+    stays on the Asset for VP / EoY validation / reporting. (This replaces the former merged-FIFO
+    co-holding warning, which is obsolete now that FIFO is computed per Depot.)"""
 
-    def test_security_co_held_in_two_accounts_warns(self, caplog):
+    def test_security_co_held_recorded_per_account(self):
         orch = _orchestrator()
         orch.raw_positions_start = [
             _pos("US0000000020", qty="100", cost="600", value="1000", account="U10000001"),
             _pos("US0000000020", qty="50", cost="300", value="500", account="U10000002"),
         ]
-        with caplog.at_level(logging.WARNING):
-            orch.process_positions()
-        assert any("multiple accounts" in r.message for r in caplog.records)
+        orch.process_positions()
+        asset = _find(orch.asset_resolver, isin="US0000000020")
+        pba = orch.asset_resolver.positions_by_account
+        # Aggregate still summed on the asset...
+        assert asset.soy_quantity == Decimal("150")
+        # ...and each account's SoY quantity recorded independently.
+        assert pba[("U10000001", asset.internal_asset_id)]["soy_quantity"] == Decimal("100")
+        assert pba[("U10000002", asset.internal_asset_id)]["soy_quantity"] == Decimal("50")
 
-    def test_transfer_between_accounts_does_not_warn(self, caplog):
-        """SoY in account A, EoY in account B (a transfer A->B): never co-held in one snapshot."""
+    def test_transfer_between_accounts_recorded_per_account(self):
+        """SoY in account A, EoY in account B (a transfer A->B): each leg recorded in its account."""
         orch = _orchestrator()
         orch.raw_positions_start = [_pos("US0000000021", qty="100", cost="600", value="1000", account="U10000001")]
         orch.raw_positions_end = [_pos("US0000000021", qty="100", cost="600", value="1000", account="U10000002")]
-        with caplog.at_level(logging.WARNING):
-            orch.process_positions()
-        assert not any("multiple accounts" in r.message for r in caplog.records)
-        # ...and the merged ledger still tracks the position (transfer carried correctly).
+        orch.process_positions()
         asset = _find(orch.asset_resolver, isin="US0000000021")
+        pba = orch.asset_resolver.positions_by_account
+        assert pba[("U10000001", asset.internal_asset_id)]["soy_quantity"] == Decimal("100")
+        assert pba[("U10000002", asset.internal_asset_id)]["eoy_quantity"] == Decimal("100")
+        # Aggregate still tracks the position across the transfer.
         assert asset.soy_quantity == Decimal("100") and asset.eoy_quantity == Decimal("100")
 
-    def test_single_account_does_not_warn(self, caplog):
-        orch = _orchestrator()
-        orch.raw_positions_start = [_pos("US0000000022", qty="100", cost="600", value="1000", account="U10000001")]
-        with caplog.at_level(logging.WARNING):
-            orch.process_positions()
-        assert not any("multiple accounts" in r.message for r in caplog.records)
-
-    def test_zero_quantity_second_account_does_not_warn(self, caplog):
-        """A zero/closed position in a second account is not co-holding."""
-        orch = _orchestrator()
-        orch.raw_positions_start = [
-            _pos("US0000000023", qty="100", cost="600", value="1000", account="U10000001"),
-            _pos("US0000000023", qty="0", cost="0", value="0", account="U10000002"),
-        ]
-        with caplog.at_level(logging.WARNING):
-            orch.process_positions()
-        assert not any("multiple accounts" in r.message for r in caplog.records)
-
-    def test_currency_in_multiple_accounts_warns_once(self, caplog):
-        """Currencies: a single summary warning (not per-currency), since FX FIFO is merged."""
+    def test_currency_co_held_recorded_per_account(self):
         orch = _orchestrator()
         orch.raw_cash_balances = [
             _cash("U10000001", "USD", "1000", "0"), _cash("U10000002", "USD", "2000", "0"),
             _cash("U10000001", "CAD", "500", "0"), _cash("U10000002", "CAD", "300", "0"),
         ]
-        with caplog.at_level(logging.WARNING):
-            orch._process_cash_balance_positions(tax_year=2025)
-        warns = [r for r in caplog.records if "multiple accounts" in r.message]
-        assert len(warns) == 1                      # one summary line, not one per currency
-        assert "USD" in warns[0].message and "CAD" in warns[0].message
+        orch._process_cash_balance_positions(tax_year=2025)
+        usd = _find(orch.asset_resolver, currency="USD", category=AssetCategory.CASH_BALANCE)
+        cba = orch.asset_resolver.cash_by_account
+        # Aggregate summed on the asset...
+        assert usd.soy_quantity == Decimal("3000")
+        # ...and per-account USD balances recorded independently.
+        assert cba[("U10000001", usd.internal_asset_id)]["soy"] == Decimal("1000")
+        assert cba[("U10000002", usd.internal_asset_id)]["soy"] == Decimal("2000")
 
-    def test_currency_single_account_no_warn(self, caplog):
+    def test_currency_single_account_recorded(self):
         orch = _orchestrator()
         orch.raw_cash_balances = [_cash("U10000001", "USD", "1000", "0")]
-        with caplog.at_level(logging.WARNING):
-            orch._process_cash_balance_positions(tax_year=2025)
-        assert not any("multiple accounts" in r.message for r in caplog.records)
+        orch._process_cash_balance_positions(tax_year=2025)
+        usd = _find(orch.asset_resolver, currency="USD", category=AssetCategory.CASH_BALANCE)
+        cba = orch.asset_resolver.cash_by_account
+        assert cba[("U10000001", usd.internal_asset_id)]["soy"] == Decimal("1000")

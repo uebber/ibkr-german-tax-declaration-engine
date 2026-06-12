@@ -457,7 +457,7 @@ class OptionCashSettlementProcessor(EventProcessor):
         if not currency_asset:
             return results
 
-        currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
+        currency_ledger = currency_fifo_ledgers.get((account_key(event.account_id), currency_asset.internal_asset_id))
         if not currency_ledger:
             return results
 
