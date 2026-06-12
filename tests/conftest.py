@@ -98,14 +98,23 @@ def mock_config_paths(temp_data_dir, monkeypatch):
         import sys
         if target_config_module in sys.modules:
             config_module_obj = sys.modules[target_config_module]
-            monkeypatch.setattr(config_module_obj, "TRADES_FILE_PATH", paths_dict["trades"])
-            monkeypatch.setattr(config_module_obj, "CASH_TRANSACTIONS_FILE_PATH", paths_dict["cash"])
-            monkeypatch.setattr(config_module_obj, "POSITIONS_START_FILE_PATH", paths_dict["pos_start"])
-            monkeypatch.setattr(config_module_obj, "POSITIONS_END_FILE_PATH", paths_dict["pos_end"])
-            monkeypatch.setattr(config_module_obj, "CORPORATE_ACTIONS_FILE_PATH", paths_dict["corp_actions"])
-            monkeypatch.setattr(config_module_obj, "CLASSIFICATION_CACHE_FILE_PATH", paths_dict["classification_cache"]) # Updated name
-            monkeypatch.setattr(config_module_obj, "ECB_RATES_CACHE_FILE_PATH", paths_dict["ecb_cache"]) # Updated name
-            monkeypatch.setattr(config_module_obj, "IS_INTERACTIVE_CLASSIFICATION", False) # Updated name, ensure non-interactive
+            # HERMETICITY: every cache the pipeline reads or WRITES must point into the
+            # test's temp dir — otherwise tests silently depend on (or mutate) the
+            # developer's real cache/ files and pass/fail differently in a clean clone.
+            # raising=False: attribute sets must not abort the remaining patches (the
+            # legacy *_FILE_PATH attributes no longer exist in config).
+            monkeypatch.setattr(config_module_obj, "TRADES_FILE_PATH", paths_dict["trades"], raising=False)
+            monkeypatch.setattr(config_module_obj, "CASH_TRANSACTIONS_FILE_PATH", paths_dict["cash"], raising=False)
+            monkeypatch.setattr(config_module_obj, "POSITIONS_START_FILE_PATH", paths_dict["pos_start"], raising=False)
+            monkeypatch.setattr(config_module_obj, "POSITIONS_END_FILE_PATH", paths_dict["pos_end"], raising=False)
+            monkeypatch.setattr(config_module_obj, "CORPORATE_ACTIONS_FILE_PATH", paths_dict["corp_actions"], raising=False)
+            monkeypatch.setattr(config_module_obj, "CLASSIFICATION_CACHE_FILE_PATH", paths_dict["classification_cache"])
+            monkeypatch.setattr(config_module_obj, "ECB_RATES_CACHE_FILE_PATH", paths_dict["ecb_cache"])
+            monkeypatch.setattr(config_module_obj, "FUND_SOY_NAV_CACHE_FILE_PATH",
+                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "fund_soy_nav.json"))
+            monkeypatch.setattr(config_module_obj, "DECLARED_VP_CACHE_FILE_PATH",
+                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "declared_vp.json"))
+            monkeypatch.setattr(config_module_obj, "IS_INTERACTIVE_CLASSIFICATION", False)
         else:
             # This might occur if tests are structured such that src.config isn't loaded when conftest runs,
             # or if the way config is imported varies. Passing paths explicitly to pipeline_runner is robust.

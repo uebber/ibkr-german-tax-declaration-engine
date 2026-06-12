@@ -365,6 +365,9 @@ class TestDividendHandling(FifoTestCaseBase):
                                expected_conceptual_other_income=Decimal("0.00"))
 
     def test_d05_stock_dividend_fifo_lot_creation_and_tax_impact(self, mock_config_paths):
+        # Input: the D05.REC receivable has AssetClass UNKNOWN and needs the
+        # user's classification (here: STOCK) — provided hermetically.
+        self.seed_classification("ISIN:SG1L1701REC0", "STOCK")
         """
         Test Case: D05-style stock dividend creates FIFO lot with dividend value and is treated as taxable income.
         

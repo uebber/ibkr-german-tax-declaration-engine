@@ -50,6 +50,22 @@ class FifoTestCaseBase:
             print("Warning: src.config not found in FifoTestCaseBase setup, using fallback tax year for original_tax_year.")
 
 
+    def seed_classification(self, asset_key: str, category: str,
+                            fund_type: str = "NONE", note: str = "test fixture"):
+        """Provide a user classification as test INPUT (what the user would
+        answer interactively), written to this test's own temp cache — tests
+        must never depend on the developer's real cache/ files."""
+        import json, os
+        path = self.config_paths["classification_cache"]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        cache = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                cache = json.load(fh)
+        cache[asset_key] = [category, fund_type, note]
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh)
+
     def _run_pipeline(self,
                       trades_data: Optional[List[List[Any]]] = None,
                       positions_start_data: Optional[List[List[Any]]] = None,
