@@ -11,13 +11,10 @@ legal_basis:
     gains flow into Zeile 19, derivative losses into Zeile 22 (Z21/Z24
     abolished; the §20 Abs. 6 S. 5 cap is retroactively repealed).
 
-KNOWN PRESENTATION QUESTION (flagged, not silently pinned): for the
-Stillhalter the engine nets premium received and settlement paid into ONE
-derivative loss RGL (here −400), whereas the strict BFH/BMF reading splits
-them: Nr. 11 premium income (+300, Z19) and Nr. 3a settlement loss (−700,
-Z22). The NET declaration (Z19 − Z22) is identical and, with the loss cap
-repealed, so is the assessed tax — the short-side test therefore pins the
-net, which is what the law unambiguously determines.
+STRICT SPLIT (user decision 2026-06-12): the Stillhalter's premium and the
+Barausgleich are SEPARATE tax events — Nr. 11 premium income (+300) and a
+Nr. 3a settlement loss (−700) — not one netted loss. Zeile 19 nets to −400
+either way; the gross Zeile-22 loss declaration must show 700, not 400.
 
 All data synthetic; index option = option without an underlying position
 (no UnderlyingConid), which is what routes it to the cash-settlement path.
@@ -133,11 +130,9 @@ class TestLongIndexOptionCashSettlement(_IndexOptionBase):
 class TestShortIndexOptionCashSettlement(_IndexOptionBase):
     def test_stillhalter_settlement_net_effect(self):
         """Write 1 IDX call (premium received 3,00 × 100 = 300); assigned,
-        Barausgleich paid 700. Statutorily determined NET (VZ 2025, cap
-        repealed): Z19 − Z22 = 300 − 700 = −400. (The per-line split — Nr. 11
-        premium on Z19 vs Nr. 3a loss on Z22 — versus the engine's netting
-        into one loss RGL is a flagged presentation question; both yield the
-        same net and the same assessed tax.)"""
+        Barausgleich paid 700. Strict split (BFH VIII R 55/13): the premium
+        is Nr. 11 income (+300), the settlement a separate Nr. 3a loss
+        (−700). VZ 2025: Zeile 19 = −400,00 net, Zeile 22 = 700,00 gross."""
         opt = dict(symbol="IDX 250620C04000000", desc="IDX 20JUN25 4000 C",
                    conid="OPTIDX2", strike=Decimal("4000"), expiry="2025-06-20",
                    putcall="C")
@@ -161,14 +156,11 @@ class TestShortIndexOptionCashSettlement(_IndexOptionBase):
         ]
         out, flv = self._run(trades, eae)
         assert out.eoy_mismatch_error_count == 0
-        # Zeile 19 is the NET under VZ-2025 rules (derivative losses are
-        # subtracted inside Z19) — identical under both the engine's netting
-        # and the strict Nr. 11/Nr. 3a split: 300 − 700 = −400.
+        # Zeile 19 is the NET under VZ-2025 rules: +300 premium − 700 loss.
         assert flv[TaxReportingCategory.ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT] == Decimal("-400.00"), \
             "Stillhalter Barausgleich: net derivative result must be premium 300 − settlement 700"
-        # Zeile 22 (gross loss declaration) is where the readings DIVERGE:
-        # engine netting declares 400; the strict split would declare 700
-        # (with the 300 premium inside Z19's positive components). Flagged
-        # presentation question — deliberately not pinned here.
-        assert flv.get(TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE, Decimal("0")) > Decimal("0"), \
-            "the settlement loss must be declared on Zeile 22 (gross), not vanish"
+        # STRICT SPLIT: the gross Zeile-22 declaration is the FULL Nr. 3a
+        # settlement loss (700), with the Nr. 11 premium (+300) among Z19's
+        # positive components — not one netted 400 loss.
+        assert flv[TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE] == Decimal("700.00"), \
+            "Barausgleich is a separate Nr. 3a loss; it must not be netted against the Nr. 11 premium"

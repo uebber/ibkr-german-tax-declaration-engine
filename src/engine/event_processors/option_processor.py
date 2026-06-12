@@ -371,9 +371,36 @@ class OptionCashSettlementProcessor(EventProcessor):
                 # Subtract commission from realization (reduces gain or increases loss)
                 gross_gl = ledger.ctx.subtract(total_realization, ledger.ctx.add(total_cost, commission_portion))
 
+                rgl = RealizedGainLoss(
+                    originating_event_id=event.event_id,
+                    asset_internal_id=ledger.asset_internal_id,
+                    asset_category_at_realization=AssetCategory.OPTION,
+                    acquisition_date=detail.original_lot_date,
+                    realization_date=event.event_date,
+                    realization_type=current_realization_type,
+                    quantity_realized=quantity_realized,
+                    unit_cost_basis_eur=cost_basis_per_unit,
+                    unit_realization_value_eur=realization_per_unit,
+                    total_cost_basis_eur=total_cost,
+                    total_realization_value_eur=total_realization,
+                    gross_gain_loss_eur=gross_gl,
+                    holding_period_days=holding_period_days,
+                    tax_reporting_category=(TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN
+                                            if gross_gl >= Decimal("0")
+                                            else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST),
+                    is_stillhalter_income=False,
+                )
+                realized_gains_losses.append(rgl)
+                logger.debug(f"  Generated RGL for cash settlement: Asset {ledger.asset_internal_id}, "
+                            f"Type {current_realization_type.name}, Qty {quantity_realized}, "
+                            f"G/L {gross_gl:.2f} EUR")
+
             else:
-                # Short option: cost basis = settlement paid (as positive), realization = premium received
-                realization_per_unit = premium_per_unit_eur
+                # Short option (Stillhalter), STRICT SPLIT (BFH VIII R 55/13):
+                # the premium received is Nr. 11 income and the Barausgleich a
+                # SEPARATE Termingeschäft loss under Abs. 2 S. 1 Nr. 3a — they
+                # are two tax events and must not be netted into one figure
+                # (the gross Zeile-22 loss declaration is the FULL settlement).
                 if total_premium_eur != Decimal("0"):
                     lot_fraction = ledger.ctx.divide(
                         ledger.ctx.multiply(detail.consumed_quantity, detail.value_per_unit_eur),
@@ -383,47 +410,55 @@ class OptionCashSettlementProcessor(EventProcessor):
                     lot_fraction = ledger.ctx.divide(detail.consumed_quantity,
                                                      sum(d.consumed_quantity for d in consumed_lot_details))
 
-                settlement_portion = ledger.ctx.multiply(settlement_eur, lot_fraction)
+                settlement_portion = ledger.ctx.multiply(settlement_eur, lot_fraction).copy_abs()
                 commission_portion = ledger.ctx.multiply(commission_abs_eur, lot_fraction)
+                premium_total = ledger.ctx.multiply(quantity_realized, premium_per_unit_eur)
 
-                total_realization = ledger.ctx.multiply(quantity_realized, realization_per_unit)
-                # Cost basis for short = cash paid out (abs of negative proceeds)
-                total_cost = settlement_portion.copy_abs()
-                cost_basis_per_unit = ledger.ctx.divide(total_cost, quantity_realized) if quantity_realized != Decimal("0") else Decimal("0")
+                # Leg 1 — Stillhalterprämie (§20 Abs. 1 Nr. 11): income in full.
+                premium_rgl = RealizedGainLoss(
+                    originating_event_id=event.event_id,
+                    asset_internal_id=ledger.asset_internal_id,
+                    asset_category_at_realization=AssetCategory.OPTION,
+                    acquisition_date=detail.original_lot_date,
+                    realization_date=event.event_date,
+                    realization_type=current_realization_type,
+                    quantity_realized=quantity_realized,
+                    unit_cost_basis_eur=Decimal("0"),
+                    unit_realization_value_eur=premium_per_unit_eur,
+                    total_cost_basis_eur=Decimal("0"),
+                    total_realization_value_eur=premium_total,
+                    gross_gain_loss_eur=premium_total,
+                    holding_period_days=holding_period_days,
+                    tax_reporting_category=TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN,
+                    is_stillhalter_income=True,
+                )
+                realized_gains_losses.append(premium_rgl)
 
-                # Subtract commission from net (reduces gain or increases loss)
-                gross_gl = ledger.ctx.subtract(total_realization, ledger.ctx.add(total_cost, commission_portion))
-
-            # Determine tax category
-            is_stillhalter = False
-            if gross_gl >= Decimal("0"):
-                tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN
-                if current_realization_type == RealizationType.OPTION_CASH_SETTLED_SHORT:
-                    is_stillhalter = True
-            else:
-                tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
-
-            rgl = RealizedGainLoss(
-                originating_event_id=event.event_id,
-                asset_internal_id=ledger.asset_internal_id,
-                asset_category_at_realization=AssetCategory.OPTION,
-                acquisition_date=detail.original_lot_date,
-                realization_date=event.event_date,
-                realization_type=current_realization_type,
-                quantity_realized=quantity_realized,
-                unit_cost_basis_eur=cost_basis_per_unit,
-                unit_realization_value_eur=realization_per_unit,
-                total_cost_basis_eur=total_cost,
-                total_realization_value_eur=total_realization,
-                gross_gain_loss_eur=gross_gl,
-                holding_period_days=holding_period_days,
-                tax_reporting_category=tax_cat,
-                is_stillhalter_income=is_stillhalter,
-            )
-            realized_gains_losses.append(rgl)
-            logger.debug(f"  Generated RGL for cash settlement: Asset {ledger.asset_internal_id}, "
-                        f"Type {current_realization_type.name}, Qty {quantity_realized}, "
-                        f"G/L {gross_gl:.2f} EUR")
+                # Leg 2 — Barausgleich (§20 Abs. 2 S. 1 Nr. 3a): loss in full
+                # (settlement paid + commission), separate from the premium.
+                settlement_loss = ledger.ctx.add(settlement_portion, commission_portion)
+                if settlement_loss > Decimal("0"):
+                    settlement_rgl = RealizedGainLoss(
+                        originating_event_id=event.event_id,
+                        asset_internal_id=ledger.asset_internal_id,
+                        asset_category_at_realization=AssetCategory.OPTION,
+                        acquisition_date=detail.original_lot_date,
+                        realization_date=event.event_date,
+                        realization_type=current_realization_type,
+                        quantity_realized=quantity_realized,
+                        unit_cost_basis_eur=ledger.ctx.divide(settlement_loss, quantity_realized) if quantity_realized != Decimal("0") else Decimal("0"),
+                        unit_realization_value_eur=Decimal("0"),
+                        total_cost_basis_eur=settlement_loss,
+                        total_realization_value_eur=Decimal("0"),
+                        gross_gain_loss_eur=ledger.ctx.minus(settlement_loss),
+                        holding_period_days=holding_period_days,
+                        tax_reporting_category=TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST,
+                        is_stillhalter_income=False,
+                    )
+                    realized_gains_losses.append(settlement_rgl)
+                logger.debug(f"  Generated SPLIT RGLs for Stillhalter cash settlement: "
+                            f"premium +{premium_total:.2f} EUR (Nr. 11), "
+                            f"Barausgleich -{settlement_loss:.2f} EUR (Nr. 3a)")
 
         # Process currency impact for cash settlement proceeds
         currency_rgls = self._process_currency_impact(event, context)
