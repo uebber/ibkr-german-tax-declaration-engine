@@ -60,14 +60,28 @@ def resolve_declared_vp(
 ) -> List[VorabpauschaleGap]:
     """Attach `vp_declared_by_year` to every fund disposed in `tax_year`; return gaps.
 
-    Every holding year (earliest acquisition year .. V-1) is prompted (once, cached).
+    The most recent holding year (V-1) is the one the engine itself computes and places on
+    Anlage KAP-INV Z9-13 of this return; here we compute the same figure (via the §18 prior-
+    year path) and **auto-enter it** into the deduction map and the cache — it is never
+    prompted. Only the earlier holding years (≤ V-2), which were declared on prior returns and
+    cannot be recomputed (no historical NAVs), are prompted.
     """
     gaps: List[VorabpauschaleGap] = []
-    prior_year = tax_year - 1  # most recent holding year (V-1)
-    # Prompted-only resolution: every holding year up to and including V-1 is asked from the
-    # user (cached). A follow-up change auto-computes the V-1 figure from the §18 prior-year
-    # path (it is the number on THIS return's Z9-13) so it never needs prompting.
+    prior_year = tax_year - 1  # most recent holding year (V-1); auto-computed
+
+    # Compute the prior-year (V-1) Vorabpauschale for all funds — the same figure the engine
+    # places on Z13 — so disposed funds can deduct it without prompting. Uses the prior-year
+    # NAVs already resolved by the NAV pre-pass (vp_nav_resolution), no FIFO ledger needed.
     prior_vp_gross: Dict[uuid.UUID, Decimal] = {}
+    from src.tax_law.registry import basiszins_pct
+    if basiszins_pct(prior_year) is not None:
+        from src.engine.calculation_engine import _vp_for_calendar_year  # lazy: avoid import cycle
+        ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION, rounding=config.DECIMAL_ROUNDING_MODE)
+        prior_records: List[VorabpauschaleData] = []
+        _vp_for_calendar_year(
+            asset_resolver, events, currency_converter, prior_year, tax_year, ctx, None, prior_records
+        )
+        prior_vp_gross = {r.asset_internal_id: r.gross_vorabpauschale_eur for r in prior_records}
 
     for asset in asset_resolver.assets_by_internal_id.values():
         if not isinstance(asset, InvestmentFund):
@@ -101,7 +115,7 @@ def resolve_declared_vp(
 
         # --- Holding years ≤ V-2: declared on prior returns, prompted (or cache-hit) ---
         missing_years: List[int] = []
-        for year in range(earliest, tax_year):  # all holding years incl. V-1 (prompted)
+        for year in range(earliest, prior_year):  # excludes V-1
             context = [f"(Fonds wurde {tax_year} veräußert.)"]
             value = provider.get_or_prompt(asset, year, interactive, context_lines=context)
             if value is not None:

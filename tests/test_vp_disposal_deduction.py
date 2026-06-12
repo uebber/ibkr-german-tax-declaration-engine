@@ -263,19 +263,19 @@ class TestDeclaredVpResolution:
                 self.set_calls.append((year, value))
         return RecordingProvider()
 
-    def test_all_holding_years_prompted_including_v_minus_1(self):
-        """Prompted-only resolution: a fund bought 2022 and sold 2025 (V=2025)
-        prompts for every holding year 2022..2024 — including V-1. (A follow-up
-        change auto-computes the V-1 figure from the §18 prior-year path so it
-        no longer needs prompting; this pins the prompted-only baseline.)"""
+    def test_v_minus_1_autocomputed_and_earlier_years_prompted(self):
+        """Fund bought 2022, sold 2025 (V=2025): holding year 2024 (V-1) is auto-computed from
+        the resolved prior-year NAV (not prompted); only 2022 and 2023 are prompted."""
         from src.processing.declared_vp_resolution import resolve_declared_vp
         from tests.test_vorabpauschale import _eur_converter
 
         fund = _make_fund(
-            soy_qty=Decimal("100"), soy_position_value=Decimal("11000"),
-            eoy_qty=Decimal("0"), eoy_position_value=Decimal("0"),
+            soy_qty=Decimal("100"), soy_position_value=Decimal("11000"),  # end-2024 NAV = 110
+            eoy_qty=Decimal("0"), eoy_position_value=Decimal("0"),        # sold: not held end-2025
             currency="EUR", description="Sold Fund",
         )
+        fund.vp_prior_soy_nav_per_unit = Decimal("100")   # 1-Jan-2024 NAV
+        fund.vp_prior_soy_nav_currency = "EUR"
         resolver = _make_resolver_with_fund(fund)
         aid = fund.internal_asset_id
         events = [_buy(aid, "2022-03-01", "100"), _sell(aid, "2025-04-01", "100")]
@@ -283,8 +283,12 @@ class TestDeclaredVpResolution:
         prov = self._recording_provider()
         resolve_declared_vp(resolver, events, tax_year=2025, interactive=True,
                             provider=prov, currency_converter=_eur_converter())
-        assert prov.prompted == [2022, 2023, 2024]
-        assert prov.set_calls == []
+
+        # 2024 (V-1) is auto-computed, never prompted; only 2022 and 2023 are asked.
+        assert prov.prompted == [2022, 2023]
+        # Basisertrag 10000 * 0.0229 * 0.7 = 160.30 (full-year factor; cap 1000 non-binding).
+        assert (2024, Decimal("160.30")) in prov.set_calls
+        assert fund.vp_declared_by_year[2024] == Decimal("160.30")
 
     def test_not_disposed_fund_is_ignored(self):
         from src.processing.declared_vp_resolution import resolve_declared_vp
@@ -430,3 +434,58 @@ class TestFifoLedgerAppliesDeduction:
         assert rgl.gross_gain_loss_eur == Decimal("88")
         # The 60 unsold units remain in the lot.
         assert sum(lot.quantity for lot in ledger.lots) == Decimal("60")
+
+
+# ---------------------------------------------------------------------------
+# Integration guard: §18 Abs. 3 + §19 — the VP is taxed exactly once (no double tax)
+# ---------------------------------------------------------------------------
+
+class TestDeemedInflowAndSaleNoDoubleTax:
+    """The exact bug this whole feature fixed: when a fund is sold in V, its V-1 Vorabpauschale
+    appears on Z9-13 (income, §18 Abs. 3) AND is deducted from the Z14-26 gain (§19 Abs. 1 S. 3).
+    The two must net so the economic gain is taxed once: Z13 + Z26 == gross gain *before* VP.
+    (Were Z26 left un-reduced, Z13 + Z26 would over-count the VP — the double taxation.)"""
+
+    def test_v_minus_1_vp_taxed_once_across_z13_and_z26(self):
+        gross_gain_before_vp = Decimal("500.00")
+        vp_v1 = Decimal("123.45")  # 2024 holding-year VP, deemed inflow 2025
+        # Sonstige Fonds (0% Teilfreistellung) for clean arithmetic, like the Singapore ETF.
+        rgl = RealizedGainLoss(
+            originating_event_id=uuid.uuid4(), asset_internal_id=uuid.uuid4(),
+            asset_category_at_realization=AssetCategory.INVESTMENT_FUND,
+            acquisition_date="2023-05-01", realization_date="2025-01-15",
+            realization_type=RealizationType.LONG_POSITION_SALE,
+            quantity_realized=Decimal("100"),
+            unit_cost_basis_eur=Decimal("1"), unit_realization_value_eur=Decimal("1"),
+            total_cost_basis_eur=Decimal("0"), total_realization_value_eur=Decimal("0"),
+            gross_gain_loss_eur=gross_gain_before_vp - vp_v1,  # 376.55 (net of VP, pre-TF)
+            tax_reporting_category=TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS,
+            fund_type_at_sale=InvestmentFundType.SONSTIGE_FONDS,
+            vp_deduction_eur=vp_v1,
+        )
+        vp = VorabpauschaleData(
+            asset_internal_id=uuid.uuid4(), tax_year=2024,
+            fund_value_start_year_eur=Decimal("10000"), fund_value_end_year_eur=Decimal("11000"),
+            distributions_during_year_eur=Decimal("0"), base_return_rate=Decimal("0.0229"),
+            basiszins=Decimal("2.29"), calculated_base_return_eur=vp_v1,
+            gross_vorabpauschale_eur=vp_v1, fund_type=InvestmentFundType.SONSTIGE_FONDS,
+            teilfreistellung_rate_applied=Decimal("0"), teilfreistellung_amount_eur=Decimal("0"),
+            net_taxable_vorabpauschale_eur=vp_v1,
+            tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO,
+            deemed_inflow_year=2025,
+        )
+        resolver = MagicMock()
+        resolver.get_asset_by_id.return_value = None
+        engine = LossOffsettingEngine(
+            realized_gains_losses=[rgl], vorabpauschale_items=[vp],
+            current_year_financial_events=[], asset_resolver=resolver, tax_year=2025,
+        )
+        result = engine.calculate_reporting_figures()
+        z13 = result.form_line_values.get(
+            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO, Decimal("0"))
+        z26 = result.form_line_values.get(
+            TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS, Decimal("0"))
+        assert z13 == vp_v1                      # VP income on Z13
+        assert z26 == Decimal("376.55")          # gain reduced by the held-period VP
+        # Taxed exactly once: declared income (Z13) + reduced gain (Z26) == full economic gain.
+        assert z13 + z26 == gross_gain_before_vp
