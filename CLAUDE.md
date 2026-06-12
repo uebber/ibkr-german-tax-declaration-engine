@@ -129,7 +129,7 @@ Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
 
-Transaction files (Trades, Cash_Transactions, Corporate_Actions, Options_EAE) for all years up to and including the tax year are concatenated automatically to provide full historical FIFO cost basis. Position and Cash Balance files are used only for the selected tax year.
+Transaction files (Trades, Cash_Transactions, Corporate_Actions, Options_EAE) for all years up to and including the tax year are concatenated automatically to provide full historical FIFO cost basis. Position and Cash Balance files are used for the selected tax year; additionally, the prior year's start-of-year positions snapshot (`Positions-{YYYY-1}-SoY.csv`), if present, is used to compute the prior calendar year's Vorabpauschale that is deemed to flow into and is declared on the selected year's return (§18 Abs. 3 InvStG).
 
 Critical requirement: Trades file **must** include `Open/CloseIndicator` column ('O'/'C') for accurate trade classification.
 

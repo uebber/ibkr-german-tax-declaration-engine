@@ -148,9 +148,10 @@ class LossOffsettingEngine:
                  # Excess amounts are now handled as separate DIVIDEND_CASH events
                  pass
 
-        vp_gross_total_for_z55 = self.ctx.create_decimal(Decimal('0'))
         for vp_item in self.vorabpauschale_items:
-            if vp_item.tax_year == self.tax_year:
+            # §18 Abs. 3: the VP taxed in this assessment year is the one deemed to flow on its
+            # first business day — i.e. the prior calendar year's VP (deemed_inflow_year == tax_year).
+            if vp_item.deemed_inflow_year == self.tax_year:
                 net_vp_eur = vp_item.net_taxable_vorabpauschale_eur
                 if net_vp_eur is None:
                     logger.warning(f"Vorabpauschale item for asset {vp_item.asset_internal_id} has no net_taxable_vorabpauschale_eur. Assuming 0.")
@@ -158,14 +159,13 @@ class LossOffsettingEngine:
 
                 fund_income_net_taxable = self.ctx.add(fund_income_net_taxable, net_vp_eur)
 
-                # Accumulate gross VP for Z55 (all VP from foreign broker = no German WHT withheld)
-                gross_vp = vp_item.gross_vorabpauschale_eur if vp_item.gross_vorabpauschale_eur is not None else Decimal('0')
-                vp_gross_total_for_z55 = self.ctx.add(vp_gross_total_for_z55, gross_vp)
-
         result.conceptual_fund_income_net_taxable = fund_income_net_taxable.quantize(self.TWO_PLACES, context=self.ctx)
 
-        # Z55: Sum of all gross Vorabpauschale for deduction on disposal
-        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55] = vp_gross_total_for_z55.quantize(self.TWO_PLACES, context=self.ctx)
+        # §19 Abs. 1 S. 3-4 InvStG: the Vorabpauschale assessed during a fund's holding period
+        # is deducted *inside* the disposal gain (already reflected in each
+        # RealizedGainLoss.gross_gain_loss_eur, net of vp_deduction_eur) and reported via the
+        # net gain on Anlage KAP-INV Z14-26 (Aufstellung). It is NOT a separate form line:
+        # Z55 of the form is "Gewinne aus bestandsgeschützten Alt-Anteilen", not the VP deduction.
 
         # Calculate foreign tax paid (Zeile 41)
         foreign_tax_total = self.ctx.create_decimal(Decimal('0'))
@@ -247,8 +247,10 @@ class LossOffsettingEngine:
         for key, val in kap_inv_gross_gl_collector.items():
             result.form_line_values[key] = val.quantize(self.TWO_PLACES, context=self.ctx)
 
-        for vp_item in self.vorabpauschale_items: # Will be 0 for 2023
-             if vp_item.tax_year == self.tax_year and vp_item.gross_vorabpauschale_eur != Decimal(0):
+        for vp_item in self.vorabpauschale_items:
+             # §18 Abs. 3: the VP on this year's KAP-INV lines (Z9-13) is the one deemed to
+             # flow this year (the prior calendar year's VP) — select by deemed_inflow_year.
+             if vp_item.deemed_inflow_year == self.tax_year and vp_item.gross_vorabpauschale_eur != Decimal(0):
                 if vp_item.tax_reporting_category_gross:
                      kap_inv_gross_vop_collector[vp_item.tax_reporting_category_gross] = self.ctx.add(kap_inv_gross_vop_collector[vp_item.tax_reporting_category_gross], vp_item.gross_vorabpauschale_eur)
 

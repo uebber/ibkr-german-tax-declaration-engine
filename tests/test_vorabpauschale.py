@@ -349,14 +349,21 @@ class TestTeilfreistellungNegativeDistribution:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Z55 in loss offsetting
+# Tests: Vorabpauschale form-line mapping in loss offsetting
 # ---------------------------------------------------------------------------
 
-class TestZ55VorabpauschaleAbzug:
-    """Verify Z55 correctly sums all gross VP."""
+class TestVorabpauschaleFormLineMapping:
+    """A flowing-in Vorabpauschale feeds the annual VP lines (Z9-13), NOT a separate
+    "Z55" deduction line.
 
-    def test_z55_sums_gross_vp(self):
-        """Z55 = sum of all gross VP for the tax year."""
+    Rewritten from the former TestZ55VorabpauschaleAbzug, which asserted
+    ``ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55 == Σ gross VP``. That mapping is wrong
+    against the official Anlage KAP-INV 2025 form: Z55 is "Gewinne aus der Veräußerung
+    von bestandsgeschützten Alt-Anteilen", and the §19 Abs. 1 S. 3-4 VP-on-sale deduction
+    is Zeile 53, folded into the net Veräußerungsgewinn on Z14-26 — not a separate VP
+    line in loss offsetting. The annual VP itself flows into Z9-13 (by fund type)."""
+
+    def test_vp_feeds_z9_13_not_a_separate_abzug_line(self):
         vp1 = VorabpauschaleData(
             asset_internal_id=uuid.uuid4(), tax_year=2024,
             fund_value_start_year_eur=Decimal("10000"), fund_value_end_year_eur=Decimal("11000"),
@@ -368,6 +375,7 @@ class TestZ55VorabpauschaleAbzug:
             teilfreistellung_amount_eur=Decimal("48.09"),
             net_taxable_vorabpauschale_eur=Decimal("112.21"),
             tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,
+            deemed_inflow_year=2024,  # VP deemed to flow in (and taxed in) VZ 2024
         )
         vp2 = VorabpauschaleData(
             asset_internal_id=uuid.uuid4(), tax_year=2024,
@@ -380,6 +388,7 @@ class TestZ55VorabpauschaleAbzug:
             teilfreistellung_amount_eur=Decimal("12.02"),
             net_taxable_vorabpauschale_eur=Decimal("68.13"),
             tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO,
+            deemed_inflow_year=2024,  # VP deemed to flow in (and taxed in) VZ 2024
         )
 
         resolver = MagicMock(spec=AssetResolver)
@@ -394,11 +403,16 @@ class TestZ55VorabpauschaleAbzug:
         )
         result = engine.calculate_reporting_figures()
 
+        # The gross VP feeds the annual VP lines (Z9 Aktienfonds, Z10 Mischfonds)...
+        z9 = result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO, Decimal("0"))
+        z10 = result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO, Decimal("0"))
+        assert z9 == Decimal("160.30")
+        assert z10 == Decimal("80.15")
+        # ...and NOT a separate "VP deduction" form line (that is not how §19/Z53 works).
         z55 = result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal("0"))
-        assert z55 == Decimal("240.45")
+        assert z55 == Decimal("0")
 
-    def test_z55_zero_when_no_vp(self):
-        """Z55 = 0 when no VP items."""
+    def test_no_vp_deduction_line_when_no_vp(self):
         resolver = MagicMock(spec=AssetResolver)
         resolver.get_asset_by_id.return_value = None
 
@@ -412,7 +426,7 @@ class TestZ55VorabpauschaleAbzug:
         result = engine.calculate_reporting_figures()
 
         z55 = result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal("0"))
-        assert z55 == Decimal("0.00")
+        assert z55 == Decimal("0")
 
     def test_fund_income_includes_net_vp(self):
         """conceptual_fund_income_net_taxable includes net VP."""
@@ -427,6 +441,7 @@ class TestZ55VorabpauschaleAbzug:
             teilfreistellung_amount_eur=Decimal("48.09"),
             net_taxable_vorabpauschale_eur=Decimal("112.21"),
             tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,
+            deemed_inflow_year=2024,  # VP deemed to flow in (and taxed in) VZ 2024
         )
 
         resolver = MagicMock(spec=AssetResolver)

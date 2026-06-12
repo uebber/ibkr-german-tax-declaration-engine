@@ -16,6 +16,11 @@ CLASSIFICATION_CACHE_FILE_PATH = "cache/user_classifications.json"
 # Cache file for ECB exchange rates
 ECB_RATES_CACHE_FILE_PATH = "cache/ecb_exchange_rates.json"
 
+# Cache file for user-supplied start-of-year fund NAVs (Vorabpauschale, mid-year acquisitions)
+FUND_SOY_NAV_CACHE_FILE_PATH = "cache/fund_soy_nav.json"
+
+# Cache file for user-declared Vorabpauschale per fund per year (§19 Abs. 1 S. 3 deduction at sale)
+
 # Taxpayer Information
 TAXPAYER_NAME = "Your Name"  # Update with your name
 ACCOUNT_ID = "U1234567"      # Update with your IBKR account ID

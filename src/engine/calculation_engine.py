@@ -6,6 +6,7 @@ from decimal import Decimal, getcontext, Context
 from collections import defaultdict
 from datetime import datetime, date
 
+from src.engine.ledger_views import aggregate_lots
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
 from src.processing.data_gaps import DataGapCollector, GapSeverity
 from src.domain.events import (
@@ -734,6 +735,8 @@ def run_main_calculations(
         currency_converter=currency_converter,
         tax_year=tax_year,
         ctx=ctx,
+        fifo_ledgers=fifo_ledgers,
+        all_financial_events=financial_events,
     )
     logger.info(f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records.")
 
@@ -759,131 +762,260 @@ def _get_vp_reporting_category(fund_type: InvestmentFundType) -> Optional['TaxRe
     return mapping.get(fund_type)
 
 
-def _calculate_vorabpauschale(
-    asset_resolver: AssetResolver,
-    current_year_events: List[FinancialEvent],
-    currency_converter: CurrencyConverter,
-    tax_year: int,
+def _vp_partial_year_factor(
+    asset_obj: "InvestmentFund",
+    fifo_ledgers: Optional[Dict[Tuple[str, uuid.UUID], FifoLedger]],
+    target_year: int,
     ctx: Context,
-) -> List[VorabpauschaleData]:
+    acquisition_month: Optional[int],
+    use_ledger: bool,
+) -> Decimal:
     """
-    Calculate Vorabpauschale for all investment funds held at start of year.
-    Formula per § 18 InvStG:
-      1. Basisertrag = fund_value_soy_eur * basiszins * 0.7
-      2. If Basisertrag <= 0 -> VP = 0
-      3. VP = max(0, Basisertrag - distributions_eur)
-      4. Cap: VP <= max(0, fund_value_eoy_eur - fund_value_soy_eur)
-      5. Apply Teilfreistellung
+    Units-weighted §18 Abs. 2 retained fraction for the units held at the end of
+    `target_year`.
+
+    Each lot acquired in a year before `target_year` keeps the full factor 1; a lot
+    acquired in month M of `target_year` keeps (13 - M)/12. Because every unit shares
+    the same year-start NAV, applying this units-weighted factor to the fund-level gross
+    Vorabpauschale equals the per-lot sum.
+
+    For the current year, per-lot acquisition dates are read from the FIFO ledger
+    (which reflects the year-end holdings). For a prior year the ledger no longer
+    reflects that year's holdings, so the single earliest-acquisition month is used.
     """
+    twelve = Decimal("12")
+    if use_ledger:
+        # Per-PERSON holdings across all accounts (AR4 aggregate view): the
+        # §18 Abs. 2 factor depends on when the person acquired the units,
+        # not in which Depot they sit.
+        lots = aggregate_lots(fifo_ledgers, asset_obj.internal_asset_id) if fifo_ledgers else []
+        if lots:
+            total_q = Decimal("0")
+            weighted = Decimal("0")
+            for lot in lots:
+                acq = parse_ibkr_date(lot.acquisition_date)
+                if acq is not None and acq.year == target_year:
+                    factor = ctx.divide(Decimal(13 - acq.month), twelve)
+                else:
+                    factor = Decimal("1")
+                total_q = ctx.add(total_q, lot.quantity)
+                weighted = ctx.add(weighted, ctx.multiply(lot.quantity, factor))
+            if total_q > Decimal("0"):
+                return ctx.divide(weighted, total_q)
+
+    if acquisition_month:
+        return ctx.divide(Decimal(13 - int(acquisition_month)), twelve)
+    return Decimal("1")
+
+
+def _build_fund_vp_record(
+    asset_obj: "InvestmentFund",
+    asset_id: uuid.UUID,
+    target_year: int,
+    basiszins: Decimal,
+    base_return_rate: Decimal,
+    fund_value_soy_eur: Decimal,
+    fund_value_eoy_eur: Decimal,
+    distributions_eur: Decimal,
+    partial_year_factor: Decimal,
+    soy_nav_eur: Decimal,
+    ctx: Context,
+) -> Optional[VorabpauschaleData]:
+    """Per-fund §18 InvStG computation from EUR snapshot values. Returns None if VP is 0."""
     from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
-    from src.tax_law.registry import basiszins_pct
-    basiszins = basiszins_pct(tax_year)  # None -> loud warning inside the registry
-    if basiszins is None:
-        return []
-
-    base_return_rate = ctx.multiply(basiszins, Decimal("0.01"))  # Convert percentage to factor
     factor_70 = Decimal("0.7")
+    basisertrag = ctx.multiply(ctx.multiply(fund_value_soy_eur, base_return_rate), factor_70)
+    if basisertrag <= Decimal('0'):
+        return None
+    vp_after_dist = ctx.subtract(basisertrag, distributions_eur)
+    if vp_after_dist <= Decimal('0'):
+        return None
+    cap = max(Decimal('0'), ctx.subtract(fund_value_eoy_eur, fund_value_soy_eur))
+    gross_vp_full = min(vp_after_dist, cap)
+    if gross_vp_full <= Decimal('0'):
+        return None
+    gross_vp = ctx.multiply(gross_vp_full, partial_year_factor)
+    if gross_vp <= Decimal('0'):
+        return None
 
-    # Conversion dates: Jan 2 for SoY (Jan 1 is never a business day), Dec 31 for EoY
-    soy_conversion_date = date(tax_year, 1, 2)
-    eoy_conversion_date = date(tax_year, 12, 31)
+    fund_type = asset_obj.fund_type or InvestmentFundType.NONE
+    tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type)
+    tf_amount = ctx.multiply(gross_vp, tf_rate)
+    net_vp = ctx.subtract(gross_vp, tf_amount)
 
-    # Collect distributions per asset during the tax year
+    TWO_PLACES = config.OUTPUT_PRECISION_AMOUNTS
+    return VorabpauschaleData(
+        asset_internal_id=asset_id,
+        tax_year=target_year,
+        fund_value_start_year_eur=fund_value_soy_eur.quantize(TWO_PLACES, context=ctx),
+        fund_value_end_year_eur=fund_value_eoy_eur.quantize(TWO_PLACES, context=ctx),
+        distributions_during_year_eur=distributions_eur.quantize(TWO_PLACES, context=ctx),
+        base_return_rate=base_return_rate,
+        basiszins=basiszins,
+        calculated_base_return_eur=basisertrag.quantize(TWO_PLACES, context=ctx),
+        gross_vorabpauschale_eur=gross_vp.quantize(TWO_PLACES, context=ctx),
+        fund_type=fund_type,
+        teilfreistellung_rate_applied=tf_rate,
+        teilfreistellung_amount_eur=tf_amount.quantize(TWO_PLACES, context=ctx),
+        net_taxable_vorabpauschale_eur=net_vp.quantize(TWO_PLACES, context=ctx),
+        tax_reporting_category_gross=_get_vp_reporting_category(fund_type),
+        partial_year_factor=partial_year_factor.quantize(Decimal("0.0001"), context=ctx),
+        soy_nav_per_unit_eur=soy_nav_eur.quantize(TWO_PLACES, context=ctx),
+        deemed_inflow_year=target_year + 1,
+    )
+
+
+def _vp_for_calendar_year(
+    asset_resolver: AssetResolver,
+    events: List[FinancialEvent],
+    currency_converter: CurrencyConverter,
+    target_year: int,
+    run_tax_year: int,
+    ctx: Context,
+    fifo_ledgers: Optional[Dict[Tuple[str, uuid.UUID], FifoLedger]],
+    results: List[VorabpauschaleData],
+) -> None:
+    """
+    Compute the Vorabpauschale for calendar year `target_year` (deemed to flow on the
+    first business day of target_year+1, §18 Abs. 3) for all funds held at the end of
+    target_year, appending records to `results`.
+
+    Current year (target_year == run_tax_year): end-of-year holdings/NAVs come from the
+    eoy_* position fields; the year-start NAV from soy_market_price (held on 1 Jan) or the
+    user-supplied vp_soy_nav_per_unit (acquired mid-year). Prior year
+    (target_year == run_tax_year - 1): end-of-year holdings/NAVs come from the soy_* fields
+    (which are the prior year's EoY = this run's SoY) and the year-start NAV from
+    vp_prior_soy_nav_per_unit (prior-year SoY positions export, or interactive input).
+    """
+    # Basiszins via the law-as-data registry (AR2): None -> loud warning there.
+    from src.tax_law.registry import basiszins_pct
+    basiszins = basiszins_pct(target_year)
+    if basiszins is None:
+        return
+
+    base_return_rate = ctx.multiply(basiszins, Decimal("0.01"))
+    is_current = target_year == run_tax_year
+    soy_conversion_date = date(target_year, 1, 2)
+    eoy_conversion_date = date(target_year, 12, 31)
+
+    # Distributions during target_year (events span all years; filter by date).
     distributions_by_asset: DefaultDict[uuid.UUID, Decimal] = defaultdict(lambda: ctx.create_decimal(Decimal('0')))
-    for event in current_year_events:
+    for event in events:
         if isinstance(event, CashFlowEvent) and event.event_type == FinancialEventType.DISTRIBUTION_FUND:
+            ev_date = parse_ibkr_date(event.event_date)
+            if ev_date is None or ev_date.year != target_year:
+                continue
             gross_eur = event.gross_amount_eur if event.gross_amount_eur is not None else Decimal('0')
             if gross_eur > Decimal('0'):
                 distributions_by_asset[event.asset_internal_id] = ctx.add(
                     distributions_by_asset[event.asset_internal_id], gross_eur
                 )
 
-    results: List[VorabpauschaleData] = []
-
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if not isinstance(asset_obj, InvestmentFund):
             continue
-        if asset_obj.soy_quantity is None or asset_obj.soy_quantity <= Decimal('0'):
+
+        if is_current:
+            units = asset_obj.eoy_quantity
+            if units is None or units <= Decimal('0'):
+                continue
+            if asset_obj.soy_quantity is not None and asset_obj.soy_quantity > Decimal('0'):
+                soy_nav_foreign = asset_obj.soy_market_price
+                soy_currency = asset_obj.soy_mark_price_currency or asset_obj.currency
+            elif asset_obj.vp_soy_nav_per_unit is not None:
+                soy_nav_foreign = asset_obj.vp_soy_nav_per_unit
+                soy_currency = asset_obj.vp_soy_nav_currency or asset_obj.currency
+            else:
+                logger.debug(f"Fund {asset_obj.description}: no {target_year} start-of-year NAV; skipping its VP.")
+                continue
+            eoy_nav_foreign = asset_obj.eoy_market_price
+            eoy_currency = asset_obj.eoy_mark_price_currency or asset_obj.currency
+            if eoy_nav_foreign is None and asset_obj.eoy_position_value is not None:
+                eoy_nav_foreign = ctx.divide(asset_obj.eoy_position_value, units)
+            acquisition_month = asset_obj.vp_acquisition_month
+            use_ledger = True
+        else:
+            # Prior year: held at end of target_year == held at this run's SoY.
+            units = asset_obj.soy_quantity
+            if units is None or units <= Decimal('0'):
+                continue
+            if asset_obj.vp_prior_soy_nav_per_unit is None:
+                logger.debug(f"Fund {asset_obj.description}: no {target_year} (prior-year) start-of-year NAV; skipping its VP.")
+                continue
+            soy_nav_foreign = asset_obj.vp_prior_soy_nav_per_unit
+            soy_currency = asset_obj.vp_prior_soy_nav_currency or asset_obj.currency
+            eoy_nav_foreign = asset_obj.soy_market_price
+            eoy_currency = asset_obj.soy_mark_price_currency or asset_obj.currency
+            if eoy_nav_foreign is None and asset_obj.soy_position_value is not None:
+                eoy_nav_foreign = ctx.divide(asset_obj.soy_position_value, units)
+            acquisition_month = asset_obj.vp_prior_acquisition_month
+            use_ledger = False
+
+        if soy_nav_foreign is None or soy_currency is None or eoy_nav_foreign is None or eoy_currency is None:
+            logger.debug(f"Fund {asset_obj.description}: missing NAV/currency for {target_year}; skipping its VP.")
             continue
 
-        # Convert SoY position value to EUR
-        soy_value_foreign = asset_obj.soy_position_value
-        soy_currency = asset_obj.soy_mark_price_currency or asset_obj.currency
-        if soy_value_foreign is None or soy_currency is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Missing SoY position value or currency. Skipping VP.")
+        soy_nav_eur = currency_converter.convert_to_eur(soy_nav_foreign, soy_currency, soy_conversion_date)
+        eoy_nav_eur = currency_converter.convert_to_eur(eoy_nav_foreign, eoy_currency, eoy_conversion_date)
+        if soy_nav_eur is None or eoy_nav_eur is None:
+            logger.warning(f"Fund {asset_obj.description}: failed EUR conversion for {target_year}; skipping its VP.")
             continue
 
-        fund_value_soy_eur = currency_converter.convert_to_eur(soy_value_foreign, soy_currency, soy_conversion_date)
-        if fund_value_soy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert SoY value to EUR. Skipping VP.")
-            continue
-
-        # Convert EoY position value to EUR
-        eoy_value_foreign = asset_obj.eoy_position_value
-        eoy_currency = asset_obj.eoy_mark_price_currency or asset_obj.currency
-        if eoy_value_foreign is None or eoy_currency is None:
-            # Fund fully sold during year — no VP needed (VP is for positions held at EoY)
-            logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No EoY position value. Skipping VP.")
-            continue
-
-        fund_value_eoy_eur = currency_converter.convert_to_eur(eoy_value_foreign, eoy_currency, eoy_conversion_date)
-        if fund_value_eoy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert EoY value to EUR. Skipping VP.")
-            continue
-
-        # 1. Basisertrag = fund_value_soy_eur * basiszins_rate * 0.7
-        basisertrag = ctx.multiply(ctx.multiply(fund_value_soy_eur, base_return_rate), factor_70)
-
-        # 2. If Basisertrag <= 0, VP = 0
-        if basisertrag <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Basisertrag={basisertrag} <= 0, VP=0.")
-            continue
-
-        # 3. VP = Basisertrag - distributions (but not below 0)
+        fund_value_soy_eur = ctx.multiply(soy_nav_eur, units)
+        fund_value_eoy_eur = ctx.multiply(eoy_nav_eur, units)
         distributions_eur = distributions_by_asset.get(asset_id, Decimal('0'))
-        vp_after_dist = ctx.subtract(basisertrag, distributions_eur)
-        if vp_after_dist <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Distributions ({distributions_eur}) >= Basisertrag ({basisertrag}), VP=0.")
-            continue
-
-        # 4. Cap: VP <= max(0, fund_value_eoy_eur - fund_value_soy_eur)
-        value_gain = ctx.subtract(fund_value_eoy_eur, fund_value_soy_eur)
-        cap = max(Decimal('0'), value_gain)
-        gross_vp = min(vp_after_dist, cap)
-
-        if gross_vp <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Value gain cap applied, VP=0.")
-            continue
-
-        # 5. Apply Teilfreistellung
-        fund_type = asset_obj.fund_type or InvestmentFundType.NONE
-        tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type)
-        tf_amount = ctx.multiply(gross_vp, tf_rate)
-        net_vp = ctx.subtract(gross_vp, tf_amount)
-
-        TWO_PLACES = config.OUTPUT_PRECISION_AMOUNTS
-        vp_data = VorabpauschaleData(
-            asset_internal_id=asset_id,
-            tax_year=tax_year,
-            fund_value_start_year_eur=fund_value_soy_eur.quantize(TWO_PLACES, context=ctx),
-            fund_value_end_year_eur=fund_value_eoy_eur.quantize(TWO_PLACES, context=ctx),
-            distributions_during_year_eur=distributions_eur.quantize(TWO_PLACES, context=ctx),
-            base_return_rate=base_return_rate,
-            basiszins=basiszins,
-            calculated_base_return_eur=basisertrag.quantize(TWO_PLACES, context=ctx),
-            gross_vorabpauschale_eur=gross_vp.quantize(TWO_PLACES, context=ctx),
-            fund_type=fund_type,
-            teilfreistellung_rate_applied=tf_rate,
-            teilfreistellung_amount_eur=tf_amount.quantize(TWO_PLACES, context=ctx),
-            net_taxable_vorabpauschale_eur=net_vp.quantize(TWO_PLACES, context=ctx),
-            tax_reporting_category_gross=_get_vp_reporting_category(fund_type),
+        partial_year_factor = _vp_partial_year_factor(
+            asset_obj, fifo_ledgers, target_year, ctx, acquisition_month, use_ledger
         )
+
+        vp_data = _build_fund_vp_record(
+            asset_obj, asset_id, target_year, basiszins, base_return_rate,
+            fund_value_soy_eur, fund_value_eoy_eur, distributions_eur,
+            partial_year_factor, soy_nav_eur, ctx,
+        )
+        if vp_data is None:
+            continue
         results.append(vp_data)
         logger.info(
-            f"Fund {asset_obj.description}: VP gross={gross_vp.quantize(TWO_PLACES, context=ctx)}, "
-            f"TF={tf_amount.quantize(TWO_PLACES, context=ctx)}, net={net_vp.quantize(TWO_PLACES, context=ctx)}"
+            f"Fund {asset_obj.description}: VP({target_year}) gross={vp_data.gross_vorabpauschale_eur} "
+            f"(factor={vp_data.partial_year_factor}, deemed inflow {vp_data.deemed_inflow_year}), "
+            f"net={vp_data.net_taxable_vorabpauschale_eur}"
         )
+
+
+def _calculate_vorabpauschale(
+    asset_resolver: AssetResolver,
+    current_year_events: List[FinancialEvent],
+    currency_converter: CurrencyConverter,
+    tax_year: int,
+    ctx: Context,
+    fifo_ledgers: Optional[Dict[Tuple[str, uuid.UUID], FifoLedger]] = None,
+    all_financial_events: Optional[List[FinancialEvent]] = None,
+) -> List[VorabpauschaleData]:
+    """
+    Calculate Vorabpauschale (§18 InvStG) for the current calendar year (deemed to flow
+    next year — a preview of the X+1 return) and for the prior calendar year (deemed to
+    flow this year — what belongs on the X return's KAP-INV lines). Each record carries
+    deemed_inflow_year = its calendar year + 1; downstream selects by deemed_inflow_year.
+    """
+    results: List[VorabpauschaleData] = []
+
+    # Current calendar year X (deemed inflow X+1; preview of next year's return).
+    _vp_for_calendar_year(
+        asset_resolver, current_year_events, currency_converter,
+        tax_year, tax_year, ctx, fifo_ledgers, results,
+    )
+
+    # Prior calendar year X-1 (deemed inflow X; feeds this year's return lines).
+    # No availability guard needed: _vp_for_calendar_year returns early (loudly,
+    # via the AR2 registry) when the prior year has no published Basiszins.
+    prior_year = tax_year - 1
+    prior_events = all_financial_events if all_financial_events is not None else current_year_events
+    _vp_for_calendar_year(
+        asset_resolver, prior_events, currency_converter,
+        prior_year, tax_year, ctx, fifo_ledgers, results,
+    )
 
     return results
 

@@ -77,6 +77,7 @@ def generate_console_tax_report(
     eoy_mismatch_count: int,
     loss_offsetting_summary: LossOffsettingResult,
     data_gaps: Optional[List["DataGap"]] = None
+
 ):
     logger.info(f"Generating console tax declaration summary for tax year {tax_year}...")
     print(f"\n--- Tax Declaration Summary for Year {tax_year} (All amounts in EUR) ---")
@@ -177,11 +178,13 @@ def generate_console_tax_report(
     print(f"    Zeile 7 (Auslands-Immobilienfonds): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS, Decimal(0)))}")
     print(f"    Zeile 8 (Sonstige Investmentfonds): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_AUSSCHUETTUNG_GROSS, Decimal(0)))}")
 
-    print("  Vorabpauschale (Brutto, vor Teilfreistellung):")
+    # §18 Abs. 3: the VP on this year's KAP-INV is the one deemed to flow this year
+    # (the prior calendar year's VP), selected by deemed_inflow_year == tax_year.
+    print(f"  Vorabpauschale (Brutto, vor Teilfreistellung) — zugeflossen 01.{'01'}.{tax_year}, also für VZ {tax_year}:")
     vp_gross_by_fund_type: Dict[InvestmentFundType, Decimal] = defaultdict(Decimal)
-    for vp_item in vorabpauschale_items: # Already filtered by engine for tax year in generation
-        if vp_item.tax_year == tax_year: # Double check, though vp_items should be for tax_year
-             vp_gross_by_fund_type[vp_item.fund_type] += vp_item.gross_vorabpauschale_eur
+    vp_for_return = [v for v in vorabpauschale_items if v.deemed_inflow_year == tax_year]
+    for vp_item in vp_for_return:
+        vp_gross_by_fund_type[vp_item.fund_type] += vp_item.gross_vorabpauschale_eur
 
     print(f"    Zeile 9 (Aktienfonds Vorabpauschale): {_q(vp_gross_by_fund_type.get(InvestmentFundType.AKTIENFONDS, Decimal(0)))}")
     print(f"    Zeile 10 (Mischfonds Vorabpauschale): {_q(vp_gross_by_fund_type.get(InvestmentFundType.MISCHFONDS, Decimal(0)))}")
@@ -189,17 +192,46 @@ def generate_console_tax_report(
     print(f"    Zeile 12 (Auslands-Immobilienfonds Vorabpauschale): {_q(vp_gross_by_fund_type.get(InvestmentFundType.AUSLANDS_IMMOBILIENFONDS, Decimal(0)))}")
     print(f"    Zeile 13 (Sonstige Fonds Vorabpauschale): {_q(vp_gross_by_fund_type.get(InvestmentFundType.SONSTIGE_FONDS, Decimal(0)) + vp_gross_by_fund_type.get(InvestmentFundType.NONE, Decimal(0)))}")
 
+    # Explicit callout where the VP is shown, if any fund could not be computed for lack
+    # of a start-of-year NAV / prior-year SoY positions export.
+    relevant_gaps = [g for g in (data_gaps or [])
+                     if g.code == "VP_NAV_MISSING" and f"Zufluss {tax_year}" in g.detail]
+    if relevant_gaps:
+        bar = "=" * 70
+        print(f"  {bar}")
+        print(f"  !!  VORABPAUSCHALE UNVOLLSTÄNDIG — Zeilen 9-13 ggf. zu niedrig  !!")
+        print(f"  {bar}")
+        for g in relevant_gaps:
+            print(f"    - {g.subject}: {g.detail}")
 
-    print("  Gewinne/Verluste aus Veräußerung von Investmentfondsanteilen (Brutto, vor Teilfreistellung):")
+    # Note any funds whose Vorabpauschale was reduced for a mid-year acquisition (§18 Abs. 2)
+    prorated = [
+        v for v in vp_for_return
+        if v.partial_year_factor is not None and v.partial_year_factor < Decimal("1")
+    ]
+    if prorated:
+        print("    Hinweis: zeitanteilige Vorabpauschale (§18 Abs. 2 InvStG, unterjähriger Erwerb):")
+        for vp_item in prorated:
+            asset = asset_resolver.get_asset_by_id(vp_item.asset_internal_id)
+            name = asset.description if asset and asset.description else str(vp_item.asset_internal_id)
+            twelfths = (vp_item.partial_year_factor * Decimal("12")).quantize(Decimal("1"))
+            print(f"      {name}: Faktor {twelfths}/12 (SoY-NAV/Anteil: {_q(vp_item.soy_nav_per_unit_eur or Decimal(0))} EUR)")
+
+    # Forward-looking preview: the current calendar year's VP flows next year (VZ tax_year+1).
+    vp_preview = [v for v in vorabpauschale_items if v.deemed_inflow_year == tax_year + 1]
+    if vp_preview:
+        preview_total = sum((v.gross_vorabpauschale_eur for v in vp_preview), Decimal(0))
+        print(f"    Vorschau: Vorabpauschale {tax_year} (zufließend 01.01.{tax_year + 1}, zu erklären in VZ {tax_year + 1}): "
+              f"{_q(preview_total)} (Brutto)")
+
+
+    print("  Gewinne/Verluste aus Veräußerung von Investmentfondsanteilen (Brutto, vor Teilfreistellung; nach §19-VP-Abzug):")
     print(f"    Zeile 14 (Aktienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 17 (Mischfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 20 (Immobilienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 23 (Auslands-Immobilienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 26 (Sonstige Investmentfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS, Decimal(0)))}")
-
-    # Z55: Vorabpauschale deduction on disposal
-    z55_value = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal(0))
-    print(f"  Zeile 55 (Anzurechnende Vorabpauschalen): {_q(z55_value)}")
+    print("    (§19 Abs. 1 S. 3: die während der Besitzzeit angesetzten Vorabpauschalen (Z53) sind im G/V bereits abgezogen.)")
 
     # --- Anlage SO (from LossOffsettingResult) ---
     print("\nAnlage SO (Sonstige Einkünfte - §23 EStG Private Sales)")

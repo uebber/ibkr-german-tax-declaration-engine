@@ -55,12 +55,17 @@ class RealizedGainLoss:
 
     tax_reporting_category: Optional[TaxReportingCategory] = None 
 
-    fund_type_at_sale: Optional[InvestmentFundType] = None 
-    teilfreistellung_rate_applied: Optional[Decimal] = None 
-    teilfreistellung_amount_eur: Optional[Decimal] = None 
-    net_gain_loss_after_teilfreistellung_eur: Optional[Decimal] = None 
+    fund_type_at_sale: Optional[InvestmentFundType] = None
+    teilfreistellung_rate_applied: Optional[Decimal] = None
+    teilfreistellung_amount_eur: Optional[Decimal] = None
+    net_gain_loss_after_teilfreistellung_eur: Optional[Decimal] = None
 
-    is_stillhalter_income: bool = False 
+    # §19 Abs. 1 S. 3-4 InvStG: gross Vorabpauschale (vor Teilfreistellung) deducted from
+    # this fund disposal's gain during the holding period. `gross_gain_loss_eur` is already
+    # net of this amount; the field is retained for the Aufstellung / report breakdown.
+    vp_deduction_eur: Optional[Decimal] = None
+
+    is_stillhalter_income: bool = False
 
     def __post_init__(self):
         if not isinstance(self.asset_category_at_realization, AssetCategory):
@@ -133,6 +138,29 @@ class VorabpauschaleData:
     teilfreistellung_rate_applied: Decimal
     teilfreistellung_amount_eur: Decimal 
     
-    net_taxable_vorabpauschale_eur: Decimal 
+    net_taxable_vorabpauschale_eur: Decimal
 
     tax_reporting_category_gross: Optional[TaxReportingCategory] = None
+
+    # Partial-year (§18 Abs. 2 InvStG) reporting: units-weighted retained fraction
+    # (1.0 = full year; <1 = prorated for mid-year acquisition) and the start-of-year
+    # NAV per unit (EUR) used for the Basisertrag, when it came from user input.
+    partial_year_factor: Optional[Decimal] = None
+    soy_nav_per_unit_eur: Optional[Decimal] = None
+
+    # §18 Abs. 3 InvStG: the Vorabpauschale for calendar year `tax_year` is deemed to flow
+    # on the first business day of the following year and is declared in that assessment.
+    # deemed_inflow_year = tax_year + 1. Form lines for assessment year A are fed by the VP
+    # with deemed_inflow_year == A (i.e. the prior calendar year's VP).
+    deemed_inflow_year: Optional[int] = None
+
+
+@dataclass
+class VorabpauschaleGap:
+    """A fund whose Vorabpauschale could not be computed because a required
+    start-of-year input was missing (warn-only; surfaced as a report callout)."""
+    asset_internal_id: Optional[uuid.UUID]
+    description: str
+    target_year: int          # the calendar year whose VP could not be computed
+    deemed_inflow_year: int    # the assessment year whose form line is affected
+    reason: str

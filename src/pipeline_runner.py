@@ -15,9 +15,11 @@ from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.parsers.parsing_orchestrator import ParsingOrchestrator
 from src.classification.asset_classifier import AssetClassifier
 from src.processing.enrichment import enrich_financial_events
+from src.processing.vp_nav_resolution import resolve_year_start_navs
+from src.identification.fund_soy_nav_provider import FundSoyNavProvider
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider, ExchangeRateProvider # Added base for custom provider
-from src.processing.data_gaps import DataGap, DataGapCollector
+from src.processing.data_gaps import DataGap, DataGapCollector, GapSeverity
 from src.engine.calculation_engine import run_main_calculations
 from src.identification.asset_resolver import AssetResolver
 
@@ -42,7 +44,8 @@ class ProcessingOutput:
         self.asset_resolver = asset_resolver
         self.eoy_mismatch_error_count = eoy_mismatch_error_count
         # AR6 data-gap channel: every "input could not fully support the
-        # computation" condition, for the report's gap section.
+        # computation" condition (incl. Vorabpauschale NAV gaps), for the
+        # report's gap sections.
         self.data_gaps: List["DataGap"] = data_gaps or []
         # For EOY state checks in tests, final assets can be fetched from asset_resolver
         self.final_assets_by_id: Dict[Any, Asset] = asset_resolver.assets_by_internal_id
@@ -62,7 +65,8 @@ def run_core_processing_pipeline(
     tax_year_to_process: int,
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
-    options_eae_file_path: Optional[str] = None  # For cash-settled option processing
+    options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
+    positions_prior_start_file_path: Optional[str] = None  # Prior-year SoY for Vorabpauschale
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -130,11 +134,29 @@ def run_core_processing_pipeline(
     )
     logger.info(f"Enrichment completed. {len(financial_events_enriched)} events processed.")
 
+    # Resolve start-of-year NAVs for the §18 InvStG Vorabpauschale: the current year
+    # (preview of next year's return) and the prior year (the VP that flows into and is
+    # declared on this year's return, §18 Abs. 3). Unresolved NAVs become DataGaps
+    # below (severity policy in _record_vp_nav_gaps).
+    prior_year_soy_positions = _load_prior_year_soy_positions(positions_prior_start_file_path)
+    fund_nav_provider = FundSoyNavProvider(cache_file_path=config.FUND_SOY_NAV_CACHE_FILE_PATH)
+    vorabpauschale_gaps = resolve_year_start_navs(
+        asset_resolver=orchestrator.asset_resolver,
+        events=financial_events_enriched,
+        tax_year=tax_year_to_process,
+        interactive=interactive_classification_mode,
+        provider=fund_nav_provider,
+        prior_year_soy_positions=prior_year_soy_positions,
+    )
+
+    data_gap_collector = DataGapCollector()
+    _record_vp_nav_gaps(data_gap_collector, vorabpauschale_gaps,
+                        interactive=interactive_classification_mode)
+
     logger.info(f"Running calculation engine for tax year {tax_year_to_process}...")
     eoy_mismatch_error_count_calc = 0
     try:
         # Ensure run_main_calculations uses the passed tax_year_to_process
-        data_gap_collector = DataGapCollector()
         realized_gains_losses, vorabpauschale_items, processed_income_events, eoy_mismatch_error_count_calc = run_main_calculations(
             financial_events=financial_events_enriched,
             asset_resolver=orchestrator.asset_resolver, # Use the resolver from the orchestrator
@@ -163,3 +185,45 @@ def run_core_processing_pipeline(
         eoy_mismatch_error_count=eoy_mismatch_error_count_calc,
         data_gaps=data_gap_collector.gaps
     )
+
+
+def _record_vp_nav_gaps(collector: DataGapCollector, vorabpauschale_gaps, *,
+                        interactive: bool) -> None:
+    """Feed unresolved §18 InvStG year-start NAVs into the AR6 data-gap channel.
+
+    SEVERITY POLICY (resolves legal-review finding F4): in a NON-INTERACTIVE run
+    a missing year-start NAV means the deemed Vorabpauschale income CANNOT be
+    computed for that fund — continuing would silently understate income, so the
+    gap is FAIL_FAST and the run aborts. Interactive runs already prompted the
+    user; anything still unresolved is surfaced as a WARNING gap and a report
+    callout instead.
+    """
+    for vp_gap in vorabpauschale_gaps:
+        collector.record(
+            code="VP_NAV_MISSING",
+            subject=vp_gap.description,
+            detail=(f"{vp_gap.reason} "
+                    f"(betrifft Vorabpauschale, Zufluss {vp_gap.deemed_inflow_year})"),
+            severity=GapSeverity.WARNING if interactive else GapSeverity.FAIL_FAST,
+        )
+
+
+def _load_prior_year_soy_positions(path: Optional[str]):
+    """Parse a prior-year SoY positions export into {ISIN: (nav_per_unit, currency)}.
+
+    Returns None if no file was provided (so the resolver knows the bulk export is
+    absent and warns accordingly); an empty/partial dict otherwise.
+    """
+    if not path:
+        return None
+    from src.parsers.positions_parser import parse_positions_csv
+    try:
+        records = parse_positions_csv(path)
+    except Exception as e:
+        logger.warning(f"Could not parse prior-year SoY positions '{path}': {e}")
+        return None
+    out: Dict[str, Any] = {}
+    for r in records:
+        if r.isin and r.mark_price is not None:
+            out[r.isin] = (r.mark_price, r.currency_primary)
+    return out

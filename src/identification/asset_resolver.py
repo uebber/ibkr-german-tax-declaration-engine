@@ -60,6 +60,9 @@ class AssetResolver:
             "soy_quantity": asset.soy_quantity, # Renamed from initial_quantity_soy
             "soy_cost_basis_amount": asset.soy_cost_basis_amount, # Renamed from initial_cost_basis_money_soy
             "soy_cost_basis_currency": asset.soy_cost_basis_currency, # Renamed from initial_cost_basis_currency_soy
+            "soy_market_price": asset.soy_market_price,  # SoY NAV per unit (Vorabpauschale)
+            "soy_position_value": asset.soy_position_value,
+            "soy_mark_price_currency": asset.soy_mark_price_currency,
             "eoy_quantity": asset.eoy_quantity,
             "eoy_mark_price_currency": asset.eoy_mark_price_currency,
             "eoy_market_price": asset.eoy_market_price, # Renamed from eoy_mark_price

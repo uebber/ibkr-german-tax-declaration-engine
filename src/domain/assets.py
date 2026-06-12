@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field, KW_ONLY
 from decimal import Decimal
 import uuid
-from typing import Set, Optional
+from typing import Set, Optional, Dict
 
 from .enums import AssetCategory, InvestmentFundType
 
@@ -38,6 +38,25 @@ class Asset:
     eoy_mark_price_currency: Optional[str] = None # Currency of the EOY mark price
     eoy_market_price: Optional[Decimal] = None # Renamed from eoy_mark_price
     eoy_position_value: Optional[Decimal] = None # EOY position value in eoy_mark_price_currency
+
+    # User-supplied start-of-year NAV per unit, for funds acquired mid-year and held at EOY.
+    # Required for the §18 Abs. 2 InvStG partial-year Vorabpauschale, because the Basisertrag
+    # uses the year-start redemption price, which is absent from IBKR data when the fund was
+    # not held on 1 Jan. Resolved by the VP NAV pre-pass (see processing/vp_nav_resolution.py).
+    vp_soy_nav_per_unit: Optional[Decimal] = None
+    vp_soy_nav_currency: Optional[str] = None
+    # Month (1-12) of the earliest tax-year acquisition, for the §18 Abs. 2 monthly
+    # reduction. Used as a single-tranche fallback when no FIFO ledger is available
+    # (the engine prefers per-lot acquisition dates from the ledger when present).
+    vp_acquisition_month: Optional[int] = None
+
+    # Prior-year (tax_year - 1) equivalents, used to compute the Vorabpauschale that is
+    # deemed to flow into the current assessment year (§18 Abs. 3). The start-of-year NAV
+    # comes from the prior-year SoY positions export when the fund was held on 1 Jan of the
+    # prior year, otherwise from interactive input for funds acquired during the prior year.
+    vp_prior_soy_nav_per_unit: Optional[Decimal] = None
+    vp_prior_soy_nav_currency: Optional[str] = None
+    vp_prior_acquisition_month: Optional[int] = None
 
 
     def __post_init__(self):

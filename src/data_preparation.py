@@ -212,6 +212,17 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         logger.warning("No Positions-%d-EoY.csv found.", tax_year)
         result["positions_end"] = ""
 
+    # --- Prior-year SoY positions (optional): for the §18 Abs. 3 Vorabpauschale that
+    # flows into this assessment year (the prior calendar year's VP). ---
+    prior_soy_file = _find_import_file("Positions", tax_year - 1, "-SoY.csv")
+    if prior_soy_file:
+        prior_soy_output = WORKING_DIR / "positions_prior_start_of_year.csv"
+        _copy_file(prior_soy_file, prior_soy_output)
+        result["positions_prior_start"] = str(prior_soy_output)
+    else:
+        logger.info("No Positions-%d-SoY.csv found (prior-year SoY for Vorabpauschale).", tax_year - 1)
+        result["positions_prior_start"] = ""
+
     # --- Cash Balance: copy for the tax year ---
     cash_balance_file = _find_import_file("Cash_Balance", tax_year)
     if cash_balance_file:

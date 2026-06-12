@@ -319,7 +319,8 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
             TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO"],
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_55_VORABPAUSCHALE_ABZUG"],
+            # §19 VP-on-sale is folded into the net gain on Z14-26 (Aufstellung); it is not a
+            # separate summary line (form Z55 = bestandsgeschützte Alt-Anteile, unrelated).
             "ANLAGE_SO_Z54_NET_GV": so_lines_map["ANLAGE_SO_Z54_NET_GV"],
             "TOTAL_ANRECHENBARE_AUSL_STEUERN": kap_lines_map["ANLAGE_KAP_ZEILE_41"]
         })
@@ -355,7 +356,6 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 20
             TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 23
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS,  # KAP-INV Zeile 26
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55,  # KAP-INV Zeile 55
             "ANLAGE_SO_Z54_NET_GV"  # SO Zeile 54
         ]
 
@@ -767,6 +767,13 @@ class PdfReportGenerator:
 
         self.story.append(Paragraph("3.3 Detailaufschlüsselung: Gewinne/Verluste", self.styles['H3']))
 
+        self.story.append(Paragraph(
+            "Veräußerungsgewinn nach §19 Abs. 1 S. 3 InvStG = Erlös − Kosten − während der "
+            "Besitzzeit angesetzte Vorabpauschalen (Z53). Der Wert ist weiterhin BRUTTO "
+            "(vor Teilfreistellung) und geht in die Anlage KAP-INV Zeilen 14–26 ein "
+            "(Aufstellung); die Teilfreistellung wendet das Finanzamt an.",
+            self.styles['SmallText']))
+
         # Get fund realized gains/losses
         fund_rgls = [
             rgl for rgl in self.realized_gains_losses
@@ -790,13 +797,18 @@ class PdfReportGenerator:
             relevant_rgls = self._filter_rgls_by_fund_type(fund_rgls, trc_enum)
 
             if relevant_rgls:
-                # Create transaction table with expanded columns
-                rgl_data = [["Asset Name", "ISIN", "Verk. Datum", "Menge", "Erlös EUR", "Ansch. Datum", "Kosten EUR", "G/V Brutto EUR"]]
+                # Create transaction table. The §19 VP deduction is made explicit: the gross
+                # gain before VP, the held-period VP deducted (Z53), and the resulting gain
+                # (brutto, vor Teilfreistellung) that feeds the KAP-INV line.
+                rgl_data = [["Asset Name", "ISIN", "Verk. Datum", "Menge", "Erlös EUR",
+                             "Ansch. Datum", "Kosten EUR", "G/V vor VP", "VP-Abzug", "G/V brutto n. VP"]]
                 calculated_total = Decimal('0')
 
                 for rgl in sorted(relevant_rgls, key=lambda x: x.realization_date):
                     asset_name, asset_isin, _ = self._get_asset_details(rgl.asset_internal_id)
-                    gain_loss = rgl.gross_gain_loss_eur
+                    gain_loss = rgl.gross_gain_loss_eur  # brutto, nach VP-Abzug (vor Teilfreistellung)
+                    vp_deduction = rgl.vp_deduction_eur or Decimal('0')
+                    gain_before_vp = gain_loss + vp_deduction
                     calculated_total += gain_loss
 
                     rgl_data.append([
@@ -807,17 +819,19 @@ class PdfReportGenerator:
                         self._format_decimal(rgl.total_realization_value_eur).replace('.', ','),
                         format_date_german(rgl.acquisition_date),
                         self._format_decimal(rgl.total_cost_basis_eur).replace('.', ','),
+                        self._format_decimal(gain_before_vp).replace('.', ','),
+                        self._format_decimal(vp_deduction).replace('.', ','),
                         self._format_decimal(gain_loss).replace('.', ',')
                     ])
 
-                # Add total row
+                # Add total row (the Summe of the brutto-n.-VP column is the KAP-INV line figure)
                 rgl_data.append([
                     Paragraph("Summe:", self.styles['TableHeader']),
-                    "", "", "", "", "", "",
+                    "", "", "", "", "", "", "", "",
                     Paragraph(self._format_decimal(calculated_total).replace('.', ','), self.styles['TableCellRight'])
                 ])
 
-                table = self._create_styled_table(rgl_data, col_widths=[3*cm, 2*cm, 1.8*cm, 1.5*cm, 1.8*cm, 1.8*cm, 1.8*cm, 1.8*cm])
+                table = self._create_styled_table(rgl_data, col_widths=[2.6*cm, 1.9*cm, 1.5*cm, 1.0*cm, 1.5*cm, 1.5*cm, 1.5*cm, 1.5*cm, 1.4*cm, 1.7*cm])
                 self.story.append(KeepTogether(table))
 
                 # Verification note
@@ -873,7 +887,9 @@ class PdfReportGenerator:
 
         filtered = []
         for vop in self.vorabpauschale_items:
-            if vop.tax_year == self.tax_year and vop.gross_vorabpauschale_eur != Decimal('0'):
+            # §18 Abs. 3: the VP on this year's KAP-INV is the one deemed to flow this year
+            # (the prior calendar year's VP), selected by deemed_inflow_year == tax_year.
+            if vop.deemed_inflow_year == self.tax_year and vop.gross_vorabpauschale_eur != Decimal('0'):
                 _, _, fund_type = self._get_asset_details(vop.asset_internal_id)
                 if fund_type == target_fund_type:
                     filtered.append(vop)

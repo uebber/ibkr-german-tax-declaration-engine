@@ -34,7 +34,9 @@
 | Stock dividend | EStG | 20 Abs. 4a Satz 5 | (varies) | estg-20-kapitalvermoegen.md |
 | Foreign WHT | EStG | 32d Abs. 5, 34c | KAP Z41 | estg-32d-abgeltungsteuer.md |
 | Fund distribution | InvStG | 16 Abs. 1 Nr. 1 | KAP-INV Z4-8 | invstg-16-investmentertraege.md |
-| Vorabpauschale | InvStG | 18 | KAP-INV Z9-13 | invstg-18-vorabpauschale.md |
+| Vorabpauschale (full year) | InvStG | 18 | KAP-INV Z9-13 | invstg-18-vorabpauschale.md |
+| Vorabpauschale (mid-year acquisition) | InvStG | 18 Abs. 2 S. 2 | KAP-INV Z9-13 | invstg-18-vorabpauschale.md |
+| Vorabpauschale (deemed inflow / assessment year = Y+1) | InvStG | 18 Abs. 3 | KAP-INV Z9-13 (prior year's VP) | invstg-18-vorabpauschale.md |
 | Fund sale gain/loss | InvStG | 19 | KAP-INV Z14-26 | invstg-19-veraeusserungsgewinne.md |
 | VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV Z55 | invstg-19-veraeusserungsgewinne.md |
 | FX gain (explicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
@@ -51,6 +53,12 @@
 | Derivative loss cap (abolished) | EStG 20 Abs. 6 S. 5 a.F. | Z24 removed 2025 | estg-20-abs6-verlustverrechnung.md |
 | Private sale loss rules | EStG 23 Abs. 3 S. 7-8 | SO only | estg-23-private-veraeusserung.md |
 | Fund Teilfreistellung | InvStG 20 | KAP-INV gross | invstg-20-teilfreistellung.md |
+
+## Known Engine Limitations
+
+| Limitation | Scope | Handling | Covered In |
+|------------|-------|----------|------------|
+| Account-agnostic (merged) FIFO instead of per-Depot | securities & FX/currency | Correct for single-account holdings + transfers; imprecise only for a security/currency co-held in 2 accounts and sold from one. Securities: per-snapshot WARNING; currencies: one summary WARNING. Full per-Depot FIFO deferred. | estg-20-kapitalvermoegen.md (Abs. 4) |
 
 ## Year-Specific Rules
 
