@@ -547,6 +547,9 @@ class TestMergerIntegration(FifoTestCaseBase):
         self.assert_results(results, expected)
 
     def test_chained_mergers_historical(self, mock_config_paths):
+        # Input: the intermediate merger asset BBB exists only in corporate
+        # actions (AssetClass UNKNOWN) and needs the user's classification.
+        self.seed_classification("CONID:CON_B", "STOCK")
         """
         Chained mergers in prior years:
         2021: BUY 50 AAA
