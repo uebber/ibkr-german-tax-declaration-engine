@@ -390,6 +390,29 @@ class FifoLedger:
             else:
                  use_fallback = True
 
+        # Cost-divergence tripwire: when the reconstruction is used (quantities match), the
+        # broker-reported SoY cost basis is otherwise IGNORED in favour of the lot-level
+        # reconstruction. If a basis-affecting event is missing from the inputs (or from the
+        # historical replay — the Einlagenrückgewähr bug class), the quantities still match and
+        # the divergence is invisible. Compare costs and warn. EUR-denominated bases only: for
+        # foreign-currency bases the trade-date-vs-SoY-date conversion drift makes the
+        # comparison unreliable (documented limitation).
+        if (not use_fallback and self.lots and not self.short_lots
+                and asset.soy_cost_basis_amount is not None
+                and (asset.soy_cost_basis_currency or "").upper() == "EUR"):
+            reconstructed_cost = sum((l.total_cost_basis_eur for l in self.lots), Decimal(0))
+            reported_cost = asset.soy_cost_basis_amount
+            if abs(reconstructed_cost - reported_cost) > Decimal("1.00"):
+                logger.warning(
+                    f"Asset {asset.get_classification_key()}: reconstructed SOY cost basis "
+                    f"({reconstructed_cost:.2f} EUR) diverges from the broker-reported SOY cost "
+                    f"basis ({reported_cost:.2f} EUR) by {reconstructed_cost - reported_cost:.2f} EUR "
+                    f"although the quantities match. A basis-affecting event (e.g. "
+                    f"Einlagenrückgewähr, option-premium adjustment) is likely missing from the "
+                    f"input files or from the historical replay. The reconstructed lot-level "
+                    f"basis is used; verify it is the correct one."
+                )
+
         # Surface ANY divergence between the reconstruction and the reported SoY snapshot. The
         # fallback path below already warns for under-reconstruction / inconsistency; this covers the
         # remaining case — OVER-reconstruction, where the replay built more than the snapshot reports

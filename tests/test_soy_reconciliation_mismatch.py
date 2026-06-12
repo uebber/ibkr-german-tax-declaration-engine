@@ -92,3 +92,40 @@ class TestSoyReconciliationMismatch:
         assert led.lots[0].acquisition_date == "2024-12-31"
         assert led.lots[0].total_cost_basis_eur == Decimal("700")
         assert _recon_warning(caplog)
+
+
+class TestSoyCostDivergenceWarning:
+    """Cost-divergence tripwire: quantities matching does NOT prove the reconstruction is
+    right — a basis-affecting event missing from the inputs (the Einlagenrückgewähr bug
+    class: cost-only mutations are invisible to the quantity reconciliation) must surface
+    as a WARNING instead of silently mis-stating later sale gains."""
+
+    def test_cost_divergence_with_matching_quantity_warns(self, caplog):
+        """Replay rebuilt 100 @ 5 (cost 500) but the broker reports cost 200 for the same
+        100 shares (e.g. an Einlagenrückgewähr absent from the cash transactions): warn."""
+        led = _ledger()
+        led.lots.append(_long_lot("100", "5"))
+        with caplog.at_level(logging.WARNING):
+            led.reconcile_with_soy_position(_asset("100", "200"), 2025)
+        assert any("cost basis" in r.message and "diverges" in r.message
+                   for r in caplog.records)
+        # figures unchanged: the reconstructed lots are still used
+        assert led.lots[0].total_cost_basis_eur == Decimal("500")
+
+    def test_matching_cost_does_not_warn(self, caplog):
+        led = _ledger()
+        led.lots.append(_long_lot("100", "5"))
+        with caplog.at_level(logging.WARNING):
+            led.reconcile_with_soy_position(_asset("100", "500"), 2025)
+        assert not any("diverges" in r.message for r in caplog.records)
+
+    def test_foreign_currency_basis_is_not_compared(self, caplog):
+        """Non-EUR reported basis: trade-date vs SoY-date conversion drift makes the
+        comparison unreliable — documented limitation, no warning."""
+        led = _ledger()
+        led.lots.append(_long_lot("100", "5"))
+        a = _asset("100", "200")
+        a.soy_cost_basis_currency = "USD"
+        with caplog.at_level(logging.WARNING):
+            led.reconcile_with_soy_position(a, 2025)
+        assert not any("diverges" in r.message for r in caplog.records)
