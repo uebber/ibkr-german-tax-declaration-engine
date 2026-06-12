@@ -131,6 +131,8 @@ replayer / gap channel where they touch those seams.
 | C8 | Einlagenrückgewähr excess (F5) — **decision PR**, confirm treatment first | §20 Abs. 1 Nr. 1 S. 3; BMF Rz. 92 |
 
 Phase C lands on whichever branch the user picks after the gate (`rework` or `rework2`).
+**DECIDED 2026-06-12: `rework2` carries Phase C and the upstream PRs** (gate passed —
+PDF byte-identical to the oracle, zero figure mismatches; see parity-log.md).
 New-test rule from here on (#9): every NEW behavior test carries a `legal_basis` reference
 (YAML specs where the spec-runner pattern fits).
 
