@@ -271,6 +271,70 @@ def _order_current_year_events_for_merger_deps(events: List[FinancialEvent]) -> 
     return ordered
 
 
+
+def _apply_historical_option_event(option_event, ledger, asset_resolver,
+                                   hist_pending_adjustments) -> None:
+    """Replay ONE historical option lifecycle event: consume the option ledger's
+    contract lots exactly like the current-year processors do, and for
+    exercise/assignment register the premium adjustment for the linked stock
+    trade (consumed by _adjust_historical_stock_trade). Emits NO RGLs — any
+    gain/loss belonged to the event's own assessment year."""
+    option_asset = asset_resolver.get_asset_by_id(option_event.asset_internal_id)
+    qty = option_event.quantity_contracts
+    try:
+        if isinstance(option_event, OptionExerciseEvent):
+            consumed = ledger.consume_long_option_get_cost(qty)
+            premium = sum((ledger.ctx.multiply(d.consumed_quantity, d.value_per_unit_eur)
+                           for d in consumed), ledger.ctx.create_decimal(0))
+            if isinstance(option_asset, Option) and option_asset.underlying_asset_internal_id is not None:
+                hist_pending_adjustments[option_event.event_id] = (
+                    premium, option_event.asset_internal_id, option_asset.option_type)
+        elif isinstance(option_event, OptionAssignmentEvent):
+            consumed = ledger.consume_short_option_get_proceeds(qty)
+            premium = sum((ledger.ctx.multiply(d.consumed_quantity, d.value_per_unit_eur)
+                           for d in consumed), ledger.ctx.create_decimal(0))
+            if isinstance(option_asset, Option) and option_asset.underlying_asset_internal_id is not None:
+                hist_pending_adjustments[option_event.event_id] = (
+                    premium, option_event.asset_internal_id, option_asset.option_type)
+        elif isinstance(option_event, OptionExpirationWorthlessEvent):
+            available_long = sum((l.quantity for l in ledger.lots), Decimal(0))
+            if available_long >= qty:
+                ledger.consume_long_option_get_cost(qty)
+            else:
+                ledger.consume_short_option_get_proceeds(qty)
+    except (ValueError, UserWarning) as e:
+        logger.warning(f"Historical option event {option_event.event_id} "
+                       f"({option_event.event_type.name}) could not be fully replayed: {e}")
+        ledger._historical_simulation_inconsistent = True
+
+
+def _adjust_historical_stock_trade(trade_event, asset_resolver,
+                                   hist_pending_adjustments) -> None:
+    """Apply a pending option-premium adjustment to a historical stock trade
+    BEFORE it is replayed into the ledger — the same mutation of
+    net_proceeds_or_cost_basis_eur the TradeProcessor performs for
+    current-year trades (PRD 2.4): long-call exercise premium increases the
+    buy cost, short-put assignment premium reduces it (sell-side adjustments
+    only affect that year's own proceeds and are applied for consistency)."""
+    adjustment_data = hist_pending_adjustments.pop(trade_event.related_option_event_id, None)
+    if adjustment_data is None:
+        logger.warning(f"Historical stock trade {trade_event.event_id} is linked to option "
+                       f"event {trade_event.related_option_event_id}, but no pending "
+                       f"adjustment was produced by the replay; basis left unadjusted.")
+        return
+    premium_eur, _option_asset_id, option_type = adjustment_data
+    if trade_event.net_proceeds_or_cost_basis_eur is None:
+        logger.warning(f"Historical stock trade {trade_event.event_id}: no EUR value to adjust.")
+        return
+    if trade_event.event_type in (FinancialEventType.TRADE_BUY_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER):
+        delta = premium_eur if option_type == 'C' else -premium_eur
+    else:
+        delta = premium_eur if option_type == 'C' else -premium_eur
+    trade_event.net_proceeds_or_cost_basis_eur = trade_event.net_proceeds_or_cost_basis_eur + delta
+    logger.info(f"Historical stock trade {trade_event.event_id}: applied option-premium "
+                f"adjustment {delta:+.2f} EUR (option type {option_type}) to the replayed basis.")
+
+
 def run_main_calculations(
     financial_events: List[FinancialEvent],
     asset_resolver: AssetResolver,
@@ -352,6 +416,14 @@ def run_main_calculations(
                 # Einlagenrückgewähr: permanent basis reduction — must be part of
                 # the securities ledger reconstruction (its currency impact is
                 # additionally collected below like every cash flow).
+                historical_events_by_asset[(account_key(event.account_id), event.asset_internal_id)].append(event)
+            elif isinstance(event, (OptionExerciseEvent, OptionAssignmentEvent, OptionExpirationWorthlessEvent)):
+                # Option lifecycle events mutate ledger state across years: they
+                # consume the option's contract lots AND (exercise/assignment)
+                # produce the premium adjustment that becomes part of the linked
+                # stock trade's PERMANENT acquisition cost — a stock acquired
+                # via exercise in year X-1 and sold in year X must realise
+                # against the premium-adjusted basis.
                 historical_events_by_asset[(account_key(event.account_id), event.asset_internal_id)].append(event)
             elif isinstance(event, CurrencyConversionEvent):
                 # CurrencyConversionEvents need to be associated with the non-EUR currency's asset ID
@@ -500,6 +572,11 @@ def run_main_calculations(
         fifo_ledgers[(acct, asset_id)] = ledger
 
     logger.info("Pass A: Replaying historical trade/transfer events chronologically...")
+    # Option-premium adjustments produced by historical exercises/assignments,
+    # consumed by the linked historical stock trades (chronological order of
+    # the stream guarantees the option event runs before its stock leg, the
+    # same ordering contract the current-year loop relies on).
+    hist_pending_adjustments: Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]] = {}
     for (acct, asset_id), evlist in historical_events_by_asset.items():
         ledger = fifo_ledgers.get((acct, asset_id))
         if ledger is None:
@@ -511,10 +588,19 @@ def run_main_calculations(
             except ValueError as e:
                 logger.critical(f"Fatal error sorting historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Cannot guarantee deterministic order for FIFO init. Aborting.")
                 raise e
+            if isinstance(hist_event, (OptionExerciseEvent, OptionAssignmentEvent, OptionExpirationWorthlessEvent)):
+                apply_fn = (lambda l=ledger, e=hist_event:
+                            _apply_historical_option_event(e, l, asset_resolver, hist_pending_adjustments))
+            elif (isinstance(hist_event, TradeEvent) and hist_event.related_option_event_id
+                  and asset_obj.asset_category == AssetCategory.STOCK):
+                apply_fn = (lambda l=ledger, a=asset_obj, e=hist_event:
+                            (_adjust_historical_stock_trade(e, asset_resolver, hist_pending_adjustments),
+                             l.apply_historical_event(a, e, tax_year)))
+            else:
+                apply_fn = (lambda l=ledger, a=asset_obj, e=hist_event:
+                            l.apply_historical_event(a, e, tax_year))
             stream.add(
-                Phase.LEDGER_EVENTS, hist_key,
-                (lambda l=ledger, a=asset_obj, e=hist_event:
-                    l.apply_historical_event(a, e, tax_year)),
+                Phase.LEDGER_EVENTS, hist_key, apply_fn,
                 label=f"sec:{asset_obj.get_classification_key()}",
             )
     # Historical internal transfers: registered ONCE in the unified stream
