@@ -6,7 +6,7 @@ import uuid
 from datetime import date as date_obj, datetime
 
 from src.domain.assets import Asset, Option 
-from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock
+from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, CashFlowEvent
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError, ProcessingError
@@ -286,6 +286,21 @@ class FifoLedger:
                 self.adjust_lots_for_split(hist_event)
             elif isinstance(hist_event, CorpActionStockDividend):
                  self.add_lot_for_stock_dividend(hist_event)
+            elif isinstance(hist_event, CashFlowEvent) and hist_event.event_type == FinancialEventType.CAPITAL_REPAYMENT:
+                # Einlagenrückgewähr (§20 Abs. 1 Nr. 1 S. 3 EStG): the basis
+                # reduction is permanent and must survive into later tax years'
+                # SoY reconstruction — without this, a sale after the
+                # distribution year UNDERSTATES the gain by the repayment.
+                repayment_eur = hist_event.gross_amount_eur or Decimal(0)
+                excess = self.reduce_cost_basis_for_capital_repayment(repayment_eur)
+                if excess > Decimal(0):
+                    # The residual above all lots was taxable income of the
+                    # DISTRIBUTION year's assessment — it is not income of the
+                    # current run's tax year and is deliberately not replayed.
+                    logger.info(
+                        f"Historical capital repayment {hist_event.event_id}: excess "
+                        f"{excess} EUR over all lots was taxable in the distribution "
+                        f"year ({hist_event.event_date[:4]}); basis carried at zero.")
         except UserWarning as uw:
             logger.warning(f"Historical simulation warning for asset {asset.internal_asset_id} processing event {hist_event.event_id}: {uw}")
             self._historical_simulation_inconsistent = True

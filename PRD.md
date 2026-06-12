@@ -303,6 +303,18 @@ The system must distinguish between taxable dividends and tax-free capital repay
 - Cost basis reduction: No taxable income
 - Excess amounts: Create separate `DIVIDEND_CASH` events, contribute to `kap_other_income_positive`
 
+**Pinned legal position (excess over acquisition cost, <1% Privatvermögen — open legal
+question, see legal-position register `EINLAGENRUECKGEWAEHR_EXCESS` and
+`reference/bmf-guidance/abgeltungsteuer-einzelfragen.md`):** the reduction is applied
+FIFO-sequentially across lots; only the residual exceeding ALL lots' combined basis is
+taxed immediately, as sonstige Kapitalerträge (Zeile-19 pot), in the distribution year's
+assessment. The prevailing-literature alternative (negative Anschaffungskosten, deferral
+into the Aktiengewinn pot at disposal) is documented in the register and disclosed on
+every report. The basis reduction is PERMANENT: prior-year repayments are replayed in the
+SoY reconstruction so a later-year sale realises against the reduced basis (without this,
+the gain is understated by the repayment amount — a defect found and fixed via
+`tests/test_einlagenrueckgewaehr_excess.py`).
+
 **Dividends (Non-Funds, `FinancialEventType.DIVIDEND_CASH`):** Taxable dividend distributions from `AssetCategory.STOCK` assets (with `event_date` in current tax year). These contribute to `kap_other_income_positive`.
 
 **Taxable Income from Corporate Actions:**

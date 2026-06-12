@@ -348,6 +348,11 @@ def run_main_calculations(
                 historical_merger_events.append(event)
             elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)):
                 historical_events_by_asset[(account_key(event.account_id), event.asset_internal_id)].append(event)
+            elif isinstance(event, CashFlowEvent) and event.event_type == FinancialEventType.CAPITAL_REPAYMENT:
+                # Einlagenrückgewähr: permanent basis reduction — must be part of
+                # the securities ledger reconstruction (its currency impact is
+                # additionally collected below like every cash flow).
+                historical_events_by_asset[(account_key(event.account_id), event.asset_internal_id)].append(event)
             elif isinstance(event, CurrencyConversionEvent):
                 # CurrencyConversionEvents need to be associated with the non-EUR currency's asset ID
                 # (or both currencies for cross-currency trades like USD→GBP), per account.

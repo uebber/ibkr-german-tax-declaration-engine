@@ -55,6 +55,35 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
 - Stock split: proportional cost basis adjustment, no taxable event
 - Stock dividend: treatment depends on whether domestic or foreign corporation
 
+#### Einlagenrueckgewaehr (20 Abs. 1 Nr. 1 S. 3 EStG, 27 KStG)
+
+**Settled (statute + BMF):** a distribution from the steuerliches Einlagekonto is NOT
+income; it reduces the Anschaffungskosten of the shares it was paid on. The reduction is
+permanent — it must survive into later assessment years (a sale after the distribution
+year realises against the REDUCED basis; losing the reduction understates the gain by
+the repayment amount).
+
+**Open legal question (excess over acquisition cost, <1% Privatvermoegen holdings):**
+neither the statute nor the BMF guidance says what happens once the acquisition cost
+reaches zero, and there is no BFH ruling for sub-1% holdings taxed under 20 EStG (for
+17-EStG holdings >= 1% the BFH rejects negative Anschaffungskosten — excess immediately
+taxable). The literature splits; the prevailing commentary view permits negative
+Anschaffungskosten (full deferral to disposal, excess surfaces in the Aktiengewinn pot).
+
+**Position taken by this engine** (legal-position register `EINLAGENRUECKGEWAEHR_EXCESS`,
+disclosed on every report):
+- allocation across FIFO lots is SEQUENTIAL (lot 1 reduced to zero, remainder spills
+  into lot 2, ...) — a gap-filling convention; no source prescribes lot mechanics;
+- only the residual exceeding ALL lots' combined basis is taxed, IMMEDIATELY, as
+  sonstige Kapitalertraege (Zeile-19 pot), in the DISTRIBUTION year's assessment;
+- the alternative (negative AK / deferral, h.M.) is documented in the register; it
+  yields identical totals on a same-year full exit but diverges on timing, on the
+  loss-offsetting pot (Z19 vs Z20 under the 20 Abs. 6 Aktien ring-fencing), and on
+  partial sales.
+
+Covered in tests/test_einlagenrueckgewaehr_excess.py (cross-year basis carry,
+FIFO-sequential partial exit, immediate excess income, cross-year excess timing).
+
 #### Foreign Withholding Tax
 - Creditable under 32d Abs. 5, subject to treaty limitations
 - Report on Zeile 41 Anlage KAP

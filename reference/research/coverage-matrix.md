@@ -42,7 +42,7 @@
 | FX gain (explicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
 | FX gain (implicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
 | Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 Nr. 2 | SO Z54 | estg-23-private-veraeusserung.md |
-| Capital repayment | EStG | 20 Abs. 1 Nr. 1 S. 3 | (not taxable) | estg-20-kapitalvermoegen.md |
+| Capital repayment | EStG | 20 Abs. 1 Nr. 1 S. 3 | (not taxable; FIFO-sequential basis reduction carried across years; excess over all lots = immediate sonstige Kapitalerträge — pinned position, see abgeltungsteuer-einzelfragen.md) | estg-20-kapitalvermoegen.md, abgeltungsteuer-einzelfragen.md |
 
 ## Loss Offsetting Rules
 
