@@ -27,6 +27,10 @@ class FinancialEvent:
     # Corresponding amounts in EUR after conversion (populated by enrichment step)
     gross_amount_eur: Optional[Decimal] = None
 
+    # IBKR custody account this event belongs to (ClientAccountID). Used for per-Depot FIFO
+    # (ledgers keyed by (account_id, asset)). None falls back to a single merged ledger.
+    account_id: Optional[str] = None
+
     # IBKR specific identifiers for tracing back to reports
     ibkr_transaction_id: Optional[str] = None # From Trades, Cash Transactions etc.
     ibkr_activity_description: Optional[str] = None # From Cash Transactions "Description" or Trades "Description"

@@ -56,3 +56,26 @@ def test_cash_balance_rows_per_account(tmp_path):
     assert [(r.client_account_id, r.starting_cash) for r in recs] == [
         (A, Decimal("1000")), (B, Decimal("-121.24")),
     ]
+
+
+def test_trade_events_carry_their_account_through_the_factory(tmp_path):
+    """per-Depot prerequisite: FinancialEvent.account_id must survive the real
+    parser -> factory path, or the (account, asset) ledger routing that follows
+    (§20 Abs. 4 S. 7 EStG, FIFO je Depot) has nothing to key on."""
+    import os
+    from src.parsers.domain_event_factory import DomainEventFactory
+    from src.identification.asset_resolver import AssetResolver
+    from src.classification.asset_classifier import AssetClassifier
+    from src.domain.events import TradeEvent
+
+    p = tmp_path / "trades.csv"
+    write_csv(str(p), TRADES_COLUMNS, [
+        trade_row(A, "US000000ABC1", "20250301", "10", "5", "BUY", "O", "T1"),
+        trade_row(B, "US000000ABC1", "20250302", "-4", "6", "SELL", "C", "T2"),
+    ])
+    raw = parse_trades_csv(str(p))
+    resolver = AssetResolver(asset_classifier=AssetClassifier(
+        cache_file_path=str(tmp_path / "cls.json")))
+    events, _cand, _stock = DomainEventFactory(resolver).create_events_from_trades(raw)
+    trades = [e for e in events if isinstance(e, TradeEvent)]
+    assert [e.account_id for e in trades] == [A, B]

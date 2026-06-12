@@ -173,7 +173,8 @@ class DomainEventFactory:
                 "local_currency": raw_trade.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": raw_trade.description,
-                "ibkr_notes_codes": raw_trade.notes_codes
+                "ibkr_notes_codes": raw_trade.notes_codes,
+                "account_id": raw_trade.client_account_id,
             }
 
             option_event: Optional[OptionLifecycleEvent] = None
@@ -323,6 +324,7 @@ class DomainEventFactory:
                         from_currency=from_curr, from_amount=from_amt_val,
                         to_currency=to_curr, to_amount=to_amt_val,
                         exchange_rate=rate,
+                        account_id=rt.client_account_id,
                         ibkr_transaction_id=tx_id_primary,
                         ibkr_activity_description=f"FX Pair Trade: {rt.description}",
                         ibkr_notes_codes=rt.notes_codes
@@ -388,6 +390,7 @@ class DomainEventFactory:
                     commission_currency=rt.ib_commission_currency or rt.currency_primary,
                     local_currency=rt.currency_primary,
                     gross_amount_foreign_currency=calculated_gross_amount.copy_abs(),
+                    account_id=rt.client_account_id,
                     ibkr_transaction_id=tx_id_primary,
                     ibkr_activity_description=rt.description,
                     ibkr_notes_codes=rt.notes_codes,
@@ -501,6 +504,7 @@ class DomainEventFactory:
             event_params_kw = {
                 "gross_amount_foreign_currency": event_amount_for_storage,
                 "local_currency": rct.currency_primary,
+                "account_id": rct.client_account_id,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": rct.description,
                 "ibkr_notes_codes": rct.code
@@ -700,6 +704,7 @@ class DomainEventFactory:
                 "ibkr_transaction_id": rca.transaction_id,
                 "ibkr_activity_description": rca.action_description or rca.description,
                 "local_currency": rca.currency_primary or affected_asset.currency,
+                "account_id": rca.client_account_id,
                 "gross_amount_foreign_currency": None # Will be set by specific CA type if applicable
             }
             logger.debug(f"CA Record {idx+1}: common_ca_params_kw_base (pre-gross): {common_ca_params_kw_base}")
@@ -907,6 +912,7 @@ class DomainEventFactory:
                     commission_currency=maturity_currency,
                     local_currency=maturity_currency,
                     gross_amount_foreign_currency=maturity_proceeds.copy_abs(),
+                    account_id=rca.client_account_id,
                     ibkr_transaction_id=rca.transaction_id or f"BM-{rca.action_id_ibkr}",
                     ibkr_activity_description=rca.action_description or rca.description,
                 )
@@ -1011,6 +1017,7 @@ class DomainEventFactory:
                     commission_foreign_currency=commission,
                     local_currency=settle_row.currency_primary,
                     gross_amount_foreign_currency=proceeds.copy_abs(),
+                    account_id=settle_row.client_account_id,
                     ibkr_activity_description=f"Cash Settlement: {settle_row.description}",
                 )
 
