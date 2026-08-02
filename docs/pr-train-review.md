@@ -22,6 +22,9 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+eeb129c fix(tax-law): verify the KAP Zeilen per year; refuse pre-2021          [ours]
+50d282b docs(reference): close the Basiszins sourcing gap (BMF-Schreiben)      [ours]
+47b00a4 docs: record the #21 verdict, BewG provenance, VP year gap            [ours]
 a96a5fd docs: drop the dangling working-document refs AR2 reintroduced         [ours]
 a41dbb9 fix(reporting): correct repeal note, keep the Zeile 24 cross-check     [ours]
 a6ff53d fix(tax-law): Basiszins regime floor; pin registry to the reference    [ours]
@@ -54,7 +57,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 440 tests pass on a simulated clean clone
+**Verification at HEAD:** 443 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -65,9 +68,10 @@ be66807 tests: config_example completeness guard                         (PR #33
 > `reference/`, `docs/` and `.gitignore` only, and touch no file under `src/`.
 >
 > From #20 on, parity is run for **tax year 2025 only** — the one year whose Positions and
-> Cash_Balance snapshots survived the `data_import/` rebuild. At `a96a5fd` (#21 + our five
+> Cash_Balance snapshots survived the `data_import/` rebuild. At `eeb129c` (#21 + our seven
 > fixes) versus `f004746`: **PDF IDENTICAL**, console 3 lines (our reworded repeal note),
-> log 8 lines matching the same-tree control in count and shape.
+> log difference entirely the known `OPTION_CASH_SETTLEMENT` permutation, checked against a
+> same-tree control taken the same session.
 
 One commit from PR #16 was **deliberately dropped**: `af95b72` added `rework2-plan.md`,
 Fsaupe's internal working plan referencing branches/tags/files that do not exist in this
@@ -388,7 +392,7 @@ the diagnostic *konzeptionell* figure, i.e. VALIDATION_REPORT finding #1, now ma
 resolved there.
 
 **Defect 1, moderate — the Basiszins table promoted two rows of the wrong statute
-(`7bfc8fa`, `a6ff53d`).** #21 widens the table from {2024, 2025} to 2016-2026 and makes the
+(`7bfc8fa`, `a6ff53d`, `50d282b`).** #21 widens the table from {2024, 2025} to 2016-2026 and makes the
 engine compute a Vorabpauschale for every listed year. That raises the evidentiary bar on
 rows that had been inert, and the two oldest do not survive it: **1.10% (2016) and 0.59%
 (2017) are the Basiszins for the vereinfachtes Ertragswertverfahren nach §203 Abs. 2 BewG**
@@ -397,9 +401,19 @@ different statute. The rows even carried the BewG reference dates, 04.01.2016 an
 02.01.2017, which is how it surfaced. The Vorabpauschale did not exist then: InvStG 2018
 provisions *"sind ab dem 1. Januar 2018 anzuwenden"* (**§56 Abs. 1 S. 1 InvStG**), the first
 Basiszins notice is BMF 04.01.2018, the first Vorabpauschale is the one for calendar 2018.
-Left in, a run for VZ 2016/2017 invents deemed income. Both rows removed; each surviving
-row now names its BMF-Schreiben, and the 2018-2023 sourcing gap (the BMF site hosts only
-the last two PDFs) is recorded in the file rather than papered over.
+Left in, a run for VZ 2016/2017 invents deemed income. Both rows removed.
+
+The sourcing was then closed rather than left as a caveat (`50d282b`). The BMF site hosts
+only the two newest Schreiben, so the 2018-2024 originals were retrieved as archived copies
+of the BMF PDFs (2019 from the BVL mirror) and read in full: every row now carries the
+Schreiben date, the GZ and the BStBl page, taken from the document. The chain
+self-authenticates — each letter's BEZUG line names its predecessor *with that
+predecessor's BStBl page*, so all but the newest citation is confirmed by a second BMF
+document. Two things the letters settle that the summaries only paraphrased: the year
+mapping, verbatim (*"Die Vorabpauschale fuer 2024 ... gilt ... am 2. Januar 2025 ...
+zugeflossen"*), and the negative years (*"Aufgrund des negativen Basiszins wird keine
+Vorabpauschale erhoben"*). Also corrected: 2021 and 2022 were computed on 04.01. and 03.01.,
+2 January not being a Boersentag in those years.
 
 **Defect 2, moderate — the registry↔reference "consistency" check could not see the
 reference (`a6ff53d`). Fourth instance of the pattern.** The shipped test kept its own
@@ -448,9 +462,33 @@ Zuflussprinzip reasoning, so that file is left untouched here to avoid a pointle
 Practically the exposure is nil today: VP needs an SoY positions snapshot, and only 2025 has
 one. See the new merge constraint in section 6.
 
-**Nit, not fixed:** `tests/test_config_example_completeness.py` cites "B4/B5g", identifiers
-from the dropped `rework2-plan.md` — the same dangling-reference class as `e467cad`, in a
-test file, so left for the owner to wave through.
+**Defect 4, moderate — the pre-2024 form-line fallback was never verified, and below 2021
+it was wrong (`eeb129c`).** `get_form_rules` serves the 2024 entry to every earlier year,
+and the store only had the Anleitung for 2024/2025, so Validation Protocol item 4 (form
+lines verified against the official form *for that year*) was unmet for everything before
+2024. Checked against the official forms:
+
+| VZ | Z20 | Z21 | Z22 | Z23 | Z24 | source |
+|----|----|----|----|----|----|----|
+| 2020 | 232/432 | **frei** | 235/435 | 236/436 | **frei** | 2020AnlKAP051 |
+| 2021 | 232/432 | 631/831 | 235/435 | 236/436 | 635/835 | 2021AnlKAP051 |
+| 2022 | 232/432 | 631/831 | 235/435 | 236/436 | 635/835 | form + Anleitung 2022 |
+| 2023 | 232/432 | 631/831 | 235/435 | 236/436 | 635/835 | form 2023 |
+
+2021-2023 are identical to 2024 down to the Kennzahlen, so the fallback was right and is now
+a verified mapping. **VZ 2020 is a different form**: Zeilen 21 and 24 are printed *"frei"*
+and "Termingeschaefte" does not appear anywhere in it — the separate lines arrived with the
+VZ 2021 form alongside the restriction that made them necessary. The engine would have
+emitted figures onto non-existent lines, silently. `get_form_rules` now raises
+`ProcessingError` below the earliest verified year. Forward carry-over is untouched: a form
+structure holds until a later year changes it, and next year's form is not published yet.
+
+**Nit, fixed with the owner's go-ahead:** `tests/test_config_example_completeness.py` cited
+"B4/B5g", identifiers from the dropped `rework2-plan.md` — same dangling-reference class as
+`e467cad`.
+
+**Everything found in #21 is now fixed in commits**, except the Vorabpauschale year mapping
+below, which belongs to #29.
 
 ## 4. Cross-cutting pattern
 
