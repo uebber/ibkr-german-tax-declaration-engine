@@ -18,6 +18,8 @@ There is no corresponding trade record for the maturity event itself.
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from src.domain.enums import RealizationType, TaxReportingCategory
 from src.engine.loss_offsetting import LossOffsettingEngine
 
@@ -469,3 +471,60 @@ class TestBondMaturity(FifoTestCaseBase):
         )
 
         self.assert_results(results, expected)
+
+
+# =============================================================================
+# Scenario 6: Missing / non-positive Proceeds must FAIL, not become a phantom loss
+# =============================================================================
+# §20 Abs. 4 EStG computes the gain as Veräußerungserlös minus Anschaffungskosten.
+# If the Veräußerungserlös is unknown, the gain is NOT computable and must not be
+# assumed to be zero: doing so books a deductible loss equal to the entire cost
+# basis and understates taxable income by that amount.
+# See reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 2 Satz 2" / Abs. 4.
+# =============================================================================
+
+def _bm_ca_row_raw_proceeds(symbol, isin, date, quantity, proceeds_literal,
+                            action_id="BM_BAD", currency="EUR"):
+    """BM row with the Proceeds cell written verbatim (may be empty or non-positive)."""
+    return [
+        ACCOUNT, symbol, f"({isin}) BOND MATURITY ({symbol})", isin, date, "",
+        "BM", action_id, f"CON_{symbol}", "", "", currency,
+        "",                 # Amount
+        proceeds_literal,   # Proceeds — the value under test
+        "",                 # Value
+        str(-Decimal(str(quantity))),
+    ]
+
+
+class TestBondMaturityRejectsUnusableProceeds(FifoTestCaseBase):
+    """A BM record whose Proceeds cell is empty, zero or negative is a data
+    integrity failure, not a total loss."""
+
+    @pytest.mark.parametrize(
+        "proceeds_literal, label",
+        [("", "empty"), ("0", "zero"), ("-1000", "negative")],
+        ids=["empty_proceeds", "zero_proceeds", "negative_proceeds"],
+    )
+    def test_unusable_proceeds_raises_instead_of_booking_full_loss(
+        self, mock_config_paths, proceeds_literal, label
+    ):
+        with pytest.raises(pytest.fail.Exception, match="data integrity"):
+            self._run_pipeline(
+                trades_data=[
+                    _bond_buy_row("XBOND", "DE000TESTBAD1", "2022-06-01",
+                                  quantity=1000, price="102.00", tx_id="TX_BAD"),
+                ],
+                corporate_actions_data=[
+                    _bm_ca_row_raw_proceeds("XBOND", "DE000TESTBAD1", "2023-03-15",
+                                            quantity=1000,
+                                            proceeds_literal=proceeds_literal),
+                ],
+                positions_start_data=[
+                    _bond_soy_row("XBOND", "DE000TESTBAD1", quantity=1000,
+                                  cost_basis="1020"),
+                ],
+                positions_end_data=[],
+                custom_rate_provider=MockECBExchangeRateProvider(
+                    foreign_to_eur_init_value=Decimal("1.0")),
+                tax_year=2023,
+            )

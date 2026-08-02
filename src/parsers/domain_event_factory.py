@@ -898,10 +898,29 @@ class DomainEventFactory:
                 # record for the maturity itself; the proceeds come from the CA record.
                 maturity_quantity = quantity_ca          # negative = bonds removed
                 maturity_proceeds = gross_amount_ca      # total cash received (not a %)
-                if maturity_quantity is None or maturity_quantity >= Decimal(0) or maturity_proceeds is None:
+                # Proceeds must be strictly positive. `gross_amount_ca` is produced by
+                # safe_decimal(..., default=Decimal('0.0')) and is therefore NEVER None —
+                # an absent/blank Proceeds column arrives here as 0. Accepting 0 would
+                # book a disposal at zero proceeds, i.e. a deductible loss equal to the
+                # ENTIRE cost basis, understating taxable income by that amount. §20
+                # Abs. 4 EStG computes the gain as Veraeusserungserloes minus
+                # Anschaffungskosten; an unknown Erloes makes the gain incomputable, so
+                # fail loudly rather than infer zero. (A genuine redemption at zero —
+                # issuer default — is therefore also rejected and must be entered
+                # explicitly; IBKR reports those as a write-off, not as Type="BM".)
+                if maturity_quantity is None or maturity_quantity >= Decimal(0):
                     data_errors.append(
                         f"CA Record {idx+1}: Bond maturity (BM) for asset {affected_asset.get_classification_key()} "
-                        f"(ActionID: {rca.action_id_ibkr}) has invalid quantity ({rca.quantity}) or proceeds ({rca.proceeds})."
+                        f"(ActionID: {rca.action_id_ibkr}) has invalid quantity ({rca.quantity}); "
+                        f"expected a negative quantity (bonds removed from the position)."
+                    )
+                    continue
+                if maturity_proceeds is None or maturity_proceeds <= Decimal(0):
+                    data_errors.append(
+                        f"CA Record {idx+1}: Bond maturity (BM) for asset {affected_asset.get_classification_key()} "
+                        f"(ActionID: {rca.action_id_ibkr}) has missing or non-positive Proceeds "
+                        f"(raw: {rca.proceeds!r}, parsed: {maturity_proceeds}). The redemption amount is "
+                        f"required to compute the gain under Paragraph 20 Abs. 4 EStG; it must not be assumed to be zero."
                     )
                     continue
                 price_per_bond = maturity_proceeds / maturity_quantity.copy_abs()
