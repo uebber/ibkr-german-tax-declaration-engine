@@ -9,7 +9,7 @@
 | Investment Funds | InvStG 16, 18, 19, 20 | BMF InvStG guidance | Anlage KAP-INV Z4-55 | investment-tax-law/*.md |
 | Options/Derivatives | EStG 20 Abs. 1 Nr. 11, Abs. 2 Nr. 3 | BMF Abgeltungsteuer | Anlage KAP Z19-24 | tax-law/estg-20-kapitalvermoegen.md |
 | CFDs | EStG 20 Abs. 2 Nr. 3 | BMF Abgeltungsteuer | Anlage KAP Z19-24 | tax-law/estg-20-kapitalvermoegen.md |
-| Private Sale Assets | EStG 23 Abs. 1 Nr. 2 | EStH Anhang 26 | Anlage SO Z48-55 | tax-law/estg-23-private-veraeusserung.md |
+| Private Sale Assets | EStG 23 Abs. 1 S. 1 Nr. 2 | EStH Anhang 26, H 23 EStH | Anlage SO Z48-55 | tax-law/estg-23-private-veraeusserung.md |
 | Foreign Currency | EStG 20/23 (depends) | BMF Abgeltungsteuer | Anlage KAP Z19,22 | bmf-guidance/fremdwaehrung-konten.md |
 
 ## Taxable Events
@@ -42,7 +42,8 @@
 | VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV Z55 | invstg-19-veraeusserungsgewinne.md |
 | FX gain (explicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
 | FX gain (implicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
-| Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 Nr. 2 | SO Z54 | estg-23-private-veraeusserung.md |
+| Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 1 | SO Z54 | estg-23-private-veraeusserung.md |
+| Jahresfrist arithmetic | AO / BGB | 108 Abs. 1 AO, 187 Abs. 1 / 188 Abs. 2-3 BGB | (decides SO Z54 vs. exempt) | estg-23-private-veraeusserung.md |
 | Capital repayment | EStG | 20 Abs. 1 Nr. 1 S. 3 | (not taxable) | estg-20-kapitalvermoegen.md |
 
 ## Loss Offsetting Rules
@@ -69,3 +70,13 @@
 | Case | Subject | Impact on Engine | Status |
 |------|---------|------------------|--------|
 | BVerfG 2 BvL 3/21 | Stock loss ring-fencing | Could abolish Z23 separation | Pending |
+
+## Open Legal Questions (no Tier 1/2 resolution located)
+
+These change a declared figure, and the engine has had to pick a reading. Each is documented
+in full, with the sources on both sides, in the reference file named.
+
+| Question | Engine's reading | Where documented |
+|----------|------------------|------------------|
+| Does § 108 Abs. 3 AO extend the § 23 Jahresfrist when the anniversary falls on a Saturday, Sunday or public holiday? | No extension (follows FG Koeln 02.06.1997; against the general breadth of BFH IX R 68/98) | estg-23-private-veraeusserung.md |
+| Does the "einzelnes Depot" boundary of the Fifo rule transpose to a foreign broker's sub-accounts? | Not reached -- the engine is account-agnostic | estg-20-kapitalvermoegen.md |
