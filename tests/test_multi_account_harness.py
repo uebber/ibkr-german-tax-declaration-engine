@@ -1,7 +1,9 @@
 """
 Self-test for the multi-account harness builders (rework2-plan AR0).
 
-legal_basis: harness only — enables §20 Abs. 4 S. 7 (FIFO je Depot) scenarios.
+legal_basis: harness only — enables the per-Depot scenarios required by
+§20 Abs. 4 S. 7 EStG i.V.m. BMF 14.05.2025 Rz. 97-98; see
+reference/tax-law/estg-20-kapitalvermoegen.md, section "Abs. 4 -- Satz 7".
 Pins that rows built with an explicit account survive the REAL parsers
 (BOM-prefixed, all-quoted CSV) with the account intact — the property the
 old single-account YAML harness could not provide.

@@ -5,14 +5,24 @@ Multi-account (per-Depot) test harness builders — rework2-plan AR0.
 The YAML spec harness forces a single ClientAccountID, so per-Depot scenarios
 (co-held securities, internal transfers, per-account cash) previously had to
 hand-roll CSV writers in every test file. These builders centralize that:
-row constructors with an EXPLICIT account for every input file type, plus a
-writer that produces the canonical quoted-CSV shape the parsers expect.
+row constructors with an EXPLICIT account for trades, positions, cash balances
+and cash transactions, plus a writer that produces the canonical quoted-CSV
+shape the parsers expect. (Corporate actions and Options_EAE have no builder
+yet; only their column tuples are re-exported.)
 
 Column orders are the canonical tuples from src/parsers/column_validator.py —
 imported, not copied, so parser-format changes fail loudly here.
 
-legal_basis: §20 Abs. 4 S. 7 EStG (FIFO je Depot) — the scenarios these
-builders enable are the per-Depot ones.
+legal_basis: §20 Abs. 4 S. 7 EStG mandates FIFO for fungible securities in
+Sammelverwahrung; the *per-Depot* dimension is administrative, not statutory —
+BMF 14.05.2025 (GZ IV C 1 - S 2252/00075/016/070) Rz. 97 S. 2 applies FIFO
+"auf das einzelne Depot bezogen", and Rz. 98 counts a sub-depot as a Depot.
+Rz. 98 is why the account is an explicit per-row parameter here rather than a
+global: the ledger key has to reach the finest account identifier IBKR reports.
+Verbatim text, the Tier 1 / Tier 2 split, and the open question about whether
+the Depot boundary transposes to a foreign broker are recorded in
+reference/tax-law/estg-20-kapitalvermoegen.md, section "Abs. 4 -- Satz 7".
+Do not restate the rule here; cite that file.
 """
 import csv
 import io
