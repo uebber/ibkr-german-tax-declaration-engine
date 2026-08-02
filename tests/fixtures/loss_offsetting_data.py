@@ -22,6 +22,18 @@ Z19 subtracts derivative losses, Z22 includes them — see
 reference/tax-law/estg-20-abs6-verlustverrechnung.md) is encoded separately in
 LOSS_OFFSETTING_TESTS_2025 at the bottom of this file.
 
+CAVEAT — the pin above covers FORM STRUCTURE ONLY, which is correct for 2024
+(the 2024 form does still carry Z21/Z24; see the reference file). It does NOT
+endorse the `conceptual_net_derivatives_capped` values in these fixtures. Four
+of them (LO_TERM_004, LO_TERM_007, LO_MIX_002, LO_MIX_004) encode the EUR 20,000
+Termingeschaefte cap of §20 Abs. 6 S. 5 a.F., which JStG 2024 (BGBl. I 2024
+Nr. 387, Art. 1 Nr. 10) REPEALED retroactively for all open cases (§52 Abs. 28
+EStG n.F., 02.12.2024). VZ 2024 is an open case, so the cap must not apply and
+those four expectations are known-wrong. Tracked as finding #1 (HIGH) in
+VALIDATION_REPORT.md; the repeal is scheduled for the law-as-data registry PR.
+The affected field is a conceptual summary only — no Anlage KAP form line
+depends on it (form lines always report gross, uncapped).
+
 This module defines test scenarios for tax reporting aggregation and loss offsetting logic.
 Uses Python dataclasses as an executable specification format.
 """
@@ -259,6 +271,8 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("0.00"),
             conceptual_net_stocks=D("0.00"),
             conceptual_net_derivatives_uncapped=D("-30000.00"),
+            # KNOWN-WRONG (VALIDATION_REPORT.md finding #1, HIGH): cap repealed
+            # retroactively by JStG 2024 for open cases. Correct value: -30000.00.
             conceptual_net_derivatives_capped=D("-20000.00"),  # Capped!
             conceptual_net_p23_estg=D("0.00"),
             conceptual_fund_income_net_taxable=D("0.00"),
@@ -323,6 +337,8 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("0.00"),
             conceptual_net_stocks=D("0.00"),
             conceptual_net_derivatives_uncapped=D("-25000.00"),  # 5000 - 30000
+            # KNOWN-WRONG (VALIDATION_REPORT.md finding #1, HIGH): cap repealed
+            # retroactively by JStG 2024 for open cases. Correct value: -25000.00.
             conceptual_net_derivatives_capped=D("-20000.00"),    # Capped
             conceptual_net_p23_estg=D("0.00"),
             conceptual_fund_income_net_taxable=D("0.00"),
@@ -599,6 +615,8 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("1000.00"),  # 1500 - 500
             conceptual_net_stocks=D("-1500.00"),  # 500 - 2000
             conceptual_net_derivatives_uncapped=D("-29000.00"),  # 1000 - 30000
+            # KNOWN-WRONG (VALIDATION_REPORT.md finding #1, HIGH): cap repealed
+            # retroactively by JStG 2024 for open cases. Correct value: -29000.00.
             conceptual_net_derivatives_capped=D("-20000.00"),  # Capped!
             conceptual_net_p23_estg=D("-600.00"),
             conceptual_fund_income_net_taxable=D("0.00"),
@@ -651,6 +669,8 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
             conceptual_net_other_income=D("-500.00"),
             conceptual_net_stocks=D("-1000.00"),
             conceptual_net_derivatives_uncapped=D("-25000.00"),
+            # KNOWN-WRONG (VALIDATION_REPORT.md finding #1, HIGH): cap repealed
+            # retroactively by JStG 2024 for open cases. Correct value: -25000.00.
             conceptual_net_derivatives_capped=D("-20000.00"),
             conceptual_net_p23_estg=D("-300.00"),
             conceptual_fund_income_net_taxable=D("0.00"),

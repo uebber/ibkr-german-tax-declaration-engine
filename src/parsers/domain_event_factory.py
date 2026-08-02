@@ -263,9 +263,20 @@ class DomainEventFactory:
                     if base_monetary_value == Decimal(0) and trade_quantity_val != Decimal(0) and rate != Decimal(0):
                         # Expected path: the IBKR trades export (TRADES_COLUMNS) does not carry
                         # TradeMoney/Proceeds, so the second leg is reconstructed from the FX pair's
-                        # Quantity (base-currency amount) × TradePrice (the exchange rate). This is
-                        # the exact conversion (the rate reconciliation below confirms consistency),
-                        # so it is normal operation, not a warning.
+                        # Quantity (base-currency amount) × TradePrice (the exchange rate).
+                        #
+                        # Logged at debug rather than warning because this is the normal path for
+                        # every FX pair trade in this export format (~1200 occurrences on a full
+                        # 2021-2025 history), not an anomaly.
+                        #
+                        # CAUTION: the rate reconciliation further down CANNOT validate this
+                        # branch. It recomputes the rate from the two legs, but the second leg was
+                        # just derived as |Quantity| x rate, so calculated_rate == rate
+                        # identically, in both the quantity>0 and quantity<0 directions. That
+                        # check is only meaningful when TradeMoney/Proceeds came from the file.
+                        # Correctness of the reconstruction rests on IBKR's column semantics
+                        # (Quantity = base-currency amount, TradePrice = quote/base rate),
+                        # not on any runtime cross-check.
                         calculated_second_leg_amount = trade_quantity_val.copy_abs() * rate
                         logger.debug(
                             f"FX Pair trade {tx_id_primary} ({asset.ibkr_symbol}): "

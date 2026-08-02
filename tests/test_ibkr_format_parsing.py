@@ -1,14 +1,23 @@
 """
-Regression tests for the current (2025) IBKR Flex export format.
+Regression tests for IBKR Flex export variants the engine did not originally
+handle.
 
-Real exports differ from the engine's original assumptions in three ways:
-1. IBKR inserts REPEATED HEADER ROWS mid-file (and when concatenating yearly
-   files, every file brings its own header) — a repeated header parsed as data
-   corrupts the row stream.
-2. Cash Balance files carry EXTRA columns (new EndingCash* fields) — strict
-   column validation rejected the whole file.
-3. Cash Balance files contain a BASE_SUMMARY aggregate row — parsing it as a
-   currency would create a phantom "BASE_SUMMARY" cash asset.
+SCOPE — these three conditions depend on the Flex Query configuration and the
+export vintage; they are NOT present in every export. None of them occur in the
+sample set currently under data_import/ (Trades / Cash_Balance / Positions,
+2021-2025), which has single headers, no extra Cash_Balance columns and no
+BASE_SUMMARY row. The tests below therefore encode formats observed in OTHER
+exports, and exist so the engine tolerates them if and when they appear:
+
+1. REPEATED HEADER ROWS mid-file (and, when concatenating yearly files, every
+   file brings its own header) — a repeated header parsed as data corrupts the
+   row stream. The concatenation case is unconditional and does affect the
+   sample set.
+2. Cash Balance files carrying EXTRA columns (e.g. further EndingCash* fields)
+   — strict column validation rejected the whole file.
+3. Cash Balance files containing a BASE_SUMMARY aggregate row — parsing it as a
+   currency would create a phantom "BASE_SUMMARY" cash asset and feed a bogus
+   position into currency FIFO.
 
 These are data-integrity prerequisites for every tax figure downstream.
 """
