@@ -373,17 +373,20 @@ uv run python validate_ledgers.py --year 2024
 uv run python validate_ledgers.py --verbose --quiet
 ```
 
-**A securities EoY mismatch aborts the run.** With a full year of input, the start-of-year
-position plus the year's events must reconcile to the broker's reported end-of-year position.
-If they do not, the ledger and the broker disagree about what is held — a disposal is missing,
-duplicated, or matched to the wrong lot — so the engine refuses to emit figures rather than
-publish a plausible-looking but wrong declaration. The error names every affected position.
+**A securities EoY mismatch aborts the run.** The start-of-year quantity is taken from the
+`Positions-{YYYY}-SoY.csv` snapshot, not reconstructed from earlier years, so the end-of-year
+quantity is determined by that snapshot plus the tax year's own events and has exactly one
+correct answer. If the engine's answer differs from the broker's, an event is missing or was
+processed incorrectly — an absent trade or corporate action, an option exercise that was not
+linked to its stock leg, or one instrument resolved under two identifiers. At least one
+disposal is then matched against the wrong lots, which makes the reported gain wrong and not
+just the quantity, so the engine refuses to emit figures. The error names every affected
+position.
 
-The usual cause is a trade history that does not reach back far enough: a position opened
-before the earliest `Trades-{YYYY}.csv` you imported has no cost basis the engine can derive.
-Fix it by adding the missing years (see the manual export instructions above), not by ignoring
-the message. Because the IBKR Flex Web Service serves only about the last two years, older
-years may have to come from Client Portal Activity Statements.
+Note what this does **not** mean: a trade history that does not reach far enough back cannot
+cause it. Missing earlier years affect the cost basis and acquisition dates the engine derives
+for carried-in positions, never the running quantity. If you hit this, look for a missing or
+mis-processed event in the tax year itself.
 
 Cash-balance (currency) divergences are **not** fatal — their usual causes are the date range
 of the cash-balance export or transaction types missing from the Cash Transactions query (see

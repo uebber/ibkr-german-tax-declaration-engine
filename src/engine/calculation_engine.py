@@ -703,14 +703,20 @@ def run_main_calculations(
                 )
 
     if eoy_mismatch_errors > 0:
-        # Given a full year of input, SoY + this year's events must reconcile to the
-        # broker's EoY positions exactly. A residual is not a reporting nuance: it means
-        # the ledger and the broker disagree about what is held, so at least one disposal
-        # was missed, double-counted, or applied to the wrong lot — and every figure
-        # derived from that ledger is suspect, not just the quantity. PRD.md 2.4 already
-        # requires the quantities to be identical and the discrepancy to be a critical
-        # error; only the engine's own "processing will continue" softened it into a
-        # warning. CLAUDE.md's fail-fast rule settles which of the two wins: a wrong
+        # The EoY quantity is fully determined by this year's input alone.
+        # reconcile_with_soy_position pins the ledger to the quantity in the SoY positions
+        # report — in the reconstruction branch, the fallback branch and the reported-zero
+        # case alike — so the previous year's trade history can influence cost basis and
+        # acquisition dates but never the running quantity. Reported SoY plus this year's
+        # events therefore has exactly one correct answer, and a residual means an event is
+        # missing or was processed wrongly: an absent trade or corporate action, an option
+        # exercise not linked, or one instrument resolved to two assets. At least one
+        # disposal is then matched against the wrong lots, so the gains computed from this
+        # ledger are wrong too — not merely the quantity.
+        #
+        # PRD.md 2.4 already required the quantities to be identical and the discrepancy to
+        # be a critical error; only the engine's own "processing will continue" softened it
+        # into a warning. CLAUDE.md's fail-fast rule settles which of the two wins: a wrong
         # number that looks plausible is worse than a crash.
         #
         # Reported as a batch, after the loop, so one run names every affected position
@@ -721,12 +727,15 @@ def run_main_calculations(
         )
         detail = (
             f"Die EoY-Abstimmung schlägt für {eoy_mismatch_errors} Position(en) fehl: der aus "
-            f"SoY-Bestand und den Ereignissen des Jahres berechnete Endbestand weicht vom "
-            f"Broker-Report ab. Betroffen: {subjects or 'siehe Log'}. Bei vollständigen "
-            f"Jahresdaten darf das nicht auftreten — die häufigste Ursache ist eine "
-            f"Transaktionshistorie, die nicht weit genug zurückreicht (Positionen, die vor "
-            f"der ersten importierten Trades-Datei eröffnet wurden). Solange die Abweichung "
-            f"besteht, sind die berechneten Veräußerungsgewinne unvollständig."
+            f"dem gemeldeten SoY-Bestand und den Ereignissen des Steuerjahres berechnete "
+            f"Endbestand weicht vom Broker-Report ab. Betroffen: {subjects or 'siehe Log'}. "
+            f"Der SoY-Bestand wird aus dem Positionsbericht übernommen, nicht aus der "
+            f"Vorjahreshistorie — die Stückzahl ist damit allein durch die Ereignisse dieses "
+            f"Jahres bestimmt, und eine Abweichung bedeutet, dass ein Ereignis fehlt oder "
+            f"falsch verarbeitet wurde (fehlende Trades, Kapitalmaßnahmen, Options-Ausübungen, "
+            f"oder ein Instrument, das unter zwei Kennungen geführt wird). Solange die "
+            f"Abweichung besteht, ist mindestens eine Veräußerung falsch zugeordnet und die "
+            f"daraus berechneten Gewinne sind unzutreffend."
         )
         if data_gap_collector is not None:
             # Records, logs CRITICAL, and raises DataGapError (a ProcessingError).
