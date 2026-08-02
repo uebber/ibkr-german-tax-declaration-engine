@@ -1352,6 +1352,33 @@ Two things to scrutinise when reached:
   German KESt. Instances in `private/real-data-observations.md` (not published).
   Fully researched — see `reference/tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md`,
   section 6 for the required fix. **Not implemented.**
+- **Positions snapshots for 2023 and 2024 recovered from older working trees (2026-08-03).**
+  Four distinct snapshots were found under `~/Code` and identified **by content**, because the
+  filenames in those trees are unreliable — one file labelled `positions_end_of_year_2024.csv`
+  is actually EoY 2025. Verification anchor: the recovered EoY-2024 matches the authoritative
+  `Positions-2025-SoY.csv` symbol-for-symbol. Installed additively into `data_import/`; both
+  years then run clean end-to-end. **Real-data parity for the remaining 14 PRs is no longer
+  limited to 2025 — 2023, 2024 and 2025 are all available.** Instance detail in
+  `private/real-data-observations.md`.
+  Two caveats. **EoY 2021 / SoY 2022 exists nowhere**, so 2022 remains unrunnable and the 320
+  could not be re-measured; it is still a 2026-03-08 figure. And **no cash-balance export
+  exists for any year but 2025**, so the currency EoY check is *skipped* for 2023/2024 — a
+  "0 currency mismatches" verdict for those years is vacuous, and the 2024 −0.51 USD
+  divergence is unmeasurable rather than fixed.
+- **The Vorabpauschale is silently skipped for three funds on live 2025 data (found
+  2026-08-03).** `_calculate_vorabpauschale` logs *"Missing SoY position value or currency.
+  Skipping VP."* at WARNING and the run completes normally, so three instruments the engine
+  has itself classified as funds contribute no deemed income to the declaration. This is the
+  silent-zero shape the AR6 data-gap channel exists to end — finding F4 — observed live in the
+  year being filed, which makes #29's FAIL_FAST wiring a good deal more than housekeeping.
+  Whether VP is actually owed on the two Bitcoin ETPs turns on their classification, which is
+  a separate question; the point is that the engine treats them as funds and then declares
+  nothing. Verify this is closed when #29 is reached.
+- **Only three forward splits exist in the whole history**, which bounds the AMZN hunt: AMZN
+  20-for-1 (2022, long), GME 4-for-1 (2022, **short**) and 9022.T 5-for-1 (2023, long). The
+  2023 one is in a year that now runs and reconciles clean, so a plain long forward split
+  across SoY is not by itself the defect. The GME split is on a short position and sits in the
+  same unrunnable year.
 - **`data_import/` was lost and has been rebuilt** from the derived `data/` copy with
   `scripts/rebuild_data_import.py --verify` (round trip lossless). Snapshot files survive
   for **one tax year only**, so parity runs are limited to that year until the earlier
