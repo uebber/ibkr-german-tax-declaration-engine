@@ -28,12 +28,12 @@ def _ledger(asset_id):
     )
 
 
-def _lot(date, qty, cost):
+def _lot(date, qty, cost, tx="T"):
     q = Decimal(qty)
     return FifoLot(acquisition_date=date, quantity=q,
                    unit_cost_basis_eur=Decimal(cost),
                    total_cost_basis_eur=q * Decimal(cost),
-                   source_transaction_id="T")
+                   source_transaction_id=tx)
 
 
 def test_aggregate_across_accounts_sorted_by_date():
@@ -48,3 +48,37 @@ def test_aggregate_across_accounts_sorted_by_date():
     lots = aggregate_lots(ledgers, aid)
     assert [l.acquisition_date for l in lots] == ["2023-01-01", "2024-05-01"]
     assert sum(l.quantity for l in lots) == Decimal("150")
+
+
+def test_aggregate_lots_orders_by_parsed_date_not_by_string():
+    """`acquisition_date` is an IBKR-sourced string and `parse_ibkr_date` accepts
+    four formats. A raw string sort puts "20240501" after "2024-12-31" because
+    '-' (0x2D) sorts before '0'. The aggregate view must order chronologically,
+    like every other lot sort in the engine."""
+    aid = uuid.uuid4()
+    la, lb = _ledger(aid), _ledger(aid)
+    la.lots.append(_lot("20240501", "10", "1"))       # 1 May 2024, YYYYMMDD
+    lb.lots.append(_lot("2024-12-31", "20", "1"))     # 31 Dec 2024, ISO
+    ledgers = {("U1", aid): la, ("U2", aid): lb}
+
+    assert [l.quantity for l in aggregate_lots(ledgers, aid)] == [Decimal("10"), Decimal("20")]
+
+
+def test_aggregate_lots_tie_break_is_content_derived_not_registry_order():
+    """Same-date lots in different Depots must not be ordered by the order the
+    ledgers happened to be constructed in. Building the registry both ways round
+    has to give the same answer, otherwise the per-Depot Vorabpauschale tranche
+    order depends on run-dependent input rather than on the lots."""
+    aid = uuid.uuid4()
+
+    def registry(first, second):
+        la, lb = _ledger(aid), _ledger(aid)
+        la.lots.append(_lot("2024-03-01", "10", "1", tx="TX_B"))
+        lb.lots.append(_lot("2024-03-01", "20", "1", tx="TX_A"))
+        return {first: la, second: lb} if first == ("U1", aid) else {first: lb, second: la}
+
+    forward = aggregate_lots(registry(("U1", aid), ("U2", aid)), aid)
+    reverse = aggregate_lots(registry(("U2", aid), ("U1", aid)), aid)
+
+    assert [l.source_transaction_id for l in forward] == ["TX_A", "TX_B"]
+    assert [l.source_transaction_id for l in reverse] == ["TX_A", "TX_B"]

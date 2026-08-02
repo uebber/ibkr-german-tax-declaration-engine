@@ -20,10 +20,12 @@ a person's accounts and must go through these helpers, never iterate the raw
 dicts. While the seam holds everything under DEFAULT_ACCOUNT the views are
 trivial; after the per-Depot flip they are the only correct way to aggregate.
 """
+from datetime import datetime
 from typing import Dict, List, Tuple
 import uuid
 
 from src.engine.fifo_manager import FifoLedger, FifoLot
+from src.utils.type_utils import parse_ibkr_date
 
 
 def ledgers_for_asset(ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger],
@@ -34,9 +36,29 @@ def ledgers_for_asset(ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger],
 
 def aggregate_lots(ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger],
                    asset_id: uuid.UUID) -> List[FifoLot]:
-    """All long lots of one asset across all accounts, sorted by acquisition
-    date (the per-person holdings, e.g. for §18 InvStG multi-tranche VP)."""
+    """All long lots of one asset across all accounts, in acquisition order
+    (the per-person holdings, e.g. for § 18 InvStG multi-tranche VP).
+
+    The sort key is deliberately the same one `FifoLedger` keeps its own `lots`
+    in -- parsed date, then `source_transaction_id`. Two reasons it may not be
+    shortened to the raw `acquisition_date` string:
+
+    * `acquisition_date` is IBKR-sourced and only documented as YYYY-MM-DD.
+      `parse_ibkr_date` also accepts YYYYMMDD, MM/DD/YYYY and DD.MM.YYYY, and
+      those do not sort lexicographically against each other or against ISO
+      ("2024-12-31" < "20240501" as strings). Every other lot sort in the
+      engine parses first; this one must not be the exception that silently
+      depends on the invariant.
+    * Without the `source_transaction_id` tie-break, same-date lots from
+      different accounts fall back to `sorted`'s stability, i.e. to the
+      iteration order of the ledger registry, i.e. to the order the ledgers
+      happened to be constructed in. That is run-dependent input, not content
+      -- the same conflation of "unique" with "deterministic" recorded against
+      PRD 5.8 event ordering. Once the per-Depot flip makes this the input to
+      the Vorabpauschale tranche calculation, lot order picks the figure.
+    """
     lots: List[FifoLot] = []
     for ledger in ledgers_for_asset(ledgers, asset_id):
         lots.extend(ledger.lots)
-    return sorted(lots, key=lambda l: l.acquisition_date)
+    return sorted(lots, key=lambda l: (parse_ibkr_date(l.acquisition_date) or datetime.min.date(),
+                                       l.source_transaction_id))
