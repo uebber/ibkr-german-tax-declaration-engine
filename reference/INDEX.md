@@ -9,6 +9,7 @@ All sources are ranked by authority tier (see research/research-strategy.md).
 - [EStG 20 Abs. 6 -- Verlustverrechnung](tax-law/estg-20-abs6-verlustverrechnung.md) -- Loss offsetting rules, stock ring-fencing, abolished derivative cap
 - [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold ETCs, Crypto ETPs), 1-year speculation period
 - [EStG 32d -- Abgeltungsteuer](tax-law/estg-32d-abgeltungsteuer.md) -- Flat tax rate (25%), Guenstigerpruefung, foreign tax credit
+- [EStG 36 / 45a -- Anrechnung inlaendischer KESt](tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md) -- German KESt on German dividends held via a foreign broker: Zeile 7/37/38/39 (NOT Zeile 41), Steuerbescheinigung requirement
 
 ## Investment Tax Law (InvStG)
 

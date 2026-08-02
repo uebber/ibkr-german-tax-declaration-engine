@@ -33,6 +33,8 @@
 | Stock split | EStG | 20 Abs. 4a | (cost adj.) | estg-20-kapitalvermoegen.md |
 | Stock dividend | EStG | 20 Abs. 4a Satz 5 | (varies) | estg-20-kapitalvermoegen.md |
 | Foreign WHT | EStG | 32d Abs. 5, 34c | KAP Z41 | estg-32d-abgeltungsteuer.md |
+| German KESt on German dividend (foreign depot) | EStG | 43 Abs. 1 S. 1 Nr. 1a i.V.m. 44 Abs. 1 S. 4 Nr. 3 | KAP Z7 + Z37/Z38/Z39 | estg-36-45a-kapitalertragsteuer-anrechnung.md |
+| KESt credit / Steuerbescheinigung | EStG | 36 Abs. 2 S. 1 Nr. 2, S. 2; 45a Abs. 2/3 | KAP Z37 | estg-36-45a-kapitalertragsteuer-anrechnung.md |
 | Fund distribution | InvStG | 16 Abs. 1 Nr. 1 | KAP-INV Z4-8 | invstg-16-investmentertraege.md |
 | Vorabpauschale | InvStG | 18 | KAP-INV Z9-13 | invstg-18-vorabpauschale.md |
 | Fund sale gain/loss | InvStG | 19 | KAP-INV Z14-26 | invstg-19-veraeusserungsgewinne.md |
