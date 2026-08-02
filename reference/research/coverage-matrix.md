@@ -22,7 +22,7 @@
 | Interest received | EStG | 20 Abs. 1 Nr. 7 | KAP Z19 | estg-20-kapitalvermoegen.md |
 | Stueckzinsen (paid) | EStG | 20 Abs. 4 | KAP Z19 (neg.) | estg-20-kapitalvermoegen.md |
 | Bond sale | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | estg-20-kapitalvermoegen.md |
-| Bond maturity (BM) | EStG | 20 Abs. 2 Nr. 7 (Einlösung) | KAP Z19/22 | estg-20-kapitalvermoegen.md |
+| Bond maturity (BM) | EStG | 20 Abs. 2 S. 1 Nr. 7 i.V.m. S. 2 (Einlösung) | KAP Z19/22 | estg-20-kapitalvermoegen.md |
 | Option premium (Stillhalter) | EStG | 20 Abs. 1 Nr. 11 | KAP Z19 | estg-20-kapitalvermoegen.md |
 | Option close (trade) | EStG | 20 Abs. 2 Nr. 3 | KAP Z21/19 | estg-20-kapitalvermoegen.md |
 | Option expiration worthless | EStG | 20 Abs. 2 Nr. 3 | KAP Z21/22/19 | estg-20-kapitalvermoegen.md |

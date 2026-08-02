@@ -1,9 +1,11 @@
 """
 Bond Maturity (BM Corporate Action) Tests
 
-Legal basis: §20 Abs. 2 Satz 1 Nr. 7 EStG — gains/losses from redemption of
-Kapitalforderungen (capital claims). Bond maturity is economically a disposal at
-par value. Gain/loss = maturity proceeds - FIFO cost basis.
+Legal basis: §20 Abs. 2 Satz 2 EStG deems the Einlösung (redemption) of a
+Kapitalforderung a Veräußerung; the gain category is §20 Abs. 2 Satz 1 Nr. 7.
+Both are required — Nr. 7 alone gives the category but not the disposal fiction.
+Gain/loss = maturity proceeds - FIFO cost basis, computed in EUR under Abs. 4.
+See reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 2 Satz 2".
 
 Form lines:
   - Gain  → ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE  (Zeile 19 component)

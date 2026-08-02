@@ -887,8 +887,11 @@ class DomainEventFactory:
                     )
 
             elif ca_type_from_file == "BM":
-                # Bond maturity (Fälligkeit) — redemption of a capital claim under
-                # §20 Abs. 2 Satz 1 Nr. 7 EStG (Einlösung gilt als Veräußerung).
+                # Bond maturity (Fälligkeit) — redemption of a capital claim.
+                # §20 Abs. 2 Satz 2 EStG deems the Einlösung a Veräußerung; the gain
+                # category is §20 Abs. 2 Satz 1 Nr. 7. Citing Nr. 7 alone is incomplete
+                # (it gives the category, not the disposal fiction). See
+                # reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 2 Satz 2".
                 # Economically a disposal of the entire position at par. Modelled as a
                 # synthetic TRADE_SELL_LONG so it reuses the bond FIFO + FX path and is
                 # replayed historically like any other trade. There is no IBKR trade

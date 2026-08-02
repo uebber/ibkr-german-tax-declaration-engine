@@ -59,7 +59,34 @@ Gains from derivatives/forward transactions.
 ### Satz 1 Nr. 7 -- Gains from capital claims
 Gains from redemption/sale of capital claims (Kapitalforderungen jeder Art).
 
+Statutory text: *"der Gewinn aus der Veraeusserung von sonstigen Kapitalforderungen jeder Art im Sinne des Absatzes 1 Nummer 7"*
+
 **Engine mapping:** Bond sales, FX gains on interest-bearing accounts
+
+### Satz 2 -- Disposal fiction (Einloesung, Rueckzahlung, Abtretung)
+
+**This is the provision that makes a bond redemption at maturity a taxable disposal.**
+
+Statutory text: *"Als Veraeusserung im Sinne des Satzes 1 gilt auch die Einloesung, Rueckzahlung, Abtretung oder verdeckte Einlage in eine Kapitalgesellschaft; in den Faellen von Satz 1 Nummer 4 gilt auch die Vereinnahmung eines Auseinandersetzungsguthabens als Veraeusserung."*
+
+Satz 2 applies to **all** of Satz 1, including Nr. 7. Consequently:
+
+| Event | Mechanism | Gain category |
+|-------|-----------|---------------|
+| Bond sold before maturity | Veraeusserung (Satz 1 directly) | Satz 1 Nr. 7 |
+| Bond redeemed at maturity (Faelligkeit) | **Einloesung, deemed Veraeusserung by Satz 2** | Satz 1 Nr. 7 |
+| Bond repaid early (Rueckzahlung) | **deemed Veraeusserung by Satz 2** | Satz 1 Nr. 7 |
+
+Gain is computed under Abs. 4 (proceeds - costs - acquisition cost), in EUR at the
+respective event-date rates. Not Aktien, so the Abs. 6 Satz 4 ring-fencing does not apply.
+
+**Correct citation for bond maturity is therefore `Abs. 2 Satz 1 Nr. 7 i.V.m. Satz 2`.**
+Citing Satz 1 Nr. 7 alone is incomplete -- it establishes the gain category but not
+that a redemption counts as a disposal at all.
+
+**Engine mapping:** IBKR corporate action `Type="BM"` -> synthetic `TRADE_SELL_LONG` ->
+`RealizationType.LONG_POSITION_SALE` -> `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE` (Zeile 19)
+if positive, `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22) if negative
 
 ---
 
