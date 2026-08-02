@@ -2,10 +2,8 @@
 
 **Branch:** `hermetic-tests-first` (local only, never pushed)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 7 of 25 PRs reviewed and accepted; 18 not yet reviewed.
-**Next up:** #22 (train 7). It inherited #21's conflict in
-`tests/fixtures/loss_offsetting_data.py`, which is now resolved here, so rebase from
-`4eeeffb` onward; see section 5.
+**Status as of 2026-08-02:** 8 of 25 PRs reviewed and accepted; 17 not yet reviewed.
+**Next up:** #23 (train 8). Rebase remaining branches from `1382bb9`; see section 5.
 **Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
 issue #15, no CI added. All of that is still open for decision.
 
@@ -22,6 +20,10 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+f5248a3 fix(engine): refuse an undecidable §23 case; truthful flag             [ours]
+f2e5cc3 fix(tax-law): cite the reference, refuse an undefined §23 period       [ours]
+24b3c1f docs(reference): root the §23 Jahresfrist at Tier 1; §108 Abs. 3 open  [ours]
+e0026da feat: HoldingPeriod domain rule — §23 Jahresfrist            (PR #22, Fsaupe)
 eeb129c fix(tax-law): verify the KAP Zeilen per year; refuse pre-2021          [ours]
 50d282b docs(reference): close the Basiszins sourcing gap (BMF-Schreiben)      [ours]
 47b00a4 docs: record the #21 verdict, BewG provenance, VP year gap            [ours]
@@ -57,7 +59,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 443 tests pass on a simulated clean clone
+**Verification at HEAD:** 462 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -490,19 +492,134 @@ structure holds until a later year changes it, and next year's form is not publi
 **Everything found in #21 is now fixed in commits**, except the Vorabpauschale year mapping
 below, which belongs to #29.
 
+### PR #22 (train 7) — §23 Jahresfrist as anniversary arithmetic — **ACCEPTED after knowledge-store repair**
+
+Rebased clean from `4eeeffb` (#21's fixture conflict is gone, as section 5 predicted).
+455 tests, green on the clean-clone protocol. **The tax reasoning is correct and it is the
+first behavioural change in the train I could not fault on the law itself** — only on where
+the law came from.
+
+**The fix is real.** `days <= 365` and the statutory Jahresfrist coincide except when the
+holding spans a 29 February, where the anniversary lies 366 days out and the shortcut wrongly
+exempts an anniversary-day disposal. Derived independently from Tier 1: §187 Abs. 1 BGB drops
+the acquisition day, §188 Abs. 2 BGB ends the period with the expiry of the day whose number
+matches, so a disposal *on* the anniversary is still inside the year. The 29-February clamp is
+§188 Abs. 3 BGB, which reads *"nach Monaten bestimmten Frist"* but covers a Jahresfrist because
+Abs. 2 treats both as ending on a day *"des letzten Monats"*. `relativedelta(years=1)` clamps
+exactly that way. All nine parametrised cases hand-checked against the statute, not the engine.
+
+Red-first verified on this tree: reverting `src/` fails **exactly one** test, the leap-span
+ledger case — matching the commit's claim that only the leap case was wrong. Real-data parity
+for 2025: console IDENTICAL, PDF IDENTICAL, log 10 lines, all the known
+`OPTION_CASH_SETTLEMENT` permutation against a 12-line same-tree control. The commit's "no
+leap-year anniversary sale in the dataset" is verified rather than taken: replaying FIFO over
+the four real `PRIVATE_SALE_ASSET` ISINs (156 trades, 2021–2025), **no lot/disposal pair
+changes verdict** — the closest approaches to the boundary are 340 and 408 days.
+The YAML fixture edit is comments and `description`/`notes` only; no `expected` block moves.
+
+**Defect 1, moderate — the citation is broader than the implementation, and the gap is a live
+legal question (`24b3c1f`).** #22 cites "§108 AO i.V.m. §§187 Abs. 1, 188 Abs. 2/3 BGB". But
+§108 AO is not only Abs. 1. **§108 Abs. 3 AO** extends any Frist whose end falls on a Sunday,
+public holiday or Saturday to the next working day — and the engine does not implement it. It
+is not a nit: an anniversary on a Saturday or Sunday would run to the Monday, and the Monday is
+the first day a taxpayer waiting out the year can actually trade. The two readings disagree on
+precisely the disposals most likely to happen.
+
+Neither reading is settled at Tier 1 or Tier 2. Tier 1 is unqualified (*"das Ende einer
+Frist"*), and §108 Abs. 1 makes Abs. 3 lex specialis to §193 BGB, which *is* limited to
+Handlungsfristen. AEAO zu §108 Nr. 2 lists where the administration applies Abs. 3 —
+Bekanntgabefiktionen, §149 Erklärungsfrist, Festsetzungsfrist — and §23 is absent, but as a
+list of confirmed applications, not an exclusion. Tier 4 points both ways: **BFH 14.10.2003
+IX R 68/98, BStBl II 2003, 898** abandoned the eigentlich/uneigentlich distinction for Abs. 3
+altogether (extended to the Festsetzungsfrist by **BFH 20.01.2016 VI R 14/15**), while
+**FG Köln 02.06.1997, EFG 1997, 1187 (rkr.)** denied the extension for §23 specifically — and
+pre-dates IX R 68/98. Littmann/Bitz/Pust §23 Rn. 106 (Tier 5) follows the FG.
+
+Recorded in `reference/` as an **open question** with both readings, the engine's choice (no
+extension) and why, plus a new *Open Legal Questions* section in the coverage matrix carrying
+it and #19's foreign-broker Depot question. Not implemented either way: §108 Abs. 3 AO's
+*"gesetzlicher Feiertag"* is Land-specific, which would be a second unresolved input.
+
+**Defect 2, moderate — the store did not carry what the PR cites (`24b3c1f`).** Same pattern
+as #18 and #19, third instance. `estg-23-private-veraeusserung.md` had three lines on period
+calculation, no statutory text, no source for any of it, and one line that just restated the
+code ("365-day threshold in `FifoManager`"). #22 replaced that line with a correct prose
+summary but added no text, no Absatz precision and no retrieval. Rewritten to the Validation
+Protocol: §23 Abs. 1 S. 1 Nr. 2 S. 1 EStG, §108 Abs. 1 AO, §§187 Abs. 1, 188 Abs. 2/3 BGB
+verbatim from gesetze-im-internet.de, the derivation, and a table of all seven boundary cases.
+Two further findings while doing it:
+
+- The file ran together two separate questions. **Which dates count** is
+  H 23 EStH *"Veräußerungsfrist"* — the obligatorisches Geschäft (BFH 15.12.1993 BStBl 1994 II
+  687; 8.4.2014 IX R 18/13 BStBl II 826; 10.2.2015 IX R 23/13 BStBl II 487). The store asserted
+  it as "Per BFH case law" with no cite. It matters: it is what makes IBKR's `TradeDate` the
+  right column and `SettleDate` the wrong one, for every §23 figure the engine emits.
+- Two Nr. 2/Nr. 3 rules are unimplemented and were undocumented. **Nr. 2 Satz 4** extends the
+  period to ten years for an asset that produced income in any calendar year. **Nr. 3** makes a
+  short sale of "andere Wirtschaftsgüter" a private Veräußerungsgeschäft with **no holding
+  period at all** — while the engine applies the Nr. 2 Jahresfrist in
+  `consume_short_lots_for_cover`, so a short held over a year would be reported exempt where
+  Nr. 3 taxes it. Unexercised in the real data (checked: no sell-to-open on any
+  `PRIVATE_SALE_ASSET`; the negative running positions on two ISINs are the known pre-2021
+  data-floor artefact, first row is a `C` sell with no prior `O`). Documented, not implemented.
+
+**Defect 3, moderate — an unreadable date pair silently produced EXEMPT (`f5248a3`).**
+`within_speculation_period` is `None` when either date fails to parse or the disposal predates
+the lot, and `if within_speculation_period:` then books
+`SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET`. #22 carried this over deliberately — "None
+(unparseable dates) falls through to exempt as before". But exempt is a positive finding, not a
+null: it drops the disposal out of Anlage SO. Silent, and it always errs towards
+under-declaring. Same shape as #18's `320e20a`. Raises `ProcessingError` now, naming both raw
+date strings; scoped to the §23 branch, so a STOCK disposal with the same unusable dates still
+just leaves `holding_period_days` unknown.
+
+**Defect 4, moderate — the store described an engine that does not exist (`f5248a3`).**
+`RealizedGainLoss.__post_init__` set `is_within_speculation_period = True` for *every*
+`PRIVATE_SALE_ASSET`, holding period irrelevant — so it read "within the speculation period" on
+exactly the disposals just classified as exempt. Nothing reads the field, so no figure was ever
+wrong, but the reference file's "Engine mapping" section documented that field as what selects
+the §23 category. #22 compounded it by introducing a local `within_speculation_period` with
+almost the same name and not connecting the two. The ledger now passes the rule's answer in,
+`__post_init__` no longer overwrites it, PRD updated.
+
+**Defect 5, low — dangling references in production source (`f2e5cc3`).**
+`src/tax_law/holding_period.py` cites "rework2-plan AR3" and "legal-review finding F3".
+Same class as #20's `e467cad`; both documents were dropped with `af95b72`. Also hardened the
+domain rule itself, which returned `True` for a disposal dated before the acquisition.
+
+**Calibrated, not just green** (standing checklist item): all four new assertions in
+`tests/test_section23_holding_period_guards.py` fail against the pre-fix tree and pass after.
+455 → 462 tests. Parity re-run after our fixes: console IDENTICAL, PDF IDENTICAL, log 6 lines,
+all known noise — the fail-fast branch never fires on the real data.
+
+**Everything found in #22 is fixed in commits.** Nothing in #23–#40 touches
+`src/tax_law/holding_period.py` or `estg-23-private-veraeusserung.md`, and no later commit
+touches the §23 branches in `fifo_manager.py`, so all five defects would have survived to the
+end of the train.
+
 ## 4. Cross-cutting pattern
 
-Across seven PRs: **the code and tests are consistently sound; the legal and factual prose is
+Across eight PRs: **the code and tests are consistently sound; the legal and factual prose is
 unreliable.** Every substantive mechanism held up under testing. 12 citation/claim errors,
 all corrected here. #19 remains the only description with nothing wrong in it — #20's
 central claim ("the only place user config is read") was false, and #21's
 "parent-parity: IDENTICAL" cannot hold for any VZ ≤ 2024 run — so this is a tendency
-rather than a law, but it has now held six times out of seven.
+rather than a law, but it has now held seven times out of eight. #22 is the near-miss: every
+factual claim in its description checks out empirically (red-first count, parity, "no
+leap-year anniversary sale in the dataset"), and only the *citation* overreaches.
 
 A refinement #21 adds: the failure is **not** in the legal reasoning, which was right and
 rooted. It is in *provenance* — where a number came from and whether the cited document
 actually says it. #21's two worst defects are a value silently inherited from the wrong
 statute (§203 BewG) and a claim about what the tests check.
+
+**#22 sharpens it into a third form: citation by section instead of by sentence.** "§108 AO"
+is true of the anniversary rule and also drags in §108 Abs. 3 AO, which the engine does not
+implement and which is a genuinely open question capable of moving a figure. The Validation
+Protocol's item 3 — cite paragraph *and* sentence — is not pedantry: **the unstated Absatz is
+where the unimplemented rule hides.** Worth applying to every remaining citation in the train,
+and it is exactly the same failure as #21's bare "§20 Abs. 6 Satz 5", which means opposite
+things before and after 02.12.2024.
 
 Practical consequence: **review the diff, not the description.** Verify claims empirically
 rather than reading them.
@@ -525,12 +642,12 @@ This pattern is now reliable enough to be a checklist item rather than an observ
 
 ## 5. Verified migration path for the remaining 19 PRs
 
-The first seven commits of every branch in the train are exactly the ones absorbed here
-(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`, `4eeeffb`), so one
-command migrates any of them:
+The first eight commits of every branch in the train are exactly the ones absorbed here
+(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`, `4eeeffb`, `1382bb9`), so
+one command migrates any of them:
 
 ```
-git rebase --onto <new-main> 4eeeffb <branch>   # 960d1ab before #21 was absorbed
+git rebase --onto <new-main> 1382bb9 <branch>   # 4eeeffb before #22 was absorbed
 ```
 
 Simulated against this branch's HEAD:
@@ -539,7 +656,8 @@ Simulated against this branch's HEAD:
 |----|--------|
 | ~~#20~~ | absorbed (`16cd0c8`) |
 | ~~#21~~ | absorbed (`88a91e9`); its 4 conflict hunks resolved, `KNOWN-WRONG` markers retired |
-| #22–#40 | rebase from `4eeeffb`; #21's conflict no longer applies |
+| ~~#22~~ | absorbed (`e0026da`); rebased clean, no conflicts |
+| #23–#40 | rebase from `1382bb9` |
 
 Note for whoever lands #21 onward: our `a7f7032` removed `src.config` from `src/cli.py` and
 moved the default-PDF-filename derivation into `src/main.py`. No commit in #21–#40 touches
@@ -601,6 +719,13 @@ VALIDATION_REPORT finding #1 is marked resolved there.
   run produces a wrong-year VP where it previously produced none. VZ 2023 flips from
   right to wrong. No exposure with the current data (VP needs an SoY snapshot; only 2025
   has one).
+- **Our #22 fixes conflict with nothing.** Verified by scanning every `pr/*` ref: no commit in
+  #23–#40 touches `src/tax_law/holding_period.py` or
+  `reference/tax-law/estg-23-private-veraeusserung.md`, and none of the seven later commits
+  that edit `src/engine/fifo_manager.py` touches a `within_speculation_period` /
+  `PRIVATE_SALE_ASSET` / `SECTION_23` line. `dc05960` (#29) does edit `src/domain/results.py`,
+  but its hunk is the `RealizedGainLoss` field block, ending at the `def __post_init__` line;
+  our change is inside that method's §23 block, several lines below its context.
 - **Leave `reference/investment-tax-law/invstg-18-vorabpauschale.md` to #29.** It rewrites
   that file with verbatim §18 Abs. 3 and the Zuflussprinzip mapping, and also flags that the
   store's current "Z55" mapping for the §19 disposal deduction is wrong (Z55 =
@@ -609,7 +734,7 @@ VALIDATION_REPORT finding #1 is marked resolved there.
 
 ## 7. Knowledge-store scan of the unreviewed PRs
 
-8 of 25 touch `reference/`: #18, ~~#21~~, #22, #28, #29, #32, #35, #40. Quality improves sharply
+8 of 25 touch `reference/`: #18, ~~#21~~, ~~#22~~, #28, #29, #32, #35, #40. Quality improves sharply
 after #18 — #22 (§108 AO i.V.m. §§187/188 BGB anniversary arithmetic incl. leap year), #29
 (§18 Abs. 2 S. 2 partial-year + §18 Abs. 3 verbatim deemed-inflow) and #35 (Einlagenrückgewähr,
 explicitly separating settled law from open questions) are the strongest legal work in the train.
@@ -630,6 +755,24 @@ Two things to scrutinise when reached:
 ---
 
 ## 8. Open items NOT in the train
+
+- **§108 Abs. 3 AO and the §23 Jahresfrist — an open legal question the engine has to answer
+  either way (found in #22).** If the weekend/holiday extension applies, an anniversary falling
+  on a Saturday or Sunday runs to the following Monday and a Monday disposal is still taxable;
+  if it does not, that disposal is exempt. No Tier 1/2 source resolves it; the §23-specific
+  authority (FG Köln 1997) and the general one (BFH IX R 68/98, 2003) point opposite ways.
+  The engine implements no extension. Documented in
+  `reference/tax-law/estg-23-private-veraeusserung.md` and in the coverage matrix's new
+  *Open Legal Questions* section. No exposure in the current data — no disposal falls in such a
+  window — but the maintainer holds and actively trades four `PRIVATE_SALE_ASSET` instruments,
+  so it can arise in any future year. Implementing it would additionally require deciding which
+  Land's `gesetzlicher Feiertag` calendar governs.
+- **§23 Abs. 1 S. 1 Nr. 3 (short sales) is mis-handled, and Nr. 2 S. 4 is not handled.**
+  A short position in "andere Wirtschaftsgüter" is a private Veräußerungsgeschäft with no
+  holding period; `consume_short_lots_for_cover` applies the Nr. 2 Jahresfrist to it, so a
+  short held over a year is reported exempt where Nr. 3 taxes it. Nr. 2 S. 4 extends the period
+  to ten years for an asset that produced income. Both documented as unimplemented in
+  `estg-23-private-veraeusserung.md`; neither is reachable in the current data.
 
 - **German KESt misdeclared as foreign tax.** `loss_offsetting.py:167-171` sums every
   `WithholdingTaxEvent` into Zeile 41 (*ausländische* Steuern) with no country filter, and the
@@ -712,8 +855,8 @@ Structural rule that makes this work, and that must be maintained:
 > **Fsaupe's commits are cherry-picked unmodified. Every correction of ours is a separate
 > commit on top.** Never amend, squash, or fold a fix into one of their commits.
 
-Current state on this branch: 8 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
-23 authored by the repo owner. Committer is the repo owner throughout (normal for
+Current state on this branch: 9 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
+26 authored by the repo owner. Committer is the repo owner throughout (normal for
 cherry-pick; GitHub attributes by Author).
 
 ### Original → landed SHA map
@@ -729,6 +872,7 @@ cherry-pick; GitHub attributes by Author).
 | #19 | `361b11a` | `312bc3a` | Fsaupe |
 | #20 | `960d1ab` | `16cd0c8` | Fsaupe |
 | #21 | `4eeeffb` | `88a91e9` | Fsaupe |
+| #22 | `1382bb9` | `e0026da` | Fsaupe |
 
 All original SHAs remain resolvable in the local object store via the fetched `pr/*` refs
 (`git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'`).
@@ -741,7 +885,8 @@ All original SHAs remain resolvable in the local object store via the fetched `p
    heads. Close each manually with a comment naming the landed SHA and the deltas applied
    (`2383b8a` for #33; `f5e8c0c` for #16/#17; `547df96`+`76cb8df`+`320e20a` for #18;
    `96d4312`+`a40adce` for #19; `a7f7032`+`fa05198`+`e467cad` for #20;
-   `df8dd6b`+`7bfc8fa`+`a6ff53d`+`a41dbb9`+`a96a5fd` for #21) so the
+   `df8dd6b`+`7bfc8fa`+`a6ff53d`+`a41dbb9`+`a96a5fd` for #21;
+   `24b3c1f`+`f2e5cc3`+`f5248a3` for #22) so the
    trail from PR to commit is explicit.
 3. Reference the PR numbers in the merge commit body so GitHub cross-links them.
 4. Fsaupe's contribution graph credits the Author email regardless of who merges, so no
