@@ -1434,7 +1434,16 @@ Two things to scrutinise when reached:
   data-floor claim was a plausible rationale stated without checking — the exact provenance
   failure catalogued in section 4, committed here by the reviewer rather than by Fsaupe, and
   it had already reached `README.md`, `PRD.md`, `spec_fifo.md` and the user-facing German
-  error message before the owner questioned it. Corrected in all five places. Instance in `private/real-data-observations.md`.
+  error message before the owner questioned it. Corrected in all five places.
+  Provenance checked rather than assumed: the claim first appears in `1cc2bc0`, a
+  review-session document; it is absent from `main`, from every Fsaupe commit message in
+  #16-#40, and from every `pr/*` tree. **Fsaupe did not write it.** The one adjacent statement
+  they do make is #18's, and it is correct and points the right way — an unhandled `BM`
+  corporate action "left a phantom bond holding (EOY mismatch)", which is the class of cause
+  the AMZN residual most likely belongs to. Distinguish it from the *genuine* floor artefact
+  recorded under #22 (two ISINs whose replayed running position goes negative because the
+  first row is a `C` sell with no prior `O`): that one is real, lives in the historical replay,
+  and cannot reach an EoY quantity, which the SoY snapshot pins. Instance in `private/real-data-observations.md`.
 
 ---
 
