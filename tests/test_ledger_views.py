@@ -1,8 +1,11 @@
 """
-AR4 (rework2): aggregate views over (account, asset)-keyed ledger registries.
+Aggregate views over (account, asset)-keyed ledger registries.
 
-legal_basis: §20 Abs. 4 S. 7 EStG — FIFO je Depot; per-person figures are
-derived views across accounts.
+legal_basis: FIFO je Depot -- BMF-Schreiben vom 14.05.2025,
+GZ IV C 1 - S 2252/00075/016/070, Rz. 97 Satz 2 (Tier 2). § 20 Abs. 4 Satz 7
+EStG supplies the FIFO fiction but not the Depot boundary; see
+reference/tax-law/estg-20-kapitalvermoegen.md. Per-person figures are derived
+views across accounts.
 """
 import uuid
 from decimal import Decimal

@@ -242,10 +242,11 @@ applied FIFO and the taxpayer both computes and evidences it. § 90 Abs. 2 AO im
 erhoehte Mitwirkungspflicht for foreign matters, so a per-depot result must be evidenced
 by per-account holdings, not merely asserted.
 
-**Engine mapping and known deviation:** `FifoManager` currently keys ledgers by asset
-only and reads no account identifier anywhere in `src/engine/`, `src/domain/` or
-`src/processing/` -- i.e. FIFO is pooled across accounts. This **deviates from Rz. 97
-S. 2**. It is currently without effect on the maintainer's own declaration, whose input
+**Engine mapping and known deviation:** the ledger registries are keyed by
+`(account_key, asset_id)`, but every write uses a single `DEFAULT_ACCOUNT` constant and no
+account identifier is read anywhere in `src/engine/`, `src/domain/` or `src/processing/`
+-- i.e. the key is a seam and FIFO is still pooled across accounts. This **deviates from
+Rz. 97 S. 2**. It is currently without effect on the maintainer's own declaration, whose input
 data contains exactly one `ClientAccountID`; per-depot and pooled FIFO coincide when there
 is one depot. For any taxpayer
 holding one ISIN in two accounts the pooled result is wrong. Flagged here per the
