@@ -2,7 +2,9 @@
 
 **Branch:** `hermetic-tests-first` (local only, never pushed)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 5 of 25 PRs reviewed and accepted; 20 not yet reviewed.
+**Status as of 2026-08-02:** 6 of 25 PRs reviewed and accepted; 19 not yet reviewed.
+**Next up:** #21 (`tests/fixtures/loss_offsetting_data.py`, JStG-2024 cap repeal) — the
+first branch in the train that does **not** rebase clean; see section 5.
 **Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
 issue #15, no CI added. All of that is still open for decision.
 
@@ -19,6 +21,14 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+e467cad docs: drop refs to working documents this repo does not contain        [ours]
+fa05198 fix(tests): close three blind spots in the leak tripwire               [ours]
+a7f7032 fix: make the RunContext boundary real, drop dead decimal_context      [ours]
+16cd0c8 refactor: explicit RunContext                                    (PR #20, Fsaupe)
+266d814 docs: trace event-ordering nondeterminism to PRD 5.8                   [ours]
+555a57b docs: record same-date event-ordering nondeterminism                   [ours]
+e9d39ec chore: separate published content from private account data            [ours]
+9e90f7b docs: record #19 verdict, parity-tool defect, #28 conflict             [ours]
 5050bba fix: drop the stray data_import symlink, harden .gitignore            [ours]
 57d7f5f docs(tests): cite the reference library, not the Fifo rule inline       [ours]
 96d4312 fix(scripts): parity_check.sh cache-hermetic/ordered/portable           [ours]
@@ -37,9 +47,10 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 397 tests pass on a simulated clean clone
-(`config_example.py`, no `cache/`). Real-data output is **byte-identical to `ebad4e7`**
-across tax years 2022–2025 — console report, `validate_ledgers.py`, and PDF text SHA-256.
+**Verification at HEAD:** 408 tests pass on a simulated clean clone
+(`config_example.py`, no `cache/`) and with the real config. Real-data output is
+**byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
+`validate_ledgers.py`, and PDF text SHA-256.
 
 > That real-data run was performed at `8ee553e` (through #18). It was **not** re-run for
 > #19, because `data_import/` no longer exists on this machine — see section 8. It still
@@ -244,42 +255,139 @@ broker's sub-account structure is not answered by any Tier 1/2 source located.
 Not fixed here, deliberately: the `RawPositionRecord` alias (that is #28's `febf459`, and
 duplicating it would collide).
 
+### PR #20 (train 5) — explicit RunContext — **ACCEPTED, boundary made real**
+
+Rebased clean, as predicted. 397 → 401 tests. Red-first confirmed on
+`test_pipeline_requires_explicit_tax_year` (the other three test a brand-new module, so
+red-first is vacuous for them).
+
+**First PR in the train with genuinely zero legal surface — verified, not assumed.** The
+only hunk touching tax logic is the `loss_offsetting.py` capping default, moved from
+import-time to call-time binding. Three independent checks agree it is inert:
+
+1. Nothing in `src/` or `tests/` mutates `APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING`, so
+   the two binding times coincide.
+2. A/B with a deliberately leaked flag produces the *identical* four failures before and
+   after the change.
+3. Blast radius is nil regardless: `conceptual_net_derivatives_capped` is consumed only by
+   `console_reporter.py:214`, a diagnostic line labelled *konzeptionell*. It reaches no
+   form-line mapping. (README already says form reporting is always un-capped; confirmed
+   in code.)
+
+So no `reference/` work was required, and none was done.
+
+Real-data parity, tax year 2025 (the only year with surviving snapshots): console
+IDENTICAL, PDF IDENTICAL. The 12-line log difference is entirely the known same-date
+`OPTION_CASH_SETTLEMENT` permutation — established by a **same-tree control capture that
+produced a larger 14-line difference**, so the noise is ambient, not attributable to #20.
+
+**Defect 1, moderate — the boundary was a pass-through; its config fallbacks were dead
+code (`a7f7032`).** `src/cli.py` already resolved both run-defining values before `main.py`
+saw them: `--tax-year` carried `default=config.TAX_YEAR`, and the parser did the
+`IS_INTERACTIVE_CLASSIFICATION` fallback itself. `RunContext.from_config()` was therefore
+always handed non-None arguments and never executed its resolution branches. Proven with a
+runtime probe that printed on fallback: **0 hits** on a default invocation and on
+`--no-interactive`. Consequences: the commit's central claim — main.py is "the only place
+user config is read for run-defining values" — is false, and
+`test_from_config_reads_boundary_defaults` covers a path production never takes.
+
+Fixed by making the claim true rather than softening it: `cli.py` no longer imports
+`src.config` at all, unspecified options stay `None`, the boundary resolves them, and the
+default PDF filename (which embeds the tax year) moves to `main.py`. Resolution verified
+unchanged for every argv shape. Only `--help` differs — it prints "TAX_YEAR from config.py"
+instead of interpolating the value.
+
+**Defect 2, low — `RunContext.decimal_context` was dead and duplicated precision config
+(`a7f7032`).** Never read anywhere; `main.py` still calls `setup_decimal_context()`, which
+installs precision into the process-wide context. Two sources of truth for precision, one
+inert, in a repo whose CLAUDE.md makes precision discipline explicit. Field removed.
+
+**Defect 3, low-moderate — the new leak tripwire had three blind spots (`fa05198`).**
+Calibrated against deliberately broken trees rather than trusted:
+
+| broken tree | session-scoped (as shipped) | per-test (repaired) |
+|---|---|---|
+| persistent `TAX_YEAR` leak | exit 1 ✓ | exit 1 ✓ |
+| leak early, restore late | **exit 0, green** | exit 1 ✓ |
+| leak any other config global | **silent** | exit 1 ✓ |
+| culprit named | last test to run (innocent) | the actual leaker |
+
+The leak-then-restore hole matters most: it is the exact shape of the incident the wire
+exists to catch. The second hole contradicted its own docstring ("a mutated global config
+value"), and left the legally-relevant capping flag unwatched. Made per-test and widened to
+every uppercase config attribute; no latent leaks surfaced in the existing suite, runtime
+unchanged.
+
+**Defect 4, low — dangling references in production source (`e467cad`).**
+`src/run_context.py`, `tests/test_run_context.py`, `src/pipeline_runner.py` and
+`src/engine/loss_offsetting.py` cite "rework2-plan AR1" and "legal-review-todo.md F1".
+Neither file exists here — `rework2-plan.md` is `af95b72`, dropped when #16 was absorbed,
+and "AR1"/"F1" are identifiers from that same dropped document. Also cleared the two
+instances that arrived with #19 and were missed then.
+
+**Defect 5, nit — `pytest.raises(Exception)`** in the immutability test passes on any
+error at all; narrowed to `FrozenInstanceError`.
+
+**Right-sizing what this PR is worth.** At the *end* of the train (`pr/40`), `RunContext`
+is still referenced only in `src/main.py`, at the same single call site it is introduced
+at — no commit in #21–#40 touches `src/run_context.py` or consumes the object, and the
+remaining 20 PRs keep passing `tax_year` as a plain `int`. So the durable value of #20 is
+**the required `tax_year_to_process` parameter and the leak tripwire**, not the context
+object, which stays a two-field wrapper around one call site for the whole train. That is
+not a reason to reject — the required parameter genuinely removes the ambient default, and
+the repaired tripwire is a real regression guard — but the PR title's "explicit RunContext"
+oversells an abstraction nothing downstream adopts. Worth remembering if a later PR is
+justified by "consistency with the RunContext pattern": there is no such pattern in the
+train yet.
+
 ## 4. Cross-cutting pattern
 
-Across five PRs: **the code and tests are consistently sound; the legal and factual prose is
-unreliable.** Every substantive mechanism held up under testing. 8 citation/claim errors,
-all corrected here. #19 is the first description with nothing wrong in it, so this is a
-tendency rather than a law — but it has held four times out of five.
+Across six PRs: **the code and tests are consistently sound; the legal and factual prose is
+unreliable.** Every substantive mechanism held up under testing. 9 citation/claim errors,
+all corrected here. #19 remains the only description with nothing wrong in it — #20's
+central claim ("the only place user config is read") was false — so this is a tendency
+rather than a law, but it has now held five times out of six.
 
 Practical consequence: **review the diff, not the description.** Verify claims empirically
 rather than reading them.
 
-**Second pattern, visible from #19 onward: verification tooling that cannot see what it
-claims to check.** #33 found the test suite silently reading the developer's real `cache/`;
-#19 shipped a real-data parity gate with the same hole, which would have certified every
-later PR's "output-neutral" claim without being able to observe a classification change.
-Both were green. When a PR adds a checking mechanism, test the *mechanism* against a
-deliberately broken tree — a green result from an instrument nobody calibrated is worth
-nothing.
+**Second pattern, now three for three: verification tooling that cannot see what it claims
+to check.** #33 found the test suite silently reading the developer's real `cache/`; #19
+shipped a real-data parity gate with the same hole, which would have certified every later
+PR's "output-neutral" claim without being able to observe a classification change; #20's
+leak tripwire passes green on the very leak shape it was written for, and its
+`from_config` tests cover a code path production never executes. All were green. When a PR
+adds a checking mechanism, test the *mechanism* against a deliberately broken tree — a
+green result from an instrument nobody calibrated is worth nothing.
+
+This pattern is now reliable enough to be a checklist item rather than an observation:
+**for every new guard, write the tree that should trip it and confirm it does.**
 
 ---
 
-## 5. Verified migration path for the remaining 20 PRs
+## 5. Verified migration path for the remaining 19 PRs
 
-The first five commits of every branch in the train are exactly the ones absorbed here
-(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`), so one command migrates any of them:
+The first six commits of every branch in the train are exactly the ones absorbed here
+(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`), so one command migrates
+any of them:
 
 ```
-git rebase --onto <new-main> 361b11a <branch>   # 1d7728b before #19 was absorbed
+git rebase --onto <new-main> 960d1ab <branch>   # 361b11a before #20 was absorbed
 ```
 
 Simulated against this branch's HEAD:
 
 | PR | Result |
 |----|--------|
-| #20 | **clean** |
+| ~~#20~~ | absorbed (`16cd0c8`) |
 | **#21** | 4 conflict hunks, one file (`tests/fixtures/loss_offsetting_data.py`) |
 | #22–#40 | inherit #21's conflict (cumulative train) |
+
+Note for whoever lands #21 onward: our `a7f7032` removed `src.config` from `src/cli.py` and
+moved the default-PDF-filename derivation into `src/main.py`. No commit in #21–#40 touches
+`src/cli.py` — verified by scanning every `pr/*` ref — so this conflicts with nothing, but a
+later PR that reintroduces a config read there will now fail
+`test_cli_module_does_not_read_user_config`, which is the intended behaviour.
 
 Only two commits in the whole train touch that file: `7f6fca0` (#16, absorbed) and
 `4eeeffb` (#21, the JStG-2024 cap repeal). The conflict is our `KNOWN-WRONG` markers meeting
@@ -426,8 +534,8 @@ Structural rule that makes this work, and that must be maintained:
 > **Fsaupe's commits are cherry-picked unmodified. Every correction of ours is a separate
 > commit on top.** Never amend, squash, or fold a fix into one of their commits.
 
-Current state on this branch: 5 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
-6 authored by the repo owner. Committer is the repo owner throughout (normal for
+Current state on this branch: 7 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
+18 authored by the repo owner. Committer is the repo owner throughout (normal for
 cherry-pick; GitHub attributes by Author).
 
 ### Original → landed SHA map
@@ -441,17 +549,19 @@ cherry-pick; GitHub attributes by Author).
 | #17 | `35d5873` | `55c7b95` | Fsaupe |
 | #18 | `1d7728b` | `4fbf570` | Fsaupe |
 | #19 | `361b11a` | `312bc3a` | Fsaupe |
+| #20 | `960d1ab` | `16cd0c8` | Fsaupe |
 
 All original SHAs remain resolvable in the local object store via the fetched `pr/*` refs
 (`git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'`).
 
 ### When landing on GitHub later
 
-1. **Do not squash-merge.** Squashing collapses all 11 commits to a single author and
+1. **Do not squash-merge.** Squashing collapses all 25 commits to a single author and
    destroys Fsaupe's credit. Use a merge commit, or fast-forward.
 2. #16/#17/#18/#33 will **not** auto-close, because these are cherry-picks, not the branch
    heads. Close each manually with a comment naming the landed SHA and the deltas applied
-   (`2383b8a` for #33; `f5e8c0c` for #16/#17; `547df96`+`76cb8df`+`320e20a` for #18) so the
+   (`2383b8a` for #33; `f5e8c0c` for #16/#17; `547df96`+`76cb8df`+`320e20a` for #18;
+   `96d4312`+`a40adce` for #19; `a7f7032`+`fa05198`+`e467cad` for #20) so the
    trail from PR to commit is explicit.
 3. Reference the PR numbers in the merge commit body so GitHub cross-links them.
 4. Fsaupe's contribution graph credits the Author email regardless of who merges, so no
