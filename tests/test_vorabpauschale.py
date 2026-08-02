@@ -190,19 +190,29 @@ class TestVorabpauschaleCalculation:
         assert len(results) == 0
 
     def test_unconfigured_basiszins_year_skips_with_loud_warning(self, caplog):
-        """A tax year with NO configured Basiszins must skip VP computation
-        with a WARNING (skipping silently could understate income — the VP is
-        deemed income under §18 InvStG). 1999 predates the InvStG 2018 regime
-        and is never configured. (Previously this used 2020, which HAS a
-        published positive Basiszins of 0.07% — see BMF table — and logged
-        only at INFO level.)"""
+        """A tax year INSIDE the InvStG-2018 regime with no configured Basiszins
+        must skip VP computation with a WARNING (skipping silently could
+        understate income — the VP is deemed income under §18 InvStG).
+        (Previously this used 2020, which HAS a published positive Basiszins of
+        0.07% — see BMF table — and logged only at INFO level.)"""
         import logging
         fund = _make_fund()
-        with caplog.at_level(logging.WARNING):
-            results = _run_vp(fund, tax_year=1999)
+        with caplog.at_level(logging.INFO):
+            results = _run_vp(fund, tax_year=2030)
         assert len(results) == 0
         assert any("Basiszins" in r.message and r.levelname == "WARNING" for r in caplog.records), \
             "missing Basiszins must be surfaced as a WARNING, not silently skipped"
+
+    def test_pre_2018_year_skips_without_a_false_alarm(self, caplog):
+        """1999 predates the InvStG 2018 regime (§56 Abs. 1 S. 1 InvStG): there
+        was no Vorabpauschale, so the skip is correct and must not be reported
+        as a missing rate."""
+        import logging
+        fund = _make_fund()
+        with caplog.at_level(logging.INFO):
+            results = _run_vp(fund, tax_year=1999)
+        assert len(results) == 0
+        assert not any(r.levelname == "WARNING" for r in caplog.records)
 
     def test_2020_positive_basiszins_yields_vp(self):
         """2020 had a POSITIVE Basiszins (0.07%, BMF) — a fund held through
@@ -444,27 +454,33 @@ class TestZ55VorabpauschaleAbzug:
 
 
 # ---------------------------------------------------------------------------
-# Tests: the shipped Basiszins table is complete (2016-2026, BMF-published)
+# Tests: the shipped Basiszins table covers exactly the years the law defines
 # ---------------------------------------------------------------------------
 
-class TestBasiszinsTable:
-    """The InvStG-2018 regime starts 2018 (Basisertrag formula identical since
-    2016 publications). All BMF-published rates must be configured so that no
-    historical tax year silently produces zero Vorabpauschale.
-    Source: reference/bmf-guidance/basiszins-vorabpauschale.md (BStBl I)."""
+class TestBasiszinsTableCoverage:
+    """Every BMF-published rate must be configured so that no tax year inside
+    the regime silently produces zero Vorabpauschale — and no year OUTSIDE the
+    regime may carry a rate, which would invent deemed income.
 
-    PUBLISHED = {
-        2016: "1.10", 2017: "0.59", 2018: "0.87", 2019: "0.52", 2020: "0.07",
-        2021: "-0.45", 2022: "-0.05", 2023: "2.55", 2024: "2.29", 2025: "2.53",
-        2026: "3.20",
-    }
+    The values themselves are pinned against the knowledge store by
+    `tests/test_tax_law_registry.py::TestBasiszinsReferenceConsistency`, which
+    parses `reference/bmf-guidance/basiszins-vorabpauschale.md`. This class
+    checks the SHAPE of the table, which that parse cannot: where it starts,
+    that it has no holes, and that the year an engine run needs is present."""
 
-    def test_all_published_rates_configured(self):
-        from decimal import Decimal as D
+    def test_regime_floor_is_2018(self):
+        """§56 Abs. 1 S. 1 InvStG: the InvStG 2018 applies from 01.01.2018, so
+        the first Vorabpauschale is the one for calendar 2018 and the first
+        published Basiszins is the 2018 one. Nothing earlier belongs here — the
+        1.10%/0.59% once listed for 2016/2017 are the §203 Abs. 2 BewG rate."""
         from src.tax_law import registry
-        missing = {y: v for y, v in self.PUBLISHED.items()
-                   if registry.BASISZINS_PCT.get(y) != D(v)}
-        assert not missing, (
-            f"tax_law registry Basiszins missing/incorrect for {missing} — "
-            "update src/tax_law/registry.py from the BMF table in "
-            "reference/bmf-guidance/basiszins-vorabpauschale.md")
+        assert min(registry.BASISZINS_PCT) == 2018
+        assert 2016 not in registry.BASISZINS_PCT
+        assert 2017 not in registry.BASISZINS_PCT
+
+    def test_every_year_from_2018_to_the_latest_is_present(self):
+        from src.tax_law import registry
+        years = sorted(registry.BASISZINS_PCT)
+        assert years == list(range(2018, years[-1] + 1)), (
+            "gap in the Basiszins table — that year's Vorabpauschale would be "
+            "skipped; fill it from reference/bmf-guidance/basiszins-vorabpauschale.md")

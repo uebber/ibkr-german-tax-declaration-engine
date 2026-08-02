@@ -1,15 +1,17 @@
 # src/tax_law/registry.py
 """
-Law-as-data registry (rework2-plan AR2) — the SINGLE home of year-parameterized
-German tax-law values. Engine and tests read the SAME tables; every entry
-carries its statutory citation; lookups outside an entry's validity are LOUD
-(never a silent zero — legal-review findings F2/F6 were exactly silent
-conveniences where the law needed explicit values).
+Law-as-data registry — the SINGLE home of year-parameterized German tax-law
+values. Engine and tests read the SAME tables; every entry carries its
+statutory citation; lookups outside an entry's validity are LOUD, never a
+silent zero.
 
-Layering contract (improvement #6): the computation core emits year-agnostic
-`TaxReportingCategory` totals; the ONLY Zeilen-aware layer is the year-
-parameterized form projection defined here (`FormYearRules`). Reporting maps
-categories to lines through `get_form_rules(tax_year)` and nothing else.
+Layering, as it actually stands: the computation core emits year-agnostic
+`TaxReportingCategory` totals, and the year-specific *branching* between form
+structures happens only through `get_form_rules(tax_year)` defined here. That
+is not the same as being the only Zeilen-aware layer — the category enum names
+carry Zeilen semantics, and `console_reporter.py` / `pdf_generator.py` print
+line numbers directly. Concentrating the branching here is the property to
+preserve; single-point Zeilen knowledge is not yet true.
 
 Sources of truth mirrored here (machine-readable side of `reference/`):
 - Basiszins:        reference/bmf-guidance/basiszins-vorabpauschale.md (BStBl I)
@@ -35,9 +37,14 @@ logger = logging.getLogger(__name__)
 # a computed zero Vorabpauschale, not a configuration gap.
 # Citation: BMF Basiszins notices, BStBl I (per-year links in the reference doc).
 
+# The series starts in 2018: the Vorabpauschale was introduced by the InvStG
+# 2018, whose provisions "sind ab dem 1. Januar 2018 anzuwenden" (§56 Abs. 1
+# Satz 1 InvStG). No §18 Abs. 4 InvStG Basiszins exists for 2016 or 2017 — the
+# 1.10%/0.59% once listed for those years are the §203 Abs. 2 BewG Basiszins
+# (a different statute); see the reference doc.
+INVSTG_2018_FIRST_BASISZINS_YEAR = 2018
+
 BASISZINS_PCT: dict[int, Decimal] = {
-    2016: Decimal("1.10"),
-    2017: Decimal("0.59"),
     2018: Decimal("0.87"),
     2019: Decimal("0.52"),
     2020: Decimal("0.07"),
@@ -51,22 +58,31 @@ BASISZINS_PCT: dict[int, Decimal] = {
 
 
 def basiszins_pct(year: int) -> Optional[Decimal]:
-    """BMF-published Basiszins for `year` in percent, or None with a LOUD
-    warning if the year is not in the table.
+    """BMF-published Basiszins for `year` in percent, or None if unavailable.
 
-    WARNING, not silence: skipping the Vorabpauschale for a year that actually
-    had a positive Basiszins UNDERSTATES deemed income (§18 InvStG). Keep the
-    table complete (BMF publishes each January)."""
+    Two ways to be absent, logged differently because they mean opposite things:
+
+    - `year` predates the InvStG-2018 regime (§56 Abs. 1 S. 1 InvStG): there was
+      no Vorabpauschale at all. INFO — nothing is being missed.
+    - `year` is 2018 or later: a rate WAS published and the table lacks it.
+      WARNING — skipping understates deemed income (§18 InvStG). Add the rate."""
     value = BASISZINS_PCT.get(year)
     if value is None:
-        logger.warning(
-            f"No Basiszins in the tax-law registry for year {year} — SKIPPING "
-            f"its Vorabpauschale computation. If funds were held through "
-            f"{year} and the BMF-published Basiszins for that year was "
-            f"positive, deemed income is being understated. Add the rate to "
-            f"src/tax_law/registry.py (source: "
-            f"reference/bmf-guidance/basiszins-vorabpauschale.md)."
-        )
+        if year < INVSTG_2018_FIRST_BASISZINS_YEAR:
+            logger.info(
+                f"No Vorabpauschale for year {year}: the InvStG 2018 regime "
+                f"applies from 1 January {INVSTG_2018_FIRST_BASISZINS_YEAR} "
+                f"(§56 Abs. 1 Satz 1 InvStG), so no Basiszins was published."
+            )
+        else:
+            logger.warning(
+                f"No Basiszins in the tax-law registry for year {year} — SKIPPING "
+                f"its Vorabpauschale computation. If funds were held through "
+                f"{year} and the BMF-published Basiszins for that year was "
+                f"positive, deemed income is being understated. Add the rate to "
+                f"src/tax_law/registry.py (source: "
+                f"reference/bmf-guidance/basiszins-vorabpauschale.md)."
+            )
     return value
 
 
@@ -97,10 +113,13 @@ def teilfreistellung_rate(fund_type: Optional[InvestmentFundType]) -> Decimal:
 # Anlage KAP form structure per assessment year (§20 Abs. 6 EStG)
 # =============================================================================
 # The €20k Termingeschäft loss cap (§20 Abs. 6 S. 5/6 a.F.) was abolished by
-# JStG 2024 (BGBl. I 2024 Nr. 387) RETROACTIVELY for all open cases
-# (§52 Abs. 28 EStG n.F.) — therefore derivative_loss_cap_applies is False for
-# EVERY year: a return prepared today, including VZ 2021-2024, is not subject
-# to it. Only the FORM STRUCTURE remains year-specific:
+# JStG 2024 (BGBl. I 2024 Nr. 387). Its scope comes from the application rule:
+# §52 Abs. 28 Satz 25 EStG n.F. (Termingeschäfte) and Satz 26 (Forderungs-
+# ausfälle) each order that the a.F. sentence "ist auf alle offenen Fälle nicht
+# mehr anzuwenden" — therefore derivative_loss_cap_applies is False for EVERY
+# year: a return prepared today, including VZ 2021-2024, is not subject to it.
+#
+# Only the FORM STRUCTURE remains year-specific:
 #   VZ <= 2024: derivative gains/losses declared separately on Z21/Z24; Z19
 #               does not subtract derivative losses; Z22 excludes them.
 #   VZ >= 2025: Z21/Z24 removed; derivative gains AND losses flow through Z19;
@@ -118,7 +137,7 @@ class FormYearRules:
 _FORM_RULES_BY_YEAR: dict[int, FormYearRules] = {
     2024: FormYearRules(
         separate_derivative_lines=True,
-        derivative_loss_cap_applies=False,  # JStG 2024, retroactive (§52 Abs. 28)
+        derivative_loss_cap_applies=False,  # JStG 2024 (§52 Abs. 28 S. 25)
         z19_subtracts_derivative_losses=False,
         z22_includes_derivative_losses=False,
     ),
@@ -134,8 +153,12 @@ _FORM_RULES_BY_YEAR: dict[int, FormYearRules] = {
 def get_form_rules(tax_year: int) -> FormYearRules:
     """Form rules for an assessment year. Exact year first; otherwise the
     nearest EARLIER configured year (form structures persist until changed);
-    years before all configured ones use the earliest (2021-2024 share the
-    2024 structure)."""
+    years before all configured ones use the earliest, so VZ 2021-2023 are
+    served the 2024 entry.
+
+    That fallback is an engine convention, not a verified mapping: the Zeilen
+    are checked against the official Anleitung for 2024 and 2025 only. See
+    reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
     if tax_year in _FORM_RULES_BY_YEAR:
         return _FORM_RULES_BY_YEAR[tax_year]
 
