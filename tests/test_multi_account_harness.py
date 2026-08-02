@@ -1,5 +1,5 @@
 """
-Self-test for the multi-account harness builders (rework2-plan AR0).
+Self-test for the multi-account harness builders.
 
 legal_basis: harness only — enables the per-Depot scenarios required by
 §20 Abs. 4 S. 7 EStG i.V.m. BMF 14.05.2025 Rz. 97-98; see

@@ -1,6 +1,6 @@
 # tests/support/multi_account.py
 """
-Multi-account (per-Depot) test harness builders — rework2-plan AR0.
+Multi-account (per-Depot) test harness builders.
 
 The YAML spec harness forces a single ClientAccountID, so per-Depot scenarios
 (co-held securities, internal transfers, per-account cash) previously had to

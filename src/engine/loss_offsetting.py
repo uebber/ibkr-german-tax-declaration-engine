@@ -25,7 +25,7 @@ class LossOffsettingEngine:
                  tax_year: int,
                  apply_conceptual_derivative_loss_capping: Optional[bool] = None):
         # None -> read the user config AT CALL TIME (the previous module-global
-        # default was bound at import time — ambient mutable state, AR1).
+        # default was bound at import time — ambient mutable state).
         if apply_conceptual_derivative_loss_capping is None:
             apply_conceptual_derivative_loss_capping = global_config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
         self.realized_gains_losses = realized_gains_losses

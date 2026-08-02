@@ -52,8 +52,7 @@ def run_core_processing_pipeline(
     interactive_classification_mode: bool,
     # REQUIRED — no global default: a run's tax year must be explicit at the
     # boundary (src/main.py via CLI/config). A silent module-global default made
-    # behavior depend on ambient, monkeypatchable state (finding F1). See
-    # src/run_context.py (AR1).
+    # behavior depend on ambient, monkeypatchable state. See src/run_context.py.
     tax_year_to_process: int,
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
