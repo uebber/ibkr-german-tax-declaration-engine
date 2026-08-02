@@ -360,17 +360,50 @@ Two things to scrutinise when reached:
   for **one tax year only**, so parity runs are limited to that year until the earlier
   years' Positions/Cash_Balance files are re-downloaded from IBKR. Real-data parity on that
   year is confirmed working: two same-tree captures compare identical on console and PDF.
-- **Same-date event processing order is nondeterministic (found 2026-08-02, not fixed).**
-  Two runs of identical code over the real 2025 data permute 12 log lines: several
-  `OPTION_CASH_SETTLEMENT` events falling on the same date are processed in a different
-  order each run. Tax figures were unaffected — console report and PDF compared identical —
-  so this is not a live defect, but the ordering is unstable, which suggests a sort keyed on
-  date without a stable tiebreaker. It matters for the per-Depot work: once lots are
-  partitioned per account, the order in which same-day disposals consume lots can change
-  which lot each one takes. Worth pinning a deterministic secondary sort key before #31/#32
-  land. This is also why the parity gate treats a log-only difference as non-fatal
-  (`PARITY_STRICT_LOG=1` to enforce) — with the streams split, console and PDF are compared
-  strictly and only the log tolerates it.
+- **Same-date event ordering is nondeterministic — spec-level, not fixed anywhere in the
+  train (found 2026-08-02).** Two runs of identical code over the real 2025 data permute 12
+  log lines: same-date `OPTION_CASH_SETTLEMENT` events are processed in a different order
+  each run. Tax figures were unaffected — console and PDF compared identical — but the
+  ordering is unstable.
+
+  Root cause, traced end to end:
+  1. `src/utils/sorting_utils.py::get_event_sort_key` ends every secondary key tuple with
+     `event.event_id`, which is `uuid.uuid4()` — regenerated on every run.
+  2. The element before it is `event.ibkr_transaction_id or ""`, so the random UUID decides
+     the order whenever same-date events share an empty transaction ID.
+  3. `OptionCashSettlementEvent` is constructed without `ibkr_transaction_id` at all, and
+     cannot have one: `OPTIONS_EAE_COLUMNS` has a `Transaction Type` column but **no
+     `TransactionID` column**, and `RawOptionsEAERecord` accordingly has no such field.
+     So the precondition fails for every cash-settlement event, by construction.
+
+  **The PRD mandates the defect**, which is why the code looks correct and reviews clean.
+  PRD.md lines 598–619 state that `event_id` is "always the last element in this tuple to
+  guarantee uniqueness and deterministic order" and that its inclusion "guarantees that the
+  overall sorting order is strictly deterministic, as each `FinancialEvent` object has a
+  unique `event_id`". That conflates **uniqueness** with **determinism**: a random UUID makes
+  the key unique *within* a run — so the sort is total and never fails — while making the
+  order differ *between* runs. The function's own docstring inherits the false claim
+  ("Generates a deterministic sort key tuple ... as per PRD 5.8").
+
+  Train scan: **nothing in #20–#40 fixes it.** The only train commit touching
+  `sorting_utils.py` is `89fdd80` (tax-neutral internal transfers), and it *propagates the
+  pattern* — it adds an `InternalTransferEvent` branch commented "the `event_id` tail keeps
+  the key unique", the same conflation. That commit's own events do pass
+  `ibkr_transaction_id=rt.transaction_id`, so it is not itself broken as long as IBKR
+  populates that field; but the spec it is following is.
+
+  Why it matters for what is coming: once #31/#32 partition lots per account, the order in
+  which same-day disposals consume lots decides *which lot* each one takes. Today the
+  instability is confined to an event type that does not consume FIFO lots competitively.
+  It should be fixed before per-Depot FIFO lands, and the fix belongs in the PRD first.
+
+  Cheapest correct fix: make `event_id` itself deterministic — `uuid.uuid5(NAMESPACE, key)`
+  over the event's identifying content — which repairs every sort key at once without
+  touching `get_event_sort_key` or any of the per-type tuples. The alternative is to replace
+  the tail with a stable input-derived key (source file + row index) and keep `event_id` out
+  of ordering entirely.
+
+  Instance details (conids, dates) in `private/real-data-observations.md`.
 - **No CI.** No `.github/workflows`. Every "green" claim in the train is unverified by
   anything observable; each review currently costs a manual baseline-control run.
 - `VALIDATION_REPORT.md` findings 2–6 remain open (finding 1 is handled by #21).
