@@ -639,7 +639,18 @@ class FifoLedger:
                         raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {sale_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                    if within_speculation_period:  # §23 Jahresfrist: anniversary rule (§§187 f. BGB), NOT a 365-day count; None (unparseable dates) falls through to exempt as before
+                    # §23 Jahresfrist: anniversary rule (§108 Abs. 1 AO i.V.m. §§187 Abs. 1,
+                    # 188 Abs. 2-3 BGB), NOT a 365-day count. See
+                    # reference/tax-law/estg-23-private-veraeusserung.md.
+                    if within_speculation_period is None:
+                        raise ProcessingError(
+                            f"Cannot decide §23 taxability for asset {self.asset_internal_id}, "
+                            f"Event {sale_event.event_id}: acquisition date "
+                            f"'{current_lot.acquisition_date}' / realization date '{sale_event.event_date}' "
+                            f"do not yield a usable date pair. An undecidable §23 case is "
+                            f"unreported income, not an exempt one."
+                        )
+                    if within_speculation_period:
                         is_taxable_under_section_23_flag = True # Renamed
                         tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                     else: 
@@ -657,6 +668,7 @@ class FifoLedger:
                     total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
                     total_realization_value_eur=realization_value_for_portion,
                     gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
+                    is_within_speculation_period=bool(within_speculation_period),
                     is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
                     tax_reporting_category=tax_cat, 
                     is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg
@@ -766,7 +778,18 @@ class FifoLedger:
                         raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {cover_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                    if within_speculation_period:  # §23 Jahresfrist: anniversary rule (§§187 f. BGB), NOT a 365-day count; None (unparseable dates) falls through to exempt as before
+                    # §23 Jahresfrist: anniversary rule (§108 Abs. 1 AO i.V.m. §§187 Abs. 1,
+                    # 188 Abs. 2-3 BGB), NOT a 365-day count. See
+                    # reference/tax-law/estg-23-private-veraeusserung.md.
+                    if within_speculation_period is None:
+                        raise ProcessingError(
+                            f"Cannot decide §23 taxability for asset {self.asset_internal_id}, "
+                            f"Event {cover_event.event_id}: acquisition date "
+                            f"'{current_short_lot.opening_date}' / realization date '{cover_event.event_date}' "
+                            f"do not yield a usable date pair. An undecidable §23 case is "
+                            f"unreported income, not an exempt one."
+                        )
+                    if within_speculation_period:
                         is_taxable_under_section_23_flag = True # Renamed
                         tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                     else: 
@@ -785,6 +808,7 @@ class FifoLedger:
                     total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
                     total_realization_value_eur=realization_value_for_portion,
                     gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
+                    is_within_speculation_period=bool(within_speculation_period),
                     is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
                     tax_reporting_category=tax_cat, 
                     is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg
@@ -913,7 +937,18 @@ class FifoLedger:
                     raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {event.event_id}. Tax category mapping must be updated.")
 
             elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                if within_speculation_period:  # §23 Jahresfrist: anniversary rule (§§187 f. BGB), NOT a 365-day count; None (unparseable dates) falls through to exempt as before
+                # §23 Jahresfrist: anniversary rule (§108 Abs. 1 AO i.V.m. §§187 Abs. 1,
+                # 188 Abs. 2-3 BGB), NOT a 365-day count. See
+                # reference/tax-law/estg-23-private-veraeusserung.md.
+                if within_speculation_period is None:
+                    raise ProcessingError(
+                        f"Cannot decide §23 taxability for asset {self.asset_internal_id}, "
+                        f"Event {event.event_id}: acquisition date "
+                        f"'{current_lot.acquisition_date}' / realization date '{event.event_date}' "
+                        f"do not yield a usable date pair. An undecidable §23 case is "
+                        f"unreported income, not an exempt one."
+                    )
+                if within_speculation_period:
                     is_taxable_under_section_23_flag = True # Renamed
                     tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                 else: 
@@ -931,6 +966,7 @@ class FifoLedger:
                 total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
                 total_realization_value_eur=realization_value_for_portion,
                 gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
+                is_within_speculation_period=bool(within_speculation_period),
                 is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
                 tax_reporting_category=tax_cat, 
                 is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg

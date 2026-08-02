@@ -554,7 +554,8 @@ Internal structures associated with an `Asset.internal_asset_id`.
 - `total_realization_value_eur` (`Decimal`, calculated as `quantity_realized` * `unit_realization_value_eur`).
 - `gross_gain_loss_eur` (`Decimal`, calculated as `total_realization_value_eur` - `total_cost_basis_eur`).
 - Also includes `holding_period_days`, `is_within_speculation_period`, `is_taxable_under_section_23`, `tax_reporting_category`, Teilfreistellung details (`fund_type_at_sale`, `teilfreistellung_rate_applied`, `teilfreistellung_amount_eur`, `net_gain_loss_after_teilfreistellung_eur`), and `is_stillhalter_income` (boolean).
-- `__post_init__` performs type checks, sets `is_within_speculation_period`, and calculates `net_gain_loss_after_teilfreistellung_eur` if applicable.
+- `is_within_speculation_period` is set by the caller (`FifoLedger`) from the §23 Jahresfrist domain rule in `src/tax_law/holding_period.py`; `holding_period_days` is informational only and must not decide taxability. See `reference/tax-law/estg-23-private-veraeusserung.md`.
+- `__post_init__` performs type checks and calculates `net_gain_loss_after_teilfreistellung_eur` if applicable.
 
 **`VorabpauschaleData`**: Conceptual structure for Vorabpauschale calculation details (base return, rates, gross amount for form, Teilfreistellung, net taxable amount, all `Decimal`).
 

@@ -74,10 +74,12 @@ class RealizedGainLoss:
         if not isinstance(self.quantity_realized, Decimal) or self.quantity_realized < Decimal(0):
             raise ValueError(f"RealizedGainLoss.quantity_realized must be a non-negative Decimal, got {self.quantity_realized}")
 
-        # Handle §23 specifics
-        if self.asset_category_at_realization == AssetCategory.PRIVATE_SALE_ASSET: 
-            self.is_within_speculation_period = True 
-            # is_taxable_under_section_23 is assumed to be correctly set by the constructor based on input.
+        # §23 specifics: is_within_speculation_period and is_taxable_under_section_23 are both
+        # set by the caller from the Jahresfrist domain rule
+        # (src/tax_law/holding_period.py). __post_init__ used to overwrite the former with an
+        # unconditional True for every PRIVATE_SALE_ASSET, which made it read "within the
+        # speculation period" on disposals the engine had just classified as
+        # SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET.
 
         # Handle Investment Fund specifics (Teilfreistellung)
         if self.asset_category_at_realization == AssetCategory.INVESTMENT_FUND:
