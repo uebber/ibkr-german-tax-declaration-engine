@@ -21,6 +21,7 @@
 | Dividend (cash) | EStG | 20 Abs. 1 Nr. 1 | KAP Z19 | estg-20-kapitalvermoegen.md |
 | Interest received | EStG | 20 Abs. 1 Nr. 7 | KAP Z19 | estg-20-kapitalvermoegen.md |
 | Stueckzinsen (paid) | EStG | 20 Abs. 4 | KAP Z19 (neg.) | estg-20-kapitalvermoegen.md |
+| Lot identification (Fifo) | EStG | 20 Abs. 4 S. 7 + BMF Rz. 97-99 (je Depot) | (all disposals) | estg-20-kapitalvermoegen.md |
 | Bond sale | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | estg-20-kapitalvermoegen.md |
 | Bond maturity (BM) | EStG | 20 Abs. 2 S. 1 Nr. 7 i.V.m. S. 2 (Einlösung) | KAP Z19/22 | estg-20-kapitalvermoegen.md |
 | Option premium (Stillhalter) | EStG | 20 Abs. 1 Nr. 11 | KAP Z19 | estg-20-kapitalvermoegen.md |

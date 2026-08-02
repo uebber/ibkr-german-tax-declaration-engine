@@ -33,9 +33,10 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
 1. **Dividenden** (20 Abs. 1 Nr. 1) -- treatment of stock dividends, scrip dividends, Einlagenrueckgewaehr
 2. **Zinsen** (20 Abs. 1 Nr. 7) -- includes Stueckzinsen treatment
 3. **Stillhalterpraemien** (20 Abs. 1 Nr. 11) -- option premium taxation, Glattstellung as negative income
-4. **Veraeusserungsgewinne** (20 Abs. 2) -- FIFO principle, partial sales
+4. **Veraeusserungsgewinne** (20 Abs. 2) -- partial sales
 5. **Termingeschaefte** (20 Abs. 2 Nr. 3) -- derivative taxation, cash settlement, exercise
-6. **Gewinnermittlung** (20 Abs. 4) -- acquisition cost determination, transaction costs
+6. **Gewinnermittlung** (20 Abs. 4) -- acquisition cost determination, transaction costs;
+   **Fifo-Methode Rz. 97-99** (section I.4.b), see below
 7. **Kapitalmasnahmen** (20 Abs. 4a) -- corporate action treatment (mergers, splits, spin-offs)
 8. **Verlustverrechnung** (20 Abs. 6) -- loss offsetting rules including stock ring-fencing
 
@@ -48,6 +49,17 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
 - Expiration worthless (long): loss under 20 Abs. 2 Nr. 3
 - Expiration worthless (short): no further tax consequence beyond premium already taxed
 - Cash settlement: gain/loss under 20 Abs. 2 Nr. 3a
+
+#### Lot identification (Fifo-Methode, Rz. 97-99)
+- Rz. 97: FIFO under 20 Abs. 4 S. 7 is applied **auf das einzelne Depot bezogen**; a
+  customer instruction naming which security to sell is *einkommensteuerrechtlich
+  unbeachtlich*
+- Rz. 98: an **Unterdepot** counts as a Depot (independent subdivision with its own running
+  number); the customer **may** determine which securities are allocated to which depot
+- Rz. 99: Fifo applies to **Streifbandverwahrung** as well
+- Wording is identical in the 18.01.2016 version -- stable practice, not a 2025 change
+- Full verbatim text and the engine's known deviation:
+  [estg-20-kapitalvermoegen.md](../tax-law/estg-20-kapitalvermoegen.md), "Abs. 4 -- Satz 7"
 
 #### Corporate Actions
 - Stock-for-stock merger: steuerneutral, cost basis rollover (20 Abs. 4a)

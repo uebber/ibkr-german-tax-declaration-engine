@@ -135,9 +135,127 @@ Special benefits or advantages granted in addition to or in place of income unde
 
 **Gain = Sale proceeds - Transaction costs - Acquisition costs (Anschaffungskosten)**
 
-Key principle: FIFO method applies per asset per depot unless specific identification is possible.
+Abs. 4 has **nine Saetze**. Satz 1 defines the gain; **Satz 7** supplies the
+lot-identification fiction that decides *which* Anschaffungskosten are used when several
+lots of the same security are held.
 
 **Engine implementation:** `FifoManager` with lot-level tracking.
+
+### Satz 7 -- FIFO fiction (Verbrauchsreihenfolge)
+
+Statutory text: *"Bei vertretbaren Wertpapieren, die einem Verwahrer zur Sammelverwahrung
+im Sinne des § 5 des Depotgesetzes [...] anvertraut worden sind, ist zu unterstellen, dass
+die zuerst angeschafften Wertpapiere zuerst veraeussert wurden."*
+
+> Verified 2026-08-02 against two Tier 1 sources: gesetze-im-internet.de/estg/__20.html
+> (full sentence, extracted from the official HTML) and dejure.org/gesetze/EStG/20.html
+> (operative clause and Depotgesetz condition agree).
+> Sentence position confirmed by the official numbering: Satz 7 of 9. Satz 8 concerns a
+> Zinsschein separated from the Stammrecht, Satz 9 the allocation of that value -- neither
+> continues the FIFO rule.
+> Umlauts are transliterated per this library's convention. The elision `[...]` is the
+> Depotgesetz version citation, verbatim: *"in der Fassung der Bekanntmachung vom
+> 11. Januar 1995 (BGBl. I S. 34), das zuletzt durch Artikel 4 des Gesetzes vom
+> 5. April 2004 (BGBl. I S. 502) geaendert worden ist, in der jeweils geltenden Fassung"*.
+
+What the statute does and does not say:
+
+- It **is mandatory** -- *"ist zu unterstellen"* is a Fiktion, not a default that the
+  taxpayer may rebut.
+- It does **not** say "per Depot". The only occurrence of "Depot" in Satz 7 is inside the
+  citation *"Depotgesetzes"*. Depot-relatedness comes from Tier 2 (below), not from the
+  statute.
+- It does **not** offer a specific-identification alternative. Its only condition is the
+  form of custody (Sammelverwahrung per § 5 DepotG).
+
+#### Depot-relatedness (Tier 2 -- BMF, this is where "je Depot" comes from)
+
+BMF-Schreiben vom 14. Mai 2025, GZ IV C 1 - S 2252/00075/016/070, *"Einzelfragen zur
+Abgeltungsteuer"*, section I.4.b **Rz. 97-99**. Neufassung of BMF 19.05.2022
+(BStBl I S. 742). The wording is **identical** in BMF 18.01.2016, so this is stable
+administrative practice across both, not a recent change.
+
+Rz. 97: *"Gemaess § 20 Absatz 4 Satz 7 EStG ist bei Wertpapieren bei der Veraeusserung aus
+der Girosammelverwahrung (§§ 5 ff. DepotG) zu unterstellen, dass die zuerst angeschafften
+Wertpapiere zuerst veraeussert werden (Fifo-Methode). Die Anwendung der Fifo-Methode im
+Sinne des § 20 Absatz 4 Satz 7 EStG ist auf das einzelne Depot bezogen anzuwenden. Konkrete
+Einzelweisungen des Kunden, welches Wertpapier veraeussert werden soll, sind insoweit
+einkommensteuerrechtlich unbeachtlich."*
+
+Rz. 98: *"Als Depot im Sinne dieser Regelung ist auch ein Unterdepot anzusehen. Bei einem
+Unterdepot handelt es sich um eine eigenstaendige Untergliederung eines Depots mit einer
+laufenden Unterdepot-Nummer. Der Kunde kann hierbei die Zuordnung der einzelnen Wertpapiere
+zum jeweiligen Depot bestimmen."*
+
+Rz. 99: *"Die Fifo-Methode gilt auch bei der Streifbandverwahrung."*
+
+| Question | Answer | Source |
+|----------|--------|--------|
+| Is FIFO mandatory? | Yes -- Fiktion, not a default | Abs. 4 S. 7 (Tier 1) |
+| May the taxpayer designate which lot is sold? | **No** -- *einkommensteuerrechtlich unbeachtlich* | Rz. 97 S. 3 (Tier 2) |
+| Is FIFO pooled across depots, or per depot? | **Per single depot** | Rz. 97 S. 2 (Tier 2) |
+| Does a sub-depot count as a depot? | **Yes**, if an independent subdivision with its own running number | Rz. 98 (Tier 2) |
+| May the taxpayer choose which depot a security sits in? | **Yes** | Rz. 98 S. 3 (Tier 2) |
+| Does FIFO also apply outside Sammelverwahrung? | Yes, also to Streifbandverwahrung | Rz. 99 (Tier 2) |
+
+The pairing of Rz. 97 S. 3 with Rz. 98 S. 3 is deliberate and is the practically important
+point: **lot selection by sale instruction is disregarded; lot allocation by custody
+placement is respected.** Holding the same ISIN in two depots is therefore a lawful way to
+influence which lots are consumed, whereas instructing the broker which lot to sell is not.
+
+Note also that Sparer-Pauschbetrag and Abs. 6 loss offsetting operate per taxpayer at the
+Veranlagung, across all depots. Depot separation changes the consumption order only.
+
+#### Correction of a previous entry in this file
+
+Until 2026-08-02 this section read, without any source:
+
+> *"Key principle: FIFO method applies per asset per depot unless specific identification
+> is possible."*
+
+The *"unless specific identification is possible"* clause is **wrong** and is removed.
+It is contradicted by Rz. 97 S. 3 (customer instructions on which security to sell are
+irrelevant for income tax) and by Rz. 99 (FIFO applies even to Streifbandverwahrung, so
+individual custody is not an escape either). The clause was a live hazard rather than a
+harmless imprecision: IBKR itself supports lot-matching methods (LIFO, specific lot,
+MaxLoss) and its realized-P&L output may reflect them, so an engine change that adopted
+IBKR's lot matching would have been endorsed by this library while being contrary to
+Rz. 97 S. 3. The "per depot" half was substantively correct but unsourced; it is now
+carried by Rz. 97 S. 2.
+
+#### Open question -- foreign custody (NOT settled, do not cite as resolved)
+
+Satz 7 conditions the fiction on Sammelverwahrung *im Sinne des § 5 DepotG* -- a German
+statute -- and Rz. 97-99 are written from the perspective of a German depotfuehrende
+Stelle. Securities held through a foreign broker may sit in omnibus custody or in
+Wertpapierrechnung, which is not § 5 DepotG Sammelverwahrung. Rz. 99 extending the method
+to Streifbandverwahrung shows the administration applies FIFO irrespective of custody
+form, which makes FIFO itself safe; what Rz. 97-99 do not squarely address is whether the
+*"einzelnes Depot"* boundary transposes to a foreign broker's account/sub-account
+structure. No Tier 1 or Tier 2 source located that settles this. Per-account FIFO is the
+defensible reading and matches the administration's evident intent, but it is reasoned,
+not sourced.
+
+Practical consequence: this engine's outputs are Veranlagungsfaelle under § 32d Abs. 3
+(foreign broker, no inlaendische Zahlstelle, no Steuerbescheinigung), so no bank has
+applied FIFO and the taxpayer both computes and evidences it. § 90 Abs. 2 AO imposes an
+erhoehte Mitwirkungspflicht for foreign matters, so a per-depot result must be evidenced
+by per-account holdings, not merely asserted.
+
+**Engine mapping and known deviation:** `FifoManager` currently keys ledgers by asset
+only and reads no account identifier anywhere in `src/engine/`, `src/domain/` or
+`src/processing/` -- i.e. FIFO is pooled across accounts. This **deviates from Rz. 97
+S. 2**. It is currently without effect on the maintainer's own declaration, whose input
+data contains exactly one `ClientAccountID` across all 6,976 trades from 2021-01-11 to
+2025-12-31; per-depot and pooled FIFO coincide when there is one depot. For any taxpayer
+holding one ISIN in two accounts the pooled result is wrong. Flagged here per the
+CLAUDE.md ground rule that code/reference conflicts are surfaced, not silently followed.
+Note that a transfer between the taxpayer's own depots is **not** a Veraeusserung under
+Abs. 2 (no change of beneficial owner, no consideration): acquisition date and cost carry
+over to the receiving depot, so a per-depot implementation must relocate lots rather than
+close and reopen them. The § 43 / § 43a Depotuebertrag rules (BMF Rz. 162-173, 184a-193)
+are Kapitalertragsteuer provisions addressed to German institutions and do not apply to a
+foreign broker; they cannot be cited for the disposal question.
 
 ### Abs. 4a -- Corporate Actions (Kapitalmasnahmen)
 
