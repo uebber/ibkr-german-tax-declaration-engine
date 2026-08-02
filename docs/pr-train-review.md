@@ -355,11 +355,22 @@ Two things to scrutinise when reached:
   German KESt. Instances in `private/real-data-observations.md` (not published).
   Fully researched — see `reference/tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md`,
   section 6 for the required fix. **Not implemented.**
-- **`data_import/` is missing on this machine**, so real-data parity could not be run for
-  #19; only the prepared `data/` working copy survives. #19 was verified against a synthetic
-  two-account set built with its own harness builders, constructed so that pooled FIFO gives
-  2250.00 and per-Depot gives 250.00. Restore `data_import/` before the next review that
-  needs a parity run.
+- **`data_import/` was lost and has been rebuilt** from the derived `data/` copy with
+  `scripts/rebuild_data_import.py --verify` (round trip lossless). Snapshot files survive
+  for **one tax year only**, so parity runs are limited to that year until the earlier
+  years' Positions/Cash_Balance files are re-downloaded from IBKR. Real-data parity on that
+  year is confirmed working: two same-tree captures compare identical on console and PDF.
+- **Same-date event processing order is nondeterministic (found 2026-08-02, not fixed).**
+  Two runs of identical code over the real 2025 data permute 12 log lines: several
+  `OPTION_CASH_SETTLEMENT` events falling on the same date are processed in a different
+  order each run. Tax figures were unaffected — console report and PDF compared identical —
+  so this is not a live defect, but the ordering is unstable, which suggests a sort keyed on
+  date without a stable tiebreaker. It matters for the per-Depot work: once lots are
+  partitioned per account, the order in which same-day disposals consume lots can change
+  which lot each one takes. Worth pinning a deterministic secondary sort key before #31/#32
+  land. This is also why the parity gate treats a log-only difference as non-fatal
+  (`PARITY_STRICT_LOG=1` to enforce) — with the streams split, console and PDF are compared
+  strictly and only the log tolerates it.
 - **No CI.** No `.github/workflows`. Every "green" claim in the train is unverified by
   anything observable; each review currently costs a manual baseline-control run.
 - `VALIDATION_REPORT.md` findings 2–6 remain open (finding 1 is handled by #21).
