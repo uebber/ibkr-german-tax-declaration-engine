@@ -41,7 +41,7 @@ class ProcessingOutput:
         self.all_financial_events_enriched = all_financial_events_enriched
         self.asset_resolver = asset_resolver
         self.eoy_mismatch_error_count = eoy_mismatch_error_count
-        # AR6 data-gap channel: every "input could not fully support the
+        # Data-gap channel: every "input could not fully support the
         # computation" condition, for the report's gap section.
         self.data_gaps: List["DataGap"] = data_gaps or []
         # For EOY state checks in tests, final assets can be fetched from asset_resolver

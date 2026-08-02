@@ -1,22 +1,44 @@
 # src/processing/data_gaps.py
 """
-Data-gap channel (rework2-plan AR6) — ONE path for "the input could not fully
-support the computation" instead of scattered ad-hoc fallbacks.
+Data-gap channel — one path for "the input could not fully support the
+computation", replacing per-site ad-hoc decisions about missing data.
 
-Why: the legal review found two failure classes born from local convenience
-decisions about missing data — silent zeros that UNDERSTATE income (missing
-Basiszins, missing fund NAV → finding F4/F6) and quiet evidentiary mismatches
-(SoY/EOY reconciliation). Every such condition now flows through a collector
-with an explicit severity policy:
+Why: conditions of this kind used to be settled locally, each in its own way —
+a silent zero here, a log line there — and the two ways of getting it wrong
+have very different costs. A silent substitute value UNDERSTATES income and is
+invisible in the output; an unreconciled divergence is visible only to whoever
+reads the log. The collector makes the choice explicit and reviewable:
 
-- ``FAIL_FAST``  — conditions under which continuing would risk UNDERSTATING
-  taxable income (e.g. an unresolvable year-start NAV for the Vorabpauschale
-  in a non-interactive run). Raises immediately: a tax engine must not emit a
-  plausible-looking but incomplete declaration.
-- ``WARNING``    — evidentiary divergences that do not silently change the
-  declared figures (e.g. EOY quantity mismatches against the broker report).
-  Recorded, logged, and surfaced as an explicit report section so the user
-  reviews them instead of finding them in a log file.
+- ``FAIL_FAST``  — continuing would risk UNDERSTATING taxable income (e.g. an
+  unresolvable year-start NAV for the Vorabpauschale in a non-interactive run,
+  where the deemed income simply cannot be computed). Raises immediately: a tax
+  engine must not emit a plausible-looking but incomplete declaration. This is
+  the same policy CLAUDE.md states for the engine at large.
+- ``WARNING``    — the run can produce a complete set of figures, but the input
+  leaves a divergence the taxpayer has to resolve before filing. Recorded,
+  logged, and surfaced as an explicit report section rather than a log line.
+
+Scope, stated precisely because the severity words above are easy to over-read:
+today exactly one condition is routed through this channel — the End-of-Year
+quantity mismatch against the broker's positions report, at WARNING. That
+choice preserves the engine's pre-existing behaviour (log, count, continue),
+which is deliberate: an EoY mismatch here is normally the pre-2021 data-floor
+artefact, and aborting would make early tax years unprocessable.
+
+**A WARNING is not a statement that the declared figures are unaffected.** An
+EoY quantity mismatch is the very signature of a disposal the engine did not
+process: if the calculated position exceeds the reported one, a sale is missing
+and with it its realised gain, so income is understated by exactly the amount
+nobody can see. WARNING here means "the engine cannot decide this for you and
+will not pretend it did" — the figures must be reconciled by hand before the
+declaration is filed.
+
+Conditions NOT routed through this channel (each still handled at its own site,
+each recorded as an open item in docs/pr-train-review.md): the event-separation
+loop's silent drop of an unsortable event, ``_apply_historical_currency_event``
+swallowing every exception at DEBUG level, and Pass 2's warn-and-continue on a
+missing merger source ledger. Wiring those up is future work, not a property of
+this module.
 
 The collector travels with the pipeline result (``ProcessingOutput.data_gaps``)
 and the reporting layer renders all collected gaps.
@@ -26,6 +48,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
+from src.domain.exceptions import ProcessingError
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,9 +58,15 @@ class GapSeverity(Enum):
     FAIL_FAST = "FAIL_FAST"
 
 
-class DataGapError(RuntimeError):
+class DataGapError(ProcessingError):
     """Raised when a FAIL_FAST gap is recorded: continuing would risk an
-    incomplete (income-understating) tax computation."""
+    incomplete (income-understating) tax computation.
+
+    Subclasses ``ProcessingError`` so it lands in the exception taxonomy
+    CLAUDE.md defines for the engine, and so an ``except ProcessingError``
+    handler cannot miss it. ``ProcessingError`` is itself a ``RuntimeError``,
+    so nothing that caught the original type stops catching this one.
+    """
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime, date
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
-from src.processing.data_gaps import DataGapCollector, GapSeverity
+from src.processing.data_gaps import DataGapCollector
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,

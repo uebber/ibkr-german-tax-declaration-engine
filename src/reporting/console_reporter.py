@@ -273,7 +273,11 @@ def generate_console_tax_report(
 
     print("\n--- Hinweise und Warnungen ---")
     if eoy_mismatch_count > 0:
-        print(f"  ACHTUNG: {eoy_mismatch_count} kritische Differenzen bei der End-of-Year Mengenvalidierung festgestellt. Siehe Log für Details.")
+        # The per-asset detail used to live only in the log; the data-gap
+        # channel now carries it into the report, so point there when it does.
+        _detail_pointer = ("Details siehe Abschnitt 'DATENLÜCKEN / HINWEISE' unten."
+                           if data_gaps else "Siehe Log für Details.")
+        print(f"  ACHTUNG: {eoy_mismatch_count} kritische Differenzen bei der End-of-Year Mengenvalidierung festgestellt. {_detail_pointer}")
     else:
         print("  Keine kritischen Differenzen bei der End-of-Year Mengenvalidierung festgestellt (basierend auf Log-Analyse).")
 
@@ -281,7 +285,7 @@ def generate_console_tax_report(
     print("  Verlustvorträge über Steuerjahre hinweg sind nicht implementiert.")
     print("  Die endgültige Steuerlast (Sparer-Pauschbetrag, Steuersätze, Soli, KiSt) wird nicht berechnet.")
     print("  Alle Angaben ohne Gewähr. Bitte überprüfen Sie alle Zahlen sorgfältig und konsultieren Sie ggf. einen Steuerberater.")
-    # AR6 data-gap channel: surface every recorded gap as an explicit report
+    # Data-gap channel: surface every recorded gap as an explicit report
     # section — the user reviews them here, not in a log file. Printed only
     # when gaps exist (clean runs are unchanged).
     if data_gaps:
