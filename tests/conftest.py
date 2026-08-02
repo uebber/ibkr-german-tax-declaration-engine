@@ -137,18 +137,38 @@ def default_tax_year():
     return 2023
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 def _global_config_leak_tripwire():
-    """AR1 guard: no test may leak a mutated global config value past its own
-    teardown. The F1 incident: a leaked src.config.TAX_YEAR made group-6
-    results depend on which modules ran before it. Patches via pytest's
-    monkeypatch are auto-reverted; anything else trips this wire."""
+    """No test may leak a mutated global config value past its own teardown.
+
+    The incident this guards: a leaked src.config.TAX_YEAR made group-6 results
+    depend on which modules ran before it. Patches via pytest's monkeypatch are
+    auto-reverted; anything else trips this wire.
+
+    Deliberately PER-TEST and over EVERY uppercase config attribute, because a
+    session-scoped probe on TAX_YEAR alone has three blind spots, all verified
+    against deliberately broken trees:
+      * leak-then-restore — one test corrupts TAX_YEAR, a later one happens to
+        set it back, session-level before/after match and the run is green even
+        though every test in between ran corrupted. That is exactly the shape of
+        the original incident.
+      * every other config global is unwatched, including the legally-relevant
+        APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING.
+      * the failure is attributed to whichever test happened to run last, not to
+        the one that leaked.
+    """
     from src import config as app_config
-    before = app_config.TAX_YEAR
+    watched = [name for name in dir(app_config) if name.isupper()]
+    sentinel = object()
+    before = {name: getattr(app_config, name) for name in watched}
     yield
-    after = app_config.TAX_YEAR
-    assert after == before, (
-        f"GLOBAL CONFIG LEAK: src.config.TAX_YEAR changed from {before} to "
-        f"{after} during the test session — some test mutated it without "
-        f"teardown (use the monkeypatch fixture)."
+    changed = {
+        name: (before[name], getattr(app_config, name, sentinel))
+        for name in watched
+        if getattr(app_config, name, sentinel) != before[name]
+    }
+    assert not changed, (
+        f"GLOBAL CONFIG LEAK: this test mutated src.config without restoring it: "
+        f"{ {k: f'{v[0]!r} -> {v[1]!r}' for k, v in changed.items()} }. "
+        f"Use the monkeypatch fixture so the change is auto-reverted."
     )
