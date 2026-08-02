@@ -2,8 +2,8 @@
 
 **Branch:** `hermetic-tests-first` (local only, never pushed)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 8 of 25 PRs reviewed and accepted; 17 not yet reviewed.
-**Next up:** #23 (train 8). Rebase remaining branches from `1382bb9`; see section 5.
+**Status as of 2026-08-02:** 9 of 25 PRs reviewed and accepted; 16 not yet reviewed.
+**Next up:** #24 (train 9). Rebase remaining branches from `ac1e9a1`; see section 5.
 **Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
 issue #15, no CI added. All of that is still open for decision.
 
@@ -20,6 +20,12 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+edda318 chore(engine): finish the LedgerKey conversion in the annotations      [ours]
+0ad410d tests: close the blind spot at the Pass 2 merger source lookup         [ours]
+3d3873b fix: drop the merger lookup's test-only fallback, re-key fixtures      [ours]
+d6537aa fix(engine): aggregate view's lot order matches the ledgers            [ours]
+05b839b fix(tax-law): cite the Depot rule where it actually comes from         [ours]
+3b8012c refactor: LedgerKey seam — (account, asset) + views          (PR #23, Fsaupe)
 f5248a3 fix(engine): refuse an undecidable §23 case; truthful flag             [ours]
 f2e5cc3 fix(tax-law): cite the reference, refuse an undefined §23 period       [ours]
 24b3c1f docs(reference): root the §23 Jahresfrist at Tier 1; §108 Abs. 3 open  [ours]
@@ -59,7 +65,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 462 tests pass on a simulated clean clone
+**Verification at HEAD:** 466 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -597,6 +603,126 @@ all known noise — the fail-fast branch never fires on the real data.
 touches the §23 branches in `fifo_manager.py`, so all five defects would have survived to the
 end of the train.
 
+### PR #23 (train 8) — LedgerKey seam, `(account, asset)`-keyed ledgers — **ACCEPTED after knowledge-store repair**
+
+Rebased clean from `1382bb9`. 462 → 463 tests, green on the clean-clone protocol and with
+the real config. Real-data parity for 2025: **console IDENTICAL, PDF IDENTICAL**, log 14
+lines against a same-tree control of 10, every one of them the known
+`OPTION_CASH_SETTLEMENT` permutation and nothing else. The "no behaviour change" claim
+holds.
+
+**This is the first PR in the train whose new guard passed calibration unmodified** — four
+deliberately broken `ledger_views` (drop the asset filter, drop the sort, take only the
+first ledger, match on account instead of asset) all trip `test_ledger_views.py`. After four
+consecutive PRs shipping instruments that could not see what they claimed to check, that is
+worth recording as a break in the pattern rather than a non-event.
+
+**And unlike #20's `RunContext`, this seam is really consumed.** Scanning every `pr/*` ref:
+`ledger_views.py` and `account_utils.py` are created here, never modified again, and by
+`pr/40` `ledgers_for_asset` / `aggregate_lots` feed the EoY validation and the Vorabpauschale
+(`calculation_engine.py:1029/1097/1185`) while `account_key()` replaces `DEFAULT_ACCOUNT` at
+all fourteen lookup sites. The right-sizing caveat recorded against #20 does **not** apply
+here — this is load-bearing infrastructure for #31/#32, introduced one commit ahead of use.
+
+**Defect 1, moderate — the seam is justified by a rule the statute does not contain, and the
+store already said so (`05b839b`). Fifth instance of the citation pattern, and the first to
+contradict `reference/` rather than outrun it.** Three docstrings and the commit message
+assert *"Per-Depot is the statutory FIFO unit (§ 20 Abs. 4 S. 7 EStG)"*; `account_utils.py`
+goes further with a bare *"German FIFO (§ 20 Abs. 4) is applied per custody account"*. Our
+`a40acce` had already established in `estg-20-kapitalvermoegen.md` that Satz 7 mandates the
+FIFO fiction for Sammelverwahrung per § 5 DepotG and that its only "Depot" is inside
+*"Depotgesetzes"* — "je Depot" is Tier 2, BMF 14.05.2025 Rz. 97 S. 2. So this is not a gap in
+the store, it is the code contradicting it, which CLAUDE.md says to surface rather than
+follow. The bare "§ 20 Abs. 4" is the citation-by-section form #22 sharpened.
+
+Both docstrings now also carry the question the seam silently answers: § 5 DepotG is German
+and Rz. 97–99 are written for a German depotführende Stelle, so whether the *"einzelnes
+Depot"* boundary transposes to a **foreign** broker's sub-accounts is reasoned, not sourced —
+recorded as open since #19 and never cited by the PR that builds on it.
+
+**Note for #31:** `7085652` repeats the same sentence verbatim in its commit message. The
+correction belongs there too.
+
+Also corrected: the reference's own *"Engine mapping and known deviation"* note, which #23
+made stale — the registries are no longer keyed by asset only. The substantive deviation is
+unchanged (every write is `DEFAULT_ACCOUNT`, so FIFO is still pooled).
+
+**Defect 2, moderate, latent — `aggregate_lots` sorts by a raw date string with no tie-break
+(`d6537aa`).** Every other lot sort in the engine uses `(parse_ibkr_date(...) or
+datetime.min.date(), source_transaction_id)`; this one used `lambda l: l.acquisition_date`.
+Two problems, neither reachable at this commit because nothing calls the view yet, both
+reachable at `pr/40` where it feeds the Vorabpauschale:
+
+1. `acquisition_date` is IBKR-sourced and only *documented* as ISO. `parse_ibkr_date` also
+   accepts `YYYYMMDD`, `MM/DD/YYYY`, `DD.MM.YYYY`, and those do not sort lexicographically
+   against ISO — `"2024-12-31" < "20240501"` as strings, because `-` is `0x2D`. Production
+   does normalise to ISO (`_get_prioritized_date` returns `.isoformat()`), so the shipped
+   sort is *coincidentally* right; the rest of the codebase parses first **and** logs
+   unparseable dates, which is a fair sign its authors did not treat the format as given.
+2. No tie-break, so same-date lots in different Depots fall back to `sorted`'s stability —
+   i.e. to registry iteration order, i.e. to the order the ledgers were constructed in. That
+   is the same conflation of "unique" with "deterministic" already recorded against PRD 5.8,
+   and after the flip it decides which Depot's tranche is which.
+
+Two red-first tests added (mixed formats ordered chronologically; a registry built in both
+orders yielding the same sequence).
+
+**Defect 3, low-moderate — production carries a branch only tests reach (`3d3873b`).**
+`MergerStockProcessor` gained a second lookup accepting a bare `asset_id` when the tuple
+misses, commented *"used by some unit tests passing hand-built ledger dicts"*. Nothing in
+`src/` writes a bare key, so it is unreachable in production — the mirror image of #20's
+Defect 1, and permanent: it survives unmodified to `pr/40` with per-Depot FIFO live. Removed;
+the seven hand-built registries in `tests/test_stock_merger_fifo.py` are re-keyed to
+`(DEFAULT_ACCOUNT, asset_id)` instead, so those tests now exercise the lookup production
+performs. Pre-existing tests, so cleared with the owner first. Calibrated: reverting one
+registry to the bare shape now fails.
+
+**Defect 4, moderate — five of the fourteen converted lookup sites are invisible to the
+entire suite.** Probed one at a time by reverting the site to a bare key and running all 463
+tests:
+
+| site | suite |
+|---|---|
+| `calculation_engine.py:277` historical merger **source** | **blind** |
+| `calculation_engine.py:645` currency EoY validation | **blind** |
+| `corporate_action_processor.py:106` MergerCash currency ledger | **blind** |
+| `trade_processor.py:450` currency ledger (2nd site) | **blind** |
+| `option_processor.py:460` OptionCashSettlement currency ledger | **blind** |
+| the other nine | caught (2–105 failures each) |
+
+So "verified by full suite" covers nine of fourteen; the rest rest on the 2025-only parity
+run. That run does exercise site 277 — the real data replays one historical merger, 2 lots,
+successfully — which is why the acceptance still stands.
+
+Site 277 is the sharp one, and probing it surfaced a **pre-existing** defect worth its own
+entry. The two lookups opening the replay are asymmetric: a missing **target** raises, a
+missing **source** only warns and `continue`s. A skipped merger is then absorbed by Pass 3,
+which reconciles against the SoY snapshot and synthesises a fallback lot — and because a
+merged holding's SoY cost basis *is* the carried-over basis, that fallback reproduces
+quantity, cost basis, proceeds and gain exactly. Proven with a probe that raises instead of
+warning: under the mutation the source lookup **does** miss on both historical-merger tests,
+and both still pass.
+
+What the fallback does not reproduce is the acquisition date — it dates the lot
+`f"{tax_year-1}-12-31"`. `test_chained_mergers_historical`'s own docstring says the sale
+"uses AAA's original acquisition date" and then never asserts it. New guard `0ad410d` pins
+exactly that; on the broken tree it is the **only** failure out of 466. For a STOCK the date
+moves no declared figure, but for a `PRIVATE_SALE_ASSET` it decides the § 23 Jahresfrist #22
+has just been hardened around. Per the owner's decision the warn-vs-raise asymmetry itself is
+left alone and recorded in section 8.
+
+**Defect 5, nits (`edda318`).** Five signatures still declared the registries as
+`Dict[uuid.UUID, FifoLedger]` after the keys became tuples, and stay wrong through `pr/40`;
+corrected. Double trailing comment un-nested. Two things left alone **deliberately**, both
+checked against `pr/40`: the now-unused `account_key` imports (the flip calls
+`account_key(event.account_id)` at those exact sites) and `for (ledger_account, asset_id)`
+in Pass 3, whose loop variable looks unused here but becomes load-bearing at `pr/40`.
+Also dropped the "rework2 AR4" markers — `rework2-plan.md` is the deliberately dropped
+`af95b72`, same dangling-reference class as `e467cad` and `f2e5cc3`, fourth instance.
+
+**Everything found in #23 is fixed in commits**, except the merger warn-vs-raise asymmetry,
+which is pre-existing and now an open item.
+
 ## 4. Cross-cutting pattern
 
 Across eight PRs: **the code and tests are consistently sound; the legal and factual prose is
@@ -638,16 +764,35 @@ instrument nobody calibrated is worth nothing.
 This pattern is now reliable enough to be a checklist item rather than an observation:
 **for every new guard, write the tree that should trip it and confirm it does.**
 
+**#23 is the first PR to break that streak** — all four mutations of `ledger_views` trip its
+new test, unmodified. Keep running the calibration, but the pattern is now four for five,
+not four for four.
+
+**Third pattern, new with #23: the suite's blind spots are not where the diff is.** Probing
+each converted lookup site individually found five of fourteen that the whole 463-test suite
+cannot observe. Two of those five are the FX/currency paths and one is the option cash
+settlement — the same corner as the known same-date nondeterminism. A green suite on a
+mechanical, repetitive refactor says much less than it appears to: the sites the tests do
+reach fail loudly (2–105 failures), so a passing run mostly proves the *covered* sites were
+converted, not the uncovered ones. Worth doing on every remaining mechanical refactor in the
+train, since #31/#32 convert these exact call sites again for real.
+
+And the masking mechanism found underneath it generalises: **Pass 3's SoY reconciliation can
+paper over an engine failure with a plausible number.** It rebuilds whatever the replay did
+not, from the Positions snapshot, so any bug that loses lots is invisible in every figure
+except the acquisition date. Any future test asserting only quantity/basis/proceeds/gain on
+a scenario with an SoY snapshot is weaker than it looks.
+
 ---
 
-## 5. Verified migration path for the remaining 19 PRs
+## 5. Verified migration path for the remaining 16 PRs
 
-The first eight commits of every branch in the train are exactly the ones absorbed here
-(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`, `4eeeffb`, `1382bb9`), so
-one command migrates any of them:
+The first nine commits of every branch in the train are exactly the ones absorbed here
+(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`, `4eeeffb`, `1382bb9`,
+`ac1e9a1`), so one command migrates any of them:
 
 ```
-git rebase --onto <new-main> 1382bb9 <branch>   # 4eeeffb before #22 was absorbed
+git rebase --onto <new-main> ac1e9a1 <branch>   # 1382bb9 before #23 was absorbed
 ```
 
 Simulated against this branch's HEAD:
@@ -657,7 +802,8 @@ Simulated against this branch's HEAD:
 | ~~#20~~ | absorbed (`16cd0c8`) |
 | ~~#21~~ | absorbed (`88a91e9`); its 4 conflict hunks resolved, `KNOWN-WRONG` markers retired |
 | ~~#22~~ | absorbed (`e0026da`); rebased clean, no conflicts |
-| #23–#40 | rebase from `1382bb9` |
+| ~~#23~~ | absorbed (`3b8012c`); rebased clean, no conflicts |
+| #24–#40 | rebase from `ac1e9a1` |
 
 Note for whoever lands #21 onward: our `a7f7032` removed `src.config` from `src/cli.py` and
 moved the default-PDF-filename derivation into `src/main.py`. No commit in #21–#40 touches
@@ -726,6 +872,19 @@ VALIDATION_REPORT finding #1 is marked resolved there.
   `PRIVATE_SALE_ASSET` / `SECTION_23` line. `dc05960` (#29) does edit `src/domain/results.py`,
   but its hunk is the `RealizedGainLoss` field block, ending at the `def __post_init__` line;
   our change is inside that method's §23 block, several lines below its context.
+- **Our #23 fixes conflict with nothing.** Verified by scanning every `pr/*` ref: no commit
+  in #24–#40 touches `src/engine/ledger_views.py`, `src/utils/account_utils.py` or
+  `tests/test_ledger_views.py`, and the only commit touching
+  `tests/test_stock_merger_fifo.py` is `f90c319` (#33, already absorbed). `7085652` (#31)
+  edits `currency_conversion_processor.py` only at lines 85 and 100, not the signature our
+  `edda318` re-annotated.
+- **#31 (`7085652`) repeats #23's mis-citation verbatim** — *"§20 Abs. 4 S. 7 EStG applies
+  FIFO je Depot"* in its commit message. Apply the same correction (Rz. 97 S. 2) when it is
+  reached, and check the reference's "known deviation" note again: #31 is the commit that
+  actually ends the deviation, so that paragraph must be rewritten, not merely updated.
+  Two things in its description to verify rather than accept: *"no per-account row -> SoY 0,
+  **silently**"* is exactly the shape of the silent-default defects fixed in #18 and #22, and
+  it claims to remove the orchestrator's merged-FX limitation warning.
 - **Leave `reference/investment-tax-law/invstg-18-vorabpauschale.md` to #29.** It rewrites
   that file with verbatim §18 Abs. 3 and the Zuflussprinzip mapping, and also flags that the
   store's current "Z55" mapping for the §19 disposal deduction is wrong (Z55 =
@@ -734,7 +893,7 @@ VALIDATION_REPORT finding #1 is marked resolved there.
 
 ## 7. Knowledge-store scan of the unreviewed PRs
 
-8 of 25 touch `reference/`: #18, ~~#21~~, ~~#22~~, #28, #29, #32, #35, #40. Quality improves sharply
+8 of 25 touch `reference/`: #18, ~~#21~~, ~~#22~~, #28, #29, #32, #35, #40. (#23 touches none, but is justified by one — see its verdict.) Quality improves sharply
 after #18 — #22 (§108 AO i.V.m. §§187/188 BGB anniversary arithmetic incl. leap year), #29
 (§18 Abs. 2 S. 2 partial-year + §18 Abs. 3 verbatim deemed-inflow) and #35 (Einlagenrückgewähr,
 explicitly separating settled law from open questions) are the strongest legal work in the train.
@@ -774,6 +933,24 @@ Two things to scrutinise when reached:
   to ten years for an asset that produced income. Both documented as unimplemented in
   `estg-23-private-veraeusserung.md`; neither is reachable in the current data.
 
+- **A missing merger SOURCE ledger is skipped silently, and Pass 3 hides it (found in #23).**
+  In `run_main_calculations` Pass 2, a missing **target** ledger raises but a missing
+  **source** ledger only logs a warning and `continue`s. The un-transferred lots are then
+  rebuilt by Pass 3's SoY reconciliation as a fallback lot dated `f"{tax_year-1}-12-31"` with
+  the cost basis read from the Positions file — which for a merged holding is the correct
+  basis, so quantity, cost basis, proceeds and gain all come out right and only the
+  acquisition date is wrong. Same silent-default shape as #18's `320e20a` and #22's
+  `f5248a3`, but pre-existing and outside #23's diff, so by the owner's decision only test
+  coverage was added (`0ad410d`), not a fail-fast. Does not fire on the real 2025 data (the
+  one historical merger there replays successfully). Harmless for STOCK; for a
+  `PRIVATE_SALE_ASSET` it would flip the § 23 Jahresfrist. A fix should make source-None
+  raise `ProcessingError`, consistent with the target branch two lines below it.
+- **Four ledger-lookup sites remain unobservable to the test suite (found in #23).**
+  `calculation_engine.py:645` (currency EoY validation), `corporate_action_processor.py:106`
+  (MergerCash currency ledger), `trade_processor.py:450` and `option_processor.py:460`. Each
+  can be broken outright with all 466 tests still green; site 277 is now covered by
+  `0ad410d`. Three of the four are FX/currency paths. #31 rewrites all of them for real
+  per-Depot keys, so coverage here is worth adding before that lands rather than after.
 - **German KESt misdeclared as foreign tax.** `loss_offsetting.py:167-171` sums every
   `WithholdingTaxEvent` into Zeile 41 (*ausländische* Steuern) with no country filter, and the
   engine has no Zeile 7/37/38/39 at all. Confirmed in real data: several German issuers'
@@ -855,8 +1032,8 @@ Structural rule that makes this work, and that must be maintained:
 > **Fsaupe's commits are cherry-picked unmodified. Every correction of ours is a separate
 > commit on top.** Never amend, squash, or fold a fix into one of their commits.
 
-Current state on this branch: 9 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
-26 authored by the repo owner. Committer is the repo owner throughout (normal for
+Current state on this branch: 10 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
+31 authored by the repo owner. Committer is the repo owner throughout (normal for
 cherry-pick; GitHub attributes by Author).
 
 ### Original → landed SHA map
@@ -873,6 +1050,7 @@ cherry-pick; GitHub attributes by Author).
 | #20 | `960d1ab` | `16cd0c8` | Fsaupe |
 | #21 | `4eeeffb` | `88a91e9` | Fsaupe |
 | #22 | `1382bb9` | `e0026da` | Fsaupe |
+| #23 | `ac1e9a1` | `3b8012c` | Fsaupe |
 
 All original SHAs remain resolvable in the local object store via the fetched `pr/*` refs
 (`git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'`).
@@ -886,7 +1064,8 @@ All original SHAs remain resolvable in the local object store via the fetched `p
    (`2383b8a` for #33; `f5e8c0c` for #16/#17; `547df96`+`76cb8df`+`320e20a` for #18;
    `96d4312`+`a40adce` for #19; `a7f7032`+`fa05198`+`e467cad` for #20;
    `df8dd6b`+`7bfc8fa`+`a6ff53d`+`a41dbb9`+`a96a5fd` for #21;
-   `24b3c1f`+`f2e5cc3`+`f5248a3` for #22) so the
+   `24b3c1f`+`f2e5cc3`+`f5248a3` for #22;
+   `05b839b`+`d6537aa`+`3d3873b`+`0ad410d`+`edda318` for #23) so the
    trail from PR to commit is explicit.
 3. Reference the PR numbers in the merge commit body so GitHub cross-links them.
 4. Fsaupe's contribution graph credits the Author email regardless of who merges, so no
