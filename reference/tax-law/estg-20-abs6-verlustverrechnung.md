@@ -3,8 +3,10 @@
 ## Source
 
 - **Primary:** [gesetze-im-internet.de -- 20 EStG](https://www.gesetze-im-internet.de/estg/__20.html)
+- **Primary (application rule):** [gesetze-im-internet.de -- 52 EStG](https://www.gesetze-im-internet.de/estg/__52.html), [dejure.org -- 52 EStG](https://dejure.org/gesetze/EStG/52.html)
 - **Amendment history:** [buzer.de -- 20 EStG Versionen](https://www.buzer.de/gesetz/4499/v62240.htm)
-- **Key amendment:** Jahressteuergesetz 2024 (BGBl. I 2024 Nr. 387), effective retroactively for all open cases
+- **Amendment synopsis (52 EStG, JStG 2024):** [buzer.de](https://www.buzer.de/gesetz/4499/al208581-0.htm)
+- **Key amendment:** Jahressteuergesetz 2024 (BGBl. I 2024 Nr. 387), effective retroactively for all open cases -- see "The repeal and its application rule" below for the verbatim provision
 
 ## Relevance to Engine
 
@@ -33,20 +35,60 @@ This creates a separate loss pool (Aktienverlusttopf). Carryforward applies unde
 
 **Engine mapping:** `ANLAGE_KAP_AKTIEN_VERLUST` (Zeile 23) kept separate from other losses
 
+### Satz 5 (current) -- Bescheinigung requirement
+
+**Careful: the sentence numbering shifted.** After the JStG-2024 repeal, Abs. 6 has **five
+Saetze**, and the *current* Satz 5 is the former Satz 7: losses subject to
+Kapitalertragsteuer may only be offset or carried forward if a Bescheinigung within the
+meaning of 43a Abs. 3 Satz 4 EStG is presented. A bare citation of "20 Abs. 6 Satz 5"
+written before 02.12.2024 means the derivative cap; written after, it means this rule.
+Always state the Fassung.
+
 ### Satz 5 a.F. -- Derivative loss cap (ABOLISHED)
 **Former rule (VZ 2021-2024):** Losses from Termingeschaefte could only be offset up to EUR 20,000 per year against gains from Termingeschaefte and Stillhalterpraemien.
 
-**Abolished by:** JStG 2024, Art. 1 Nr. 10 (BGBl. I 2024 Nr. 387, 02.12.2024)
-- Retroactive application to all open cases (52 Abs. 28 EStG n.F.)
-- Existing loss carryforwards from Termingeschaefte are fully usable
-- BFH had signaled unconstitutionality: Beschluss vom 07.06.2024, VIII B 113/23
-
-**Source:** [Bayerisches Landesamt fuer Steuern -- Verlustverrechnungsbeschraenkungen](https://www.lfst.bayern.de/aktuelles/gesetzliche-aenderungen/details?tx_news_pi1%5Baction%5D=detail&tx_news_pi1%5Bcontroller%5D=News&tx_news_pi1%5Bnews%5D=321&cHash=938da14ac42f3754b4f9dc47963cbab2)
-
 ### Satz 6 a.F. -- Worthless securities cap (ABOLISHED)
-**Former rule:** Losses from total loss (Ausfall/Ausbuchung) of Wirtschaftsguetern capped at EUR 20,000 per year.
+**Former rule (VZ 2020 onwards):** Losses from total loss (Ausfall/Ausbuchung) of Wirtschaftsguetern capped at EUR 20,000 per year.
 
-**Also abolished** by JStG 2024, same retroactive scope.
+### The repeal and its application rule (Tier 1, verbatim)
+
+Both caps were struck by **JStG 2024, Art. 1 Nr. 10 (BGBl. I 2024 Nr. 387, 02.12.2024)**;
+Abs. 6 Satz 5 und 6 a.F. *"werden aufgehoben"*. The scope of the repeal is decided not by
+20 Abs. 6 itself but by the application rule in **52 Abs. 28 EStG**, which the same
+Article amended. Absatz 28 has 26 Saetze; the last two are the ones that matter:
+
+- **52 Abs. 28 Satz 25 EStG n.F.** -- *"[20 Absatz 6 Satz 5 in der Fassung des Gesetzes
+  vom 21. Dezember 2020 (BGBl. I S. 3096)] ist auf alle offenen Faelle nicht mehr
+  anzuwenden."*
+- **52 Abs. 28 Satz 26 EStG n.F.** -- identical wording for **20 Absatz 6 Satz 6**.
+
+> Verified 2026-08-02 against Tier 1 sources. Wording and sentence positions (Satz 25 =
+> Termingeschaefte, Satz 26 = Forderungsausfaelle, 26 Saetze in Abs. 28) taken from
+> dejure.org/gesetze/EStG/52.html; the *change* is read off the buzer.de synopsis of the
+> JStG-2024 amendment, which shows the operative clause replaced in both sentences:
+> Satz 25 *"ist auf Verluste anzuwenden, die nach dem 31. Dezember 2020 entstehen"* ->
+> *"ist auf alle offenen Faelle nicht mehr anzuwenden"*; Satz 26 the same with
+> "31. Dezember 2019". The repeal in 20 Abs. 6 was confirmed against the official
+> gesetze-im-internet.de text, which now shows **five** Saetze in Abs. 6 with **no** EUR
+> 20,000 restriction of either kind. Umlauts transliterated per this library's convention.
+
+**What "alle offenen Faelle" means for this engine:** the legislature did not set a first
+year of application -- it ordered the old provisions *not to be applied* to any case still
+open. A return being prepared now for VZ 2021, 2022, 2023 or 2024 is such a case. There is
+therefore **no assessment year in which this engine should apply the EUR 20,000 cap.**
+
+**Not the same question as the form structure.** The repeal removes the *offsetting
+restriction*; it does not restructure the *forms* that were already published. Anlage KAP
+for VZ <= 2024 still has its separate Termingeschaefte lines, and figures still belong on
+them. See "Year-Specific Engine Behavior" below: `derivative_loss_cap_applies` is False for
+every year, `separate_derivative_lines` remains year-specific.
+
+Constitutional background (Tier 4, context only -- the repeal is what binds):
+BFH, Beschluss vom 07.06.2024, VIII B 113/23 (AdV), signalled serious doubts about the
+Termingeschaeft restriction. Existing Termingeschaeft loss carryforwards are fully usable.
+
+Secondary summary consulted, not relied on: [Bayerisches Landesamt fuer Steuern --
+Verlustverrechnungsbeschraenkungen](https://www.lfst.bayern.de/aktuelles/gesetzliche-aenderungen/details?tx_news_pi1%5Baction%5D=detail&tx_news_pi1%5Bcontroller%5D=News&tx_news_pi1%5Bnews%5D=321&cHash=938da14ac42f3754b4f9dc47963cbab2)
 
 ---
 
@@ -76,7 +118,18 @@ Note: Zeile 21/24 existed for tracking even after abolition of the cap -- the fo
 | Zeile 23 | Stock losses (absolute value) |
 | Zeile 24 | 0.00 (line removed from form) |
 
-**Engine implementation:** `src/reporting/form_rules.py` -- `FormYearRules` dataclass with `get_form_rules(tax_year)`
+**Engine implementation:** `src/tax_law/registry.py` -- `FormYearRules` dataclass with
+`get_form_rules(tax_year)` (`src/reporting/form_rules.py` is a re-export shim).
+`derivative_loss_cap_applies` is **False in every entry** (52 Abs. 28 S. 25 EStG, above);
+only `separate_derivative_lines`, `z19_subtracts_derivative_losses` and
+`z22_includes_derivative_losses` are year-specific.
+
+**Verification status of the line numbers.** The Zeilen above are verified against the
+official Anleitung for **2024 and 2025 only** (`reference/Anltg_KAP_24.md`,
+`reference/Anltg_KAP_25.md`). `get_form_rules` falls back to the 2024 entry for VZ 2021-2023,
+so those years inherit the 2024 *structure* -- that fallback is an engine convention, not a
+verified mapping. Before filing a VZ <= 2023 return from this engine, check the Zeilen
+against that year's official Anleitung (Validation Protocol item 4).
 
 ---
 
