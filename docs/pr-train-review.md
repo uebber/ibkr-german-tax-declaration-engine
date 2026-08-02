@@ -2,9 +2,10 @@
 
 **Branch:** `hermetic-tests-first` (local only, never pushed)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 6 of 25 PRs reviewed and accepted; 19 not yet reviewed.
-**Next up:** #21 (`tests/fixtures/loss_offsetting_data.py`, JStG-2024 cap repeal) — the
-first branch in the train that does **not** rebase clean; see section 5.
+**Status as of 2026-08-02:** 7 of 25 PRs reviewed and accepted; 18 not yet reviewed.
+**Next up:** #22 (train 7). It inherited #21's conflict in
+`tests/fixtures/loss_offsetting_data.py`, which is now resolved here, so rebase from
+`4eeeffb` onward; see section 5.
 **Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
 issue #15, no CI added. All of that is still open for decision.
 
@@ -21,6 +22,12 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+a96a5fd docs: drop the dangling working-document refs AR2 reintroduced         [ours]
+a41dbb9 fix(reporting): correct repeal note, keep the Zeile 24 cross-check     [ours]
+a6ff53d fix(tax-law): Basiszins regime floor; pin registry to the reference    [ours]
+7bfc8fa docs(reference): correct the Basiszins table, cite it per year         [ours]
+df8dd6b docs(reference): root the JStG-2024 cap repeal at Tier 1               [ours]
+88a91e9 feat: law-as-data registry                                       (PR #21, Fsaupe)
 e467cad docs: drop refs to working documents this repo does not contain        [ours]
 fa05198 fix(tests): close three blind spots in the leak tripwire               [ours]
 a7f7032 fix: make the RunContext boundary real, drop dead decimal_context      [ours]
@@ -47,7 +54,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 408 tests pass on a simulated clean clone
+**Verification at HEAD:** 440 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -56,6 +63,11 @@ be66807 tests: config_example completeness guard                         (PR #33
 > #19, because `data_import/` no longer exists on this machine — see section 8. It still
 > holds by construction: #19 and the four commits on top of it change `scripts/`, `tests/`,
 > `reference/`, `docs/` and `.gitignore` only, and touch no file under `src/`.
+>
+> From #20 on, parity is run for **tax year 2025 only** — the one year whose Positions and
+> Cash_Balance snapshots survived the `data_import/` rebuild. At `a96a5fd` (#21 + our five
+> fixes) versus `f004746`: **PDF IDENTICAL**, console 3 lines (our reworded repeal note),
+> log 8 lines matching the same-tree control in count and shape.
 
 One commit from PR #16 was **deliberately dropped**: `af95b72` added `rework2-plan.md`,
 Fsaupe's internal working plan referencing branches/tags/files that do not exist in this
@@ -340,25 +352,133 @@ oversells an abstraction nothing downstream adopts. Worth remembering if a later
 justified by "consistency with the RunContext pattern": there is no such pattern in the
 train yet.
 
+### PR #21 (train 6) — law-as-data registry — **ACCEPTED after knowledge-store repair**
+
+Rebased with the 4 predicted conflicts in `tests/fixtures/loss_offsetting_data.py`;
+resolution was "take theirs, drop the `KNOWN-WRONG` marker" ×4, exactly as section 5
+foresaw. 401 → 420 tests, then 440 with ours. Red-first verified: with `src/` reverted,
+10 tests fail (6 cap-repeal, 4 Basiszins) — the commit says 7, which is imprecise but not
+wrong in kind. Real-data parity for tax year 2025 below.
+
+**The central legal claim is right, and it is the first time in the train that a
+behavioural change rests on a provision the store already contained.** #21 sets
+`derivative_loss_cap_applies=False` for VZ 2024 on the strength of "abolished
+retroactively for all open cases (§52 Abs. 28 EStG n.F.)", which
+`estg-20-abs6-verlustverrechnung.md` already asserted. Verified at Tier 1 rather than
+taken on trust — and it holds:
+
+- **§52 Abs. 28 Satz 25 EStG n.F.** — §20 Abs. 6 Satz 5 a.F. *"ist auf alle offenen Faelle
+  nicht mehr anzuwenden"*; **Satz 26** the same for Satz 6. Read off dejure.org; the
+  buzer.de synopsis of the JStG-2024 amendment shows what each clause replaced
+  (*"ist auf Verluste anzuwenden, die nach dem 31. Dezember 2020 entstehen"*).
+- gesetze-im-internet.de confirms §20 Abs. 6 now has **five** Saetze and neither €20,000
+  restriction. Note the renumbering trap: the *current* Satz 5 is the §43a Abs. 3 S. 4
+  Bescheinigung rule, formerly Satz 7.
+
+**What the store was missing was the sentence numbers and a Tier 1 quote** — its only
+source was a Bayerisches-LfSt summary page, and Validation Protocol item 3 asks for
+paragraph *and* sentence. Repaired in `df8dd6b`, together with the distinction #21 depends
+on but does not state: the repeal removes the *offsetting restriction*, not the published
+*forms*. Z21/Z24 stay for VZ ≤ 2024, which is why `separate_derivative_lines` must remain
+year-specific while `derivative_loss_cap_applies` goes to False everywhere.
+
+**Blast radius of the cap flag, re-confirmed at this tree:** `loss_offsetting.py:266` and
+`console_reporter.py:213` only. No form line. The −20000 → −25000 fixture corrections are
+the diagnostic *konzeptionell* figure, i.e. VALIDATION_REPORT finding #1, now marked
+resolved there.
+
+**Defect 1, moderate — the Basiszins table promoted two rows of the wrong statute
+(`7bfc8fa`, `a6ff53d`).** #21 widens the table from {2024, 2025} to 2016-2026 and makes the
+engine compute a Vorabpauschale for every listed year. That raises the evidentiary bar on
+rows that had been inert, and the two oldest do not survive it: **1.10% (2016) and 0.59%
+(2017) are the Basiszins for the vereinfachtes Ertragswertverfahren nach §203 Abs. 2 BewG**
+(BMF 04.01.2016, IV C 7 - S 3102/07/10001; the 2017 value from OFD-Verfuegungen) — a
+different statute. The rows even carried the BewG reference dates, 04.01.2016 and
+02.01.2017, which is how it surfaced. The Vorabpauschale did not exist then: InvStG 2018
+provisions *"sind ab dem 1. Januar 2018 anzuwenden"* (**§56 Abs. 1 S. 1 InvStG**), the first
+Basiszins notice is BMF 04.01.2018, the first Vorabpauschale is the one for calendar 2018.
+Left in, a run for VZ 2016/2017 invents deemed income. Both rows removed; each surviving
+row now names its BMF-Schreiben, and the 2018-2023 sourcing gap (the BMF site hosts only
+the last two PDFs) is recorded in the file rather than papered over.
+
+**Defect 2, moderate — the registry↔reference "consistency" check could not see the
+reference (`a6ff53d`). Fourth instance of the pattern.** The shipped test kept its own
+hardcoded copy of all eleven rates while the reference document claimed the tests "assert
+the registry matches this document". Two hand-kept copies cannot detect drift from a third
+— and both copies carried the BewG rows, so the check was green on the exact defect it
+existed to prevent. Replaced by a parse of the markdown table, calibrated against five
+deliberately broken trees (value edited on either side, row added to the doc only, hole
+punched in the registry, BewG row restored): all five trip it, green again when restored.
+
+**Defect 3, moderate — the console tells VZ ≤ 2024 users a false rule and drops a live
+form line (`a41dbb9`).** Flipping the flag for 2024 moves the summary onto a branch written
+for the 2025 boundary. It prints *"(Verlustverrechnungsbeschraenkung fuer Termingeschaefte
+ab {tax_year} aufgehoben)"* — "ab 2024" on a 2024 run, "ab 2021" on a 2021 run. The repeal
+has no first year of application; that is the whole point of "alle offenen Faelle". And the
+line reporting the gross losses declared on **Zeile 24** was nested inside the cap branch,
+so a form line that still exists for VZ ≤ 2024 and is still populated stopped being shown.
+Keyed to `separate_derivative_lines` now. New `tests/test_console_reporter_derivatives.py`,
+red-first 7/13.
+
+This also falsifies the commit's "Real-data parent-parity: IDENTICAL" for any VZ ≤ 2024
+run: that block prints unconditionally, so the console *always* changes. It is true for
+2025, which is the only year with surviving snapshots here.
+
+**Real-data parity, tax year 2025** (baseline `f004746` vs. #21 + our five fixes):
+**PDF IDENTICAL**, console 3 lines — solely our reworded repeal note — log 8 lines, the
+same count and the same `OPTION_CASH_SETTLEMENT` permutation shape as the same-tree control
+capture taken immediately before. No declared figure moves.
+
+**Open, and it is not #21's bug — but #21 enlarges it. The engine books the
+Vorabpauschale one year too early.** §18 Abs. 3 InvStG (already in the store, in
+`invstg-18-vorabpauschale.md`) deems the VP for calendar X to flow on the first working day
+of X+1, so it is income of **X+1**. `_calculate_vorabpauschale` computes it from
+`basiszins[tax_year]` and the tax year's own SoY position and reports it **in tax_year**.
+Before #21 that misfired only for 2024 and 2025, the only years in the config; now it
+misfires for every year 2018-2026. The sharpest case is **VZ 2023**, which flips from right
+to wrong: the amount taxable in 2023 is the 2022 VP, and 2022's Basiszins is −0.05% → zero,
+which is what the engine produced when it skipped; it now computes 2.55% on the 2023 SoY
+value instead.
+
+Not fixed here, deliberately — **PR #29 fixes it** (`_vp_for_calendar_year`,
+`deemed_inflow_year = target_year + 1`, prior-year lines feeding this year's return), and
+#29 needs exactly the widened table #21 supplies, since it looks up `basiszins(tax_year−1)`.
+#29 also rewrites `invstg-18-vorabpauschale.md` with the verbatim Abs. 3 text and the
+Zuflussprinzip reasoning, so that file is left untouched here to avoid a pointless conflict.
+Practically the exposure is nil today: VP needs an SoY positions snapshot, and only 2025 has
+one. See the new merge constraint in section 6.
+
+**Nit, not fixed:** `tests/test_config_example_completeness.py` cites "B4/B5g", identifiers
+from the dropped `rework2-plan.md` — the same dangling-reference class as `e467cad`, in a
+test file, so left for the owner to wave through.
+
 ## 4. Cross-cutting pattern
 
-Across six PRs: **the code and tests are consistently sound; the legal and factual prose is
-unreliable.** Every substantive mechanism held up under testing. 9 citation/claim errors,
+Across seven PRs: **the code and tests are consistently sound; the legal and factual prose is
+unreliable.** Every substantive mechanism held up under testing. 12 citation/claim errors,
 all corrected here. #19 remains the only description with nothing wrong in it — #20's
-central claim ("the only place user config is read") was false — so this is a tendency
-rather than a law, but it has now held five times out of six.
+central claim ("the only place user config is read") was false, and #21's
+"parent-parity: IDENTICAL" cannot hold for any VZ ≤ 2024 run — so this is a tendency
+rather than a law, but it has now held six times out of seven.
+
+A refinement #21 adds: the failure is **not** in the legal reasoning, which was right and
+rooted. It is in *provenance* — where a number came from and whether the cited document
+actually says it. #21's two worst defects are a value silently inherited from the wrong
+statute (§203 BewG) and a claim about what the tests check.
 
 Practical consequence: **review the diff, not the description.** Verify claims empirically
 rather than reading them.
 
-**Second pattern, now three for three: verification tooling that cannot see what it claims
+**Second pattern, now four for four: verification tooling that cannot see what it claims
 to check.** #33 found the test suite silently reading the developer's real `cache/`; #19
 shipped a real-data parity gate with the same hole, which would have certified every later
 PR's "output-neutral" claim without being able to observe a classification change; #20's
 leak tripwire passes green on the very leak shape it was written for, and its
-`from_config` tests cover a code path production never executes. All were green. When a PR
-adds a checking mechanism, test the *mechanism* against a deliberately broken tree — a
-green result from an instrument nobody calibrated is worth nothing.
+`from_config` tests cover a code path production never executes; #21's registry↔reference
+consistency test compared two hand-kept copies of the same numbers, both of which contained
+the wrong-statute rows it should have caught. All were green. When a PR adds a checking
+mechanism, test the *mechanism* against a deliberately broken tree — a green result from an
+instrument nobody calibrated is worth nothing.
 
 This pattern is now reliable enough to be a checklist item rather than an observation:
 **for every new guard, write the tree that should trip it and confirm it does.**
@@ -367,12 +487,12 @@ This pattern is now reliable enough to be a checklist item rather than an observ
 
 ## 5. Verified migration path for the remaining 19 PRs
 
-The first six commits of every branch in the train are exactly the ones absorbed here
-(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`), so one command migrates
-any of them:
+The first seven commits of every branch in the train are exactly the ones absorbed here
+(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`, `4eeeffb`), so one
+command migrates any of them:
 
 ```
-git rebase --onto <new-main> 960d1ab <branch>   # 361b11a before #20 was absorbed
+git rebase --onto <new-main> 4eeeffb <branch>   # 960d1ab before #21 was absorbed
 ```
 
 Simulated against this branch's HEAD:
@@ -380,8 +500,8 @@ Simulated against this branch's HEAD:
 | PR | Result |
 |----|--------|
 | ~~#20~~ | absorbed (`16cd0c8`) |
-| **#21** | 4 conflict hunks, one file (`tests/fixtures/loss_offsetting_data.py`) |
-| #22–#40 | inherit #21's conflict (cumulative train) |
+| ~~#21~~ | absorbed (`88a91e9`); its 4 conflict hunks resolved, `KNOWN-WRONG` markers retired |
+| #22–#40 | rebase from `4eeeffb`; #21's conflict no longer applies |
 
 Note for whoever lands #21 onward: our `a7f7032` removed `src.config` from `src/cli.py` and
 moved the default-PDF-filename derivation into `src/main.py`. No commit in #21–#40 touches
@@ -389,9 +509,9 @@ moved the default-PDF-filename derivation into `src/main.py`. No commit in #21�
 later PR that reintroduces a config read there will now fail
 `test_cli_module_does_not_read_user_config`, which is the intended behaviour.
 
-Only two commits in the whole train touch that file: `7f6fca0` (#16, absorbed) and
-`4eeeffb` (#21, the JStG-2024 cap repeal). The conflict is our `KNOWN-WRONG` markers meeting
-the fix they point at:
+Only two commits in the whole train touched `tests/fixtures/loss_offsetting_data.py`:
+`7f6fca0` (#16) and `4eeeffb` (#21), both absorbed. The conflict was our `KNOWN-WRONG`
+markers meeting the fix they pointed at:
 
 ```
 <<<<<<< HEAD
@@ -402,9 +522,9 @@ the fix they point at:
 >>>>>>> 4eeeffb
 ```
 
-**#21's value equals the value our marker predicted** — two independent derivations
-agreeing. Resolution is "take theirs, drop the marker", ×4. The conflict is desirable: it
-forces whoever lands #21 to retire the markers consciously.
+**#21's value equalled the value our marker predicted** — two independent derivations
+agreeing. Resolved as "take theirs, drop the marker", ×4; all four markers are retired and
+VALIDATION_REPORT finding #1 is marked resolved there.
 
 ---
 
@@ -433,17 +553,34 @@ forces whoever lands #21 to retire the markers consciously.
   the taxpayer's own depots is not a Veräußerung under Abs. 2 and that the §43/§43a
   Depotübertrag rules are Kapitalertragsteuer provisions that cannot carry the disposal
   question — check that commit against it rather than the other way round.
-- **#16 must not land without #21**, or the legally-repealed €20k cap stays pinned and
-  blessed by a comment. (Mitigated here by the `KNOWN-WRONG` markers.)
+- ~~**#16 must not land without #21**~~ — satisfied; #21 is absorbed and the cap is False
+  for every year.
+- **#21 must not be followed by a pre-2024 filing until #29 lands.** #21 widens the
+  Basiszins table so the engine computes a Vorabpauschale for 2018-2026, but the engine
+  still books the VP for calendar X in VZ X, where §18 Abs. 3 InvStG puts it in X+1. #29
+  fixes the year mapping and *requires* the widened table (it looks up
+  `basiszins(tax_year−1)`), so the ordering is right — but between the two, a VZ 2018-2023
+  run produces a wrong-year VP where it previously produced none. VZ 2023 flips from
+  right to wrong. No exposure with the current data (VP needs an SoY snapshot; only 2025
+  has one).
+- **Leave `reference/investment-tax-law/invstg-18-vorabpauschale.md` to #29.** It rewrites
+  that file with verbatim §18 Abs. 3 and the Zuflussprinzip mapping, and also flags that the
+  store's current "Z55" mapping for the §19 disposal deduction is wrong (Z55 =
+  bestandsgeschützte Alt-Anteile). Our Basiszins work deliberately touched only
+  `reference/bmf-guidance/basiszins-vorabpauschale.md`, which no later PR edits.
 
 ## 7. Knowledge-store scan of the unreviewed PRs
 
-8 of 25 touch `reference/`: #18, #21, #22, #28, #29, #32, #35, #40. Quality improves sharply
+8 of 25 touch `reference/`: #18, ~~#21~~, #22, #28, #29, #32, #35, #40. Quality improves sharply
 after #18 — #22 (§108 AO i.V.m. §§187/188 BGB anniversary arithmetic incl. leap year), #29
 (§18 Abs. 2 S. 2 partial-year + §18 Abs. 3 verbatim deemed-inflow) and #35 (Einlagenrückgewähr,
 explicitly separating settled law from open questions) are the strongest legal work in the train.
 
 Two things to scrutinise when reached:
+- **The Basiszins provenance lesson generalises.** #21's table was legally reasoned but two
+  rows came from the wrong statute, undetected because three copies of the numbers agreed
+  with each other. For any later PR that ships a rate table, check where each row came from,
+  not just that the copies match.
 - **§20 Abs. 4 Satz 7** is cited by #32 as "(FIFO per Depot)" but never quoted. Verified Tier 1:
   Satz 7 *is* the FIFO fiction, but it is conditioned on *Sammelverwahrung* per §5 DepotG and
   does not literally say "per Depot". That is the standard interpretation presented as statute;
@@ -514,7 +651,10 @@ Two things to scrutinise when reached:
   Instance details (conids, dates) in `private/real-data-observations.md`.
 - **No CI.** No `.github/workflows`. Every "green" claim in the train is unverified by
   anything observable; each review currently costs a manual baseline-control run.
-- `VALIDATION_REPORT.md` findings 2–6 remain open (finding 1 is handled by #21).
+- `VALIDATION_REPORT.md` findings 2–6 remain open. Finding 1 is **resolved** by #21 plus
+  `a41dbb9`, and marked so in that file.
+- **Vorabpauschale is booked one assessment year too early** (§18 Abs. 3 InvStG). Pre-existing;
+  #21 widens its reach; **#29 fixes it**. Detail in the #21 verdict and section 6.
 - 2022 ledger validation still FAILs — one security's EOY quantity is non-zero when the
   broker reports zero; pre-existing, caused by trade history predating the 2021 data floor.
   Unchanged by this branch. Instance in `private/real-data-observations.md`.
@@ -534,8 +674,8 @@ Structural rule that makes this work, and that must be maintained:
 > **Fsaupe's commits are cherry-picked unmodified. Every correction of ours is a separate
 > commit on top.** Never amend, squash, or fold a fix into one of their commits.
 
-Current state on this branch: 7 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
-18 authored by the repo owner. Committer is the repo owner throughout (normal for
+Current state on this branch: 8 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
+23 authored by the repo owner. Committer is the repo owner throughout (normal for
 cherry-pick; GitHub attributes by Author).
 
 ### Original → landed SHA map
@@ -550,6 +690,7 @@ cherry-pick; GitHub attributes by Author).
 | #18 | `1d7728b` | `4fbf570` | Fsaupe |
 | #19 | `361b11a` | `312bc3a` | Fsaupe |
 | #20 | `960d1ab` | `16cd0c8` | Fsaupe |
+| #21 | `4eeeffb` | `88a91e9` | Fsaupe |
 
 All original SHAs remain resolvable in the local object store via the fetched `pr/*` refs
 (`git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'`).
@@ -561,7 +702,8 @@ All original SHAs remain resolvable in the local object store via the fetched `p
 2. #16/#17/#18/#33 will **not** auto-close, because these are cherry-picks, not the branch
    heads. Close each manually with a comment naming the landed SHA and the deltas applied
    (`2383b8a` for #33; `f5e8c0c` for #16/#17; `547df96`+`76cb8df`+`320e20a` for #18;
-   `96d4312`+`a40adce` for #19; `a7f7032`+`fa05198`+`e467cad` for #20) so the
+   `96d4312`+`a40adce` for #19; `a7f7032`+`fa05198`+`e467cad` for #20;
+   `df8dd6b`+`7bfc8fa`+`a6ff53d`+`a41dbb9`+`a96a5fd` for #21) so the
    trail from PR to commit is explicit.
 3. Reference the PR numbers in the merge commit body so GitHub cross-links them.
 4. Fsaupe's contribution graph credits the Author email regardless of who merges, so no

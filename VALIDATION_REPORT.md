@@ -8,7 +8,14 @@
 
 ## Confirmed Errors
 
-### 1. Derivative Loss Cap Still Applied for Tax Year 2024
+### 1. Derivative Loss Cap Still Applied for Tax Year 2024 -- RESOLVED
+
+**Status:** fixed. `derivative_loss_cap_applies` is now False for every year in
+`src/tax_law/registry.py`, and the four fixture expectations below carry the
+values this finding predicted. The application rule is quoted verbatim in
+`reference/tax-law/estg-20-abs6-verlustverrechnung.md`: 52 Abs. 28 Satz 25 EStG
+n.F., *"ist auf alle offenen Faelle nicht mehr anzuwenden"*. The description
+below is kept as the original finding.
 
 **Severity:** HIGH
 **Legal basis:** EStG 20 Abs. 6 Satz 5 a.F., abolished by JStG 2024 (BGBl. I 2024 Nr. 387, Art. 1 Nr. 10)
@@ -190,7 +197,7 @@ All 28 loss offsetting test cases (LO_ALL_001 through LO_FUND_MISCH_002) were sp
 
 | # | Finding | Severity | Type |
 |---|---------|----------|------|
-| 1 | Derivative loss cap applied for 2024 (abolished retroactively) | HIGH | Test + code error |
+| 1 | Derivative loss cap applied for 2024 (abolished retroactively) | HIGH | Test + code error -- RESOLVED |
 | 2 | `is_taxable_under_section_23` defaults True for non-23 assets | LOW | Code error (dormant) |
 | 3 | Stock dividend treated as taxable income (may conflict with Satz 5) | MEDIUM | Ambiguous test |
 | 4 | Negative dividends/interest ignored in loss offsetting | MEDIUM | Missing handling |
