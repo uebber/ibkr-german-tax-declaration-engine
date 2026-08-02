@@ -138,9 +138,13 @@ this engine's typical scope are far below that threshold.
 `ANLAGE_KAP_FOREIGN_TAX_PAID` (Zeile 41) with **no country filter**, and the engine has no
 representation of Zeile 7 / 37 / 38 / 39 at all.
 
-Observed in real data (German issuers held at IBKR Ireland): Aurubis, BASF and BMW dividends
-carry `Withholding Tax` rows described `... - DE TAX`. The 2024 BMW row is
-EUR 317.56 on EUR 1,204.00 gross = **exactly 26.375%**, i.e. 25% KESt + 5.5% SolZ.
+Confirmed against real data: dividends of German issuers held at IBKR Ireland carry
+`Withholding Tax` rows described `... - DE TAX`, and the withheld amount is **exactly
+26.375% of the gross** -- 25% KESt plus 5.5% SolZ on the KESt. That arithmetic is the
+signature that identifies such a row as German Kapitalertragsteuer rather than foreign
+withholding, and it is the test the fix should key on. (Several issuers across several
+years match. Issuer names and amounts are account data and are recorded locally in
+`private/real-data-observations.md`, which is not published.)
 
 Effect: German KESt is declared as anrechenbare **auslaendische** Steuer in Zeile 41.
 

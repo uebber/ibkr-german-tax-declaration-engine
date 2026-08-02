@@ -115,6 +115,7 @@ cache/
 data/
 data_import
 data_import/
+private/
 ibkr_token
 all_cash_trans.csv
 

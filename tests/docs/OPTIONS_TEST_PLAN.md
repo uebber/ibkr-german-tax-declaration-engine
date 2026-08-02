@@ -656,73 +656,73 @@ Example parsing:
 **Option Trade: Open Short Put**
 ```csv
 "ClientAccountID","CurrencyPrimary","AssetClass","SubCategory","Symbol","Description","ISIN","Strike","Expiry","Put/Call","TradeDate","Quantity","TradePrice","IBCommission","IBCommissionCurrency","Buy/Sell","TransactionID","Notes/Codes","UnderlyingSymbol","Conid","UnderlyingConid","Multiplier","Open/CloseIndicator"
-"U7542366","EUR","OPT","P","P LEG  20230317 69 M","LEG 17MAR23 69 P","","69","2023-03-17","P","2023-02-24","-1","1.75","-1.1","EUR","SELL","1693439457","","LEG","615639024","121764205","100","O"
+"U1234567","EUR","OPT","P","P LEG  20230317 69 M","LEG 17MAR23 69 P","","69","2023-03-17","P","2023-02-24","-1","1.75","-1.1","EUR","SELL","1693439457","","LEG","615639024","121764205","100","O"
 ```
 
 **Option Trade: Assignment Closes Position**
 ```csv
-"U7542366","EUR","OPT","P","P LEG  20230317 69 M","LEG 17MAR23 69 P","","69","2023-03-17","P","2023-03-10","1","0","0","EUR","BUY","1726146148","A","LEG","615639024","121764205","100","C"
+"U1234567","EUR","OPT","P","P LEG  20230317 69 M","LEG 17MAR23 69 P","","69","2023-03-17","P","2023-03-10","1","0","0","EUR","BUY","1726146148","A","LEG","615639024","121764205","100","C"
 ```
 
 **Linked Stock Trade: Buy Due to Assignment**
 ```csv
-"U7542366","EUR","STK","COMMON","LEGd","LEG IMMOBILIEN SE","DE000LEG1110","","","","2023-03-10","100","69","0","EUR","BUY","1726146151","A","","121764205","","1","O"
+"U1234567","EUR","STK","COMMON","LEGd","LEG IMMOBILIEN SE","DE000LEG1110","","","","2023-03-10","100","69","0","EUR","BUY","1726146151","A","","121764205","","1","O"
 ```
 
 ### C.2 Short Put Expired Worthless (LEG - EUR, Stillhalter)
 
 **Option Trade: Open Short Put**
 ```csv
-"U7542366","EUR","OPT","P","P LEG  20230421 54 M","LEG 21APR23 54 P","","54","2023-04-21","P","2023-04-14","-1","1.25","-1.1","EUR","SELL","1800649699","","LEG","609992388","121764205","100","O"
+"U1234567","EUR","OPT","P","P LEG  20230421 54 M","LEG 21APR23 54 P","","54","2023-04-21","P","2023-04-14","-1","1.25","-1.1","EUR","SELL","1800649699","","LEG","609992388","121764205","100","O"
 ```
 
 **Option Trade: Expiration (Worthless)**
 ```csv
-"U7542366","EUR","OPT","P","P LEG  20230421 54 M","LEG 21APR23 54 P","","54","2023-04-21","P","2023-04-21","1","0","0","EUR","BUY","1816736533","Ep","LEG","609992388","121764205","100","C"
+"U1234567","EUR","OPT","P","P LEG  20230421 54 M","LEG 21APR23 54 P","","54","2023-04-21","P","2023-04-21","1","0","0","EUR","BUY","1816736533","Ep","LEG","609992388","121764205","100","C"
 ```
 
 ### C.3 Long Put Exercised (TIO - USD)
 
 **Option Trade: Exercise Closes Long Put**
 ```csv
-"U7542366","USD","OPT","P","TIO   231020P00001000","TIO 20OCT23 1 P","","1","2023-10-20","P","2023-10-20","-30","0","0","USD","SELL","2221290007","Ex","TIO","649035915","325898828","100","C"
+"U1234567","USD","OPT","P","TIO   231020P00001000","TIO 20OCT23 1 P","","1","2023-10-20","P","2023-10-20","-30","0","0","USD","SELL","2221290007","Ex","TIO","649035915","325898828","100","C"
 ```
 
 **Linked Stock Trade: Sell Due to Put Exercise**
 ```csv
-"U7542366","USD","STK","COMMON","TIO","TINGO GROUP INC","US55328R1095","","","","2023-10-20","-3000","1","0","USD","SELL","2221290013","Ex","","325898828","","1","O"
+"U1234567","USD","STK","COMMON","TIO","TINGO GROUP INC","US55328R1095","","","","2023-10-20","-3000","1","0","USD","SELL","2221290013","Ex","","325898828","","1","O"
 ```
 
 ### C.4 Long Call Exercised (CNXT - USD)
 
 **Option Trade: Exercise Closes Long Call**
 ```csv
-"U7542366","USD","OPT","C","CNXT  220617C00034000","CNXT 17JUN22 34 C","","34","2022-06-17","C","2022-06-13","-1","0","0","USD","SELL","1194348130","Ex","CNXT","556424314","229725573","100","C"
+"U1234567","USD","OPT","C","CNXT  220617C00034000","CNXT 17JUN22 34 C","","34","2022-06-17","C","2022-06-13","-1","0","0","USD","SELL","1194348130","Ex","CNXT","556424314","229725573","100","C"
 ```
 
 **Linked Stock Trade: Buy Due to Call Exercise**
 ```csv
-"U7542366","USD","STK","ETF","CNXT","VANECK CHINEXT ETF","US92189F6271","","","","2022-06-13","100","34","0","USD","BUY","1194348131","Ex","","229725573","","1","O"
+"U1234567","USD","STK","ETF","CNXT","VANECK CHINEXT ETF","US92189F6271","","","","2022-06-13","100","34","0","USD","BUY","1194348131","Ex","","229725573","","1","O"
 ```
 
 ### C.5 Short Call Assigned (GME - USD)
 
 **Option Trade: Assignment Closes Short Call**
 ```csv
-"U7542366","USD","OPT","C","GME   230630C00021000","GME 30JUN23 21 C","","21","2023-06-30","C","2023-06-30","15","0","0","USD","BUY","1972857526","A","GME","630444042","36285627","100","C"
+"U1234567","USD","OPT","C","GME   230630C00021000","GME 30JUN23 21 C","","21","2023-06-30","C","2023-06-30","15","0","0","USD","BUY","1972857526","A","GME","630444042","36285627","100","C"
 ```
 
 **Linked Stock Trade: Sell Due to Call Assignment**
 ```csv
-"U7542366","USD","STK","COMMON","GME","GAMESTOP CORP-CLASS A","US36467W1099","","","","2023-06-30","-1500","21","-0.4695","USD","SELL","1972857529","A","","36285627","","1","O"
+"U1234567","USD","STK","COMMON","GME","GAMESTOP CORP-CLASS A","US36467W1099","","","","2023-06-30","-1500","21","-0.4695","USD","SELL","1972857529","A","","36285627","","1","O"
 ```
 
 ### C.6 Partial Fill Example (GME - USD)
 
 **Multiple Partial Fills for Same Option**
 ```csv
-"U7542366","USD","OPT","C","GME   230324C00014500","GME 24MAR23 14.5 C","","14.5","2023-03-24","C","2023-03-22","11","11.19","-4.93955","USD","BUY","1751532701","P","GME","618008307","36285627","100","C"
-"U7542366","USD","OPT","C","GME   230324C00014500","GME 24MAR23 14.5 C","","14.5","2023-03-24","C","2023-03-22","5","11.19","-2.24525","USD","BUY","1751532702","P","GME","618008307","36285627","100","C"
+"U1234567","USD","OPT","C","GME   230324C00014500","GME 24MAR23 14.5 C","","14.5","2023-03-24","C","2023-03-22","11","11.19","-4.93955","USD","BUY","1751532701","P","GME","618008307","36285627","100","C"
+"U1234567","USD","OPT","C","GME   230324C00014500","GME 24MAR23 14.5 C","","14.5","2023-03-24","C","2023-03-22","5","11.19","-2.24525","USD","BUY","1751532702","P","GME","618008307","36285627","100","C"
 ```
 Note: Same option, same time, different transaction IDs - these are partial fills of a single order (11 + 5 = 16 contracts total)
 

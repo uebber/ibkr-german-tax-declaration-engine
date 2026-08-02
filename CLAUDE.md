@@ -152,6 +152,34 @@ The `reference/` directory contains curated, authoritative German tax and legal 
 4. The coverage matrix at `reference/research/coverage-matrix.md` maps every supported event/asset to its legal source.
 5. If a conflict arises between engine code and reference files, flag it to the user — do not silently follow the code.
 
+## Private vs. Published Data
+
+This repository is **public**. It processes one person's real brokerage data, so there is a
+hard line between what lives in the working copy and what is committed.
+
+**Never committed — gitignored, working copy only:**
+`data_import/`, `data/`, `cache/`, `parity/`, `private/`, `src/config.py`, `ibkr_token`,
+`tax_report_*.pdf`. These hold trades, positions, balances, classifications, credentials
+and generated declarations.
+
+**Committed — must contain no account data:** everything else. In particular `reference/`,
+`docs/`, `PRD.md`, `input_data_spec.md` and `tests/`.
+
+The rule for documentation: **state the mechanism and anything derivable from law; keep the
+instance local.** A claim may say that a withholding row was observed at exactly 26.375% of
+gross (that rate is public law and is the point being made); it may not name the issuer, the
+amount, the account number or the position size. Account-specific evidence belongs in
+`private/real-data-observations.md`, which is gitignored, and the public document points
+there.
+
+Concretely, never commit: IBKR account numbers (`U…`), Flex Query IDs, the taxpayer's name,
+held ISINs/tickers together with quantities or amounts, transaction IDs, or figures copied
+out of a generated report. Use the placeholders from `src/config_example.py`
+(`U1234567`) in examples.
+
+Before committing documentation that cites real behaviour, check:
+`git grep -nIE 'U[0-9]{7}' -- .` must return only placeholder matches.
+
 ## Ground Rules
 
 After modifying or extending application code: Never change pre-existing tests without asking the user and explaining why this is, without doubt, necessary!!

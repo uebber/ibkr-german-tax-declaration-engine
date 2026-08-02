@@ -229,8 +229,8 @@ supports lot-matching methods (LIFO, specific lot, MaxLoss), and CLAUDE.md tells
 matching.
 
 **Legal impact assessed as currently nil, and worth recording why:** the maintainer's data
-contains exactly one `ClientAccountID` across all 6,976 trades from 2021-01-11 to
-2025-12-31. Per-Depot and pooled FIFO coincide at one depot. The engine reads no account
+contains exactly one `ClientAccountID` across the whole history (figures in
+`private/real-data-observations.md`). Per-Depot and pooled FIFO coincide at one depot. The engine reads no account
 identifier anywhere in `src/engine/`, `src/domain/` or `src/processing/`. So the whole
 per-Depot thread — #19's harness, #28's aggregation, #31/#32 — changes no figure in the
 maintainer's own declaration while refactoring the FIFO core that determines every figure
@@ -350,8 +350,9 @@ Two things to scrutinise when reached:
 
 - **German KESt misdeclared as foreign tax.** `loss_offsetting.py:167-171` sums every
   `WithholdingTaxEvent` into Zeile 41 (*ausländische* Steuern) with no country filter, and the
-  engine has no Zeile 7/37/38/39 at all. Real data: BMW 2024 = €317.56 on €1,204.00 gross =
-  exactly 26.375% (25% KESt + 5.5% SolZ). Also Aurubis 2021/22/23 and BASF 2022.
+  engine has no Zeile 7/37/38/39 at all. Confirmed in real data: several German issuers'
+  dividends withhold **exactly 26.375%** of gross (25% KESt + 5.5% SolZ) — the signature of
+  German KESt. Instances in `private/real-data-observations.md` (not published).
   Fully researched — see `reference/tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md`,
   section 6 for the required fix. **Not implemented.**
 - **`data_import/` is missing on this machine**, so real-data parity could not be run for
@@ -362,8 +363,9 @@ Two things to scrutinise when reached:
 - **No CI.** No `.github/workflows`. Every "green" claim in the train is unverified by
   anything observable; each review currently costs a manual baseline-control run.
 - `VALIDATION_REPORT.md` findings 2–6 remain open (finding 1 is handled by #21).
-- 2022 ledger validation still FAILs (AMAZON.COM INC EOY 320 vs 0) — pre-existing, caused by
-  trade history predating the 2021 data floor. Unchanged by this branch.
+- 2022 ledger validation still FAILs — one security's EOY quantity is non-zero when the
+  broker reports zero; pre-existing, caused by trade history predating the 2021 data floor.
+  Unchanged by this branch. Instance in `private/real-data-observations.md`.
 
 ---
 

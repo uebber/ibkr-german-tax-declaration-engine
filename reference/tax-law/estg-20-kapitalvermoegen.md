@@ -246,8 +246,8 @@ by per-account holdings, not merely asserted.
 only and reads no account identifier anywhere in `src/engine/`, `src/domain/` or
 `src/processing/` -- i.e. FIFO is pooled across accounts. This **deviates from Rz. 97
 S. 2**. It is currently without effect on the maintainer's own declaration, whose input
-data contains exactly one `ClientAccountID` across all 6,976 trades from 2021-01-11 to
-2025-12-31; per-depot and pooled FIFO coincide when there is one depot. For any taxpayer
+data contains exactly one `ClientAccountID`; per-depot and pooled FIFO coincide when there
+is one depot. For any taxpayer
 holding one ISIN in two accounts the pooled result is wrong. Flagged here per the
 CLAUDE.md ground rule that code/reference conflicts are surfaced, not silently followed.
 Note that a transfer between the taxpayer's own depots is **not** a Veraeusserung under
