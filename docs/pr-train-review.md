@@ -2,7 +2,7 @@
 
 **Branch:** `hermetic-tests-first` (local only, never pushed)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 4 of 25 PRs reviewed and accepted; 21 not yet reviewed.
+**Status as of 2026-08-02:** 5 of 25 PRs reviewed and accepted; 20 not yet reviewed.
 **Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
 issue #15, no CI added. All of that is still open for decision.
 
@@ -19,6 +19,11 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+5050bba fix: drop the stray data_import symlink, harden .gitignore            [ours]
+57d7f5f docs(tests): cite the reference library, not the Fifo rule inline       [ours]
+96d4312 fix(scripts): parity_check.sh cache-hermetic/ordered/portable           [ours]
+a40adce docs(reference): add EStG 20 Abs. 4 Satz 7 (Fifo), correct per-Depot    [ours]
+312bc3a feat: parity tooling + multi-account harness                     (PR #19, Fsaupe)
 8ee553e docs(reference): add EStG 36/45a — Anrechnung inlaendischer KESt      [ours]
 320e20a fix(parsers): reject BM records with missing/non-positive Proceeds     [ours]
 76cb8df docs(reference): validate the Satz 2 entry against Validation Protocol [ours]
@@ -32,9 +37,14 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 394 tests pass on a simulated clean clone
+**Verification at HEAD:** 397 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`). Real-data output is **byte-identical to `ebad4e7`**
 across tax years 2022–2025 — console report, `validate_ledgers.py`, and PDF text SHA-256.
+
+> That real-data run was performed at `8ee553e` (through #18). It was **not** re-run for
+> #19, because `data_import/` no longer exists on this machine — see section 8. It still
+> holds by construction: #19 and the four commits on top of it change `scripts/`, `tests/`,
+> `reference/`, `docs/` and `.gitignore` only, and touch no file under `src/`.
 
 One commit from PR #16 was **deliberately dropped**: `af95b72` added `rework2-plan.md`,
 Fsaupe's internal working plan referencing branches/tags/files that do not exist in this
@@ -153,31 +163,121 @@ redemptions (issuer default — IBKR reports those as a write-off, not `Type="BM
 
 ---
 
+### PR #19 (train 4) — parity tooling + multi-account harness — **ACCEPTED, tool repaired**
+
+No production code touched (verified: `.gitignore`, `scripts/`, `tests/` only). Rebased
+clean. 397 tests pass on a simulated clean clone (394 → 397).
+
+The harness is sound. All four row builders match the canonical `column_validator.py`
+tuples in order and arity (trades 23, positions 15, cash balance 6, cash transactions 14);
+importing the tuples instead of copying them is the right call. The deferred assertion in
+`test_position_rows_per_account` is honest: `RawPositionRecord` really does carry
+`alias="AccountId"` while the column is `ClientAccountID`, so positions really do lose the
+account. **This PR's description is the first in the train that I could not fault.**
+
+**Defect found and fixed (`96d4312`), severe.** `scripts/parity_check.sh` is the evidence
+base every remaining PR cites for its parent-parity claim, and it could not see a
+classification change. The pipeline reads *and writes* `cache/user_classifications.json`;
+the baseline capture warmed the cache and the second capture read it back. A/B on the
+identical sequence (no cache → capture A → reclassify a holding STOCK→AKTIENFONDS →
+capture B):
+
+| | verdict |
+|---|---|
+| original script | cache leaks between legs, both legs `Aktien 2250.00`, **`IDENTICAL`, exit 0** |
+| repaired script | no leakage, `2250.00` vs `250.00`, console DIFF 24 lines, PDF DIFF, exit 1 |
+
+Classification drives Teilfreistellung and the KAP/KAP-INV split, so this was the blind
+spot with the largest tax consequence — and it is the same bug class **#33** was moved to
+the front of the train to fix for the test suite. Fixed by snapshot/restore of `cache/`
+around each capture (not by deleting it — 49 KB of hand-made classifications). Verified the
+curated file is byte-identical afterwards.
+
+Two further defects in the same script: the global `sort` in `normalize()` reduced the
+console leg to a multiset of lines, justified by a cause that isn't real (dicts are
+insertion-ordered); the actual cause was the script's own `2>&1` merging unbuffered stderr
+with block-buffered stdout — proven by moving 16 lines under `PYTHONUNBUFFERED=1` with
+identical code. Fixed at source by splitting the streams, after confirming two same-tree
+runs then compare identical on all three legs *without* sorting. And `stat -c%s` is GNU-only
+and fails on macOS, in the branch that only runs when there is a difference to report.
+
+**Knowledge-store repair (`a40adce`).** Same pattern as #18: the PR cites
+`§20 Abs. 4 S. 7 EStG (FIFO je Depot)` and the provision was **absent** from `reference/` —
+"Abs. 4 — Gain Calculation" was three lines before jumping to Abs. 4a. Grepping the file for
+"Satz 7" gives a false positive (that hit is Abs. 4a, Abspaltungen). Added with the full
+verbatim sentence from gesetze-im-internet.de cross-checked against dejure.org, sentence
+position confirmed as Satz 7 of 9.
+
+The citation turned out to be **substantively right but mis-attributed**: Satz 7 mandates
+FIFO for Sammelverwahrung per §5 DepotG and never says "per Depot" (its only "Depot" is
+inside "Depotgesetzes"). "Je Depot" is Tier 2 — BMF 14.05.2025, GZ IV C 1 - S
+2252/00075/016/070, Rz. 97 S. 2, *"auf das einzelne Depot bezogen anzuwenden"*, with Rz. 98
+counting a sub-depot as a Depot and Rz. 99 extending FIFO to Streifbandverwahrung. Identical
+wording in the 18.01.2016 version, so stable practice. Both PDFs were retrieved and text-
+extracted; the Rz. numbers are read off the documents.
+
+This **closes the open question §7 parked for #32** — the per-Depot reading does have solid
+Tier 2 backing, now located with Randziffer.
+
+**It also found an outright wrong claim already in the store**, unsourced since before the
+train: *"FIFO method applies per asset per depot unless specific identification is
+possible."* Rz. 97 S. 3 says customer instructions on which security to sell are
+*einkommensteuerrechtlich unbeachtlich*, and Rz. 99 closes the Streifbandverwahrung escape.
+There is no specific-identification alternative. This was a live hazard, not a nit: IBKR
+supports lot-matching methods (LIFO, specific lot, MaxLoss), and CLAUDE.md tells engineers
+`reference/` outranks general knowledge — the library would have blessed adopting IBKR's lot
+matching.
+
+**Legal impact assessed as currently nil, and worth recording why:** the maintainer's data
+contains exactly one `ClientAccountID` across all 6,976 trades from 2021-01-11 to
+2025-12-31. Per-Depot and pooled FIFO coincide at one depot. The engine reads no account
+identifier anywhere in `src/engine/`, `src/domain/` or `src/processing/`. So the whole
+per-Depot thread — #19's harness, #28's aggregation, #31/#32 — changes no figure in the
+maintainer's own declaration while refactoring the FIFO core that determines every figure
+that *is* declared. That is a sequencing argument for landing the parity repair before the
+engine work, not against the work.
+
+Recorded as **open, not settled**: Satz 7 hooks on §5 DepotG and Rz. 97–99 are written for a
+German depotführende Stelle; whether the "einzelnes Depot" boundary transposes to a foreign
+broker's sub-account structure is not answered by any Tier 1/2 source located.
+
+Not fixed here, deliberately: the `RawPositionRecord` alias (that is #28's `febf459`, and
+duplicating it would collide).
+
 ## 4. Cross-cutting pattern
 
-Across four PRs: **the code and tests are consistently sound; the legal and factual prose is
-consistently unreliable.** Every substantive mechanism held up under testing. Not one
-description was fully accurate — 7 citation/claim errors, all corrected here.
+Across five PRs: **the code and tests are consistently sound; the legal and factual prose is
+unreliable.** Every substantive mechanism held up under testing. 8 citation/claim errors,
+all corrected here. #19 is the first description with nothing wrong in it, so this is a
+tendency rather than a law — but it has held four times out of five.
 
 Practical consequence: **review the diff, not the description.** Verify claims empirically
 rather than reading them.
 
+**Second pattern, visible from #19 onward: verification tooling that cannot see what it
+claims to check.** #33 found the test suite silently reading the developer's real `cache/`;
+#19 shipped a real-data parity gate with the same hole, which would have certified every
+later PR's "output-neutral" claim without being able to observe a classification change.
+Both were green. When a PR adds a checking mechanism, test the *mechanism* against a
+deliberately broken tree — a green result from an instrument nobody calibrated is worth
+nothing.
+
 ---
 
-## 5. Verified migration path for the remaining 21 PRs
+## 5. Verified migration path for the remaining 20 PRs
 
-The first four commits of every branch in the train are exactly the ones absorbed here
-(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`), so one command migrates any of them:
+The first five commits of every branch in the train are exactly the ones absorbed here
+(`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`), so one command migrates any of them:
 
 ```
-git rebase --onto <new-main> 1d7728b <branch>
+git rebase --onto <new-main> 361b11a <branch>   # 1d7728b before #19 was absorbed
 ```
 
 Simulated against this branch's HEAD:
 
 | PR | Result |
 |----|--------|
-| #19, #20 | **clean** |
+| #20 | **clean** |
 | **#21** | 4 conflict hunks, one file (`tests/fixtures/loss_offsetting_data.py`) |
 | #22–#40 | inherit #21's conflict (cumulative train) |
 
@@ -207,6 +307,24 @@ forces whoever lands #21 to retire the markers consciously.
   account-agnostic and "full per-Depot FIFO is a deferred larger change" — the library would
   actively contradict the code.
 - **#18's reference fix must stay in #18**, not #28.
+- **#28 (`febf459`) will conflict with our Satz 7 section, and should.** #28 inserts a
+  "Known limitation — account-agnostic (merged) FIFO" block at exactly the line our
+  `a40adce` rewrote, and it re-adds the false *"unless specific identification is
+  possible"* clause because it was written against the old text. Resolution when #28 is
+  reached: **keep ours**, graft #28's block in (it is good, more specific content —
+  it characterises precisely when merged FIFO bites and documents the co-holding warning),
+  but re-cite it from bare "§20 Abs. 4 EStG" to **Rz. 97 S. 2**, and do not restore the
+  deleted clause. #28's harness edit (strengthening `test_position_rows_per_account` once
+  it fixes the `AccountId` alias) is in a different hunk from our docstring change and will
+  merge cleanly.
+- **Nothing in #20–#40 ever touches `scripts/parity_check.sh` again**, so the repairs in
+  `96d4312` are not duplicated by any later PR and conflict with nothing. Verified by
+  scanning every `pr/*` ref.
+- **`89fdd80` (train: tax-neutral internal transfers, Depotübertragung)** also edits
+  `estg-20-kapitalvermoegen.md`. Our Satz 7 section already records that a transfer between
+  the taxpayer's own depots is not a Veräußerung under Abs. 2 and that the §43/§43a
+  Depotübertrag rules are Kapitalertragsteuer provisions that cannot carry the disposal
+  question — check that commit against it rather than the other way round.
 - **#16 must not land without #21**, or the legally-repealed €20k cap stays pinned and
   blessed by a comment. (Mitigated here by the `KNOWN-WRONG` markers.)
 
@@ -236,6 +354,11 @@ Two things to scrutinise when reached:
   exactly 26.375% (25% KESt + 5.5% SolZ). Also Aurubis 2021/22/23 and BASF 2022.
   Fully researched — see `reference/tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md`,
   section 6 for the required fix. **Not implemented.**
+- **`data_import/` is missing on this machine**, so real-data parity could not be run for
+  #19; only the prepared `data/` working copy survives. #19 was verified against a synthetic
+  two-account set built with its own harness builders, constructed so that pooled FIFO gives
+  2250.00 and per-Depot gives 250.00. Restore `data_import/` before the next review that
+  needs a parity run.
 - **No CI.** No `.github/workflows`. Every "green" claim in the train is unverified by
   anything observable; each review currently costs a manual baseline-control run.
 - `VALIDATION_REPORT.md` findings 2–6 remain open (finding 1 is handled by #21).
@@ -271,6 +394,7 @@ cherry-pick; GitHub attributes by Author).
 | #16 | `af95b72` | **dropped** (`rework2-plan.md`, internal working doc) | Fsaupe |
 | #17 | `35d5873` | `55c7b95` | Fsaupe |
 | #18 | `1d7728b` | `4fbf570` | Fsaupe |
+| #19 | `361b11a` | `312bc3a` | Fsaupe |
 
 All original SHAs remain resolvable in the local object store via the fetched `pr/*` refs
 (`git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'`).
