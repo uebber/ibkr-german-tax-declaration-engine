@@ -69,6 +69,13 @@ Statutory text: *"der Gewinn aus der Veraeusserung von sonstigen Kapitalforderun
 
 Statutory text: *"Als Veraeusserung im Sinne des Satzes 1 gilt auch die Einloesung, Rueckzahlung, Abtretung oder verdeckte Einlage in eine Kapitalgesellschaft; in den Faellen von Satz 1 Nummer 4 gilt auch die Vereinnahmung eines Auseinandersetzungsguthabens als Veraeusserung."*
 
+> Verified 2026-08-02 against two Tier 1 sources: gesetze-im-internet.de/estg/__20.html
+> and dejure.org/gesetze/EStG/20.html (wording, semicolon and word order agree).
+> Version status: as amended by JStG 2024 (BGBl. I 2024 Nr. 387), effective 01.01.2025.
+> Note Abs. 2 continues past Satz 2 -- Saetze 3-5 cover Personengesellschaft interests
+> and the separation of Zinsschein/Zinsforderung from the Stammrecht; Satz 2 is not the
+> end of the Absatz.
+
 Satz 2 applies to **all** of Satz 1, including Nr. 7. Consequently:
 
 | Event | Mechanism | Gain category |
@@ -77,16 +84,45 @@ Satz 2 applies to **all** of Satz 1, including Nr. 7. Consequently:
 | Bond redeemed at maturity (Faelligkeit) | **Einloesung, deemed Veraeusserung by Satz 2** | Satz 1 Nr. 7 |
 | Bond repaid early (Rueckzahlung) | **deemed Veraeusserung by Satz 2** | Satz 1 Nr. 7 |
 
-Gain is computed under Abs. 4 (proceeds - costs - acquisition cost), in EUR at the
-respective event-date rates. Not Aktien, so the Abs. 6 Satz 4 ring-fencing does not apply.
+Gain is computed under Abs. 4 (Veraeusserungserloes minus Veraeusserungskosten minus
+Anschaffungskosten). Bonds are not Aktien, so the Abs. 6 Satz 4 ring-fencing does not apply.
 
 **Correct citation for bond maturity is therefore `Abs. 2 Satz 1 Nr. 7 i.V.m. Satz 2`.**
 Citing Satz 1 Nr. 7 alone is incomplete -- it establishes the gain category but not
 that a redemption counts as a disposal at all.
 
+#### Form placement (Tier 3 -- verified against the official Anleitung)
+
+Verified against BOTH tax years the engine supports: Anleitung zur Anlage KAP **2024**
+(`reference/Anltg_KAP_24.md`, Zeilen 18/19) and **2025** (`reference/Anltg_KAP_25.md`,
+same wording at Zeile 19 and the identical "zusaetzlich" rule). The placement below is
+unchanged by JStG 2024 -- that amendment removed Zeilen 21/24 (Termingeschaefte), which
+bonds never used.
+
+Anleitung zur Anlage KAP 2024, Zeilen 18/19:
+
+- Zeile 18 takes **inlaendische** Kapitalertraege not yet subject to Steuerabzug by an
+  inlaendische Zahlstelle.
+- Zeile 19 takes **auslaendische** Ertraege, *"insbesondere Ertraege bei auslaendischen
+  Kreditinstituten"*.
+- *"Alle Veraeusserungstatbestaende tragen Sie bitte zusaetzlich in die Zeilen 20
+  und / oder 22 und / oder 23 ein."*
+
+The Z18/Z19 split turns on the **intermediary** (broker location), NOT on issuer domicile
+-- see `reference/research/inlaendisch-auslaendisch-relevance.md`. Because IBKR is an Irish
+broker, all income from this engine's inputs lands in Zeile 19 regardless of where the bond
+issuer sits. **This mapping is conditional on that fact**; it is not a property of bond
+maturities as such. A bond redeemed through a German Zahlstelle would belong in Zeile 18.
+
+Applying the "zusaetzlich" rule: a bond maturity **gain** nets into Zeile 19 only (Zeile 20
+is reserved for Aktien). A bond maturity **loss** subtracts within Zeile 19 and is
+additionally entered in Zeile 22 as a positive amount (Zeile 23 is reserved for Aktien).
+
 **Engine mapping:** IBKR corporate action `Type="BM"` -> synthetic `TRADE_SELL_LONG` ->
 `RealizationType.LONG_POSITION_SALE` -> `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE` (Zeile 19)
-if positive, `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22) if negative
+if positive, `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22) if negative. EUR conversion of both
+legs follows the engine's general enrichment rule (ECB rate at each event date), not a
+provision specific to Satz 2.
 
 ---
 
