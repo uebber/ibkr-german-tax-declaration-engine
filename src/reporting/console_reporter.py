@@ -210,14 +210,19 @@ def generate_console_tax_report(
     print("\n--- Zusammenfassung: Saldo der konzeptionellen Steuertöpfe (vor Anwendung Sparer-Pauschbetrag etc.) ---")
     print(f"  Saldo Aktien: {_q(loss_offsetting_summary.conceptual_net_stocks)}")
     
+    # Two independent switches, deliberately not nested: whether the €20k cap is
+    # applied (never — §52 Abs. 28 S. 25 EStG: "auf alle offenen Fälle nicht mehr
+    # anzuwenden"), and whether the form of this year has a separate Zeile 24.
     if form_rules.derivative_loss_cap_applies:
         print(f"  Saldo Termingeschäfte (konzeptionell, nach Verrechnung und ggf. Verlustbegrenzung): {_q(loss_offsetting_summary.conceptual_net_derivatives_capped)}")
         if loss_offsetting_summary.conceptual_net_derivatives_uncapped != loss_offsetting_summary.conceptual_net_derivatives_capped:
             print(f"     (Saldo Termingeschäfte vor konzeptioneller Verlustbegrenzung: {_q(loss_offsetting_summary.conceptual_net_derivatives_uncapped)})")
-        print(f"     (Für Anlage KAP Zeile 24 deklarierte Verluste (Brutto, unbegrenzt): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))})")
     else:
         print(f"  Saldo Termingeschäfte (konzeptionell, nach Verrechnung, ohne Verlustbegrenzung): {_q(loss_offsetting_summary.conceptual_net_derivatives_uncapped)}")
-        print(f"     (Verlustverrechnungsbeschränkung für Termingeschäfte ab {tax_year} aufgehoben)")
+        print("     (Verlustverrechnungsbeschränkung für Termingeschäfte durch das JStG 2024 aufgehoben;")
+        print("      § 52 Abs. 28 Satz 25 EStG: auf alle offenen Fälle nicht mehr anzuwenden)")
+    if form_rules.separate_derivative_lines:
+        print(f"     (Für Anlage KAP Zeile 24 deklarierte Verluste (Brutto, unbegrenzt): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))})")
     
     print(f"  Saldo Sonstige Kapitalerträge (nicht Fonds): {_q(loss_offsetting_summary.conceptual_net_other_income)}")
     print(f"  Saldo Investmentfonds (Netto, nach TF, inkl. Vorabpauschale): {_q(loss_offsetting_summary.conceptual_fund_income_net_taxable)}")
