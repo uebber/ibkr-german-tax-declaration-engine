@@ -24,6 +24,7 @@ from src.domain.enums import FinancialEventType, AssetCategory, RealizationType
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger, FifoLot, ShortFifoLot
 from src.engine.event_processors.corporate_action_processor import MergerStockProcessor
+from src.utils.account_utils import DEFAULT_ACCOUNT
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider
 
@@ -268,7 +269,8 @@ class TestMergerStockProcessor:
         source_ledger.lots.append(_make_long_lot("2022-01-01", "130", "167.56", "TX1"))
 
         merger = _make_merger_event(source_id, target_id)
-        fifo_ledgers = {source_id: source_ledger, target_id: target_ledger}
+        fifo_ledgers = {(DEFAULT_ACCOUNT, source_id): source_ledger,
+                        (DEFAULT_ACCOUNT, target_id): target_ledger}
         context = {'fifo_ledgers': fifo_ledgers}
 
         processor = MergerStockProcessor()
@@ -291,7 +293,8 @@ class TestMergerStockProcessor:
         source_ledger.short_lots.append(_make_short_lot("2022-04-01", "50", "200.00", "TX_S"))
 
         merger = _make_merger_event(source_id, target_id)
-        context = {'fifo_ledgers': {source_id: source_ledger, target_id: target_ledger}}
+        context = {'fifo_ledgers': {(DEFAULT_ACCOUNT, source_id): source_ledger,
+                                    (DEFAULT_ACCOUNT, target_id): target_ledger}}
 
         processor = MergerStockProcessor()
         rgls = processor.process(merger, source_ledger, context)
@@ -308,7 +311,8 @@ class TestMergerStockProcessor:
         target_ledger = _make_ledger(target_id)
 
         merger = _make_merger_event(source_id, target_id)
-        context = {'fifo_ledgers': {source_id: source_ledger, target_id: target_ledger}}
+        context = {'fifo_ledgers': {(DEFAULT_ACCOUNT, source_id): source_ledger,
+                                    (DEFAULT_ACCOUNT, target_id): target_ledger}}
 
         processor = MergerStockProcessor()
         rgls = processor.process(merger, source_ledger, context)
@@ -322,7 +326,7 @@ class TestMergerStockProcessor:
         source_ledger.lots.append(_make_long_lot("2022-01-01", "100", "50.00", "TX1"))
 
         merger = _make_merger_event(source_id, target_id)
-        context = {'fifo_ledgers': {source_id: source_ledger}}  # No target ledger
+        context = {'fifo_ledgers': {(DEFAULT_ACCOUNT, source_id): source_ledger}}  # No target ledger
 
         processor = MergerStockProcessor()
         rgls = processor.process(merger, source_ledger, context)
@@ -341,7 +345,8 @@ class TestMergerStockProcessor:
         source_ledger.lots.append(lot)
 
         merger = _make_merger_event(source_id, target_id)
-        context = {'fifo_ledgers': {source_id: source_ledger, target_id: target_ledger}}
+        context = {'fifo_ledgers': {(DEFAULT_ACCOUNT, source_id): source_ledger,
+                                    (DEFAULT_ACCOUNT, target_id): target_ledger}}
 
         # Patch receive to raise an exception
         with patch.object(target_ledger, 'receive_all_lots_from_merger', side_effect=ValueError("Test error")):
@@ -366,7 +371,8 @@ class TestMergerStockProcessor:
         source_ledger.short_lots.append(_make_short_lot("2022-02-01", "20", "60.00", "TX_S"))
 
         merger = _make_merger_event(source_id, target_id)
-        context = {'fifo_ledgers': {source_id: source_ledger, target_id: target_ledger}}
+        context = {'fifo_ledgers': {(DEFAULT_ACCOUNT, source_id): source_ledger,
+                                    (DEFAULT_ACCOUNT, target_id): target_ledger}}
 
         processor = MergerStockProcessor()
         processor.process(merger, source_ledger, context)
@@ -387,7 +393,8 @@ class TestMergerStockProcessor:
         ])
 
         merger = _make_merger_event(source_id, target_id)
-        context = {'fifo_ledgers': {source_id: source_ledger, target_id: target_ledger}}
+        context = {'fifo_ledgers': {(DEFAULT_ACCOUNT, source_id): source_ledger,
+                                    (DEFAULT_ACCOUNT, target_id): target_ledger}}
 
         processor = MergerStockProcessor()
         processor.process(merger, source_ledger, context)
