@@ -36,19 +36,30 @@ class TestCollectorPolicy:
 
 
 class TestEoyMismatchFlowsIntoChannel(FifoTestCaseBase):
-    def test_eoy_quantity_mismatch_recorded_as_gap(self, mock_config_paths):
-        """Buy 20, EOY report says 10: the existing mismatch error count is
-        unchanged AND the divergence appears in the data-gap channel."""
+    def test_eoy_quantity_mismatch_aborts_the_run(self, mock_config_paths):
+        """Buy 20, EOY report says 10: the divergence flows through the data-gap
+        channel and the run ABORTS.
+
+        Changed from the original assertion (`eoy_mismatch_error_count == 1`,
+        "unchanged behavior") on the maintainer's decision: given a full year of
+        input the reconciliation must succeed, so a residual means a disposal was
+        missed, duplicated or mismatched and every figure from that ledger is
+        unsafe. PRD 2.4 requires the quantities to be identical and the
+        discrepancy to be a critical error; the engine no longer continues past
+        one. See tests/docs/spec_fifo.md, Group 3.
+        """
         trades = [["U_GAP_TEST", "EUR", "STK", "COMMON", "GAPX", "GAP X", "US000000GAP1",
                    "", "", "", "20230401", "20", "10", "0", "EUR", "BUY", "T1", "", "",
                    "CONGAP", "", "1", "O"]]
         positions_end = [["U_GAP_TEST", "EUR", "STK", "COMMON", "GAPX", "GAP X",
                           "US000000GAP1", Decimal("10"), Decimal("100"), Decimal("10"),
                           Decimal("100"), "", "CONGAP", "", Decimal("1")]]
-        out = self._run_pipeline(
-            trades_data=trades, positions_end_data=positions_end,
-            custom_rate_provider=MockECBExchangeRateProvider(Decimal("1.0")),
-            tax_year=2023,
-        )
-        assert out.eoy_mismatch_error_count == 1  # unchanged behavior
-        assert any(g.code == "EOY_QTY_MISMATCH" for g in out.data_gaps)
+        with pytest.raises(DataGapError) as excinfo:
+            self._run_pipeline(
+                trades_data=trades, positions_end_data=positions_end,
+                custom_rate_provider=MockECBExchangeRateProvider(Decimal("1.0")),
+                tax_year=2023,
+            )
+        message = str(excinfo.value)
+        assert "EOY_RECONCILIATION_FAILED" in message
+        assert "GAP X" in message, message

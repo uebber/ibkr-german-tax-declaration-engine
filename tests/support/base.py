@@ -6,6 +6,7 @@ from typing import Any, Optional, List, Dict, Tuple
 
 # Application components
 from src.pipeline_runner import run_core_processing_pipeline, ProcessingOutput
+from src.processing.data_gaps import DataGapError
 from src.utils.exchange_rate_provider import ExchangeRateProvider  # Base class for mock
 from src.domain.results import RealizedGainLoss
 from src.domain.assets import Asset
@@ -124,6 +125,12 @@ class FifoTestCaseBase:
             )
             return results
 
+        except DataGapError:
+            # A fail-fast data gap is a deliberate engine verdict, not a harness
+            # failure: scenarios that specify an abort (e.g. the Group 3 EoY
+            # reconciliation mismatches) assert it with pytest.raises. Converting it
+            # into pytest.fail here would make that outcome unassertable.
+            raise
         except Exception as e:
             print(f"Error during pipeline execution in test: {e}")
             import traceback

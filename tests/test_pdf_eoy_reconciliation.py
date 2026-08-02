@@ -72,6 +72,18 @@ def test_mismatch_without_detail_says_so_rather_than_staying_silent():
     assert "Log-Ausgabe" in text
 
 
+def test_currency_eoy_gaps_reach_the_pdf():
+    """The currency check is deliberately non-fatal, so unlike the securities
+    one its gaps really do arrive in a generated report. They must not be
+    covered by an all-clear about "die Endbestände"."""
+    gaps = [DataGap(code="CURRENCY_EOY_MISMATCH", subject="USD",
+                    detail="FIFO-Bestand 100.00 weicht vom gemeldeten Kontostand 100.51 ab.")]
+    text = _eoy_section_text(eoy_mismatch_count=0, data_gaps=gaps)
+    assert ALL_CLEAR not in text
+    assert "USD" in text and "100.51" in text
+    assert "20 Abs. 2 Nr. 3" in text
+
+
 def test_structured_details_still_render_the_table():
     """The pre-existing table path is untouched — it is simply unreachable from
     production today, because the engine returns a count and not rows."""

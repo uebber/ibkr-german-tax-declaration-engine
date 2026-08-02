@@ -65,8 +65,26 @@ This document outlines the test scenarios for the FIFO (First-In, First-Out) cal
 ---
 
 ### Test Group 3: End-of-Year (EOY) Position Validation
-**Objective:** Ensure calculated EOY positions match `positions_end_of_year.csv` and that discrepancies (especially quantity) are flagged as errors.
+**Objective:** Ensure calculated EOY positions match `positions_end_of_year.csv`, and that any discrepancy stops the run.
 **PRD Coverage:** 2.4 (EOY Quantity Validation), 2.10 (Critical Error Report: EOY Quantity Mismatch), 5.12 (Perform EOY Quantity Validation).
+
+**A non-zero "Expected: Errors" means the run ABORTS.** Given a full year of input, the
+start-of-year position plus the year's events must reconcile to the broker's reported
+end-of-year position exactly. A residual is not a reporting nuance: the ledger and the broker
+disagree about what is held, so at least one disposal was missed, double-counted, or matched
+to the wrong lot — and every figure derived from that ledger, not just the quantity, is
+unsafe. PRD 2.4 already requires the quantities to be identical and the discrepancy to be a
+critical error; the engine raises `EOY_RECONCILIATION_FAILED`, naming every affected position
+in one message, after checking them all.
+
+Consequence, recorded so it is not rediscovered as a bug: a tax year whose imported trade
+history does not reach back far enough to explain an open position **cannot be processed**.
+That is intended. The cost basis of such a position is unknown, so the gain computed from it
+would be wrong; the fix is to supply the missing history, not to let the run continue.
+
+The `Expected: EOY State (Qty)` column for the mismatch rows therefore documents what the
+engine had computed at the moment it refused to continue. It is not asserted — there is no
+post-mismatch state, because no result is produced.
 
 | ID          | Description                                                                 | Inputs: SOY (`ASSET_A`) | Inputs: Intra-Year (`ASSET_A`) | Inputs: `positions_end_of_year.csv` (`ASSET_A`) | Expected: RGLs (Type: Gain/Loss EUR) | Expected: `ASSET_A` EOY State (Qty) | Expected: Errors (`eoy_mismatch_error_count`) | Key Variations                                                      |
 |-------------|-----------------------------------------------------------------------------|-------------------------|--------------------------------|-------------------------------------------------|--------------------------------------|-----------------------------------|-----------------------------------------------|-------------------------------------------------------------|

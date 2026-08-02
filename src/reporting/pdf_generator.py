@@ -535,6 +535,14 @@ class PdfReportGenerator:
         The all-clear is now conditioned on the mismatch count. Where the count
         is non-zero, the recorded data gaps supply the per-asset detail; if none
         are available, the report says so rather than filling the silence.
+
+        The securities branch is a **backstop**: a securities EoY mismatch now
+        aborts the run (PRD 2.4), so no PDF is produced with a non-zero count.
+        It is kept because the sentence it replaces was wrong for the whole
+        history of this file, and nothing should be able to restore it by
+        letting a count through some other path. The *currency* balances below
+        are the live case — that check is deliberately non-fatal, so those gaps
+        do reach a generated report.
         """
         self.story.append(Paragraph("Abstimmung der Endbestände (EOY)", self.styles['H2']))
 
@@ -554,8 +562,9 @@ class PdfReportGenerator:
                     self.story.append(Paragraph(
                         "Eine Aufstellung der betroffenen Positionen liegt diesem Bericht nicht "
                         "vor; siehe Log-Ausgabe des Laufs.", self.styles['BodyText']))
-            else:
+            elif not self._currency_eoy_gaps():
                 self.story.append(Paragraph("Alle berechneten Endbestände stimmen mit den gemeldeten Endbeständen überein.", self.styles['BodyText']))
+            self._add_currency_eoy_gaps()
             return
 
         data = [["Asset Beschreibung", "ISIN/Symbol", "Ber. EOY Menge (FIFO)", "Gem. EOY Menge (IBKR)", "Differenz"]]
@@ -575,9 +584,30 @@ class PdfReportGenerator:
             # Adjusted col_widths slightly to accommodate potentially wider integer quantity strings if numbers are large
             table = self._create_styled_table(data, col_widths=[5*cm, 3*cm, 3.5*cm, 3.5*cm, 2*cm])
             self.story.append(table)
-        else: 
+        else:
             self.story.append(Paragraph("Keine Abweichungen bei den Endbeständen festgestellt.", self.styles['BodyText']))
-            
+        self._add_currency_eoy_gaps()
+
+    def _currency_eoy_gaps(self) -> List["DataGap"]:
+        return [g for g in self.data_gaps if g.code == "CURRENCY_EOY_MISMATCH"]
+
+    def _add_currency_eoy_gaps(self):
+        """Cash balances are end balances too, and unlike the securities check
+        this one is not fatal — so a generated report can and must carry it.
+        The FX ledger drives the §20 Abs. 2 Nr. 3 currency gains, so a ledger
+        that disagrees with the broker's closing balance puts those figures in
+        question even though the run completed."""
+        gaps = self._currency_eoy_gaps()
+        if not gaps:
+            return
+        self.story.append(Paragraph(
+            f"ACHTUNG: Bei {len(gaps)} Währungskonto/-konten weicht der aus dem FIFO-Bestand "
+            "berechnete Endbestand vom gemeldeten Kontostand ab. Die daraus abgeleiteten "
+            "Fremdwährungsgewinne (§ 20 Abs. 2 Nr. 3 EStG) sind entsprechend unsicher.",
+            self.styles['BodyText']))
+        for gap in gaps:
+            self.story.append(Paragraph(f"• {gap.subject}: {gap.detail}", self.styles['BodyText']))
+
     def _get_asset_details(self, asset_id: uuid.UUID) -> Tuple[str, str, Optional[InvestmentFundType]]:
         asset = self.assets_by_id.get(asset_id)
         if not asset:

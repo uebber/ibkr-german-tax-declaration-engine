@@ -373,6 +373,22 @@ uv run python validate_ledgers.py --year 2024
 uv run python validate_ledgers.py --verbose --quiet
 ```
 
+**A securities EoY mismatch aborts the run.** With a full year of input, the start-of-year
+position plus the year's events must reconcile to the broker's reported end-of-year position.
+If they do not, the ledger and the broker disagree about what is held — a disposal is missing,
+duplicated, or matched to the wrong lot — so the engine refuses to emit figures rather than
+publish a plausible-looking but wrong declaration. The error names every affected position.
+
+The usual cause is a trade history that does not reach back far enough: a position opened
+before the earliest `Trades-{YYYY}.csv` you imported has no cost basis the engine can derive.
+Fix it by adding the missing years (see the manual export instructions above), not by ignoring
+the message. Because the IBKR Flex Web Service serves only about the last two years, older
+years may have to come from Client Portal Activity Statements.
+
+Cash-balance (currency) divergences are **not** fatal — their usual causes are the date range
+of the cash-balance export or transaction types missing from the Cash Transactions query (see
+the note above). They are reported as `CURRENCY_EOY_MISMATCH` in the console and PDF.
+
 ## Output
 
 1.  **Console:** Processing logs and, with `--report-tax-declaration`, a summary of figures for direct tax form entry.

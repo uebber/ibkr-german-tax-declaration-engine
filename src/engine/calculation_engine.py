@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime, date
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
-from src.processing.data_gaps import DataGapCollector
+from src.processing.data_gaps import DataGapCollector, DataGapError, GapSeverity
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,
@@ -189,9 +189,14 @@ def run_main_calculations(
     1. Separates historical and current year events.
     2. Initializes FIFO ledgers based on SOY positions and historical trades.
     3. Processes current year events chronologically using dedicated processors.
-    4. Performs EOY quantity validation (logs errors but does not halt).
+    4. Performs EOY quantity validation. A securities mismatch is FATAL (PRD 2.4): every
+       asset is checked, then the run raises DataGapError naming all of them. A currency
+       (cash balance) divergence is recorded as a WARNING data gap and does not halt.
     5. Calculates Vorabpauschale (currently placeholder).
-    6. Returns calculated results (Realized G/L, Vorabpauschale), processed events, and EOY mismatch count.
+    6. Returns calculated results (Realized G/L, Vorabpauschale), processed events, and EOY
+       mismatch count. The count is retained in the signature and in ProcessingOutput as a
+       backstop for the reporting layer, but on a successful return it is now always 0 —
+       any other value would have raised.
     """
     logger.info(f"Starting main calculation engine for tax year {tax_year} with {len(financial_events)} events.")
     ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode) # Renamed internal_working_precision
@@ -698,7 +703,43 @@ def run_main_calculations(
                 )
 
     if eoy_mismatch_errors > 0:
-        logger.error(f"EOY Quantity Validation FAILED with {eoy_mismatch_errors} critical mismatches. Processing will continue, but results may be inaccurate.")
+        # Given a full year of input, SoY + this year's events must reconcile to the
+        # broker's EoY positions exactly. A residual is not a reporting nuance: it means
+        # the ledger and the broker disagree about what is held, so at least one disposal
+        # was missed, double-counted, or applied to the wrong lot — and every figure
+        # derived from that ledger is suspect, not just the quantity. PRD.md 2.4 already
+        # requires the quantities to be identical and the discrepancy to be a critical
+        # error; only the engine's own "processing will continue" softened it into a
+        # warning. CLAUDE.md's fail-fast rule settles which of the two wins: a wrong
+        # number that looks plausible is worse than a crash.
+        #
+        # Reported as a batch, after the loop, so one run names every affected position
+        # instead of stopping at the first.
+        subjects = "; ".join(
+            g.subject for g in (data_gap_collector.gaps if data_gap_collector else [])
+            if g.code == "EOY_QTY_MISMATCH"
+        )
+        detail = (
+            f"Die EoY-Abstimmung schlägt für {eoy_mismatch_errors} Position(en) fehl: der aus "
+            f"SoY-Bestand und den Ereignissen des Jahres berechnete Endbestand weicht vom "
+            f"Broker-Report ab. Betroffen: {subjects or 'siehe Log'}. Bei vollständigen "
+            f"Jahresdaten darf das nicht auftreten — die häufigste Ursache ist eine "
+            f"Transaktionshistorie, die nicht weit genug zurückreicht (Positionen, die vor "
+            f"der ersten importierten Trades-Datei eröffnet wurden). Solange die Abweichung "
+            f"besteht, sind die berechneten Veräußerungsgewinne unvollständig."
+        )
+        if data_gap_collector is not None:
+            # Records, logs CRITICAL, and raises DataGapError (a ProcessingError).
+            data_gap_collector.record(
+                code="EOY_RECONCILIATION_FAILED",
+                subject=f"Steuerjahr {tax_year}",
+                detail=detail,
+                severity=GapSeverity.FAIL_FAST,
+            )
+        # Reached only when no collector was supplied (direct callers). The abort must not
+        # be contingent on an optional argument.
+        logger.critical(f"EOY Quantity Validation FAILED with {eoy_mismatch_errors} critical mismatches.")
+        raise DataGapError(f"[EOY_RECONCILIATION_FAILED] Steuerjahr {tax_year}: {detail}")
     else:
         logger.info("EOY Quantity Validation passed or no critical mismatches found against reported EOY positions.")
 
@@ -734,6 +775,22 @@ def run_main_calculations(
                 f"Diff={diff:.2f}"
             )
             currency_eoy_mismatches += 1
+            # WARNING, not FAIL_FAST, and deliberately unlike the securities check
+            # above: the listed causes are input-completeness problems (cash-balance
+            # export date range, deposits/withdrawals/margin interest absent from the
+            # cash-transactions file) rather than a ledger that disagrees with the
+            # broker about a holding. Recorded so it reaches the report instead of
+            # living only in the log — an FX ledger that is short still moves the
+            # §20 Abs. 2 Nr. 3 gains computed from it.
+            if data_gap_collector is not None:
+                data_gap_collector.record(
+                    code="CURRENCY_EOY_MISMATCH",
+                    subject=str(asset_obj.currency),
+                    detail=(f"FIFO-Bestand {calculated_eoy:.2f} weicht vom gemeldeten "
+                            f"Kontostand {reported_eoy:.2f} ab (Differenz {diff:.2f}). "
+                            f"Mögliche Ursachen: Zeitraum der Cash-Balance-Datei, oder "
+                            f"nicht erfasste Ein-/Auszahlungen, Margin-Zinsen oder Gebühren."),
+                )
         else:
             logger.debug(f"Currency EOY OK {asset_obj.currency}: FIFO={calculated_eoy:.2f}, Reported={reported_eoy:.2f}")
 

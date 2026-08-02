@@ -102,20 +102,69 @@ class TestBothEoyBranchesRecord(FifoTestCaseBase):
         """Bought 20 and never sold, but the EoY positions export does not list
         the asset at all — reported quantity is not "different", it is absent.
         The engine treats that as a mismatch against an implied zero; that is
-        the branch the suite could not see."""
+        the branch the suite could not see, and it now has to abort like the
+        other one."""
         trades = [["U_GAP_TEST", "EUR", "STK", "COMMON", "GAPY", "GAP Y", "US000000GAP2",
                    "", "", "", "20230401", "20", "10", "0", "EUR", "BUY", "T1", "", "",
                    "CONGAPY", "", "1", "O"]]
+        with pytest.raises(DataGapError) as excinfo:
+            self._run_pipeline(
+                trades_data=trades, positions_end_data=[],
+                custom_rate_provider=MockECBExchangeRateProvider(Decimal("1.0")),
+                tax_year=2023,
+            )
+        message = str(excinfo.value)
+        assert "EOY_RECONCILIATION_FAILED" in message
+        assert "GAP Y" in message, message
+
+    def test_the_abort_names_every_affected_position_not_just_the_first(self, mock_config_paths):
+        """Diagnostics: reporting one asset per run would mean fixing the input
+        N times to discover N problems. The engine checks every asset before it
+        raises."""
+        trades = [
+            ["U_GAP_TEST", "EUR", "STK", "COMMON", "GAPY", "GAP Y", "US000000GAP2",
+             "", "", "", "20230401", "20", "10", "0", "EUR", "BUY", "T1", "", "",
+             "CONGAPY", "", "1", "O"],
+            ["U_GAP_TEST", "EUR", "STK", "COMMON", "GAPZ", "GAP Z", "US000000GAP3",
+             "", "", "", "20230402", "7", "10", "0", "EUR", "BUY", "T2", "", "",
+             "CONGAPZ", "", "1", "O"],
+        ]
+        with pytest.raises(DataGapError) as excinfo:
+            self._run_pipeline(
+                trades_data=trades, positions_end_data=[],
+                custom_rate_provider=MockECBExchangeRateProvider(Decimal("1.0")),
+                tax_year=2023,
+            )
+        message = str(excinfo.value)
+        assert "GAP Y" in message and "GAP Z" in message, message
+        assert "2 Position(en)" in message, message
+
+
+class TestCurrencyEoyStaysNonFatal(FifoTestCaseBase):
+    """The cash-balance check is deliberately the exception to the rule above.
+
+    Its known causes are input-completeness problems — the date range of the
+    cash-balance export, or deposits, withdrawals, margin interest and fees
+    absent from the cash-transactions file — not a ledger disagreeing with the
+    broker about a holding. So it records and continues. Pinning both halves:
+    that it does NOT abort, and that it no longer lives only in the log.
+    """
+
+    def test_currency_divergence_is_recorded_and_the_run_completes(self, mock_config_paths):
+        """SoY 0 USD, no currency-affecting events, but the broker reports 100.51
+        USD at year end. The engine cannot explain the balance; it says so."""
+        cash_balance = [["U_GAP_TEST", "USD", "20230101", "20231231",
+                         Decimal("0"), Decimal("100.51")]]
         out = self._run_pipeline(
-            trades_data=trades, positions_end_data=[],
+            cash_balance_data=cash_balance,
             custom_rate_provider=MockECBExchangeRateProvider(Decimal("1.0")),
             tax_year=2023,
         )
-        assert out.eoy_mismatch_error_count == 1
-        recorded = [g for g in out.data_gaps if g.code == "EOY_QTY_MISMATCH"]
+        recorded = [g for g in out.data_gaps if g.code == "CURRENCY_EOY_MISMATCH"]
         assert len(recorded) == 1, out.data_gaps
-        assert "GAP Y" in recorded[0].subject
-        assert "20" in recorded[0].detail
+        assert recorded[0].subject == "USD"
+        assert "100.51" in recorded[0].detail
+        assert recorded[0].severity is GapSeverity.WARNING
 
 
 class TestFailFastIsNotSwallowed:
