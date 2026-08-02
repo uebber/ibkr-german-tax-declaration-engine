@@ -170,10 +170,11 @@ def main_application():
     if args.pdf_output_file:
         if loss_offsetting_summary:
             logger.info(f"Generating PDF report to {args.pdf_output_file}...")
+            # The structured per-asset table is still unfed (the engine returns a
+            # count, not rows), but the count and the recorded data gaps are
+            # enough for the report to stop certifying a reconciliation it never
+            # performed. See PdfReportGenerator._add_eoy_reconciliation.
             eoy_mismatch_details_for_pdf = []
-            if processing_results.eoy_mismatch_error_count > 0 and not eoy_mismatch_details_for_pdf:
-                 logger.warning(f"EOY mismatch count is {processing_results.eoy_mismatch_error_count}, but detailed mismatch data is not available for the PDF report. The PDF section will be limited.")
-
             pdf_generator = PdfReportGenerator(
                 loss_offsetting_result=loss_offsetting_summary,
                 # The PDF report should also use correctly filtered events for income sections
@@ -183,7 +184,9 @@ def main_application():
                 assets_by_id=asset_resolver.assets_by_internal_id,
                 tax_year=tax_year,
                 eoy_mismatch_details=eoy_mismatch_details_for_pdf,
-                report_version="v3.2.3" # Updated to match PRD version reflecting this fix
+                report_version="v3.2.3", # Updated to match PRD version reflecting this fix
+                eoy_mismatch_count=processing_results.eoy_mismatch_error_count,
+                data_gaps=processing_results.data_gaps
             )
             pdf_generator.generate_report(args.pdf_output_file)
         else:

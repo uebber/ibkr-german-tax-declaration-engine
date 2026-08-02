@@ -11,6 +11,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
 
+from src.processing.data_gaps import DataGap
 from src.domain.results import LossOffsettingResult, RealizedGainLoss, VorabpauschaleData
 from src.domain.events import FinancialEvent, CashFlowEvent, WithholdingTaxEvent, CorporateActionEvent, \
     CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock
@@ -32,7 +33,9 @@ class PdfReportGenerator:
                  assets_by_id: Dict[uuid.UUID, Asset],
                  tax_year: int,
                  eoy_mismatch_details: Optional[List[Dict[str, Any]]],
-                 report_version: str = "v1.0"):
+                 report_version: str = "v1.0",
+                 eoy_mismatch_count: int = 0,
+                 data_gaps: Optional[List["DataGap"]] = None):
         self.loss_offsetting_result = loss_offsetting_result
         self.all_financial_events = all_financial_events
         self.realized_gains_losses = realized_gains_losses
@@ -41,6 +44,12 @@ class PdfReportGenerator:
         self.tax_year = tax_year
         self.eoy_mismatch_details = eoy_mismatch_details if eoy_mismatch_details else []
         self.report_version = report_version
+        # The per-asset mismatch table above has never been fed by production
+        # (main.py hands it a hardcoded []), so the count and the recorded gaps
+        # are what actually tell this report whether the EoY reconciliation
+        # succeeded. See _add_eoy_reconciliation.
+        self.eoy_mismatch_count = eoy_mismatch_count
+        self.data_gaps: List["DataGap"] = data_gaps if data_gaps else []
 
         self.styles = self._generate_styles()
         self.story: List[Any] = []
@@ -514,10 +523,39 @@ class PdfReportGenerator:
             self.story.append(Paragraph(f"• {note}", self.styles['BodyText']))
 
     def _add_eoy_reconciliation(self):
+        """Report the EoY reconciliation, and never claim one that did not happen.
+
+        The all-clear below used to be unconditional in practice: main.py passes
+        a hardcoded empty ``eoy_mismatch_details``, so every PDF ever generated
+        stated that all calculated end balances match the broker's — including
+        the runs where the engine had just logged the opposite. An EoY quantity
+        mismatch is the signature of a disposal the engine did not process, so
+        that sentence certified the one condition it should have flagged.
+
+        The all-clear is now conditioned on the mismatch count. Where the count
+        is non-zero, the recorded data gaps supply the per-asset detail; if none
+        are available, the report says so rather than filling the silence.
+        """
         self.story.append(Paragraph("Abstimmung der Endbestände (EOY)", self.styles['H2']))
 
         if not self.eoy_mismatch_details:
-            self.story.append(Paragraph("Alle berechneten Endbestände stimmen mit den gemeldeten Endbeständen überein.", self.styles['BodyText']))
+            if self.eoy_mismatch_count > 0:
+                self.story.append(Paragraph(
+                    f"ACHTUNG: Bei {self.eoy_mismatch_count} Position(en) weicht der berechnete "
+                    "Endbestand vom gemeldeten Endbestand des Brokers ab. Eine Abweichung deutet "
+                    "auf einen nicht verarbeiteten Verkauf oder eine unvollständige Transaktions"
+                    "historie hin; die betroffenen Positionen müssen vor Abgabe der Erklärung "
+                    "manuell abgestimmt werden.", self.styles['BodyText']))
+                eoy_gaps = [g for g in self.data_gaps if g.code == "EOY_QTY_MISMATCH"]
+                for gap in eoy_gaps:
+                    self.story.append(Paragraph(f"• {gap.subject}: {gap.detail}",
+                                                self.styles['BodyText']))
+                if not eoy_gaps:
+                    self.story.append(Paragraph(
+                        "Eine Aufstellung der betroffenen Positionen liegt diesem Bericht nicht "
+                        "vor; siehe Log-Ausgabe des Laufs.", self.styles['BodyText']))
+            else:
+                self.story.append(Paragraph("Alle berechneten Endbestände stimmen mit den gemeldeten Endbeständen überein.", self.styles['BodyText']))
             return
 
         data = [["Asset Beschreibung", "ISIN/Symbol", "Ber. EOY Menge (FIFO)", "Gem. EOY Menge (IBKR)", "Differenz"]]
