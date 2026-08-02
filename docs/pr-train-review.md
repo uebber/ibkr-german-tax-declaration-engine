@@ -2,8 +2,8 @@
 
 **Branch:** `hermetic-tests-first` (local only, never pushed)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 10 of 25 PRs reviewed and accepted; 15 not yet reviewed.
-**Next up:** #25 (train 10). Rebase remaining branches from `a717f47`; see section 5.
+**Status as of 2026-08-02:** 11 of 25 PRs reviewed and accepted; 14 not yet reviewed.
+**Next up:** #26 (train 11). Rebase remaining branches from `345bd49`; see section 5.
 **Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
 issue #15, no CI added. All of that is still open for decision.
 
@@ -20,6 +20,11 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+47f2581 chore: drop the unused typing import the channel arrived with         [ours]
+a2f3974 fix(reporting): PDF stops certifying an EoY reconciliation             [ours]
+0893139 tests: pin the two ends of the data-gap channel the suite can't see    [ours]
+7e3eada fix: say what the data-gap channel covers; root its error type         [ours]
+68fd82d feat: data-gap channel                                        (PR #25, Fsaupe)
 1c01fbd docs: correct the replay determinism claim and the merger citation    [ours]
 273f6ef fix(engine): refuse an unsortable historical currency event            [ours]
 a35a881 tests: pin the replay stream's ordering contract                       [ours]
@@ -69,7 +74,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 471 tests pass on a simulated clean clone
+**Verification at HEAD:** 485 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -83,7 +88,9 @@ be66807 tests: config_example completeness guard                         (PR #33
 > Cash_Balance snapshots survived the `data_import/` rebuild. At `eeb129c` (#21 + our seven
 > fixes) versus `f004746`: **PDF IDENTICAL**, console 3 lines (our reworded repeal note),
 > log difference entirely the known `OPTION_CASH_SETTLEMENT` permutation, checked against a
-> same-tree control taken the same session.
+> same-tree control taken the same session. At `47f2581` (#25 + our four fixes) versus
+> `78868e4`: **console IDENTICAL, PDF IDENTICAL**, 14 log lines against a 10-line same-tree
+> control, all of them the same permutation.
 
 One commit from PR #16 was **deliberately dropped**: `af95b72` added `rework2-plan.md`,
 Fsaupe's internal working plan referencing branches/tags/files that do not exist in this
@@ -858,6 +865,118 @@ and the "one stream replaces three machines" description is accurate.
 **Everything found in #24 is fixed in commits**, except the separation loop's silent drop,
 which is pre-existing and now an open item.
 
+### PR #25 (train 10) — data-gap channel — **ACCEPTED, both ends now tested**
+
+Rebased clean from `a717f47`. 471 → 474 with the PR, 485 with ours; green on the clean-clone
+protocol (`config_example.py`, no `cache/`) and with the real config. Real-data parity for
+2025: **console IDENTICAL, PDF IDENTICAL**, log 14 lines against a same-tree control of 10,
+every one of them the known `OPTION_CASH_SETTLEMENT` permutation and nothing else. The
+commit's *"the dataset has no gaps, so no new output"* is **verified rather than taken**: the
+2025 run produces zero `EOY MISMATCH` log lines, so the new report section never prints.
+
+**The smallest PR since #17 and the only one whose description I could not fault.** *(#19 was
+the other; #22 came close.)* `Legal basis: n/a (infrastructure)` is accurate — no
+`reference/` file is touched and none needs to be, because nothing here can move a figure:
+the only wired condition records an already-logged, already-counted EoY mismatch, and the
+FAIL_FAST path has no call site at this commit. `Contains: code (…), tests` is accurate,
+which #24's was not. The forward claim *"PR 14 plugs missing-NAV gaps into this channel with
+FAIL_FAST"* checks out at `dc05960`.
+
+**And the seam is genuinely consumed** — the #20 `RunContext` caveat does not apply, for the
+third time running. `data_gaps.py` is created here and **never modified again** through
+`pr/40`, but by then `_record_vp_nav_gaps` makes an unresolvable §18 InvStG year-start NAV
+FAIL_FAST in a non-interactive run — i.e. the channel is what stops the engine declaring a
+fund's deemed income as zero — while a missing *declared* VP is deliberately WARNING because
+it only overstates the gain. That is a real severity policy doing real work, introduced four
+PRs ahead of its first user.
+
+**Defect 1, moderate — the severity rationale is backwards on the one condition actually
+wired (`7e3eada`).** The module places EoY quantity mismatches under WARNING, defined there
+as *"evidentiary divergences that do not silently change the declared figures"*. An EoY
+quantity mismatch is the signature of a disposal the engine did not process: calculated >
+reported means a sale is missing and with it its realised gain, so income is understated by
+an amount that appears nowhere in the output. That is the file's own FAIL_FAST criterion,
+verbatim. The severity **choice** is defensible and is kept — it preserves the pre-existing
+log-count-continue behaviour, and the mismatches actually seen in this data are the pre-2021
+data-floor artefact (2022's non-zero EOY on one security), so failing fast would make early
+tax years unprocessable. What is not defensible is the stated reason, which tells a reader
+the divergence is harmless. Reworded; whether WARNING is the right call is recorded as an
+open item for the owner in section 8.
+
+**Defect 2, moderate — the report half of the feature is invisible to the suite, and so is
+one of the two recording sites (`0893139`).** Mutation-probed with all 474 running:
+
+| mutation | failures |
+|---|---|
+| drop the record at the "quantity differs" EoY branch | 1 |
+| drop the record at the "asset absent from EoY report" branch | **0** |
+| delete the report section that renders the gaps | **0** |
+
+The blind recording branch is the sharper of the two — the engine holds a position the
+broker's EoY export does not list at all — and the rendering block is the entire point of
+the channel: a gap that reaches only the log is precisely the condition the module was
+written to end. Deleting it outright leaves a green suite. This is the same shape as #24's
+untested ordering contract, one layer up: the mechanism is fine, the instrument is missing.
+Six assertions added in `tests/test_data_gap_channel_guards.py`, each calibrated against the
+tree that should break it (all five mutations trip exactly the intended test and only it).
+Two of them pin a promise nothing exercises yet — that `DataGapError` is catchable as
+`ProcessingError`, and that `run_core_processing_pipeline`'s `except Exception` re-raises
+rather than degrading a fail-fast gap into a warning with no report entry — because #29 is
+what starts depending on both.
+
+**Defect 3, moderate, pre-existing but fixed here because #25 is what makes it fixable
+(`a2f3974`) — the PDF certifies an EoY reconciliation that never happened.** `main.py` hands
+`PdfReportGenerator` a **hardcoded empty** `eoy_mismatch_details`, and
+`_add_eoy_reconciliation` prints *"Alle berechneten Endbestände stimmen mit den gemeldeten
+Endbeständen überein."* whenever that list is empty. Since it is always empty, **every PDF
+ever produced by this engine carries the all-clear** — including runs where the engine has
+just logged `CRITICAL EOY MISMATCH` and the console has just printed `ACHTUNG`. The dead
+`and not eoy_mismatch_details_for_pdf` guard beside it logged the missing detail into the log,
+the one place the user is not looking. This is the sharpest instance of the exact failure #25
+exists to prevent — a plausible-looking incomplete declaration — in the artifact that leaves
+the machine. The all-clear is now conditioned on the mismatch count, the recorded
+`EOY_QTY_MISMATCH` gaps supply the per-asset detail, and where no detail is available the
+report says so. Red-first: 3 of 5 new assertions fail on the pre-fix tree; the other two pin
+behaviour that must not change (the all-clear on a genuinely clean run, and the untouched
+structured-table path). 2025 parity is unaffected because that year takes the all-clear
+branch. **`PdfReportGenerator` had no test of any kind before this**; it is instantiated only
+from `main.py`.
+
+**Defect 4, low — `DataGapError(RuntimeError)` sits outside the project's exception taxonomy
+(`7e3eada`).** CLAUDE.md and `src/domain/exceptions.py` define `DataIntegrityError` for
+parsing and `ProcessingError` for the engine; a third RuntimeError subclass means an
+`except ProcessingError` handler cannot see the one exception the fail-fast policy exists to
+raise. Now a `ProcessingError`, which is itself a `RuntimeError`, so nothing that caught the
+original type stops catching it.
+
+**Defect 5, low — the module claims a scope it does not have (`7e3eada`).** *"Every such
+condition now flows through a collector"*: exactly one does. The three silent-fallback sites
+already recorded as open items — the separation loop's dropped event, the historical currency
+replay's DEBUG swallow, Pass 2's missing merger source — are untouched by it, and one of them
+(the currency swallow) is precisely the "silent zero" class the module names in its own
+rationale. Named them, so the file documents its actual reach.
+
+**Nits (`7e3eada`, `47f2581`).** Dangling references: *"rework2-plan AR6"* and *"finding
+F4/F6"* name documents this repo does not contain — `af95b72` was dropped when #16 was
+absorbed. **Fifth instance** of the class after `e467cad`, `f2e5cc3`, `edda318`, and it
+propagates: `dc05960` repeats *"resolves legal-review finding F4"* in `_record_vp_nav_gaps`,
+so apply the same correction at #29. `GapSeverity` is imported into `calculation_engine.py`
+and never used (and stays unused through `pr/40`); `Optional` is imported into
+`data_gaps.py` and never used. The console's pre-existing EoY warning still said *"Siehe Log
+für Details"* after the details had been moved into the report; it now points at the section
+carrying them and falls back to the log line when no gaps were collected.
+
+**Two observations recorded rather than changed.** Each EoY mismatch is now logged twice, by
+the engine at ERROR and by the collector at WARNING — defensible (engine validation vs.
+channel record) but it doubles the line count for anyone grepping. And
+`tests/test_data_gaps.py`'s *"recorded before raising (visible post-mortem)"* is not true in
+production: the collector is a local of `run_core_processing_pipeline` and its gaps reach
+`ProcessingOutput` only on the success path, so a FAIL_FAST gap is visible in the CRITICAL
+log and nowhere else. Fsaupe's own new test file left untouched.
+
+**Everything found in #25 is fixed in commits**, except the EoY-mismatch severity question,
+which is the owner's call and is now an open item.
+
 ## 4. Cross-cutting pattern
 
 Across eight PRs: **the code and tests are consistently sound; the legal and factual prose is
@@ -881,6 +1000,16 @@ Protocol's item 3 — cite paragraph *and* sentence — is not pedantry: **the u
 where the unimplemented rule hides.** Worth applying to every remaining citation in the train,
 and it is exactly the same failure as #21's bare "§20 Abs. 6 Satz 5", which means opposite
 things before and after 02.12.2024.
+
+**#25 is the first clean break in that pattern since #19, and it is worth being precise about
+why.** Every factual claim in its description holds under test, and — unlike #22 — there is
+no citation to overreach, because there is nothing to cite: the PR is pure infrastructure,
+`Legal basis: n/a` is the truthful answer, and it gives it. The prose that *is* wrong in #25
+is not a citation but a **rationale**: WARNING justified by "does not silently change the
+declared figures" for the one condition where it does. So the pattern refines once more —
+where a PR has no legal claim to get wrong, the same unreliability reappears one level down,
+in the reason given for a policy rather than the source given for a rule. Two for nine on
+descriptions; the code and tests remain sound in all nine.
 
 Practical consequence: **review the diff, not the description.** Verify claims empirically
 rather than reading them.
@@ -920,6 +1049,13 @@ reach fail loudly (2–105 failures), so a passing run mostly proves the *covere
 converted, not the uncovered ones. Worth doing on every remaining mechanical refactor in the
 train, since #31/#32 convert these exact call sites again for real.
 
+**#25 is the third consecutive PR where the probe pays, and it moves the target.** #23 and #24
+were probed at *lookup sites* and *ordering*; #25's blind spots are a **recording site** and
+the **rendering block** — the feature's own two ends. Deleting either leaves 474 green. The
+generalisation: probe the ends of a new channel, not just its middle. A collector that
+records and a report that prints are each a place where the whole feature can vanish without
+a single test noticing.
+
 **#24 confirms it and locates the blind spot precisely: the historical FX replay.** Reversing
 the chronological order of every historical currency event leaves all 466 tests green, while
 the equivalent mutation on securities fails one. Three of #23's five blind lookup sites were
@@ -936,12 +1072,12 @@ a scenario with an SoY snapshot is weaker than it looks.
 
 ## 5. Verified migration path for the remaining 16 PRs
 
-The first ten commits of every branch in the train are exactly the ones absorbed here
+The first eleven commits of every branch in the train are exactly the ones absorbed here
 (`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`, `4eeeffb`, `1382bb9`,
-`ac1e9a1`, `a717f47`), so one command migrates any of them:
+`ac1e9a1`, `a717f47`, `345bd49`), so one command migrates any of them:
 
 ```
-git rebase --onto <new-main> a717f47 <branch>   # ac1e9a1 before #24 was absorbed
+git rebase --onto <new-main> 345bd49 <branch>   # a717f47 before #25 was absorbed
 ```
 
 Remaining PR heads, for orientation (train position = PR − 15; several PRs are docs/tests
@@ -962,7 +1098,8 @@ Simulated against this branch's HEAD:
 | ~~#22~~ | absorbed (`e0026da`); rebased clean, no conflicts |
 | ~~#23~~ | absorbed (`3b8012c`); rebased clean, no conflicts |
 | ~~#24~~ | absorbed (`a1bd93c`); rebased clean, no conflicts |
-| #25–#40 | rebase from `a717f47` |
+| ~~#25~~ | absorbed (`68fd82d`); rebased clean, no conflicts |
+| #26–#40 | rebase from `345bd49` |
 
 Note for whoever lands #21 onward: our `a7f7032` removed `src.config` from `src/cli.py` and
 moved the default-PDF-filename derivation into `src/main.py`. No commit in #21–#40 touches
@@ -1054,6 +1191,22 @@ VALIDATION_REPORT finding #1 is marked resolved there.
   modified again) or adds any test file matching `replay`/`stream`, and
   `_replay_historical_merger` is untouched after #24, so dropping its unused `asset_resolver`
   collides with nothing.
+- **Our #25 fixes: one expected conflict, trivial.** `169ccc5` (#26) inserts its
+  legal-position render block immediately above the data-gap section in
+  `console_reporter.py`, and its hunk carries the *"AR6 data-gap channel"* comment our
+  `7e3eada` reworded as context. Resolution: keep ours, take their block — and drop the
+  *"AR7"* marker from it, same dangling-reference class. Everything else of ours is
+  conflict-free, verified by scanning every `pr/*` ref: `src/processing/data_gaps.py` is
+  created at #25 and never modified again; no later commit touches
+  `PdfReportGenerator.__init__` or `_add_eoy_reconciliation` (`dc05960` hits line 319,
+  `3220bd3` lines 994/1133/1158, `89fdd80` none); the two later `src/main.py` hunks are both
+  at lines 96–98, not the PDF block; and no later commit modifies
+  `calculation_engine.py`'s import of `GapSeverity`.
+- **`dc05960` (#29) repeats #25's dangling reference** — *"resolves legal-review finding F4"*
+  in `_record_vp_nav_gaps`, naming a document dropped with `af95b72`. Apply the same
+  correction when #29 is reached. Also verify there that the VP severity split is what it
+  claims: FAIL_FAST non-interactive, WARNING interactive for a missing year-start NAV, and
+  WARNING always for a missing *declared* VP (which only overstates the gain).
 - **`0163bcd` (#37) and `89fdd80` both depend on #24's chronological interleave for a tax
   figure** — the option-replay fix needs a historical exercise to run before its stock leg, and
   the transfer handler needs bought-transferred-sold reconstruction. Verify both against
@@ -1067,7 +1220,9 @@ VALIDATION_REPORT finding #1 is marked resolved there.
 
 ## 7. Knowledge-store scan of the unreviewed PRs
 
-8 of 25 touch `reference/`: #18, ~~#21~~, ~~#22~~, #28, #29, #32, #35, #40. (#23 touches none, but is justified by one — see its verdict.) Quality improves sharply
+8 of 25 touch `reference/`: #18, ~~#21~~, ~~#22~~, #28, #29, #32, #35, #40. (#23 touches none
+but is justified by one — see its verdict; #24 and #25 touch none and need none, #25 because
+it genuinely has no legal surface.) Quality improves sharply
 after #18 — #22 (§108 AO i.V.m. §§187/188 BGB anniversary arithmetic incl. leap year), #29
 (§18 Abs. 2 S. 2 partial-year + §18 Abs. 3 verbatim deemed-inflow) and #35 (Einlagenrückgewähr,
 explicitly separating settled law from open questions) are the strongest legal work in the train.
@@ -1130,6 +1285,28 @@ Two things to scrutinise when reached:
   are all dead code. Pre-existing and outside #24's diff, so not fixed — the fix is to raise
   `ProcessingError`. Note it also makes those three branches genuinely unreachable, so any future
   test of them has to bypass the public path.
+- **Owner's call: should an EoY quantity mismatch be FAIL_FAST rather than WARNING (found in
+  #25)?** #25 routes it into the data-gap channel at WARNING, which preserves the engine's
+  pre-existing log-count-continue behaviour. But an EoY mismatch is the signature of a
+  disposal the engine did not process — calculated > reported means a sale is missing and
+  with it its realised gain, so income is understated by an amount visible nowhere in the
+  output. By the channel's own definition that is the FAIL_FAST criterion. The argument for
+  leaving it at WARNING is concrete: the mismatches actually present in this data are the
+  pre-2021 trade-history floor (2022's one non-zero EoY security), so failing fast would make
+  early tax years unprocessable. A middle option is to fail fast only when the mismatch is
+  *not* explainable by the data floor — i.e. when the asset's first observed trade is after
+  the floor. Nothing in #26–#40 revisits this. The prose no longer claims the divergence is
+  harmless either way (`7e3eada`).
+- **The PDF's structured EoY mismatch table is still unfed.** `a2f3974` stops the report
+  claiming a reconciliation it never performed and renders the recorded gaps as text, but the
+  five-column table (calculated / reported / difference) remains unreachable from production,
+  because `run_main_calculations` returns a count and not rows. Feeding it means giving
+  `DataGap` a structured payload alongside its human-readable `detail`. Worth doing if any
+  later PR needs machine-readable gaps; not needed to remove the false statement.
+- **Non-EoY gaps never reach the PDF.** The console renders every collected gap; the PDF now
+  renders only `EOY_QTY_MISMATCH`. From #29 an *interactive* run can finish with a
+  `VP_NAV_MISSING` WARNING that appears in the console and not in the PDF. Decide at #29
+  whether the PDF needs a general gap section.
 - **The historical currency replay swallows every exception at DEBUG level.**
   `_apply_historical_currency_event` wraps its whole body in
   `except Exception as e: logger.debug(f"…skipped event {event.event_id}: {e}")`. A rate lookup
@@ -1229,8 +1406,8 @@ Structural rule that makes this work, and that must be maintained:
 > **Fsaupe's commits are cherry-picked unmodified. Every correction of ours is a separate
 > commit on top.** Never amend, squash, or fold a fix into one of their commits.
 
-Current state on this branch: 53 commits — 11 authored by `Fsaupe <florian.saupe@gmx.de>`,
-42 by the repo owner. (The figure recorded at #23 was stale; recounted with
+Current state on this branch: 58 commits — 12 authored by `Fsaupe <florian.saupe@gmx.de>`,
+46 by the repo owner. (Recount with
 `git log --format='%an' ebad4e7..HEAD | sort | uniq -c`.) Committer is the repo owner throughout (normal for
 cherry-pick; GitHub attributes by Author).
 
@@ -1250,6 +1427,7 @@ cherry-pick; GitHub attributes by Author).
 | #22 | `1382bb9` | `e0026da` | Fsaupe |
 | #23 | `ac1e9a1` | `3b8012c` | Fsaupe |
 | #24 | `a717f47` | `a1bd93c` | Fsaupe |
+| #25 | `345bd49` | `68fd82d` | Fsaupe |
 
 All original SHAs remain resolvable in the local object store via the fetched `pr/*` refs
 (`git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'`).
@@ -1265,7 +1443,8 @@ All original SHAs remain resolvable in the local object store via the fetched `p
    `df8dd6b`+`7bfc8fa`+`a6ff53d`+`a41dbb9`+`a96a5fd` for #21;
    `24b3c1f`+`f2e5cc3`+`f5248a3` for #22;
    `05b839b`+`d6537aa`+`3d3873b`+`0ad410d`+`edda318` for #23;
-   `a35a881`+`273f6ef`+`1c01fbd` for #24) so the
+   `a35a881`+`273f6ef`+`1c01fbd` for #24;
+   `7e3eada`+`0893139`+`a2f3974`+`47f2581` for #25) so the
    trail from PR to commit is explicit.
 3. Reference the PR numbers in the merge commit body so GitHub cross-links them.
 4. Fsaupe's contribution graph credits the Author email regardless of who merges, so no
