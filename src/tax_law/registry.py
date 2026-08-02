@@ -26,6 +26,7 @@ from decimal import Decimal
 from typing import Optional
 
 from src.domain.enums import InvestmentFundType
+from src.domain.exceptions import ProcessingError
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,19 @@ class FormYearRules:
     z22_includes_derivative_losses: bool
 
 
+# Verified against the official form for each year (see the verification table in
+# reference/tax-law/estg-20-abs6-verlustverrechnung.md). 2021 is the EARLIEST:
+# on the VZ 2020 form (Formularstand 2020AnlKAP051) Zeilen 21 and 24 are printed
+# "frei" and the word "Termingeschäfte" does not occur at all — the separate
+# Termingeschäft lines were introduced with the VZ 2021 form, alongside the
+# (since repealed) §20 Abs. 6 S. 5 restriction.
 _FORM_RULES_BY_YEAR: dict[int, FormYearRules] = {
+    2021: FormYearRules(          # 2021AnlKAP051; 2022/2023 identical, incl. Kennzahlen
+        separate_derivative_lines=True,
+        derivative_loss_cap_applies=False,  # JStG 2024 (§52 Abs. 28 S. 25)
+        z19_subtracts_derivative_losses=False,
+        z22_includes_derivative_losses=False,
+    ),
     2024: FormYearRules(
         separate_derivative_lines=True,
         derivative_loss_cap_applies=False,  # JStG 2024 (§52 Abs. 28 S. 25)
@@ -151,14 +164,19 @@ _FORM_RULES_BY_YEAR: dict[int, FormYearRules] = {
 
 
 def get_form_rules(tax_year: int) -> FormYearRules:
-    """Form rules for an assessment year. Exact year first; otherwise the
-    nearest EARLIER configured year (form structures persist until changed);
-    years before all configured ones use the earliest, so VZ 2021-2023 are
-    served the 2024 entry.
+    """Form rules for an assessment year.
 
-    That fallback is an engine convention, not a verified mapping: the Zeilen
-    are checked against the official Anleitung for 2024 and 2025 only. See
-    reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
+    Exact year first, otherwise the nearest EARLIER configured year: a form
+    structure stays in force until a later year changes it, so carrying the
+    most recent verified structure FORWARD is the only sound default (and the
+    only option for a year whose form is not published yet).
+
+    Carrying one BACKWARD is not sound, and here it is demonstrably wrong: the
+    earliest configured year is 2021, and the VZ 2020 form has no Zeile 21 and
+    no Zeile 24 at all — both are printed "frei". Projecting Termingeschäft
+    figures onto them would produce entries for lines that do not exist, so a
+    tax year before the earliest configured one raises rather than guesses.
+    See reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
     if tax_year in _FORM_RULES_BY_YEAR:
         return _FORM_RULES_BY_YEAR[tax_year]
 
@@ -172,5 +190,12 @@ def get_form_rules(tax_year: int) -> FormYearRules:
         return _FORM_RULES_BY_YEAR[fallback_year]
 
     earliest = available_years[0]
-    logger.info(f"No form rules defined for tax year {tax_year}, falling back to earliest known year {earliest}.")
-    return _FORM_RULES_BY_YEAR[earliest]
+    raise ProcessingError(
+        f"No Anlage KAP form rules for tax year {tax_year}: the earliest "
+        f"verified form year is {earliest}. Earlier forms differ structurally "
+        f"(the VZ 2020 form has no Zeile 21 and no Zeile 24 — both are 'frei'), "
+        f"so the {earliest} projection must not be applied backwards. Add a "
+        f"verified entry to src/tax_law/registry.py, checked against that "
+        f"year's official form (reference/tax-law/"
+        f"estg-20-abs6-verlustverrechnung.md)."
+    )

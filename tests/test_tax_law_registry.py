@@ -8,10 +8,13 @@ mirrored from reference/ (see registry module docstring).
 """
 import logging
 import re
+
+import pytest
 from decimal import Decimal
 from pathlib import Path
 
 from src.domain.enums import InvestmentFundType
+from src.domain.exceptions import ProcessingError
 from src.tax_law import registry
 
 
@@ -48,6 +51,24 @@ class TestFormYearRules:
     def test_pre_2024_years_use_2024_structure(self):
         """VZ 2021-2023 share the <=2024 form structure (earliest fallback)."""
         assert registry.get_form_rules(2023) == registry.get_form_rules(2024)
+
+    def test_every_configured_year_2021_to_2023_matches_2024(self):
+        """Verified against the official forms: 2021AnlKAP051, 2022, 2023 and
+        2024 carry the same Zeilen 18-25 with the same Kennzahlen."""
+        for year in (2021, 2022, 2023):
+            assert registry.get_form_rules(year) == registry.get_form_rules(2024), year
+
+    def test_years_before_the_earliest_verified_form_raise(self):
+        """The VZ 2020 form has no Zeile 21 and no Zeile 24 (both 'frei'), so
+        the 2021+ projection must not be carried backwards onto it."""
+        for year in (2020, 2019, 2018):
+            with pytest.raises(ProcessingError, match="earliest verified form year"):
+                registry.get_form_rules(year)
+
+    def test_future_years_carry_the_latest_structure_forward(self):
+        """Forward-carry stays a silent default: a form structure holds until a
+        later year changes it, and next year's form is not published yet."""
+        assert registry.get_form_rules(2027) == registry.get_form_rules(2025)
 
     def test_reporting_shim_reexports(self):
         from src.reporting.form_rules import get_form_rules, FormYearRules

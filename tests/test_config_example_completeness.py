@@ -3,9 +3,10 @@ Guard: a fresh clone configured by copying src/config_example.py must support
 EVERY config read in the application — no AttributeError lurking behind a
 developer's richer local src/config.py.
 
-legal_basis: infrastructure — this masked real breakage once: B4/B5g read the
-retired config.BASISZINS_BY_YEAR, every test stayed green against a local
-config that still had the table, and only a clean-clone run would have failed.
+legal_basis: infrastructure — this masked real breakage once: the Vorabpauschale
+code read the since-retired config.BASISZINS_BY_YEAR, every test stayed green
+against a local config that still had the table, and only a clean-clone run
+would have failed.
 """
 import ast
 import re

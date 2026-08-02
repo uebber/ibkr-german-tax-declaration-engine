@@ -119,17 +119,43 @@ Note: Zeile 21/24 existed for tracking even after abolition of the cap -- the fo
 | Zeile 24 | 0.00 (line removed from form) |
 
 **Engine implementation:** `src/tax_law/registry.py` -- `FormYearRules` dataclass with
-`get_form_rules(tax_year)` (`src/reporting/form_rules.py` is a re-export shim).
+`get_form_rules(tax_year)` (`src/reporting/form_rules.py` is a re-export shim). Entries for
+**2021** (covering 2021-2023 by forward carry-over) and **2024**, **2025**.
 `derivative_loss_cap_applies` is **False in every entry** (52 Abs. 28 S. 25 EStG, above);
 only `separate_derivative_lines`, `z19_subtracts_derivative_losses` and
 `z22_includes_derivative_losses` are year-specific.
 
-**Verification status of the line numbers.** The Zeilen above are verified against the
-official Anleitung for **2024 and 2025 only** (`reference/Anltg_KAP_24.md`,
-`reference/Anltg_KAP_25.md`). `get_form_rules` falls back to the 2024 entry for VZ 2021-2023,
-so those years inherit the 2024 *structure* -- that fallback is an engine convention, not a
-verified mapping. Before filing a VZ <= 2023 return from this engine, check the Zeilen
-against that year's official Anleitung (Validation Protocol item 4).
+### Verification of the line numbers, per year (Validation Protocol item 4)
+
+Each assessment year was checked against the official form or Anleitung for that year, not
+inferred from a neighbouring year. Retrieved 2026-08-02.
+
+| VZ | Z20 Aktiengewinne | Z21 Stillhalter + Termingewinne | Z22 sonstige Verluste | Z23 Aktienverluste | Z24 Terminverluste | Source checked |
+|----|----|----|----|----|----|----|
+| 2020 | 232/432 | **frei** | 235/435 | 236/436 | **frei** | Form 2020AnlKAP051 |
+| 2021 | 232/432 | 631/831 | 235/435 | 236/436 | 635/835 | Form 2021AnlKAP051 |
+| 2022 | 232/432 | 631/831 | 235/435 | 236/436 | 635/835 | Form + Anleitung zur Anlage KAP 2022 |
+| 2023 | 232/432 | 631/831 | 235/435 | 236/436 | 635/835 | Form (Anlage KAP 2023) |
+| 2024 | -- | Z21 | Z22 | Z23 | Z24 | `reference/Anltg_KAP_24.md` |
+| 2025 | -- | removed | Z22 (incl. derivatives) | Z23 | removed | `reference/Anltg_KAP_25.md` |
+
+Numbers in the middle columns are the official Kennzahlen printed on the form; they are
+**identical across 2021-2023**, which is the strongest available identity check between
+those years.
+
+**VZ 2020 and earlier are outside this engine's form coverage.** On the 2020 form, Zeilen 21
+and 24 are printed *"frei"* and the word "Termingeschäfte" does not occur anywhere in the
+form. The separate Termingeschäft lines were introduced with the VZ 2021 form, together with
+the (since repealed) 20 Abs. 6 Satz 5 restriction that made the split necessary. Carrying the
+2021+ projection backwards would put figures on lines that do not exist, so
+`get_form_rules` **raises** for a tax year before 2021 rather than falling back. Forward
+carry-over (an unpublished future form inherits the latest verified structure) remains a
+silent default -- a structure stays in force until a later year changes it.
+
+Sources for the retrieved forms: official Formularstand identifiers as printed
+(2020AnlKAP051, 2021AnlKAP051); PDFs mirrored at steuern.de / steuerklassen.com /
+helpdesk.stotax.de (Tier 3 copies of the Bundesfinanzverwaltung forms, identified by their
+Formularstand string).
 
 ---
 
