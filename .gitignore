@@ -113,6 +113,7 @@ venv.bak/
 tax_report_202?.pdf
 cache/
 data/
+data_import
 data_import/
 ibkr_token
 all_cash_trans.csv
