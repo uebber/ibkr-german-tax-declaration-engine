@@ -217,7 +217,8 @@ def run_main_calculations(
                 f"{len(current_year_events)} current tax year events.")
 
     fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip
-    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip  # Separate dict for currency ledgers
+    # Separate dict for currency ledgers; same (account_key, asset_id) key shape.
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}
 
     # === Three-pass SOY initialization ===
     # Pass 1: Create ledgers and simulate historical events (trades, splits, stock dividends)
@@ -871,8 +872,8 @@ def _create_excess_dividend_event(original_event, excess_amount, asset_object, c
 def _ensure_currency_ledger_exists(
     currency_code: str,
     asset_resolver: AssetResolver,
-    currency_fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
-    fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
+    fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
     currency_converter: CurrencyConverter,
     exchange_rate_provider: ECBExchangeRateProvider,
     internal_calculation_precision: int,
@@ -930,9 +931,9 @@ def _ensure_currency_ledger_exists(
 def _process_cashflow_currency_impact(
     event: FinancialEvent,
     asset_resolver: AssetResolver,
-    currency_fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
     currency_processor: 'CurrencyConversionProcessor',
-    fifo_ledgers: Optional[Dict[uuid.UUID, 'FifoLedger']] = None,
+    fifo_ledgers: Optional[Dict[Tuple[str, uuid.UUID], 'FifoLedger']] = None,
     currency_converter: Optional[CurrencyConverter] = None,
     exchange_rate_provider: Optional[ECBExchangeRateProvider] = None,
     internal_calculation_precision: int = 28,

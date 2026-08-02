@@ -12,7 +12,7 @@ Per BMF circular May 2022 (para. 131): IBKR FX reserves are interest-bearing, me
 """
 import logging
 from decimal import Decimal, Context
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import uuid
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
@@ -55,7 +55,7 @@ class CurrencyConversionProcessor:
         self.ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode)
 
     def process(self, event: CurrencyConversionEvent,
-                fifo_ledgers: Dict[uuid.UUID, FifoLedger],
+                fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger],
                 asset_resolver: AssetResolver) -> List[RealizedGainLoss]:
         """
         Process a CurrencyConversionEvent, updating currency FIFO ledgers and returning any realized FX gains/losses.
