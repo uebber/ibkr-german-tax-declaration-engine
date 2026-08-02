@@ -5,9 +5,12 @@
 - **Legal basis:** InvStG 18 Abs. 4; regime start InvStG 56 Abs. 1 Satz 1
 - **Basiszins zum 02.01.2025 (2.53%):** [BMF-Schreiben 10.01.2025, GZ IV C 1 - S 1980/00230/009/002 (PDF)](https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Investmentsteuer/2025-01-10-basiszins-vorabpauschale-zum-2-1-2025.pdf?__blob=publicationFile&v=7)
 - **Basiszins zum 02.01.2026 (3.20%):** [BMF-Schreiben 13.01.2026, GZ IV C 1 - S 1980/00230/012/001 (PDF)](https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Investmentsteuer/2026-01-13-basiszins-berechnung-vorabpauschale.pdf?__blob=publicationFile&v=3)
-- **Archive:** the BMF Investmentsteuer download page carries only the two most recent
-  Schreiben (checked 2026-08-02). Earlier years must be cited from BStBl I -- see the
-  per-year column in the table below.
+- **2018-2024:** the BMF Investmentsteuer download page carries only the two most recent
+  Schreiben (checked 2026-08-02). The earlier Schreiben were retrieved as archived copies of
+  the original BMF PDFs (Internet Archive snapshots of
+  `bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Investmentsteuer/`),
+  plus the 2019 letter from the BVL mirror. Each was read in full; their GZ, date, value and
+  BStBl citation are in the table below.
 
 ## Relevance to Engine
 
@@ -28,6 +31,14 @@ Basiszins as of 02.01.X   ->   Vorabpauschale FOR calendar year X
                           ->   taxable, and declared on Anlage KAP-INV, in VZ X+1
 ```
 
+The BMF states this in every annual Schreiben. Verbatim from the 05.01.2024 letter
+(GZ IV C 1 - S 1980-1/19/10038 :008):
+
+> *"Die Vorabpauschale fuer 2024 gilt gemaess § 18 Absatz 3 InvStG beim Anleger als am
+> ersten Werktag des folgenden Kalenderjahres - also am 2. Januar 2025 - zugeflossen. Die
+> Vorabpauschale fuer 2024 ist unter Anwendung des Basiszinses vom 2. Januar 2024 zu
+> ermitteln."*
+
 Worked example: the Vorabpauschale on the **2025** Anlage KAP-INV is the one computed for
 calendar **2024** -- Basiszins 2.29%, Ruecknahmepreis as of 01.01.2024, capped by the 2024
 value gain, reduced by 2024 distributions. The 2.53% rate published on 10.01.2025 first
@@ -46,25 +57,33 @@ gesetze-im-internet.de, retrieved 2026-08-02). The first Basiszins notice is the
 BMF-Schreiben vom 04.01.2018; the first Vorabpauschale is the one for calendar 2018,
 deemed to flow on 02.01.2019 and declared in VZ 2019.
 
-| Calendar Year | Basiszins | Reference Date | Effective Basisertrag Factor | BMF-Schreiben / Fundstelle |
-|---------------|-----------|----------------|------------------------------|----------------------------|
-| 2018 | 0.87% | 02.01.2018 | 0.609% | BMF 04.01.2018, BStBl I |
-| 2019 | 0.52% | 02.01.2019 | 0.364% | BMF 09.01.2019, BStBl I 2019 S. 58 |
-| 2020 | 0.07% | 02.01.2020 | 0.049% | BMF 29.01.2020, IV C 1 - S 1980-1/19/10038 :001, BStBl I 2020 S. 218 |
-| 2021 | -0.45% | 04.01.2021 | negative -> 0 | BMF 06.01.2021, BStBl I |
-| 2022 | -0.05% | 03.01.2022 | negative -> 0 | BMF 07.01.2022, BStBl I |
-| 2023 | 2.55% | 02.01.2023 | 1.785% | BMF 04.01.2023, IV C 1 - S 1980-1/19/10038 :007, BStBl I |
-| 2024 | 2.29% | 02.01.2024 | 1.603% | BMF 05.01.2024, IV C 1 - S 1980-1/19/10038 :008, BStBl I 2024 S. 154 |
-| 2025 | 2.53% | 02.01.2025 | 1.771% | BMF 10.01.2025, IV C 1 - S 1980/00230/009/002, BStBl I |
-| 2026 | 3.20% | 02.01.2026 | 2.240% | BMF 13.01.2026, IV C 1 - S 1980/00230/012/001, BStBl I |
+| Calendar Year | Basiszins | Reference Date | Effective Basisertrag Factor | BMF-Schreiben | GZ | Fundstelle |
+|------|--------|------------|------------|------------|------------|------------|
+| 2018 | 0.87% | 02.01.2018 | 0.609% | 04.01.2018 | IV C 1 - S 1980-1/14/10001 :038 | BStBl I 2018 S. 249 |
+| 2019 | 0.52% | 02.01.2019 | 0.364% | 09.01.2019 | IV C 1 - S 1980-1/14/10001 :038 | BStBl I 2019 S. 58 |
+| 2020 | 0.07% | 02.01.2020 | 0.049% | 29.01.2020 | IV C 1 - S 1980-1/19/10038 :001 | BStBl I 2020 S. 218 |
+| 2021 | -0.45% | 04.01.2021 | negative -> 0 | 06.01.2021 | IV C 1 - S 1980-1/19/10038 :004 | BStBl I 2021 S. 56 |
+| 2022 | -0.05% | 03.01.2022 | negative -> 0 | 07.01.2022 | IV C 1 - S 1980-1/19/10038 :005 | BStBl I 2022 S. 122 |
+| 2023 | 2.55% | 02.01.2023 | 1.785% | 04.01.2023 | IV C 1 - S 1980-1/19/10038 :007 | BStBl I 2023 S. 178 |
+| 2024 | 2.29% | 02.01.2024 | 1.603% | 05.01.2024 | IV C 1 - S 1980-1/19/10038 :008 | BStBl I 2024 S. 154 |
+| 2025 | 2.53% | 02.01.2025 | 1.771% | 10.01.2025 | IV C 1 - S 1980/00230/009/002 | BStBl I |
+| 2026 | 3.20% | 02.01.2026 | 2.240% | 13.01.2026 | IV C 1 - S 1980/00230/012/001 | BStBl I |
 
-**Verification status (2026-08-02).** The 2025 and 2026 rates are read off the BMF PDFs
-linked above (Tier 2, primary). The 2018-2024 rates and their Schreiben dates were
-recovered from secondary tax-press summaries because the BMF site no longer hosts those
-PDFs; the values are mutually consistent across independent summaries, and the 2024 entry
-carries a BStBl page cited by the BMF itself. **Gap, recorded deliberately:** for
-2018-2023 no Tier 1/2 document was retrieved in full. Before an engine figure for VZ 2019-2024
-is filed, confirm the year's rate against BStBl I or the taxpayer's Steuerbescheinigung.
+**Verification status (2026-08-02): complete, every row read off the BMF-Schreiben itself.**
+Date, GZ and percentage come from the document; the reference date is the Boersentag the
+Bundesbank computed on, as named in the letter (note 04.01.2021 and 03.01.2022 -- 2 January
+was not a trading day in those years). The letters authenticate each other: every Schreiben
+carries a BEZUG line naming its predecessor **with the BStBl page**, so 2018 S. 249 is
+confirmed by the 2019 letter, 2019 S. 58 by the 2020 letter, 2020 S. 218 by the 2021 letter,
+2021 S. 56 by the 2022 letter, 2022 S. 122 by the 2023 letter and 2023 S. 178 by the 2024
+letter. The 2024 letter closes with *"Dieses Schreiben wird im Bundessteuerblatt Teil I
+veroeffentlicht"*; its own page (S. 154) is cited by the BMF elsewhere and is the one entry
+in the chain not confirmed by a successor letter.
+
+**On the negative years, the BMF is explicit** -- 06.01.2021: *"Aufgrund des negativen
+Basiszins wird keine Vorabpauschale erhoben."* 07.01.2022 says the same for 2022. That is
+the same result the engine reaches by computing a non-positive Basisertrag, so the two rows
+are values, not gaps.
 
 ### Not a Basiszins under 18 Abs. 4 InvStG: 2016 and 2017
 
