@@ -2,8 +2,8 @@
 
 **Branch:** `hermetic-tests-first` (local only, never pushed)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 9 of 25 PRs reviewed and accepted; 16 not yet reviewed.
-**Next up:** #24 (train 9). Rebase remaining branches from `ac1e9a1`; see section 5.
+**Status as of 2026-08-02:** 10 of 25 PRs reviewed and accepted; 15 not yet reviewed.
+**Next up:** #25 (train 10). Rebase remaining branches from `a717f47`; see section 5.
 **Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
 issue #15, no CI added. All of that is still open for decision.
 
@@ -20,6 +20,10 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+1c01fbd docs: correct the replay determinism claim and the merger citation    [ours]
+273f6ef fix(engine): refuse an unsortable historical currency event            [ours]
+a35a881 tests: pin the replay stream's ordering contract                       [ours]
+a1bd93c refactor: unified chronological replayer                      (PR #24, Fsaupe)
 edda318 chore(engine): finish the LedgerKey conversion in the annotations      [ours]
 0ad410d tests: close the blind spot at the Pass 2 merger source lookup         [ours]
 3d3873b fix: drop the merger lookup's test-only fallback, re-key fixtures      [ours]
@@ -65,7 +69,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 466 tests pass on a simulated clean clone
+**Verification at HEAD:** 471 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -723,6 +727,137 @@ Also dropped the "rework2 AR4" markers — `rework2-plan.md` is the deliberately
 **Everything found in #23 is fixed in commits**, except the merger warn-vs-raise asymmetry,
 which is pre-existing and now an open item.
 
+### PR #24 (train 9) — unified chronological replayer — **ACCEPTED, contract now tested**
+
+Rebased clean from `ac1e9a1`. 466 → 471 tests with ours (the PR itself adds none), green on
+the clean-clone protocol and with the real config. Real-data parity for 2025 is the
+strongest in the train so far: **console IDENTICAL, PDF IDENTICAL**, and the log compared as
+a *multiset* differs from the parent by exactly the three intentional wording lines
+(`Pass 1: Creating…` removed, `Building unified historical replay stream…` added,
+`(three-pass)` → `(unified replay)`) plus one ECB read-timeout that the same-tree control
+reproduces. The 98-line ordered log diff is pure reordering, which is what the refactor is.
+
+**The "no behaviour change" claim holds, and the commutation argument behind it checks
+out** — read rather than assumed. Every Phase.LEDGER_EVENTS handler touches exactly one
+ledger: `apply_historical_event` only `self`; `_apply_historical_currency_event` only the
+`ledger` it is passed; `reconcile_with_soy_position` and `_reconcile_currency_soy` only their
+own. `_replay_historical_merger` spans two securities ledgers but runs in a later phase, as
+before. So interleaving securities and currency events, and moving MERGERS and the securities
+RECONCILE to after the currency events, cannot change a figure. Two orderings that did NOT
+change are worth recording because they look like they should have: `securities_ledger_count`
+is captured before `_ensure_currency_ledger_exists` starts adding currency ledgers to
+`fifo_ledgers`, so the count logged at the end is still the securities-only count; and the
+Pass 3 loop still iterates `fifo_ledgers` before that same mutation, so currency ledgers still
+get no securities reconcile.
+
+**And the seam is really consumed** — the #20 `RunContext` caveat does not apply. `replay.py`
+is created here and never modified again, but by `pr/40` the internal-transfer handler
+registers at `Phase.LEDGER_EVENTS` *because* it needs the chronological interleave with
+trades ("reconstructs a bought-transferred-sold history lot-exactly"), and the historical
+option-replay fix relies on the same ordering to run an exercise before its stock leg. The
+contract becomes figure-load-bearing later in the train even though it moves nothing here.
+
+**Defect 1, moderate — the contract is the whole PR and it shipped with no test, in a suite
+that cannot see it (`a35a881`).** Mutating `ReplayStream.run()` and running all 466:
+
+| mutation | failures |
+|---|---|
+| drop the sort entirely (insertion order) | **0** |
+| drop chronology, keep phase + insertion order | **0** |
+| drop the `seq` tie-breaker | **0** |
+| reverse every historical **currency** event | **0** |
+| reverse every historical **security** event | 1 |
+| run MERGERS before LEDGER_EVENTS | 1 |
+| run RECONCILE before MERGERS | 1 |
+
+The first three are weak mutations and it is worth knowing why: **insertion order almost
+exactly reproduces the old three-pass order**, so "no sorting at all" is nearly a no-op here.
+The fourth is not weak. The entire historical currency replay — which fixes the EUR cost basis
+of every foreign-currency lot and so every FX gain declared under §20 Abs. 2 Nr. 3 / Abs. 4 —
+can be replayed backwards with the whole suite green. And the single failure the two phase
+mutations produce is **our own `0ad410d`** from the #23 review; without that guard the phase
+contract would have been unobservable too. `tests/test_replay_stream.py` now pins the three
+run() properties plus a figure-level currency scenario (−25.00 EUR chronologically, −75.00 EUR
+if the order is disturbed), calibrated against every mutation above.
+
+Two things that probe surfaced, both recorded in the test module because they bound what it
+proves. **`ParsingOrchestrator.get_all_financial_events` already sorts the entire event list
+by `get_event_sort_key` before the engine runs**, so CSV row order is normalised away upstream
+and the stream's sort is a second, independent guarantee rather than the one that establishes
+chronology — which is the other reason the insertion-order mutations are green. And **`seq` is
+redundant today**: `sorted()` is stable and `_items` is already in insertion order, so dropping
+`seq` from the key changes nothing. The test pins the property, not the mechanism.
+
+**Defect 2, moderate — a new silent default on the currency sort, with a comment that
+describes the opposite of what it does (`273f6ef`).** Three sites build a sort key for the
+replay; the securities and merger ones log CRITICAL and re-raise, the new currency one did
+
+```python
+hist_key = (date.min, ())  # keep insertion order via seq
+```
+
+`(date.min, ())` sorts **ahead of every other item in the phase**, so an event whose place in
+the chronology could not be determined would be applied first — before every trade, dividend
+and fee of every asset and currency. In a currency ledger the first lot is the first consumed,
+so that decides which EUR cost basis carries into the tax year. Same shape as #18's `320e20a`
+and #22's `f5248a3`. Made fatal, consistent with its two siblings and with `pr/40`'s own
+transfer handler.
+
+The branch is **unreachable** as things stand — and so are the securities and merger ones —
+because the event separation loop at the top of `run_main_calculations` already builds a sort
+key for every event and drops the failures. That is an argument for consistency, not for
+leaving a wrong fallback: #31 rewrites this whole block. **The reachable version of the same
+defect is that separation loop**, and it is now an open item in section 8.
+
+**Defect 3, low — `get_event_sort_key` computed twice per historical security event
+(`273f6ef`).** Once inside `sorted()`, once again at `stream.add()`. Any warning the function
+emits — a historical trade with no `ibkr_transaction_id` — would print twice. It does not on
+this dataset (42 such warnings before and after, which is how the double call was ruled out as
+an output change), but it is ~4,264 redundant calls on the 2025 history. Each event is keyed
+once now and the key is carried into the stream; `7085652` arrives at the same shape.
+
+**Defect 4, moderate — the determinism claim is false, and it is the third instance of the
+same conflation (`1c01fbd`).** The docstring calls `seq` the tie-breaker "making replay fully
+deterministic". `sort_key` is `get_event_sort_key`, whose tail is `event.event_id` =
+`uuid.uuid4()`; `seq` stabilises only items whose keys are already *identical*. Measured on
+the real 2025 history: 7,614 of 8,949 items collide (every trade is streamed twice under the
+same key, once per ledger; all 420 RECONCILE items share `(0,)`), so `seq` is doing real work —
+just not the work claimed. Order between *distinct* same-day events sharing a transaction id is
+still redrawn every run. PRD 5.8 says the same thing and `89fdd80` repeats it; nothing in the
+train fixes it. Docstring corrected and pointed at where the repair belongs.
+
+**Defect 5, low — citation by section, and one the store already contradicts (`1c01fbd`).**
+Sixth instance of the pattern. The MERGERS phase cited "§20 Abs. 4a EStG" by Absatz; the
+controlling rule is **Abs. 4a Satz 1-2** (the new shares step into the tax position of the old
+ones), which is precisely what licenses transferring lots with their acquisition date and cost
+basis rather than closing and reopening them. `reference/tax-law/estg-20-kapitalvermoegen.md`
+already carries it verbatim, so this is rooted — it just was not cited to the sentence. Worse,
+the same docstring lists *"internal transfers, §43 Abs. 1 S. 5"* as a future stream member,
+and that file says in terms that the §43/§43a Depotübertrag rules "are Kapitalertragsteuer
+provisions addressed to German institutions and do not apply to a foreign broker; they cannot
+be cited for the disposal question". Section 7 predicted that mis-citation for **#32**; it
+actually lands here, as a forward-looking aside, one PR before the code that leans on it.
+Dropped; the architectural point survives without it.
+
+**Nits (`1c01fbd`, `273f6ef`):** `_replay_historical_merger` took an `asset_resolver` it never
+used and still never uses at `pr/40` — dropped. `replay.py` imported `dataclasses.field` and
+`typing.Any`, neither used. CLAUDE.md still described the engine as "three-pass historical
+replay" and did not list `src/engine/replay.py` — refreshed; it stays stale through `pr/40`
+otherwise. Left alone deliberately: the `Pass 2:` / `Pass 3:` log prefixes (kept verbatim so the
+parity capture stays comparable), the function-level `from src.engine.replay import …` (#31
+rewrites that block, so moving it buys a conflict for nothing), and
+`tests/test_stock_merger_fifo.py`'s "three-pass SOY initialization" docstring — a pre-existing
+test file, so a one-line follow-up for the owner rather than a unilateral edit.
+
+**Description accuracy.** The PR body says *"Contains: code (src/engine/replay.py: …), tests"*.
+The diff contains **no tests**. Every other factual claim in it checks out: the parity result
+is right (and understated — it was measured with the pre-repair script that sorted lines, so
+the reordering it produces was invisible then), the three log-wording lines are exactly three,
+and the "one stream replaces three machines" description is accurate.
+
+**Everything found in #24 is fixed in commits**, except the separation loop's silent drop,
+which is pre-existing and now an open item.
+
 ## 4. Cross-cutting pattern
 
 Across eight PRs: **the code and tests are consistently sound; the legal and factual prose is
@@ -768,6 +903,14 @@ This pattern is now reliable enough to be a checklist item rather than an observ
 new test, unmodified. Keep running the calibration, but the pattern is now four for five,
 not four for four.
 
+**#24 is the limiting case of the same pattern: a documented contract with no instrument at
+all.** It ships an explicit "ordering contract (the law of the stream)" and zero tests, and
+the existing suite can observe almost none of it — reversing every historical currency event
+leaves all 466 green. So the checklist item needs a second half: *when a PR documents a
+contract, also write the tree that violates it.* An untested contract is not weaker evidence
+than an uncalibrated guard; it is the same failure with the instrument omitted rather than
+miscalibrated.
+
 **Third pattern, new with #23: the suite's blind spots are not where the diff is.** Probing
 each converted lookup site individually found five of fourteen that the whole 463-test suite
 cannot observe. Two of those five are the FX/currency paths and one is the option cash
@@ -776,6 +919,12 @@ mechanical, repetitive refactor says much less than it appears to: the sites the
 reach fail loudly (2–105 failures), so a passing run mostly proves the *covered* sites were
 converted, not the uncovered ones. Worth doing on every remaining mechanical refactor in the
 train, since #31/#32 convert these exact call sites again for real.
+
+**#24 confirms it and locates the blind spot precisely: the historical FX replay.** Reversing
+the chronological order of every historical currency event leaves all 466 tests green, while
+the equivalent mutation on securities fails one. Three of #23's five blind lookup sites were
+FX paths; this is the same hole seen from the other side. Anything touching the currency
+replay should be probed by reversal, not by running the suite.
 
 And the masking mechanism found underneath it generalises: **Pass 3's SoY reconciliation can
 paper over an engine failure with a plausible number.** It rebuilds whatever the replay did
@@ -787,13 +936,22 @@ a scenario with an SoY snapshot is weaker than it looks.
 
 ## 5. Verified migration path for the remaining 16 PRs
 
-The first nine commits of every branch in the train are exactly the ones absorbed here
+The first ten commits of every branch in the train are exactly the ones absorbed here
 (`af95b72`, `7f6fca0`, `35d5873`, `1d7728b`, `361b11a`, `960d1ab`, `4eeeffb`, `1382bb9`,
-`ac1e9a1`), so one command migrates any of them:
+`ac1e9a1`, `a717f47`), so one command migrates any of them:
 
 ```
-git rebase --onto <new-main> ac1e9a1 <branch>   # 1382bb9 before #23 was absorbed
+git rebase --onto <new-main> a717f47 <branch>   # ac1e9a1 before #24 was absorbed
 ```
+
+Remaining PR heads, for orientation (train position = PR − 15; several PRs are docs/tests
+only and share code commits with their neighbours):
+
+| #25 `345bd49` data-gap channel | #26 `169ccc5` legal-position register | #27 `91c9297` replace false-confidence tests | #28 `febf459` sum multi-account balances |
+|---|---|---|---|
+| #29 `2dbb5dc` V-1 declared Vorabpauschale | #30 `3220bd3` itemize Sonstige Kapitalerträge | #31 `7085652` per-Depot FIFO | #32 `b788c5c` final parity gate |
+| ~~#33~~ absorbed | #34 `0b27054` branch decision | #35 `391782b` Einlagenrückgewähr | #36 `dca13f3` SoY cost-divergence tripwire |
+| #37 `0163bcd` historical option replay | #38 `8cfd6b3` forward-split tests | #39 `f16aa40` Nr. 11 / Nr. 3a split | #40 `8988198` PRD + coverage sync |
 
 Simulated against this branch's HEAD:
 
@@ -803,7 +961,8 @@ Simulated against this branch's HEAD:
 | ~~#21~~ | absorbed (`88a91e9`); its 4 conflict hunks resolved, `KNOWN-WRONG` markers retired |
 | ~~#22~~ | absorbed (`e0026da`); rebased clean, no conflicts |
 | ~~#23~~ | absorbed (`3b8012c`); rebased clean, no conflicts |
-| #24–#40 | rebase from `ac1e9a1` |
+| ~~#24~~ | absorbed (`a1bd93c`); rebased clean, no conflicts |
+| #25–#40 | rebase from `a717f47` |
 
 Note for whoever lands #21 onward: our `a7f7032` removed `src.config` from `src/cli.py` and
 moved the default-PDF-filename derivation into `src/main.py`. No commit in #21–#40 touches
@@ -885,6 +1044,21 @@ VALIDATION_REPORT finding #1 is marked resolved there.
   Two things in its description to verify rather than accept: *"no per-account row -> SoY 0,
   **silently**"* is exactly the shape of the silent-default defects fixed in #18 and #22, and
   it claims to remove the orchestrator's merged-FX limitation warning.
+- **Our #24 fixes: one expected conflict, and it is a good one.** `7085652` (#31) rewrites the
+  securities replay loop wholesale — it drops `sort_key_func`, keys each event once inside the
+  loop and carries the key into `stream.add`, i.e. it independently arrives at our `273f6ef`.
+  Resolution when #31 is reached: **take theirs**, then re-check that the currency branch three
+  hundred lines below still raises rather than falling back — #31 does *not* touch it, and the
+  `(date.min, ())` fallback otherwise survives to `pr/40` unchanged. Everything else of ours is
+  conflict-free: no commit in #25–#40 touches `src/engine/replay.py` (created at #24, never
+  modified again) or adds any test file matching `replay`/`stream`, and
+  `_replay_historical_merger` is untouched after #24, so dropping its unused `asset_resolver`
+  collides with nothing.
+- **`0163bcd` (#37) and `89fdd80` both depend on #24's chronological interleave for a tax
+  figure** — the option-replay fix needs a historical exercise to run before its stock leg, and
+  the transfer handler needs bought-transferred-sold reconstruction. Verify both against
+  `tests/test_replay_stream.py` rather than against the suite at large, which cannot see
+  ordering.
 - **Leave `reference/investment-tax-law/invstg-18-vorabpauschale.md` to #29.** It rewrites
   that file with verbatim §18 Abs. 3 and the Zuflussprinzip mapping, and also flags that the
   store's current "Z55" mapping for the §19 disposal deduction is wrong (Z55 =
@@ -945,6 +1119,24 @@ Two things to scrutinise when reached:
   one historical merger there replays successfully). Harmless for STOCK; for a
   `PRIVATE_SALE_ASSET` it would flip the § 23 Jahresfrist. A fix should make source-None
   raise `ProcessingError`, consistent with the target branch two lines below it.
+- **An event the engine cannot sort is dropped from the entire calculation, silently (found in
+  #24).** `run_main_calculations`'s event separation loop calls `get_event_sort_key` on every
+  event and, on `ValueError` — unparseable date, or an `asset_internal_id` the resolver does not
+  know — logs `logger.error` and `continue`s. The event never reaches `historical_events_by_asset`,
+  `historical_currency_events`, `historical_merger_events` or `current_year_events`. A dropped
+  trade is a missing FIFO lot or a missing disposal; a dropped cash flow is missing income. It is
+  the reachable version of the defect fixed inside #24's diff, the same shape as #18's `320e20a`
+  and #22's `f5248a3`, and it is why the three `except ValueError` branches in the replay build
+  are all dead code. Pre-existing and outside #24's diff, so not fixed — the fix is to raise
+  `ProcessingError`. Note it also makes those three branches genuinely unreachable, so any future
+  test of them has to bypass the public path.
+- **The historical currency replay swallows every exception at DEBUG level.**
+  `_apply_historical_currency_event` wraps its whole body in
+  `except Exception as e: logger.debug(f"…skipped event {event.event_id}: {e}")`. A rate lookup
+  failure, a bad Decimal, a missing field — all silently skip the event's currency impact at a
+  log level the default configuration does not print, leaving the lot state short and the FX cost
+  basis wrong. Pre-existing (#24 only extracted it verbatim as the per-event unit); recorded here
+  because #24 is what made it a named function worth fixing on its own.
 - **Four ledger-lookup sites remain unobservable to the test suite (found in #23).**
   `calculation_engine.py:645` (currency EoY validation), `corporate_action_processor.py:106`
   (MergerCash currency ledger), `trade_processor.py:450` and `option_processor.py:460`. Each
@@ -1000,6 +1192,11 @@ Two things to scrutinise when reached:
   instability is confined to an event type that does not consume FIFO lots competitively.
   It should be fixed before per-Depot FIFO lands, and the fix belongs in the PRD first.
 
+  **#24 restates the false claim a third time** (`replay.py`: `seq` as the tie-breaker "making
+  replay fully deterministic"), corrected in `1c01fbd`. It also quantifies the collision rate
+  that makes `seq` worth having at all: 7,614 of 8,949 stream items on the real 2025 history
+  share a `(phase, sort_key)`.
+
   Cheapest correct fix: make `event_id` itself deterministic — `uuid.uuid5(NAMESPACE, key)`
   over the event's identifying content — which repairs every sort key at once without
   touching `get_event_sort_key` or any of the per-type tuples. The alternative is to replace
@@ -1032,8 +1229,9 @@ Structural rule that makes this work, and that must be maintained:
 > **Fsaupe's commits are cherry-picked unmodified. Every correction of ours is a separate
 > commit on top.** Never amend, squash, or fold a fix into one of their commits.
 
-Current state on this branch: 10 commits authored by `Fsaupe <florian.saupe@gmx.de>`,
-31 authored by the repo owner. Committer is the repo owner throughout (normal for
+Current state on this branch: 53 commits — 11 authored by `Fsaupe <florian.saupe@gmx.de>`,
+42 by the repo owner. (The figure recorded at #23 was stale; recounted with
+`git log --format='%an' ebad4e7..HEAD | sort | uniq -c`.) Committer is the repo owner throughout (normal for
 cherry-pick; GitHub attributes by Author).
 
 ### Original → landed SHA map
@@ -1051,6 +1249,7 @@ cherry-pick; GitHub attributes by Author).
 | #21 | `4eeeffb` | `88a91e9` | Fsaupe |
 | #22 | `1382bb9` | `e0026da` | Fsaupe |
 | #23 | `ac1e9a1` | `3b8012c` | Fsaupe |
+| #24 | `a717f47` | `a1bd93c` | Fsaupe |
 
 All original SHAs remain resolvable in the local object store via the fetched `pr/*` refs
 (`git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'`).
@@ -1065,7 +1264,8 @@ All original SHAs remain resolvable in the local object store via the fetched `p
    `96d4312`+`a40adce` for #19; `a7f7032`+`fa05198`+`e467cad` for #20;
    `df8dd6b`+`7bfc8fa`+`a6ff53d`+`a41dbb9`+`a96a5fd` for #21;
    `24b3c1f`+`f2e5cc3`+`f5248a3` for #22;
-   `05b839b`+`d6537aa`+`3d3873b`+`0ad410d`+`edda318` for #23) so the
+   `05b839b`+`d6537aa`+`3d3873b`+`0ad410d`+`edda318` for #23;
+   `a35a881`+`273f6ef`+`1c01fbd` for #24) so the
    trail from PR to commit is explicit.
 3. Reference the PR numbers in the merge commit body so GitHub cross-links them.
 4. Fsaupe's contribution graph credits the Author email regardless of who merges, so no
