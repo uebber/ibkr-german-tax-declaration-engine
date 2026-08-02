@@ -55,12 +55,19 @@ def main_application():
     Parses arguments, runs processing, and generates reports.
     """
     args = parse_arguments()
-    # AR1 boundary: construct the immutable per-run context HERE (the only
-    # place user config is read for run-defining values); below this point
-    # everything receives explicit parameters, never ambient globals.
+    # Boundary: construct the immutable per-run context HERE. src/cli.py leaves
+    # unspecified run-defining options as None, so this is the only place the
+    # user config is read for them; below this point everything receives
+    # explicit parameters, never ambient globals.
     from src.run_context import RunContext
     run_ctx = RunContext.from_config(tax_year=args.tax_year, interactive=args.interactive)
     tax_year = run_ctx.tax_year
+
+    # Derived here rather than in the parser: the default PDF name embeds the
+    # tax year, which is not known until the boundary has resolved it.
+    if args.report_tax_declaration and args.pdf_output_file is None:
+        args.pdf_output_file = f"tax_report_{tax_year}.pdf"
+
     setup_decimal_context()
 
     logger.info("Starting IBKR German Tax Declaration Engine for tax year %d...", tax_year)
