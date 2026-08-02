@@ -16,7 +16,6 @@ so the calculated gains are then short by that disposal's realised gain.
 """
 from decimal import Decimal
 
-import pytest
 from reportlab.platypus import Paragraph
 
 from src.domain.results import LossOffsettingResult
