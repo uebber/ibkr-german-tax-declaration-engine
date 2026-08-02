@@ -31,9 +31,9 @@ Items are processed in ascending (phase, sort_key, seq) order:
 whose (phase, sort_key) collide keep the order in which the stream was built
 (per-ledger event order), making replay fully deterministic.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Callable, List, Tuple
+from typing import Callable, List, Tuple
 
 
 class Phase(IntEnum):

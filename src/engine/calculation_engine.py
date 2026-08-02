@@ -129,7 +129,7 @@ def _format_asset_info(asset_obj) -> str:
     symbol = asset_obj.ibkr_symbol or "N/A"
     return f"'{desc}' (Symbol: {symbol})"
 
-def _replay_historical_merger(merger_event, fifo_ledgers, asset_resolver) -> None:
+def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
     """Apply ONE historical stock-for-stock merger (§20 Abs. 4a EStG,
     tax-neutral lot transfer) — the per-event unit the unified replayer
     streams in the MERGERS phase."""
@@ -289,23 +289,26 @@ def run_main_calculations(
                 fund_type=asset_fund_type
             )
 
-            asset_historical_events_for_soy_init = []
+            # Key each event ONCE and carry the key into the stream. Computing it
+            # again at stream.add() would repeat every warning get_event_sort_key
+            # emits (e.g. a historical trade with no ibkr_transaction_id).
+            sorted_hist_keys_and_events: List[Tuple[Any, FinancialEvent]] = []
             if asset_id in historical_events_by_asset:
                 try:
-                    sort_key_func = lambda e: get_event_sort_key(e, asset_resolver)
-                    asset_historical_events_for_soy_init = sorted(
-                        historical_events_by_asset[asset_id], key=sort_key_func
+                    sorted_hist_keys_and_events = sorted(
+                        ((get_event_sort_key(e, asset_resolver), e)
+                         for e in historical_events_by_asset[asset_id]),
+                        key=lambda keyed: keyed[0],
                     )
                 except ValueError as e:
                     logger.critical(f"Fatal error sorting historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Cannot guarantee deterministic order for FIFO init. Aborting.")
                     raise e
 
             ledger.begin_historical_simulation(asset_obj)
-            ledger.announce_historical_simulation(asset_obj, len(asset_historical_events_for_soy_init))
-            for hist_event in asset_historical_events_for_soy_init:
+            ledger.announce_historical_simulation(asset_obj, len(sorted_hist_keys_and_events))
+            for hist_key, hist_event in sorted_hist_keys_and_events:
                 stream.add(
-                    Phase.LEDGER_EVENTS,
-                    get_event_sort_key(hist_event, asset_resolver),
+                    Phase.LEDGER_EVENTS, hist_key,
                     (lambda l=ledger, a=asset_obj, e=hist_event:
                         l.apply_historical_event(a, e, tax_year)),
                     label=f"sec:{asset_obj.get_classification_key()}",
@@ -324,7 +327,7 @@ def run_main_calculations(
                 raise e
             stream.add(
                 Phase.MERGERS, merger_key,
-                (lambda m=merger_event: _replay_historical_merger(m, fifo_ledgers, asset_resolver)),
+                (lambda m=merger_event: _replay_historical_merger(m, fifo_ledgers)),
                 label="merger",
             )
     else:
@@ -398,8 +401,20 @@ def run_main_calculations(
                 try:
                     hist_key = get_event_sort_key(hist_event, asset_resolver)
                 except ValueError as e:
-                    logger.error(f"Could not sort historical events for {currency_code}: {e}")
-                    hist_key = (date.min, ())  # keep insertion order via seq
+                    # Fatal, like the securities branch above and the merger branch
+                    # between them: an event that cannot be placed in the chronology
+                    # cannot be replayed, and the replay order fixes the EUR cost
+                    # basis of every currency lot it touches. Unreachable as things
+                    # stand -- the event separation loop at the top of this function
+                    # already builds a sort key for every event and drops the ones
+                    # that raise -- but the previous fallback was worse than dead: it
+                    # sorted the event to (date.min, ()), which is ahead of every
+                    # other item in the phase, not "insertion order" as its comment
+                    # claimed.
+                    logger.critical(f"Fatal error sorting historical currency event {hist_event.event_id} "
+                                    f"for {currency_code}: {e}. Cannot guarantee deterministic order "
+                                    f"for FIFO init. Aborting.")
+                    raise
                 stream.add(
                     Phase.LEDGER_EVENTS, hist_key,
                     (lambda e=hist_event, f=_apply_ccy_event: f(e)),
