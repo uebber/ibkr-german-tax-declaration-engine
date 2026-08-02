@@ -20,6 +20,7 @@ This branch carries the PRs reviewed and accepted so far, cherry-picked onto `ma
 Fsaupe's authorship preserved, plus our own fix commits.
 
 ```
+1c4c981 fix(engine): EoY reconciliation failure is fatal (owner's ruling)      [ours]
 47f2581 chore: drop the unused typing import the channel arrived with         [ours]
 a2f3974 fix(reporting): PDF stops certifying an EoY reconciliation             [ours]
 0893139 tests: pin the two ends of the data-gap channel the suite can't see    [ours]
@@ -74,7 +75,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 485 tests pass on a simulated clean clone
+**Verification at HEAD:** 488 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -890,18 +891,41 @@ fund's deemed income as zero — while a missing *declared* VP is deliberately W
 it only overstates the gain. That is a real severity policy doing real work, introduced four
 PRs ahead of its first user.
 
-**Defect 1, moderate — the severity rationale is backwards on the one condition actually
-wired (`7e3eada`).** The module places EoY quantity mismatches under WARNING, defined there
-as *"evidentiary divergences that do not silently change the declared figures"*. An EoY
-quantity mismatch is the signature of a disposal the engine did not process: calculated >
-reported means a sale is missing and with it its realised gain, so income is understated by
-an amount that appears nowhere in the output. That is the file's own FAIL_FAST criterion,
-verbatim. The severity **choice** is defensible and is kept — it preserves the pre-existing
-log-count-continue behaviour, and the mismatches actually seen in this data are the pre-2021
-data-floor artefact (2022's non-zero EOY on one security), so failing fast would make early
-tax years unprocessable. What is not defensible is the stated reason, which tells a reader
-the divergence is harmless. Reworded; whether WARNING is the right call is recorded as an
-open item for the owner in section 8.
+**Defect 1, moderate → escalated by the owner into a behavioural fix (`7e3eada`, `1c4c981`).**
+The module placed EoY quantity mismatches under WARNING, defined there as *"evidentiary
+divergences that do not silently change the declared figures"*. An EoY quantity mismatch is
+the signature of a disposal the engine did not process: calculated > reported means a sale is
+missing and with it its realised gain, so income is understated by an amount that appears
+nowhere in the output. That is the file's own FAIL_FAST criterion, verbatim.
+
+Raised as an open question; the owner's ruling was that **SoY → EoY must always compute
+cleanly given full-year data**, so the mismatch is now **fatal**. That surfaced a genuine
+document conflict worth recording: **PRD.md 2.4 already required it** (*"must be identical"*,
+*"must be flagged as a critical error"*, no licence to continue), while the engine logged
+*"Processing will continue, but results may be inaccurate"* and
+`tests/docs/spec_fifo.md` Group 3 had been written around the engine — five cases
+(`EOY_M_001`–`004`, `EOY_SM_001`) specifying a surviving mismatch **with a defined
+post-mismatch EOY state**. So the spec had been fitted to the implementation, and the PRD was
+the thing being contradicted. The spec, the fixtures, `test_data_gaps.py` and the harness's
+blanket `pytest.fail` were changed with the owner's approval; the five fixtures now expect the
+abort and their EOY-state fields are documentation only.
+
+Design points worth keeping: the check runs to completion over every asset and *then* raises
+one `EOY_RECONCILIATION_FAILED` naming all of them (one run identifies the whole problem), and
+the raise does **not** depend on the optional collector being supplied — an optional argument
+must not decide whether the engine aborts. Calibrated: removing the raise fails 8 tests.
+
+**The accepted cost:** a tax year whose imported trade history does not reach back far enough
+to explain an open position is now unprocessable — 2022 today. The owner chose no override
+flag. The cost basis of such a position is unknown, so its gain was wrong anyway; the remedy
+is to supply the missing years.
+
+**The currency (cash balance) check stays non-fatal, also the owner's call.** Its documented
+causes are input-completeness problems — the cash-balance export's date range, or transaction
+types missing from the Cash Transactions query — not a ledger disagreeing about a holding. It
+is now recorded as a `CURRENCY_EOY_MISMATCH` WARNING gap so it reaches the console and the PDF
+instead of only the log. Real 2024 has one (−0.51 USD); 2025 has none, which is why parity
+holds.
 
 **Defect 2, moderate — the report half of the feature is invisible to the suite, and so is
 one of the two recording sites (`0893139`).** Mutation-probed with all 474 running:
@@ -1285,18 +1309,17 @@ Two things to scrutinise when reached:
   are all dead code. Pre-existing and outside #24's diff, so not fixed — the fix is to raise
   `ProcessingError`. Note it also makes those three branches genuinely unreachable, so any future
   test of them has to bypass the public path.
-- **Owner's call: should an EoY quantity mismatch be FAIL_FAST rather than WARNING (found in
-  #25)?** #25 routes it into the data-gap channel at WARNING, which preserves the engine's
-  pre-existing log-count-continue behaviour. But an EoY mismatch is the signature of a
-  disposal the engine did not process — calculated > reported means a sale is missing and
-  with it its realised gain, so income is understated by an amount visible nowhere in the
-  output. By the channel's own definition that is the FAIL_FAST criterion. The argument for
-  leaving it at WARNING is concrete: the mismatches actually present in this data are the
-  pre-2021 trade-history floor (2022's one non-zero EoY security), so failing fast would make
-  early tax years unprocessable. A middle option is to fail fast only when the mismatch is
-  *not* explainable by the data floor — i.e. when the asset's first observed trade is after
-  the floor. Nothing in #26–#40 revisits this. The prose no longer claims the divergence is
-  harmless either way (`7e3eada`).
+- ~~**Should an EoY quantity mismatch be FAIL_FAST?**~~ **Resolved by the owner during the #25
+  review: yes, fatal, no override** (`1c4c981`). Consequences now live rather than open: tax
+  year **2022 is unprocessable** until its pre-2021 trade history is supplied, and the
+  reporting paths for a non-zero mismatch count (console `ACHTUNG` line, PDF section) are
+  backstops that production can no longer reach. They are kept and tested deliberately — the
+  sentence the PDF branch replaces was wrong for the whole history of that file, and nothing
+  should be able to restore it through another path.
+- **`validate_ledgers.py` still reports rather than refuses.** It is a separate script with its
+  own SoY/EoY comparison and was not touched; it remains the right tool for surveying which
+  years reconcile, now that `src.main` refuses the ones that do not. Worth confirming its
+  verdicts still agree with the engine's once earlier years' snapshots are re-downloaded.
 - **The PDF's structured EoY mismatch table is still unfed.** `a2f3974` stops the report
   claiming a reconciliation it never performed and renders the recorded gaps as text, but the
   five-column table (calculated / reported / difference) remains unreachable from production,
@@ -1389,7 +1412,7 @@ Two things to scrutinise when reached:
   #21 widens its reach; **#29 fixes it**. Detail in the #21 verdict and section 6.
 - 2022 ledger validation still FAILs — one security's EOY quantity is non-zero when the
   broker reports zero; pre-existing, caused by trade history predating the 2021 data floor.
-  Unchanged by this branch. Instance in `private/real-data-observations.md`.
+  **As of `1c4c981` this now aborts the engine run for 2022**, by the owner's decision. Instance in `private/real-data-observations.md`.
 
 ---
 
@@ -1444,7 +1467,7 @@ All original SHAs remain resolvable in the local object store via the fetched `p
    `24b3c1f`+`f2e5cc3`+`f5248a3` for #22;
    `05b839b`+`d6537aa`+`3d3873b`+`0ad410d`+`edda318` for #23;
    `a35a881`+`273f6ef`+`1c01fbd` for #24;
-   `7e3eada`+`0893139`+`a2f3974`+`47f2581` for #25) so the
+   `7e3eada`+`0893139`+`a2f3974`+`47f2581`+`1c4c981` for #25) so the
    trail from PR to commit is explicit.
 3. Reference the PR numbers in the merge commit body so GitHub cross-links them.
 4. Fsaupe's contribution graph credits the Author email regardless of who merges, so no
