@@ -110,10 +110,14 @@ def mock_config_paths(temp_data_dir, monkeypatch):
             monkeypatch.setattr(config_module_obj, "CORPORATE_ACTIONS_FILE_PATH", paths_dict["corp_actions"], raising=False)
             monkeypatch.setattr(config_module_obj, "CLASSIFICATION_CACHE_FILE_PATH", paths_dict["classification_cache"])
             monkeypatch.setattr(config_module_obj, "ECB_RATES_CACHE_FILE_PATH", paths_dict["ecb_cache"])
+            # raising=False: these two are introduced later in the train (VP work);
+            # they must not abort the remaining patches when absent.
             monkeypatch.setattr(config_module_obj, "FUND_SOY_NAV_CACHE_FILE_PATH",
-                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "fund_soy_nav.json"))
+                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "fund_soy_nav.json"),
+                                raising=False)
             monkeypatch.setattr(config_module_obj, "DECLARED_VP_CACHE_FILE_PATH",
-                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "declared_vp.json"))
+                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "declared_vp.json"),
+                                raising=False)
             monkeypatch.setattr(config_module_obj, "IS_INTERACTIVE_CLASSIFICATION", False)
         else:
             # This might occur if tests are structured such that src.config isn't loaded when conftest runs,
