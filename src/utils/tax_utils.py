@@ -1,5 +1,5 @@
 # src/utils/tax_utils.py
-"""Compatibility shim (rework2 AR2): Teilfreistellung rates live in the
+"""Compatibility shim: Teilfreistellung rates live in the
 law-as-data registry (src/tax_law/registry.py, §20 InvStG citations there)."""
 from decimal import Decimal
 from typing import Optional
