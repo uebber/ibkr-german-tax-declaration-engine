@@ -130,9 +130,11 @@ def _format_asset_info(asset_obj) -> str:
     return f"'{desc}' (Symbol: {symbol})"
 
 def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
-    """Apply ONE historical stock-for-stock merger (§20 Abs. 4a EStG,
-    tax-neutral lot transfer) — the per-event unit the unified replayer
-    streams in the MERGERS phase."""
+    """Apply ONE historical stock-for-stock merger — the per-event unit the
+    unified replayer streams in the MERGERS phase. Tax-neutral under §20
+    Abs. 4a Satz 1-2 EStG (the new shares step into the tax position of the
+    old ones), so the lots transfer with their acquisition date and cost
+    basis: reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"."""
     source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
     target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
 

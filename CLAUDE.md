@@ -75,7 +75,8 @@ uv run pytest tests/test_options_lifecycle.py -v
 
 - `src/identification/asset_resolver.py` - Global alias map maintaining unique Asset objects across all input files
 - `src/engine/fifo_manager.py` - FIFO lot tracking for long/short positions, including drain/receive for stock mergers and position flip splitting
-- `src/engine/calculation_engine.py` - Main calculation orchestration with three-pass historical replay for mergers
+- `src/engine/calculation_engine.py` - Main calculation orchestration; builds the historical replay stream
+- `src/engine/replay.py` - `ReplayStream`: one ordered stream rebuilding all pre-tax-year ledger state (securities, mergers, currencies) under a documented phase contract
 - `src/engine/event_processors/` - Processors for trades, corporate actions, options, and currency conversions
 - `src/processing/option_trade_linker.py` - Links option exercises/assignments to stock trades
 - `src/pipeline_runner.py` - Orchestrates the full processing pipeline
