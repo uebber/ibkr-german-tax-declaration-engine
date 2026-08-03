@@ -68,19 +68,21 @@ This document outlines the test scenarios for the FIFO (First-In, First-Out) cal
 **Objective:** Ensure calculated EOY positions match `positions_end_of_year.csv`, and that any discrepancy stops the run.
 **PRD Coverage:** 2.4 (EOY Quantity Validation), 2.10 (Critical Error Report: EOY Quantity Mismatch), 5.12 (Perform EOY Quantity Validation).
 
-**A non-zero "Expected: Errors" means the run ABORTS.** Given a full year of input, the
-start-of-year position plus the year's events must reconcile to the broker's reported
-end-of-year position exactly. A residual is not a reporting nuance: the ledger and the broker
-disagree about what is held, so at least one disposal was missed, double-counted, or matched
-to the wrong lot — and every figure derived from that ledger, not just the quantity, is
-unsafe. PRD 2.4 already requires the quantities to be identical and the discrepancy to be a
-critical error; the engine raises `EOY_RECONCILIATION_FAILED`, naming every affected position
-in one message, after checking them all.
+**A non-zero "Expected: Errors" means the run ABORTS.** The start-of-year quantity is
+authoritative — `reconcile_with_soy_position` pins the ledger to the reported `soy_quantity`
+in every branch, using the historical reconstruction only for cost basis and acquisition
+dates — so the end-of-year quantity follows from that snapshot plus the year's own events and
+has exactly one correct answer. A residual is not a reporting nuance: an event is missing or
+was processed incorrectly, which leaves at least one disposal matched against the wrong lots
+and makes every figure derived from that ledger unsafe, not just the quantity. PRD 2.4 already
+requires the quantities to be identical and the discrepancy to be a critical error; the engine
+raises `EOY_RECONCILIATION_FAILED`, naming every affected position in one message, after
+checking them all.
 
-Consequence, recorded so it is not rediscovered as a bug: a tax year whose imported trade
-history does not reach back far enough to explain an open position **cannot be processed**.
-That is intended. The cost basis of such a position is unknown, so the gain computed from it
-would be wrong; the fix is to supply the missing history, not to let the run continue.
+**An incomplete prior-year trade history cannot cause this**, which is worth stating because
+it is the intuitive guess and it is wrong: missing earlier years change the cost basis and
+acquisition dates of carried-in positions, never the running quantity. A mismatch always
+points at the tax year's own input or at the engine's handling of it.
 
 The `Expected: EOY State (Qty)` column for the mismatch rows therefore documents what the
 engine had computed at the moment it refused to continue. It is not asserted — there is no
