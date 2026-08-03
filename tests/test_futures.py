@@ -7,8 +7,10 @@ Tests futures-specific functionality:
 - Loss offsetting routing (Termingeschäfte, Zeile 21/24)
 - FIFO mechanics via YAML spec (group11_futures.yaml)
 
-Legal basis: §20 Abs. 2 Nr. 3 EStG — Futures are Termingeschäfte,
-taxed identically to options and CFDs.
+legal_basis: GT-ESTG20-007 — §20 Abs. 2 Satz 1 Nr. 3 EStG. Futures are
+Termingeschäfte, taxed identically to options and CFDs; the form line they
+land on is year-specific (GT-FORM-010, GT-FORM-011).
+reference/tax-law/estg-20-kapitalvermoegen.md.
 """
 
 import pytest

@@ -1,7 +1,8 @@
 """
 Bond Maturity (BM Corporate Action) Tests
 
-Legal basis: §20 Abs. 2 Satz 2 EStG deems the Einlösung (redemption) of a
+legal_basis: GT-ESTG20-009 with GT-ESTG20-008.
+§20 Abs. 2 Satz 2 EStG deems the Einlösung (redemption) of a
 Kapitalforderung a Veräußerung; the gain category is §20 Abs. 2 Satz 1 Nr. 7.
 Both are required — Nr. 7 alone gives the category but not the disposal fiction.
 Gain/loss = maturity proceeds - FIFO cost basis, computed in EUR under Abs. 4.

@@ -1,7 +1,8 @@
 """
 Console summary: the Termingeschäfte block.
 
-legal_basis: §20 Abs. 6 S. 5 a.F. EStG (€20k cap) was repealed by JStG 2024;
+legal_basis: GT-ESTG20-035 with GT-ESTG20-037.
+§20 Abs. 6 S. 5 a.F. EStG (€20k cap) was repealed by JStG 2024;
 §52 Abs. 28 Satz 25 EStG orders it "auf alle offenen Fälle nicht mehr
 anzuwenden" — so the block must never claim a first year of repeal, and it must
 not tie the Zeile-24 cross-check to the cap, which no longer applies anywhere.

@@ -2,9 +2,10 @@
 Law-as-data registry: the engine and the tests read the SAME
 tables; entries carry citations; lookups outside validity are loud.
 
-legal_basis: §20 InvStG (Teilfreistellung), §18 Abs. 4 InvStG (Basiszins),
-§20 Abs. 6 EStG + JStG 2024 §52 Abs. 28 (form structure, cap repeal) —
-mirrored from reference/ (see registry module docstring).
+legal_basis: GT-INVSTG-020..024 (Teilfreistellung rates), GT-INVSTG-050 and
+GT-INVSTG-053 (Basiszins), GT-ESTG20-035..037 and GT-FORM-010..012 (form
+structure, cap repeal) — mirrored from reference/ (see registry module
+docstring).
 """
 import logging
 import re

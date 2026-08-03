@@ -13,8 +13,16 @@ Test Organization:
 - TestCurrencyFifoRGLs: Unit-level RGL verification (cost basis, proceeds, gain/loss)
 - TestCurrencyFifoAggregates: Integration-level tax form aggregate verification
 
-PRD Coverage: §20 EStG (Capital Income from Interest-Bearing Accounts)
-Legal Basis: BMF Circular May 2022, Para. 131
+legal_basis: GT-FX-001 — currency gains on an interest-bearing balance are
+§20 Abs. 2 Satz 1 Nr. 7 EStG income; reference/bmf-guidance/fremdwaehrung-konten.md.
+Related: GT-FX-006 (short currency positions) and GT-FX-007 (currency embedded
+in a securities trade), both choices under uncertainty — see
+reference/research/open-legal-questions.md and docs/legal-implementation-map.md.
+
+Note the store records that the controlling BMF circular has never been
+retrieved and that its Randziffer numbering is ambiguous across versions, so
+these expectations rest on administrative practice, not on a verified Tier 2
+citation.
 """
 
 import logging

@@ -23,8 +23,9 @@ Three properties, none of which the shipped rule had:
    reference/tax-law/estg-23-private-veraeusserung.md documented that field as what
    drives the §23 category.
 
-Legal basis: reference/tax-law/estg-23-private-veraeusserung.md
-(§23 Abs. 1 S. 1 Nr. 2 S. 1 EStG; §108 Abs. 1 AO i.V.m. §§187 Abs. 1, 188 Abs. 2-3 BGB).
+legal_basis: GT-ESTG23-003 (§108 Abs. 1 AO i.V.m. §§187 Abs. 1, 188 Abs. 2-3
+BGB) and GT-ESTG23-012 (an undecidable §23 case raises rather than defaulting
+to exempt); reference/tax-law/estg-23-private-veraeusserung.md.
 """
 import uuid
 from datetime import date

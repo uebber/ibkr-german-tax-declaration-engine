@@ -1,7 +1,8 @@
 """
 §23 Abs. 1 Nr. 2 EStG — the one-year speculation period (Jahresfrist).
 
-Legal basis (reference/tax-law/estg-23-private-veraeusserung.md): the period is
+legal_basis: GT-ESTG23-003 (reference/tax-law/estg-23-private-veraeusserung.md).
+The period is
 computed per §108 AO in conjunction with §§187 Abs. 1, 188 Abs. 2 BGB. It ends
 with the EXPIRY OF THE ANNIVERSARY DAY of the acquisition in the following
 year: a disposal ON the anniversary day is still within the period (taxable);

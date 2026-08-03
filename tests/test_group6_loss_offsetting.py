@@ -340,7 +340,8 @@ class TestLossOffsetting2025FromSpec:
     """Verify the VZ >= 2025 Anlage KAP structure (JStG 2024): Zeilen 21/24
     removed, derivative gains AND losses net in Zeile 19, Zeile 22 includes
     derivative losses, and no €20k cap (capped == uncapped).
-    Legal basis: reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
+    legal_basis: GT-ESTG20-033, GT-ESTG20-037;
+    reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
 
     @pytest.mark.parametrize(
         "test_case",
@@ -390,7 +391,8 @@ class TestLossOffsettingDerivativeCapRepealed:
     RETROACTIVELY for all open cases by JStG 2024 (§52 Abs. 28 EStG n.F.) — a
     VZ-2024 return prepared today is NOT subject to it. The conceptual summary
     must therefore never cap, even when explicitly requested.
-    Legal basis: reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
+    legal_basis: GT-ESTG20-033, GT-ESTG20-037;
+    reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
 
     def _run(self, test_case_id: str) -> LossOffsettingResult:
         test_case = next(tc for tc in LOSS_OFFSETTING_TESTS if tc.id == test_case_id)

@@ -977,8 +977,9 @@ LOSS_OFFSETTING_TESTS: List[LossOffsettingTestCase] = [
 # =============================================================================
 # VZ >= 2025 scenarios — Anlage KAP after JStG 2024
 # =============================================================================
-# Legal basis (reference/tax-law/estg-20-abs6-verlustverrechnung.md, "Tax Year
-# >= 2025"): the Verlustverrechnungsbeschraenkung for Termingeschaefte was
+# legal_basis: GT-ESTG20-037 with GT-FORM-011
+# (reference/tax-law/estg-20-abs6-verlustverrechnung.md): the
+# Verlustverrechnungsbeschraenkung for Termingeschaefte was
 # abolished, the 2025 form drops Zeilen 21/24, derivative gains AND losses flow
 # through Zeile 19, and Zeile 22 includes derivative losses alongside other
 # non-stock losses. No €20k cap exists (JStG 2024, retroactive for open cases),

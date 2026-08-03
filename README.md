@@ -400,9 +400,17 @@ the note above). They are reported as `CURRENCY_EOY_MISMATCH` in the console and
 
 ## German Tax Form Mapping
 
-*   **Anlage KAP:** Stock/derivative gains/losses (Zeilen 19-24), foreign WHT (Zeile 41).
-*   **Anlage KAP-INV:** Investment fund distributions and gains (GROSS figures, Zeilen 4-8, 14, 17, 20, 23, 26).
-*   **Anlage SO:** Private sales under section 23 EStG (holding period < 1 year), including FX gains/losses.
+*   **Anlage KAP:** capital income, gains and losses from stocks and derivatives, and creditable
+    foreign withholding tax.
+*   **Anlage KAP-INV:** investment fund distributions, Vorabpauschale and disposal gains, entered
+    gross (before Teilfreistellung).
+*   **Anlage SO:** private sales under § 23 EStG disposed of within the one-year period.
+
+**Line numbers are deliberately not listed here.** They are legal facts, they are year-specific,
+and CLAUDE.md permits them in exactly one place: `reference/`. See
+[`reference/tax-forms/`](reference/tax-forms/) for the per-year line mappings with their sources,
+and [`docs/legal-implementation-map.md`](docs/legal-implementation-map.md) for which of them this
+engine actually produces — several it does not.
 
 ## Architecture
 

@@ -209,3 +209,22 @@ class TestCitationsIntoTheStoreResolve:
             "left the citation dangling):\n"
             + "\n".join(f"  {t} <- {', '.join(sorted(set(s)))}" for t, s in sorted(broken.items()))
         )
+
+    def test_claim_ids_cited_from_src_and_tests_resolve(self):
+        """Guard 5. Docstrings cite claims by ID. An ID that no longer exists
+        is the same failure the retired field pointer was — a citation that
+        reads as authoritative and refers to nothing."""
+        store = set(_store_definitions())
+        assert store, "no claim IDs found in the store; the scan is broken"
+        dangling: dict[str, list[str]] = {}
+        for root in ("src", "tests"):
+            for source in sorted((REPO_ROOT / root).rglob("*.py")):
+                if "__pycache__" in source.parts or source.name == Path(__file__).name:
+                    continue
+                for claim in set(CLAIM_ID.findall(source.read_text(encoding="utf-8"))) - store:
+                    dangling.setdefault(claim, []).append(
+                        source.relative_to(REPO_ROOT).as_posix())
+        assert not dangling, (
+            "code cites claim IDs that no reference file defines:\n"
+            + "\n".join(f"  {c} <- {', '.join(f)}" for c, f in sorted(dangling.items()))
+        )

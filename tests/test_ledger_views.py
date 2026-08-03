@@ -1,7 +1,7 @@
 """
 Aggregate views over (account, asset)-keyed ledger registries.
 
-legal_basis: FIFO je Depot -- BMF-Schreiben vom 14.05.2025,
+legal_basis: GT-ESTG20-013 -- FIFO je Depot. BMF-Schreiben vom 14.05.2025,
 GZ IV C 1 - S 2252/00075/016/070, Rz. 97 Satz 2 (Tier 2). § 20 Abs. 4 Satz 7
 EStG supplies the FIFO fiction but not the Depot boundary; see
 reference/tax-law/estg-20-kapitalvermoegen.md. Per-person figures are derived

@@ -1,5 +1,13 @@
 # tests/test_vorabpauschale.py
-"""Tests for Vorabpauschale calculation (§ 18 InvStG)."""
+"""Tests for the Vorabpauschale (§ 18 InvStG).
+
+legal_basis: GT-INVSTG-010 (Basisertrag and its cap), GT-INVSTG-012 and
+GT-INVSTG-014 (the VZ Y return carries the figure for calendar Y-1),
+GT-INVSTG-015 (declared gross), GT-INVSTG-033 and GT-FORM-033 (the deduction
+on disposal is Zeile 53, and is not computed), GT-INVSTG-050/053 (Basiszins).
+See reference/investment-tax-law/invstg-18-vorabpauschale.md and
+docs/legal-implementation-map.md.
+"""
 import uuid
 import pytest
 from decimal import Decimal, Context

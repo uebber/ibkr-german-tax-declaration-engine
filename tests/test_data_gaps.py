@@ -1,10 +1,12 @@
 """
-AR6 (rework2): the data-gap channel — one path for "input could not fully
-support the computation", with an explicit severity policy.
+The data-gap channel: one path for "the input could not fully support the
+computation", with an explicit severity policy.
 
-legal_basis: infrastructure for findings F4/F6 — silent fallbacks must never
-understate income (FAIL_FAST) and evidentiary mismatches must reach the
-report, not only a log file (WARNING).
+legal_basis: infrastructure. No declared figure depends on these assertions.
+What depends on them is the fail-fast policy in CLAUDE.md — a silent fallback
+must never understate income (FAIL_FAST), and an evidentiary mismatch must
+reach the report rather than only a log file (WARNING). Choosing WARNING is a
+claim that the declared figures are still safe.
 """
 import logging
 from decimal import Decimal

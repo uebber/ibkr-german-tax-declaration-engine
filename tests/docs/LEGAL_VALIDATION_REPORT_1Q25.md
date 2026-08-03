@@ -1,5 +1,28 @@
 # Legal Validation Report: IBKR German Tax Declaration Engine
 
+> ## HISTORICAL — superseded, do not cite as ground truth
+>
+> **Marked historical 2026-08-03.** This document is retained for the record. It is **not** part
+> of the reference library and must not be used to justify any legally relevant behaviour.
+>
+> Two reasons:
+>
+> 1. **It predates the curated store.** It was written on 2026-01-11, before `reference/` existed
+>    in its present form. Where the two disagree, `reference/` wins — that is the Ground Truth
+>    Rule in CLAUDE.md, and it admits no exception for an older document in this repository.
+> 2. **Its sourcing does not meet the current standard.** It rests partly on Tier 5 web sources
+>    that `reference/research/research-strategy.md` now refuses as sole authority, and it carries
+>    no retrieval dates or verbatim quotations for most of its claims.
+>
+> For what the law requires: `reference/`, indexed by `reference/INDEX.md`. For what this engine
+> does about each requirement and which tests guard it: `docs/legal-implementation-map.md`. For
+> points that are genuinely unsettled: `reference/research/open-legal-questions.md`.
+>
+> Specific claims here have **not** been re-audited against the corrected store, and several
+> areas the store has since corrected — the Vorabpauschale declaration year, Anlage KAP-INV
+> Zeile 53, the Aktienfonds threshold, the § 34c carve-out pinpoint — may still be stated in
+> their former, wrong form below.
+
 ## Test Specification Compliance with German Tax Regulations
 
 **Document Version:** 1.6

@@ -13,7 +13,8 @@ yet; only their column tuples are re-exported.)
 Column orders are the canonical tuples from src/parsers/column_validator.py —
 imported, not copied, so parser-format changes fail loudly here.
 
-legal_basis: §20 Abs. 4 S. 7 EStG mandates FIFO for fungible securities in
+legal_basis: GT-ESTG20-012 with GT-ESTG20-013.
+§20 Abs. 4 S. 7 EStG mandates FIFO for fungible securities in
 Sammelverwahrung; the *per-Depot* dimension is administrative, not statutory —
 BMF 14.05.2025 (GZ IV C 1 - S 2252/00075/016/070) Rz. 97 S. 2 applies FIFO
 "auf das einzelne Depot bezogen", and Rz. 98 counts a sub-depot as a Depot.
