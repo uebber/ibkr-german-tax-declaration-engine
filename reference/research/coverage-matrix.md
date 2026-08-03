@@ -37,9 +37,9 @@
 | German KESt on German dividend (foreign depot) | EStG | 43 Abs. 1 S. 1 Nr. 1a i.V.m. 44 Abs. 1 S. 4 Nr. 3 | KAP Z7 + Z37/Z38/Z39 | estg-36-45a-kapitalertragsteuer-anrechnung.md |
 | KESt credit / Steuerbescheinigung | EStG | 36 Abs. 2 S. 1 Nr. 2, S. 2; 45a Abs. 2/3 | KAP Z37 | estg-36-45a-kapitalertragsteuer-anrechnung.md |
 | Fund distribution | InvStG | 16 Abs. 1 Nr. 1 | KAP-INV Z4-8 | invstg-16-investmentertraege.md |
-| Vorabpauschale | InvStG | 18 | KAP-INV Z9-13 | invstg-18-vorabpauschale.md |
-| Fund sale gain/loss | InvStG | 19 | KAP-INV Z14-26 | invstg-19-veraeusserungsgewinne.md |
-| VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV Z55 | invstg-19-veraeusserungsgewinne.md |
+| Vorabpauschale | InvStG | 18 Abs. 1; Zufluss 18 Abs. 3 | KAP-INV Z9-13 (for calendar year VZ-1) | invstg-18-vorabpauschale.md |
+| Fund sale gain/loss | InvStG | 19 Abs. 1 S. 1-2 | KAP-INV Z14-26 | invstg-19-veraeusserungsgewinne.md |
+| VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV **Z53** (not Z55) -- not computed | invstg-19-veraeusserungsgewinne.md |
 | FX gain (explicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
 | FX gain (implicit) | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | fremdwaehrung-konten.md |
 | Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 1 | SO Z54 | estg-23-private-veraeusserung.md |
@@ -52,7 +52,7 @@
 |------|-------------|-------------|------------|
 | No cross-income offsetting | EStG 20 Abs. 6 S. 1 | KAP only | estg-20-abs6-verlustverrechnung.md |
 | Stock loss ring-fencing | EStG 20 Abs. 6 S. 4 | Z23 separate | estg-20-abs6-verlustverrechnung.md |
-| Derivative loss cap (abolished) | EStG 20 Abs. 6 S. 5 a.F. | Z24 removed 2025 | estg-20-abs6-verlustverrechnung.md |
+| Derivative loss cap (repealed, all open cases) | EStG 20 Abs. 6 S. 5 a.F.; repeal per 52 Abs. 28 S. 25 | Never applied in any VZ; Z21/Z24 still used <= 2024 | estg-20-abs6-verlustverrechnung.md |
 | Private sale loss rules | EStG 23 Abs. 3 S. 7-8 | SO only | estg-23-private-veraeusserung.md |
 | Fund Teilfreistellung | InvStG 20 | KAP-INV gross | invstg-20-teilfreistellung.md |
 
@@ -60,10 +60,10 @@
 
 | Rule | 2024 and earlier | 2025 and later | Source |
 |------|------------------|----------------|--------|
-| Derivative loss cap | 20k EUR cap (S. 5) | Abolished (JStG 2024) | estg-20-abs6-verlustverrechnung.md |
-| Separate derivative lines | Z21 gains, Z24 losses | Merged into Z19/Z22 | anlage-kap-zeilen.md |
-| SO Freigrenze | EUR 1,000 (since 2024) | EUR 1,000 | estg-23-private-veraeusserung.md |
-| Basiszins | 2.29% (2024), 2.53% (2025) | 3.20% (2026) | basiszins-vorabpauschale.md |
+| Derivative loss cap | **Not applied in any year.** The repeal is addressed to *alle offenen Faelle* (52 Abs. 28 S. 25/26 EStG), not to a first year of application -- a return prepared now for VZ 2021-2024 is such a case | Not applied | estg-20-abs6-verlustverrechnung.md |
+| Separate derivative lines (a *form* question, independent of the repeal above) | Z21 gains, Z24 losses -- in use | Not used; derivative gains net into Z19, losses into Z22. Whether the lines were physically removed from the form is **unresolved**, see Open Legal Questions | anlage-kap-zeilen.md |
+| SO Freigrenze | EUR 1,000 from VZ 2024 (Wachstumschancengesetz v. 27.03.2024, BGBl. 2024 I Nr. 108); EUR 600 before | EUR 1,000 | estg-23-private-veraeusserung.md |
+| Basiszins (for the VP *of* that calendar year, declared the following VZ) | 2.29% (2024), 2.53% (2025) | 3.20% (2026) | basiszins-vorabpauschale.md |
 
 ## Pending Legal Developments
 
@@ -80,3 +80,6 @@ in full, with the sources on both sides, in the reference file named.
 |----------|------------------|------------------|
 | Does § 108 Abs. 3 AO extend the § 23 Jahresfrist when the anniversary falls on a Saturday, Sunday or public holiday? | No extension (follows FG Koeln 02.06.1997; against the general breadth of BFH IX R 68/98) | estg-23-private-veraeusserung.md |
 | Does the "einzelnes Depot" boundary of the Fifo rule transpose to a foreign broker's sub-accounts? | Not reached -- the engine is account-agnostic | estg-20-kapitalvermoegen.md |
+| Were Zeilen 21/24/25 physically removed from the VZ 2025 Anlage KAP, or retained and left unused? | Engine writes nothing to them either way, so no figure turns on it. The Anleitung 2025 is silent, but keeps the block at *"Zeilen 18 bis 26a"* and leaves every later line number unchanged (Z41 is still the noch nicht angerechnete auslaendische Steuer in both years), which points to retained-but-unused, as Z21/Z24 were *frei* on the VZ 2020 form. A Tier 5 summary claims removal **plus** a three-line renumbering; the renumbering half is refuted by the official Anleitung. Official VZ 2025 form not retrievable as of 2026-08-03 | anlage-kap-zeilen.md, estg-20-abs6-verlustverrechnung.md |
+| From which VZ does the JStG-2024 wording of 20 Abs. 1 Nr. 11 EStG (Glattstellungspraemien as *negative Einnahmen at the time of payment*) apply? | Engine books the paid premium at payment date. That matches the new wording, and the administration's practice before it (BMF 19.05.2022 Rz. 25 ff.), but **against** BFH v. 02.08.2022 VIII R 27/21, which required the reduction in the VZ the Stillhalterpraemie was received. buzer shows two JStG-2024 versions of § 20 (06.12.2024 and 01.01.2025) and no § 52 EStG application rule has been located for Nr. 11 | estg-20-kapitalvermoegen.md |
+| Is a fund disposed of during the calendar year exempt from that year's Vorabpauschale? | Yes -- engine skips any fund with no end-of-year position. Inferred from the 18 Abs. 3 Zuflussfiktion (the deemed inflow falls after the disposal), not from a located Tier 1/2 statement | invstg-18-vorabpauschale.md |

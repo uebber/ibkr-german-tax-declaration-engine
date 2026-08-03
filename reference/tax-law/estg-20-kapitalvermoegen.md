@@ -19,6 +19,15 @@ Dividends and other distributions from corporations (Koerperschaften).
 
 **Engine mapping:** `DIVIDEND_CASH` event -> `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE`
 
+### Nr. 3 -- Investmentertraege
+*"Investmentertraege nach § 16 des Investmentsteuergesetzes"*. This is the hook through which all
+fund income (Ausschuettungen, Vorabpauschale, Veraeusserungsgewinne) becomes Einkuenfte aus
+Kapitalvermoegen. Nr. 3a does the same for Spezial-Investmentertraege nach § 34 InvStG -- out of
+scope for this engine.
+
+**Engine mapping:** all `ANLAGE_KAP_INV_*` categories; see `investment-tax-law/`. Declared on
+Anlage KAP-INV, not Anlage KAP.
+
 ### Nr. 7 -- Interest
 Interest from capital claims of any kind (Kapitalforderungen jeder Art).
 
@@ -27,13 +36,48 @@ Interest from capital claims of any kind (Kapitalforderungen jeder Art).
 ### Nr. 11 -- Stillhalterpraemien (Option Premiums)
 Premiums received for granting options (Einraeumung von Optionen).
 
+Statutory text (retrieved 2026-08-03): *"Stillhalterpraemien, die fuer die Einraeumung von
+Optionen vereinnahmt werden; schliesst der Stillhalter ein Glattstellungsgeschaeft ab, sind die
+im Glattstellungsgeschaeft gezahlten Praemien zum Zeitpunkt der Zahlung als negative Einnahmen zu
+beruecksichtigen."*
+
 Key rules:
 - Premium is taxable upon receipt under Abs. 1 Nr. 11
-- Glattstellungsgeschaeft (closing/buy-back): paid premium is negative income at time of payment (as of JStG 2024, codified in statute effective 01.01.2024)
+- Glattstellungsgeschaeft (closing/buy-back): paid premium is a **negative Einnahme at the time
+  of payment**. See the timing caveat below -- the *from when* is not settled here.
 - Physical exercise: premium does NOT reduce under Nr. 11; instead affects cost basis of underlying trade (Abs. 2)
 - Barausgleich (cash settlement) by Stillhalter: loss from Termingeschaeft under Abs. 2 Satz 1 Nr. 3a (per BFH VIII R 55/13)
 
 **Engine mapping:** Short option events, `OPTION_EXPIRED_SHORT`, `OPTION_CASH_SETTLED_SHORT`
+
+#### Open question -- from which VZ does the "negative Einnahmen" wording apply? (NOT resolved)
+
+The *"zum Zeitpunkt der Zahlung als negative Einnahmen"* wording was put into the statute by the
+**JStG 2024**, displacing BFH v. 02.08.2022 - VIII R 27/21, which had held that Glattstellung
+costs reduce the Stillhalterpraemien **in the VZ the premium was received** (a rueckwirkendes
+Ereignis under 175 Abs. 1 S. 1 Nr. 2 AO), not in the VZ of payment. The two readings put the
+same amount in different years, so this changes a declared figure whenever the two legs straddle
+a year end.
+
+What is not established:
+
+- buzer.de lists **two** JStG-2024 versions of § 20 EStG -- one effective **06.12.2024**
+  (Art. 3) and one effective **01.01.2025** (Art. 4) -- and does not say which carried Nr. 11.
+- No application rule in § 52 EStG for Nr. 11 has been located.
+- Tier 5 sources disagree openly: Haufe Finance Office states application from 01.01.2024; Haufe
+  Steuer Office Excellence states from the day after promulgation.
+
+**What the engine does:** it books the paid premium at the payment date in every year. That
+matches the new statutory wording, and it matches the administration's practice even before it
+(BMF 18.01.2016 Rz. 25 ff., carried into BMF 19.05.2022 and 14.05.2025) -- but it is contrary to
+BFH VIII R 27/21 for any VZ before the amendment took effect. **A straddling Stillhalter/
+Glattstellung pair in VZ 2024 or earlier should be reviewed by hand.** Recorded in
+`research/coverage-matrix.md`.
+
+> **Correction, 2026-08-03.** This section previously asserted the change was "codified in
+> statute effective 01.01.2024" as settled fact. The codification is real; the date was
+> unsourced, contradicted this file's own header (JStG 2024, effective 01.01.2025), and is
+> disputed. Validation Protocol items 3 and 7.
 
 ---
 
@@ -44,10 +88,24 @@ Gains from sale of shares in any corporation (Koerperschaft, Personenvereinigung
 
 **Engine mapping:** `LONG_POSITION_SALE` / `SHORT_POSITION_COVER` for STOCK category -> `ANLAGE_KAP_AKTIEN_GEWINN`
 
-### Satz 1 Nr. 2 -- Sale of other capital claims
-Gains from sale of interest-bearing instruments (Anleihen, Zertifikate, etc.).
+### Satz 1 Nr. 2 -- Sale of Dividenden-/Zinsscheine apart from the Stammrecht
 
-**Engine mapping:** `LONG_POSITION_SALE` for BOND category -> `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE`
+**Not bonds.** Nr. 2 covers the sale of *"Dividendenscheinen und sonstigen Anspruechen durch den
+Inhaber des Stammrechts, wenn die dazugehoerigen Aktien oder sonstigen Anteile nicht
+mitveraeussert werden"* (Buchst. a) and of *"Zinsscheinen und Zinsforderungen durch den Inhaber
+oder ehemaligen Inhaber der Schuldverschreibung, wenn die dazugehoerigen Schuldverschreibungen
+nicht mitveraeussert werden"* (Buchst. b) -- i.e. a coupon or dividend claim detached from the
+security it belongs to.
+
+> Retrieved 2026-08-03 from gesetze-im-internet.de/estg/__20.html.
+
+**Engine mapping: none.** The engine has no event for a detached coupon sale.
+
+> **Correction, 2026-08-03.** This entry previously read "Sale of other capital claims -- gains
+> from sale of interest-bearing instruments (Anleihen, Zertifikate, etc.)" and carried the BOND
+> engine mapping. That is Nr. 7, not Nr. 2 -- as this same file states correctly under
+> "Satz 1 Nr. 7" and again in the Satz 2 section below. The file contradicted itself and the
+> wrong half was the one carrying an engine mapping. Validation Protocol item 2.
 
 ### Satz 1 Nr. 3 -- Termingeschaefte (Derivatives)
 Gains from derivatives/forward transactions.
@@ -270,13 +328,34 @@ Conditions:
 Additional cash consideration (Barzuzahlung) is taxable under Abs. 1 Nr. 1.
 
 **Satz 5: Zuteilung without consideration (foreign corporations)**
-Shares allocated by a foreign corporation without consideration: income and acquisition cost = EUR 0. Original shares' cost basis unchanged.
+Shares allocated without consideration by a corporation with *"weder Geschaeftsleitung noch Sitz
+im Inland"*: income and acquisition cost are both set to EUR 0, and the cost basis of the shares
+that gave rise to the allocation is unchanged. **Conditional** -- the statute adds *"wenn die
+Voraussetzungen der Saetze 3, 4 und 7 nicht vorliegen"*, i.e. Satz 5 is the residual case after
+the Wandelanleihe (Satz 3), Bezugsrecht (Satz 4) and Abspaltung (Satz 7) rules. The engine
+applies the EUR 0 treatment without testing those three conditions.
 
 **Satz 7: Spin-offs (Abspaltungen)**
 Asset transfer via Abspaltung: Satz 1 and 2 apply analogously.
 
-**Satz 8: Timing**
-Effective date = date of booking into the taxpayer's depot (Einbuchung in das Depot).
+**Satz 6: Timing**
+*"Soweit es auf die steuerliche Wirksamkeit einer Kapitalmassnahme im Sinne der vorstehenden
+Saetze 1 bis 5 ankommt, ist auf den Zeitpunkt der Einbuchung in das Depot des Steuerpflichtigen
+abzustellen."*
+
+> **Correction, 2026-08-03.** Previously cited as "Satz 8". **Abs. 4a has seven Saetze; there is
+> no Satz 8.** The timing rule is Satz 6 and it is expressly limited to Saetze 1 bis 5 -- it
+> does not govern the Abspaltung case in Satz 7. Retrieved 2026-08-03 from
+> gesetze-im-internet.de/estg/__20.html. Validation Protocol item 2.
+
+**Saetze 3 and 4 -- present in the statute, not implemented**
+- Satz 3: Wandel-/Umtauschanleihen -- where the holder or issuer exercises a right to deliver
+  shares instead of cash at maturity, the cost of the claim becomes the disposal price of the
+  claim *and* the acquisition cost of the shares received.
+- Satz 4: Bezugsrechte -- the portion of the old shares' acquisition cost attributable to the
+  subscription right is set at EUR 0.
+
+Neither has an engine event. Recorded per Validation Protocol item 2.
 
 **Engine mapping:**
 - `CORP_MERGER_STOCK` -> tax-neutral cost basis transfer (FifoManager drain/receive)

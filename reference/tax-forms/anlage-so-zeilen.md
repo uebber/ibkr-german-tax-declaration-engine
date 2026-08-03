@@ -53,8 +53,10 @@ The form distinguishes:
 
 ## Key Rules
 
-### Freigrenze (Exemption Threshold)
-- EUR 1,000 per calendar year (since VZ 2024, changed from EUR 600 by JStG 2024)
+### Freigrenze (Exemption Threshold) -- 23 Abs. 3 Satz 5 EStG
+- EUR 1,000 per calendar year, from VZ 2024; EUR 600 before. Raised by the
+  **Wachstumschancengesetz vom 27.03.2024 (BGBl. 2024 I Nr. 108)** -- *not* by the JStG 2024,
+  as this file previously stated. See `tax-law/estg-23-private-veraeusserung.md`.
 - Applies to total gain from ALL private sales combined
 - If exceeded, the ENTIRE gain is taxable (Freigrenze, not Freibetrag)
 - Engine does not apply this threshold; it reports the gross figure

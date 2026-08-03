@@ -195,8 +195,23 @@ For assets acquired without consideration (gift, inheritance), the acquirer inhe
 ### Gain Calculation
 **Gain/Loss = Sale price - Acquisition/production costs - Advertising expenses (Werbungskosten)**
 
-### Exemption Threshold (Freigrenze)
-Gains remain **tax-free** if the total gain from private sales in the calendar year is less than **EUR 1,000** (changed from EUR 600 by JStG 2024 for VZ 2024 onwards).
+### Exemption Threshold (Freigrenze) -- Abs. 3 Satz 5
+
+Statutory text: *"Gewinne bleiben steuerfrei, wenn der aus den privaten Veraeusserungsgeschaeften
+erzielte Gesamtgewinn im Kalenderjahr weniger als 1 000 Euro betragen hat."*
+
+> Retrieved 2026-08-03 from gesetze-im-internet.de/estg/__23.html. Note *"weniger als"* -- a
+> Gesamtgewinn of exactly EUR 1 000 is **not** exempt.
+
+**Amendment:** raised from EUR 600 to EUR 1 000 by the **Wachstumschancengesetz vom 27.03.2024
+(BGBl. 2024 I Nr. 108)**, first applicable for **VZ 2024**.
+
+> **Correction, 2026-08-03.** This file and `tax-forms/anlage-so-zeilen.md` previously credited
+> the increase to the JStG 2024. That is wrong, and wrong in a way that is hard to spot: the
+> JStG 2024 *did* amend § 23 (dejure amendment table, effective 06.12.2024), just not this
+> figure. Amendment source: dejure.org/gesetze/EStG/23.html amendment table, entry
+> "01.01.2024 -- Wachstumschancengesetz, 27.03.2024, BGBl. I Nr. 108". Validation Protocol
+> item 3.
 
 **Important:** This is a Freigrenze (exemption threshold), NOT a Freibetrag (allowance). If the threshold is exceeded, the ENTIRE gain is taxable.
 
