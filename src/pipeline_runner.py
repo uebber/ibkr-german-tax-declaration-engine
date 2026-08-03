@@ -61,7 +61,13 @@ def run_core_processing_pipeline(
     tax_year_to_process: int,
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
-    options_eae_file_path: Optional[str] = None  # For cash-settled option processing
+    options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
+    # Preceding calendar year's position snapshots. Required for the Vorabpauschale, which for
+    # a VZ Y declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). Optional at
+    # this boundary: the engine decides what a missing snapshot means once it knows whether any
+    # fund is held. See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    positions_prior_start_file_path: Optional[str] = None,
+    positions_prior_end_file_path: Optional[str] = None
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -85,6 +91,8 @@ def run_core_processing_pipeline(
             cash_transactions_file=cash_transactions_file_path,
             positions_start_file=positions_start_file_path,
             positions_end_file=positions_end_file_path,
+            positions_prior_start_file=positions_prior_start_file_path,
+            positions_prior_end_file=positions_prior_end_file_path,
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
@@ -142,7 +150,10 @@ def run_core_processing_pipeline(
             tax_year=tax_year_to_process,
             internal_calculation_precision=config.INTERNAL_CALCULATION_PRECISION, # Renamed parameter
             decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
-            data_gap_collector=data_gap_collector
+            data_gap_collector=data_gap_collector,
+            prior_year_positions_available=bool(
+                positions_prior_start_file_path and positions_prior_end_file_path
+            ),
         )
     except Exception as e:
         logger.critical(f"Calculation engine failed with unexpected error: {e}", exc_info=True)

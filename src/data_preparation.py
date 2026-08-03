@@ -212,6 +212,31 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         logger.warning("No Positions-%d-EoY.csv found.", tax_year)
         result["positions_end"] = ""
 
+    # --- Positions for the preceding year: needed for the Vorabpauschale ---
+    # The VP declared in VZ Y is the one computed FOR calendar Y-1 (18 Abs. 3 InvStG; Anleitung
+    # zur Anlage KAP-INV, Zeilen 9-13). Its Basisertrag uses the Ruecknahmepreis at the start of
+    # Y-1 and its cap the last price set in Y-1, so both of the PRIOR year's snapshots are
+    # required. Absence is not an error here -- the engine decides what to do about a missing
+    # snapshot at the point it knows whether any fund is actually held
+    # (src/engine/calculation_engine.py).
+    prior_year = tax_year - 1
+    for file_key, suffix, label in (
+        ("positions_prior_start", "-SoY.csv", "start"),
+        ("positions_prior_end", "-EoY.csv", "end"),
+    ):
+        prior_file = _find_import_file("Positions", prior_year, suffix)
+        if prior_file:
+            prior_output = WORKING_DIR / f"positions_prior_year_{label}.csv"
+            _copy_file(prior_file, prior_output)
+            result[file_key] = str(prior_output)
+        else:
+            logger.info(
+                "No Positions-%d%s found. The Vorabpauschale for calendar %d cannot be "
+                "computed from it; the engine will report this as a data gap if funds are held.",
+                prior_year, suffix, prior_year,
+            )
+            result[file_key] = ""
+
     # --- Cash Balance: copy for the tax year ---
     cash_balance_file = _find_import_file("Cash_Balance", tax_year)
     if cash_balance_file:

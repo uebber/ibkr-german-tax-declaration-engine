@@ -46,6 +46,9 @@ class ParsingOrchestrator:
         self.raw_cash_transactions: List[RawCashTransactionRecord] = []
         self.raw_positions_start: List[RawPositionRecord] = []
         self.raw_positions_end: List[RawPositionRecord] = []
+        # Preceding calendar year's snapshots -- Vorabpauschale only. See Asset.prior_year_*.
+        self.raw_positions_prior_start: List[RawPositionRecord] = []
+        self.raw_positions_prior_end: List[RawPositionRecord] = []
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
         self.raw_options_eae: List[RawOptionsEAERecord] = []
@@ -63,6 +66,8 @@ class ParsingOrchestrator:
                            cash_transactions_file: Optional[str] = None,
                            positions_start_file: Optional[str] = None,
                            positions_end_file: Optional[str] = None,
+                           positions_prior_start_file: Optional[str] = None,
+                           positions_prior_end_file: Optional[str] = None,
                            corporate_actions_file: Optional[str] = None,
                            cash_balance_file: Optional[str] = None,
                            options_eae_file: Optional[str] = None):
@@ -79,6 +84,12 @@ class ParsingOrchestrator:
         if positions_end_file:
             self.raw_positions_end = parse_positions_csv(positions_end_file)
             logger.info(f"Loaded {len(self.raw_positions_end)} raw end-of-year position records.")
+        if positions_prior_start_file:
+            self.raw_positions_prior_start = parse_positions_csv(positions_prior_start_file)
+            logger.info(f"Loaded {len(self.raw_positions_prior_start)} raw prior-year start-of-year position records (Vorabpauschale).")
+        if positions_prior_end_file:
+            self.raw_positions_prior_end = parse_positions_csv(positions_prior_end_file)
+            logger.info(f"Loaded {len(self.raw_positions_prior_end)} raw prior-year end-of-year position records (Vorabpauschale).")
         if corporate_actions_file:
             self.raw_corporate_actions = parse_corporate_actions_csv(corporate_actions_file)
             logger.info(f"Loaded {len(self.raw_corporate_actions)} raw corporate action records.")
@@ -125,9 +136,42 @@ class ParsingOrchestrator:
             )
             asset.eoy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
             asset.eoy_market_price = safe_decimal(raw_pos.mark_price) # Changed from eoy_mark_price
-            asset.eoy_position_value = safe_decimal(raw_pos.position_value) 
+            asset.eoy_position_value = safe_decimal(raw_pos.position_value)
             asset.eoy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
+
+        # Preceding calendar year's snapshots. Used ONLY by the Vorabpauschale, which for a VZ Y
+        # declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). These must not
+        # feed cost basis, reconciliation or any other consumer.
+        logger.info("Processing prior-year positions (Vorabpauschale reference prices)...")
+        for raw_pos in self.raw_positions_prior_start:
+            asset = self._resolve_asset_from_position(raw_pos)
+            asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
+            asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
+
+        for raw_pos in self.raw_positions_prior_end:
+            asset = self._resolve_asset_from_position(raw_pos)
+            asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
+
+    def _resolve_asset_from_position(self, raw_pos):
+        """Resolve (or create) the Asset a raw position record refers to.
+
+        Extracted verbatim from the SoY/EoY loops so the prior-year loops resolve identically --
+        a fund that resolved to one Asset from the tax year's snapshot must resolve to the same
+        Asset from the prior year's, or its Vorabpauschale would attach to a second instrument.
+        """
+        return self.asset_resolver.get_or_create_asset(
+            raw_isin=raw_pos.isin, raw_conid=raw_pos.conid, raw_symbol=raw_pos.symbol,
+            raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
+            raw_description=raw_pos.description,
+            description_source_type="position",
+            raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
+            raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+            raw_underlying_conid=raw_pos.underlying_conid,
+            raw_underlying_symbol=raw_pos.underlying_symbol
+        )
 
     def discover_assets_from_transactions(self):
         # ... (implementation is the same)
@@ -574,6 +618,8 @@ class ParsingOrchestrator:
                              cash_transactions_file: Optional[str] = None,
                              positions_start_file: Optional[str] = None,
                              positions_end_file: Optional[str] = None,
+                             positions_prior_start_file: Optional[str] = None,
+                             positions_prior_end_file: Optional[str] = None,
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
@@ -586,6 +632,8 @@ class ParsingOrchestrator:
                 cash_transactions_file=cash_transactions_file,
                 positions_start_file=positions_start_file,
                 positions_end_file=positions_end_file,
+                positions_prior_start_file=positions_prior_start_file,
+                positions_prior_end_file=positions_prior_end_file,
                 corporate_actions_file=corporate_actions_file,
                 cash_balance_file=cash_balance_file,
                 options_eae_file=options_eae_file

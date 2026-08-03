@@ -33,11 +33,26 @@ class Asset:
     soy_position_value: Optional[Decimal] = None
     soy_mark_price_currency: Optional[str] = None
 
-    # End of Year (EOY) position data (from IBKR positions_end_file, for Vorabpauschale, reconciliation)
+    # End of Year (EOY) position data (from IBKR positions_end_file, for reconciliation)
     eoy_quantity: Optional[Decimal] = None
     eoy_mark_price_currency: Optional[str] = None # Currency of the EOY mark price
     eoy_market_price: Optional[Decimal] = None # Renamed from eoy_mark_price
     eoy_position_value: Optional[Decimal] = None # EOY position value in eoy_mark_price_currency
+
+    # Position data for the PRECEDING calendar year, used ONLY for the Vorabpauschale.
+    #
+    # The Vorabpauschale declared in VZ Y is the one computed for calendar year Y-1: it is
+    # deemed to flow on the first working day of Y (18 Abs. 3 InvStG), and Zeilen 9-13 of the
+    # VZ Y Anlage KAP-INV take "die Ihnen im Jahr Y als zugeflossen geltenden Vorabpauschalen".
+    # See reference/investment-tax-law/invstg-18-vorabpauschale.md and
+    # reference/tax-forms/anlage-kap-inv-zeilen.md. The Basisertrag therefore needs the
+    # Ruecknahmepreis at the START of Y-1 and the cap needs the last price set IN Y-1 --
+    # neither of which is the tax year's own SoY/EoY snapshot.
+    prior_year_soy_quantity: Optional[Decimal] = None
+    prior_year_soy_position_value: Optional[Decimal] = None
+    prior_year_soy_mark_price_currency: Optional[str] = None
+    prior_year_eoy_position_value: Optional[Decimal] = None
+    prior_year_eoy_mark_price_currency: Optional[str] = None
 
 
     def __post_init__(self):

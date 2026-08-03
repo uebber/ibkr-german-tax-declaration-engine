@@ -17,6 +17,9 @@ from src.pipeline_runner import run_core_processing_pipeline, ProcessingOutput
 # Loss Offsetting Engine
 from src.engine.loss_offsetting import LossOffsettingEngine
 
+# Data gaps
+from src.processing.data_gaps import DataGapCollector
+
 # Reporting
 from src.reporting.console_reporter import generate_console_tax_report, generate_stock_trade_report_for_symbol
 from src.reporting.diagnostic_reports import (
@@ -99,6 +102,8 @@ def main_application():
             cash_transactions_file_path=data_paths["cash_transactions"],
             positions_start_file_path=data_paths["positions_start"],
             positions_end_file_path=data_paths["positions_end"],
+            positions_prior_start_file_path=data_paths.get("positions_prior_start") or None,
+            positions_prior_end_file_path=data_paths.get("positions_prior_end") or None,
             corporate_actions_file_path=data_paths["corporate_actions"],
             interactive_classification_mode=run_ctx.interactive,
             tax_year_to_process=tax_year,
@@ -112,6 +117,9 @@ def main_application():
     loss_offsetting_summary = None
     if args.report_tax_declaration or args.pdf_output_file: # Calculate if any report needing it is active
         logger.info("Calculating final tax figures with loss offsetting...")
+        # Loss offsetting runs after the pipeline, so it needs its own collector; its gaps are
+        # merged into the pipeline's list below so the reporters render one combined set.
+        loss_offsetting_gaps = DataGapCollector()
         try:
             loss_engine = LossOffsettingEngine(
                 realized_gains_losses=processing_results.realized_gains_losses,
@@ -120,12 +128,17 @@ def main_application():
                 current_year_financial_events=processing_results.processed_income_events,
                 asset_resolver=processing_results.asset_resolver,
                 tax_year=tax_year,
-                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
+                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING,
+                # Zeile 53 (Vorabpauschale deduction on disposal) cannot be computed; the gap
+                # must reach the report, not just the log.
+                data_gap_collector=loss_offsetting_gaps,
             )
             loss_offsetting_summary = loss_engine.calculate_reporting_figures()
             logger.info("Loss offsetting calculation completed.")
         except Exception as e:
             logger.error(f"Loss offsetting calculation failed: {e}. Tax reports might be incomplete or inaccurate.", exc_info=True)
+        finally:
+            processing_results.data_gaps.extend(loss_offsetting_gaps.gaps)
 
     asset_resolver = processing_results.asset_resolver
 

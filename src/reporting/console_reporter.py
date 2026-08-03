@@ -180,7 +180,7 @@ def generate_console_tax_report(
     print("  Vorabpauschale (Brutto, vor Teilfreistellung):")
     vp_gross_by_fund_type: Dict[InvestmentFundType, Decimal] = defaultdict(Decimal)
     for vp_item in vorabpauschale_items: # Already filtered by engine for tax year in generation
-        if vp_item.tax_year == tax_year: # Double check, though vp_items should be for tax_year
+        if vp_item.declaration_year == tax_year:  # VP for calendar X is declared in VZ X+1
              vp_gross_by_fund_type[vp_item.fund_type] += vp_item.gross_vorabpauschale_eur
 
     print(f"    Zeile 9 (Aktienfonds Vorabpauschale): {_q(vp_gross_by_fund_type.get(InvestmentFundType.AKTIENFONDS, Decimal(0)))}")
@@ -197,9 +197,9 @@ def generate_console_tax_report(
     print(f"    Zeile 23 (Auslands-Immobilienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 26 (Sonstige Investmentfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS, Decimal(0)))}")
 
-    # Z55: Vorabpauschale deduction on disposal
-    z55_value = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal(0))
-    print(f"  Zeile 55 (Anzurechnende Vorabpauschalen): {_q(z55_value)}")
+    # Z53: Vorabpauschale assessed during the holding period, deducted on disposal
+    z53_value = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53, Decimal(0))
+    print(f"  Zeile 53 (Während der Besitzzeit angesetzte Vorabpauschalen, vor Teilfreistellung): {_q(z53_value)}")
 
     # --- Anlage SO (from LossOffsettingResult) ---
     print("\nAnlage SO (Sonstige Einkünfte - §23 EStG Private Sales)")

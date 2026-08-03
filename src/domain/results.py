@@ -117,10 +117,18 @@ class RealizedGainLoss:
 
 
 @dataclass
-class VorabpauschaleData: 
+class VorabpauschaleData:
     asset_internal_id: uuid.UUID
-    tax_year: int
-    
+
+    # The CALENDAR YEAR the Vorabpauschale is computed FOR -- not the year it is declared in.
+    # The two differ by one: the VP for calendar X is deemed to flow on the first working day
+    # of X+1 (18 Abs. 3 InvStG) and is therefore declared in VZ X+1, on Zeilen 9-13 of that
+    # year's Anlage KAP-INV. The field was previously named `tax_year`, which invited exactly
+    # the confusion that made the engine declare the wrong year's figure.
+    # See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    vorabpauschale_year: int
+
+
     fund_value_start_year_eur: Decimal
     fund_value_end_year_eur: Decimal
     distributions_during_year_eur: Decimal
@@ -138,3 +146,8 @@ class VorabpauschaleData:
     net_taxable_vorabpauschale_eur: Decimal 
 
     tax_reporting_category_gross: Optional[TaxReportingCategory] = None
+
+    @property
+    def declaration_year(self) -> int:
+        """The Veranlagungszeitraum this Vorabpauschale belongs on (18 Abs. 3 InvStG)."""
+        return self.vorabpauschale_year + 1

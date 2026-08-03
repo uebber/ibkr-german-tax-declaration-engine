@@ -182,7 +182,12 @@ def run_main_calculations(
     tax_year: int,
     internal_calculation_precision: int, # Renamed from internal_working_precision
     decimal_rounding_mode: str,
-    data_gap_collector: Optional["DataGapCollector"] = None
+    data_gap_collector: Optional["DataGapCollector"] = None,
+    # Whether the PRECEDING year's position snapshots were supplied. The Vorabpauschale
+    # declared in VZ `tax_year` is the one for calendar `tax_year - 1` (18 Abs. 3 InvStG), so
+    # their absence is a gap rather than an empty portfolio. Defaults False so a caller that
+    # has not been updated fails loudly instead of silently dropping deemed income.
+    prior_year_positions_available: bool = False
 ) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]: 
     """
     Runs the main calculation logic:
@@ -192,7 +197,7 @@ def run_main_calculations(
     4. Performs EOY quantity validation. A securities mismatch is FATAL (PRD 2.4): every
        asset is checked, then the run raises DataGapError naming all of them. A currency
        (cash balance) divergence is recorded as a WARNING data gap and does not halt.
-    5. Calculates Vorabpauschale (currently placeholder).
+    5. Calculates the Vorabpauschale FOR calendar `tax_year - 1` (18 Abs. 3 InvStG).
     6. Returns calculated results (Realized G/L, Vorabpauschale), processed events, and EOY
        mismatch count. The count is retained in the signature and in ProcessingOutput as a
        backstop for the reporting layer, but on a successful return it is now always 0 —
@@ -811,15 +816,60 @@ def run_main_calculations(
     else:
         logger.info("Currency EOY validation passed.")
 
-    # Vorabpauschale calculation
+    # --- Vorabpauschale ---
+    # The VP declared in VZ `tax_year` is the one computed FOR calendar `tax_year - 1`: it is
+    # deemed to flow on the first working day of `tax_year` (18 Abs. 3 InvStG), and Zeilen 9-13
+    # take "die Ihnen im Jahr <tax_year> als zugeflossen geltenden Vorabpauschalen". Until
+    # 2026-08-03 the engine computed the VP for the tax year itself and declared it in that same
+    # year -- one year early, with the wrong Basiszins and the wrong reference prices.
+    # See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    vorabpauschale_year = tax_year - 1
+
+    funds_held = any(
+        isinstance(a, InvestmentFund) for a in asset_resolver.assets_by_internal_id.values()
+    )
+    if funds_held and not prior_year_positions_available:
+        # Cannot compute deemed income that is certainly due. Substituting the tax year's own
+        # snapshot is what produced the wrong figure; emitting nothing would understate income.
+        detail = (
+            f"Vorabpauschale for calendar {vorabpauschale_year} cannot be computed: "
+            f"Positions-{vorabpauschale_year}-SoY.csv and/or Positions-{vorabpauschale_year}-EoY.csv "
+            f"is not present in data_import/. The VZ {tax_year} declaration must report the "
+            f"Vorabpauschale for {vorabpauschale_year} (18 Abs. 3 InvStG; Anlage KAP-INV "
+            f"Zeilen 9-13 take the amounts deemed to flow in {tax_year}), and that needs "
+            f"{vorabpauschale_year}'s start and end position snapshots. Add those files, or "
+            f"establish by hand that no investment fund was held during {vorabpauschale_year}."
+        )
+        if data_gap_collector is not None:
+            data_gap_collector.record(
+                code="VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING",
+                subject=f"Vorabpauschale {vorabpauschale_year}",
+                detail=detail,
+                severity=GapSeverity.FAIL_FAST,
+            )  # records, logs CRITICAL and raises DataGapError
+        else:
+            # No collector wired: a FAIL_FAST condition must still stop the run rather than
+            # fall through to an absent Vorabpauschale.
+            raise DataGapError(
+                f"[VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING] "
+                f"Vorabpauschale {vorabpauschale_year}: {detail}"
+            )
+
+    prior_year_distributions_by_asset: Dict[uuid.UUID, Decimal] = _collect_fund_distributions_for_year(
+        financial_events, vorabpauschale_year, asset_resolver, ctx
+    )
+
     vorabpauschale_data_items = _calculate_vorabpauschale(
         asset_resolver=asset_resolver,
-        current_year_events=current_year_events,
+        distributions_by_asset=prior_year_distributions_by_asset,
         currency_converter=currency_converter,
-        tax_year=tax_year,
+        vorabpauschale_year=vorabpauschale_year,
         ctx=ctx,
     )
-    logger.info(f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records.")
+    logger.info(
+        f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records "
+        f"for calendar {vorabpauschale_year} (declared in VZ {tax_year})."
+    )
 
     processed_income_events_for_output: List[FinancialEvent] = list(current_year_events)
 
@@ -843,72 +893,118 @@ def _get_vp_reporting_category(fund_type: InvestmentFundType) -> Optional['TaxRe
     return mapping.get(fund_type)
 
 
+def _collect_fund_distributions_for_year(
+    financial_events: List[FinancialEvent],
+    calendar_year: int,
+    asset_resolver: AssetResolver,
+    ctx: Context,
+) -> Dict[uuid.UUID, Decimal]:
+    """Sum gross EUR fund distributions per asset within one calendar year.
+
+    Separate from the engine's historical/current-year split, which buckets only the event
+    kinds the FIFO replay needs and drops `DISTRIBUTION_FUND` before the tax year. The
+    Vorabpauschale for calendar `calendar_year` is reduced by that year's distributions
+    (18 Abs. 1 S. 1 InvStG), which for a VZ Y run are *prior-year* events.
+
+    Only positive distributions reduce the Basisertrag; a negative amount is a correction
+    booking, not a distribution, and must not inflate the deemed income.
+    """
+    totals: DefaultDict[uuid.UUID, Decimal] = defaultdict(lambda: ctx.create_decimal(Decimal('0')))
+    for event in financial_events:
+        if not isinstance(event, CashFlowEvent):
+            continue
+        if event.event_type != FinancialEventType.DISTRIBUTION_FUND:
+            continue
+        try:
+            event_date_obj = get_event_sort_key(event, asset_resolver)[0]
+        except ValueError as e:
+            logger.error(
+                f"Fund distribution {event.event_id} has an invalid date or identifier ({e}); "
+                f"it cannot be attributed to a Vorabpauschale year."
+            )
+            continue
+        if event_date_obj.year != calendar_year:
+            continue
+        gross_eur = event.gross_amount_eur if event.gross_amount_eur is not None else Decimal('0')
+        if gross_eur > Decimal('0'):
+            totals[event.asset_internal_id] = ctx.add(totals[event.asset_internal_id], gross_eur)
+    return dict(totals)
+
+
 def _calculate_vorabpauschale(
     asset_resolver: AssetResolver,
-    current_year_events: List[FinancialEvent],
+    distributions_by_asset: Dict[uuid.UUID, Decimal],
     currency_converter: CurrencyConverter,
-    tax_year: int,
+    vorabpauschale_year: int,
     ctx: Context,
 ) -> List[VorabpauschaleData]:
     """
-    Calculate Vorabpauschale for all investment funds held at start of year.
-    Formula per § 18 InvStG:
-      1. Basisertrag = fund_value_soy_eur * basiszins * 0.7
-      2. If Basisertrag <= 0 -> VP = 0
-      3. VP = max(0, Basisertrag - distributions_eur)
-      4. Cap: VP <= max(0, fund_value_eoy_eur - fund_value_soy_eur)
-      5. Apply Teilfreistellung
+    Calculate the Vorabpauschale FOR calendar year `vorabpauschale_year`.
+
+    **`vorabpauschale_year` is not the Veranlagungszeitraum.** The VP for calendar X is deemed
+    to flow on the first working day of X+1 (18 Abs. 3 InvStG) and is declared on Zeilen 9-13
+    of the *X+1* Anlage KAP-INV. Callers preparing a VZ Y return must pass Y-1. All position
+    values and distributions read here are therefore those of `vorabpauschale_year`, taken from
+    the `Asset.prior_year_*` fields, not the tax year's own SoY/EoY snapshot.
+
+    Formula per 18 InvStG, sentence by sentence:
+      Abs. 1 S. 2  Basisertrag = Ruecknahmepreis_Jahresbeginn * basiszins * 0.7
+      Abs. 1 S. 3  Basisertrag capped at (last price of year - first price) + distributions
+      Abs. 1 S. 1  VP = max(0, Basisertrag - distributions)
+      Abs. 4       basiszins from the published BMF table for `vorabpauschale_year`
+    Teilfreistellung (20 InvStG) is applied to derive the net figure; the gross figure is what
+    goes on the form.
+
+    Not implemented, and deliberately so rather than silently approximated -- see
+    reference/investment-tax-law/invstg-18-vorabpauschale.md, "Known deviations":
+    Abs. 2 (pro-rata reduction in the acquisition year) and Abs. 1 S. 4 (Boersen- oder
+    Marktpreis only where no Ruecknahmepreis was set).
     """
     from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
     from src.tax_law.registry import basiszins_pct
-    basiszins = basiszins_pct(tax_year)  # None -> loud warning inside the registry
+    basiszins = basiszins_pct(vorabpauschale_year)  # None -> loud warning inside the registry
     if basiszins is None:
         return []
 
     base_return_rate = ctx.multiply(basiszins, Decimal("0.01"))  # Convert percentage to factor
     factor_70 = Decimal("0.7")
 
-    # Conversion dates: Jan 2 for SoY (Jan 1 is never a business day), Dec 31 for EoY
-    soy_conversion_date = date(tax_year, 1, 2)
-    eoy_conversion_date = date(tax_year, 12, 31)
-
-    # Collect distributions per asset during the tax year
-    distributions_by_asset: DefaultDict[uuid.UUID, Decimal] = defaultdict(lambda: ctx.create_decimal(Decimal('0')))
-    for event in current_year_events:
-        if isinstance(event, CashFlowEvent) and event.event_type == FinancialEventType.DISTRIBUTION_FUND:
-            gross_eur = event.gross_amount_eur if event.gross_amount_eur is not None else Decimal('0')
-            if gross_eur > Decimal('0'):
-                distributions_by_asset[event.asset_internal_id] = ctx.add(
-                    distributions_by_asset[event.asset_internal_id], gross_eur
-                )
+    # Conversion dates within the Vorabpauschale year: Jan 2 for the year-start price
+    # (Jan 1 is never a business day), Dec 31 for the last price set in the year.
+    soy_conversion_date = date(vorabpauschale_year, 1, 2)
+    eoy_conversion_date = date(vorabpauschale_year, 12, 31)
 
     results: List[VorabpauschaleData] = []
 
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if not isinstance(asset_obj, InvestmentFund):
             continue
-        if asset_obj.soy_quantity is None or asset_obj.soy_quantity <= Decimal('0'):
+        # Held at the start of the Vorabpauschale year? Units acquired later get no VP here;
+        # Abs. 2's pro-rata reduction is not implemented (see the docstring).
+        if asset_obj.prior_year_soy_quantity is None or asset_obj.prior_year_soy_quantity <= Decimal('0'):
             continue
 
-        # Convert SoY position value to EUR
-        soy_value_foreign = asset_obj.soy_position_value
-        soy_currency = asset_obj.soy_mark_price_currency or asset_obj.currency
+        # Ruecknahmepreis at the start of the Vorabpauschale year (Abs. 1 S. 2)
+        soy_value_foreign = asset_obj.prior_year_soy_position_value
+        soy_currency = asset_obj.prior_year_soy_mark_price_currency or asset_obj.currency
         if soy_value_foreign is None or soy_currency is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Missing SoY position value or currency. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Missing start-of-{vorabpauschale_year} position value or currency. Skipping VP.")
             continue
 
         fund_value_soy_eur = currency_converter.convert_to_eur(soy_value_foreign, soy_currency, soy_conversion_date)
         if fund_value_soy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert SoY value to EUR. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} value to EUR. Skipping VP.")
             continue
 
-        # Convert EoY position value to EUR
-        eoy_value_foreign = asset_obj.eoy_position_value
-        eoy_currency = asset_obj.eoy_mark_price_currency or asset_obj.currency
+        # Last Ruecknahmepreis set in the Vorabpauschale year (Abs. 1 S. 3 cap)
+        eoy_value_foreign = asset_obj.prior_year_eoy_position_value
+        eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
         if eoy_value_foreign is None or eoy_currency is None:
-            # Fund fully sold during year — no VP needed (VP is for positions held at EoY)
-            logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No EoY position value. Skipping VP.")
+            # Fund fully disposed of during the year. The Abs. 3 Zufluss then falls after the
+            # disposal, so no VP arises. Recorded as an open question in coverage-matrix.md:
+            # this is inferred from Abs. 3, not stated by a located Tier 1/2 source.
+            logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} position value. Skipping VP.")
             continue
 
         fund_value_eoy_eur = currency_converter.convert_to_eur(eoy_value_foreign, eoy_currency, eoy_conversion_date)
@@ -949,7 +1045,7 @@ def _calculate_vorabpauschale(
         TWO_PLACES = config.OUTPUT_PRECISION_AMOUNTS
         vp_data = VorabpauschaleData(
             asset_internal_id=asset_id,
-            tax_year=tax_year,
+            vorabpauschale_year=vorabpauschale_year,
             fund_value_start_year_eur=fund_value_soy_eur.quantize(TWO_PLACES, context=ctx),
             fund_value_end_year_eur=fund_value_eoy_eur.quantize(TWO_PLACES, context=ctx),
             distributions_during_year_eur=distributions_eur.quantize(TWO_PLACES, context=ctx),

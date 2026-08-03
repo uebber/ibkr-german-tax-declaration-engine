@@ -297,7 +297,7 @@ class PdfReportGenerator:
             "ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z11 (Brutto VOP Immofonds)",
             "ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z12 (Brutto VOP Ausl. Immofonds)",
             "ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z13 (Brutto VOP Sonstige Fonds)",
-            "ANLAGE_KAP_INV_ZEILE_55_VORABPAUSCHALE_ABZUG": "KAP-INV Z55 (Anzurechnende Vorabpauschalen)",
+            "ANLAGE_KAP_INV_ZEILE_53_VORABPAUSCHALE_ABZUG": "KAP-INV Z53 (Waehrend der Besitzzeit angesetzte Vorabpauschalen)",
         }
         so_lines_map = {
              "ANLAGE_SO_Z54_NET_GV": "Anlage SO Zeile 54 (G/V §23 EStG)"
@@ -328,7 +328,7 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
             TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO"],
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_55_VORABPAUSCHALE_ABZUG"],
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_53_VORABPAUSCHALE_ABZUG"],
             "ANLAGE_SO_Z54_NET_GV": so_lines_map["ANLAGE_SO_Z54_NET_GV"],
             "TOTAL_ANRECHENBARE_AUSL_STEUERN": kap_lines_map["ANLAGE_KAP_ZEILE_41"]
         })
@@ -364,7 +364,7 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 20
             TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 23
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS,  # KAP-INV Zeile 26
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55,  # KAP-INV Zeile 55
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53,  # KAP-INV Zeile 53
             "ANLAGE_SO_Z54_NET_GV"  # SO Zeile 54
         ]
 
@@ -1221,7 +1221,9 @@ class PdfReportGenerator:
             rgl for rgl in self.realized_gains_losses 
             if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND
         ]
-        fund_vop_for_kap = [vp for vp in self.vorabpauschale_items if vp.tax_year == self.tax_year]
+        # Selected by declaration year: the VP for calendar X appears on the VZ X+1 return
+        # (18 Abs. 3 InvStG).
+        fund_vop_for_kap = [vp for vp in self.vorabpauschale_items if vp.declaration_year == self.tax_year]
 
         for dist_event in fund_distributions_for_kap:
             asset_id = dist_event.asset_internal_id
