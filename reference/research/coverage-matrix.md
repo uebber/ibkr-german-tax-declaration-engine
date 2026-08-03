@@ -50,6 +50,7 @@ have is worse than one with a visible hole.
 | VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV **Z53** (not Z55) | invstg-19-veraeusserungsgewinne.md |
 | FX gain (explicit conversion) | EStG | 20 Abs. 2 S. 1 Nr. 7 i.V.m. S. 2 (verzinslich) / 23 Abs. 1 S. 1 Nr. 2 (unverzinslich) | KAP Z19/22 or SO | fremdwaehrung-konten.md |
 | FX gain (currency leg of a securities trade) | -- | **unresolved**; Rz. 131 does *not* address it | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-007], open-legal-questions.md Q9 |
+| FX gain (currency consumed to settle a cash-flow item) | -- | **unresolved**; Rz. 131 names Veraeusserung and Rueckzahlung, not a payment out of the balance | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-001], open-legal-questions.md Q10 |
 | Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 1 | SO Z54 | estg-23-private-veraeusserung.md |
 | Jahresfrist arithmetic | AO / BGB | 108 Abs. 1 AO, 187 Abs. 1 / 188 Abs. 2-3 BGB | (decides SO Z54 vs. exempt) | estg-23-private-veraeusserung.md |
 | Jahresfrist, currency lot order | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 3 | (decides which acquisition date is compared) | estg-23-private-veraeusserung.md |

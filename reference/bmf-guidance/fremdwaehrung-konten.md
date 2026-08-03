@@ -104,6 +104,12 @@ Consequences, all carried by Rz. 131 above:
 - **Every Einzahlung and every Zinsgutschrift is an Anschaffungsvorgang.** A repayment is a
   veraeusserungsgleicher Vorgang under Abs. 2 Satz 2 -- and it is one whether or not the amount is
   converted into EUR or a third currency at the same time.
+
+**Not decided by Rz. 131: a balance debited to settle a cash-flow item** -- a withholding tax, a
+fee, a charge paid out of the balance rather than converted. Rz. 131 opens on *Veraeusserung oder
+Rueckzahlung* and then names specific cases; a payment out of the balance is not among them, and
+no Tier 1 or Tier 2 source deciding it has been located. Registered in
+`../research/open-legal-questions.md` Q10.
 - **Re-investment and transfer are disposals too.** Placing a matured balance on deposit again, or
   moving it to another interest-bearing account at the same or a different institution, is a
   disposal of the old Kapitalforderung and an acquisition of a new one.
