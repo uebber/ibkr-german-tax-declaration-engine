@@ -65,10 +65,10 @@ right figure, into this engine.
 1. **Every claim** traces back to at least a Tier 1 or Tier 2 source. Tier 3 fixes form
    structure; Tier 4 and Tier 5 may support an interpretation but **never stand alone**.
 2. **Cite to the sentence, not the section** — every citation, not only rates and thresholds.
-   `§ 108 AO` is true of the anniversary rule *and* pulls in `§ 108 Abs. 3 AO`, which this engine
-   does not implement. **The unstated Absatz is where the unimplemented rule hides.** Having
-   named the sentence, state what else the cited unit contains and whether the engine implements
-   it.
+   `§ 108 AO` is true of the anniversary rule *and* pulls in `§ 108 Abs. 3 AO`, which is not
+   implemented here. **The unstated Absatz is where the unimplemented rule hides.** Having named
+   the sentence, state what else the cited unit contains. Whether it is implemented is recorded
+   in `docs/legal-implementation-map.md`, against the claim ID — not in this library.
 3. **Year-specific rules** name the exact amendment law (e.g. JStG 2024, BGBl. I Nr. 387) and,
    where the amendment says so, the fact that it applies to *all open cases* rather than from a
    given year. A repeal with no first year of application is not the same as a rule that starts
@@ -86,14 +86,23 @@ right figure, into this engine.
 6. **State the applicable tax years** and the regime floor. A provision that did not exist before
    a given year must say so, or the engine will compute a figure for a year in which the concept
    had not been introduced.
-7. **Record open questions as open.** Where Tier 1 and Tier 2 do not settle a point the engine has
-   to answer either way, write both readings, the engine's choice, the reason, and the authority
-   pointing the other way — then add it to the *Open Legal Questions* section of
-   `coverage-matrix.md`. An unresolved question recorded is ground truth; an unresolved question
-   silently resolved is not.
+7. **Record open questions as open.** Where Tier 1 and Tier 2 do not settle a point that has to be
+   answered either way, write **both readings and the authority behind each** into
+   `open-legal-questions.md`. Which reading was chosen, and why, is recorded against the same
+   claim ID in `docs/legal-implementation-map.md` — this library states what the law is and is
+   not settled on, not what was decided about it. An unresolved question recorded is ground
+   truth; an unresolved question silently resolved is not.
 8. **On correcting a reference, check what cited the old reading.** Grep the code, the tests and
    the docs. A reference that changes while the code keeps its former justification leaves the two
    in conflict, which is the state this rule exists to prevent.
+9. **State law, and only law.** No file here names a module, class, field, function, test, CSV
+   column or data file, carries a code block, or describes what the engine does. Those belong in
+   `docs/legal-implementation-map.md`, keyed by claim ID. Two failures made this a rule rather
+   than a preference. A pointer to a field named in an *"Engine Mapping"* table survived long
+   after the field was gone, so the store asserted as ground truth something that had never been
+   true. And the Teilfreistellung rates were stated once in an authority table and again as code
+   literals in the same file, with nothing binding the two — the duplication item 5 forbids,
+   reintroduced by the code copy. Enforced by `tests/test_reference_purity.py`.
 
 ## Scope: Supported Taxable Events & Asset Types
 
@@ -158,8 +167,12 @@ reference/
   research/                 # Meta-documentation
     research-strategy.md    # This file
     coverage-matrix.md      # Event/asset vs. source mapping
+    open-legal-questions.md # Points no Tier 1/2 source settles: both readings, both authorities
     inlaendisch-auslaendisch-relevance.md
 ```
+
+Outside the library, and deliberately so: `docs/legal-implementation-map.md` records what the
+engine does about each claim ID and which tests guard it. Nothing in `reference/` may state that.
 
 ## Extending the Library (required procedure)
 
@@ -168,9 +181,27 @@ The `reference/` library is the only admissible source of legal requirements for
 1. **State the question** precisely: the event/asset, the tax year, and the figure or form line it affects.
 2. **Locate sources** using the tier table above. Prefer Tier 1 (statute) and Tier 2 (BMF/EStH). Tier 4/5 may support interpretation but never stand alone.
 3. **Verify against the Validation Protocol above** — all eight items, not only the tier check.
-4. **Write the reference file** into the matching subdirectory of the structure above. Each file records: the statutory text or an accurate summary, the precise citation, the source URL and its tier, the retrieval date, applicable tax years, and the concrete implication for the engine.
+4. **Write the reference file** into the matching subdirectory of the structure above. Each file
+   records: the statutory text or an accurate summary, the precise citation, the source URL and
+   its tier, the retrieval date, applicable tax years, and **a stable claim ID on the heading of
+   each normative requirement** (`GT-<AREA>-<NNN>`; see below). It records no implementation
+   detail — Validation Protocol item 9.
 5. **Update the meta-docs**: add the file to `reference/INDEX.md`, and add or amend the relevant rows in `coverage-matrix.md` (asset type, taxable event, loss offsetting, year-specific rules, as applicable).
 6. **Then implement**, citing the reference file in the code comment, test docstring, or commit message.
+7. **Record the position in the map.** Every claim ID gets a row in
+   `docs/legal-implementation-map.md` saying what the engine does about it — implements,
+   deviates, or does not reach — which module, and which tests guard it. A claim with no row is
+   a claim nobody has decided about; the purity test fails on one.
+
+### Claim IDs
+
+`GT-<AREA>-<NNN>`, one per statutory unit that already carries a heading. Areas: `GT-ESTG20`,
+`GT-ESTG23`, `GT-INVSTG`, `GT-CREDIT` (§ 32d / 34c / 34d / 36 / 45a), `GT-FORM`, `GT-FX`.
+
+IDs exist because the map has to point at a requirement and keep pointing at it. A heading
+anchor breaks the moment the heading is reworded, silently — this repo already carries one dead
+anchor citation. An ID is greppable, survives rewording, and its disappearance is caught by a
+test. Allocate the next free number in the area; **never reuse a retired ID**.
 
 If a question cannot be resolved to Tier 1/2 standard, record what was found, mark the gap explicitly, and raise it with the user. Do not close the gap with general knowledge or an uncited web result.
 
@@ -207,5 +238,5 @@ from.
 - Update Basiszins annually after BMF publication (typically January)
 - When a reference is corrected, re-check every citation of it in code, tests and docs (Validation
   Protocol item 8)
-- Re-check the *Open Legal Questions* section of `coverage-matrix.md` after each BFH decision or
-  BMF-Schreiben that touches a listed question
+- Re-check `open-legal-questions.md` after each BFH decision or BMF-Schreiben that touches a
+  listed question

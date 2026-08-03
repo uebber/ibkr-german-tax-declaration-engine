@@ -25,7 +25,7 @@ knowledge *and* over what the code currently does → if not covered, stop and e
 first, to Tier 1/2, following `reference/research/research-strategy.md`. Research done in a
 conversation and not written into `reference/` does not count.
 
-Three failure modes seen repeatedly, in increasing subtlety:
+Four failure modes seen repeatedly, in increasing subtlety:
 
 **a) Citing a provision the store does not contain.** Three PRs cited a rule that was simply
 absent from `reference/` — the coverage-matrix row pointed at a file that did not carry the
@@ -43,9 +43,18 @@ per-Depot FIFO is statutory under §20 Abs. 4 S. 7 EStG when the reference file 
 recorded that the statute says no such thing (it is Tier 2 — BMF, by Randziffer). If code and
 `reference/` disagree, surface it; do not follow the code.
 
-And a fourth that is not about citations at all:
+**d) Putting implementation state into `reference/`.** The store states law and nothing else —
+no module, class, field, test, CSV column or code block. Anything you want to say about what
+the engine *does* with a legal requirement goes in `docs/legal-implementation-map.md`, against
+the requirement's claim ID. This is not tidiness: an *"Engine Mapping"* row named a field that
+had ceased to exist, and the store went on asserting it as ground truth. Legal facts do not go
+stale from a refactor; identifiers do. `tests/test_reference_purity.py` enforces it, in both
+directions — a claim ID with no map row fails too, because that is a requirement nobody has
+decided about.
 
-**d) Check your *rationale*, not just your citations.** The worst factual error in this
+And a fifth, not about citations at all:
+
+**e) Check your *rationale*, not just your citations.** The worst factual error in this
 review was made by the reviewer, not a contributor: a plausible-sounding cause for a
 reconciliation failure ("the trade history does not reach back far enough") that was not
 merely unverified but *incapable* of being true, because the start-of-year quantity is taken
@@ -164,6 +173,8 @@ Practical form: for each factual claim in your description, name how it was meas
 
 - [ ] Every legally relevant change traces to a `reference/` file that actually says it, cited
       to the sentence, with the coverage matrix updated.
+- [ ] `reference/` still states law only — no identifier, path or code block added — and every
+      claim ID touched has its row in `docs/legal-implementation-map.md`.
 - [ ] Every new guard calibrated against a deliberately broken tree — and the calibration
       stated in the description.
 - [ ] Mechanical refactors probed site-by-site, not just run.

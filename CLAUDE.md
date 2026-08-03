@@ -107,7 +107,25 @@ Seams worth knowing before changing the engine:
 
 `reference/` is the **single source of truth for every legal requirement this engine
 implements**. `reference/INDEX.md` is its directory; `reference/research/coverage-matrix.md`
-maps every supported event and asset to its legal source.
+maps every supported event and asset to its legal source, and
+`reference/research/open-legal-questions.md` records the points no Tier 1/2 source settles.
+
+### The Purity Rule (non-negotiable, and reciprocal)
+
+This file states how the project is built and contains no tax content; a legal fact here is a
+defect. **The mirror holds: `reference/` states law and contains no implementation state.** It
+names no module, class, field, function, test, CSV column or data file, carries no code block,
+and does not describe what the engine does. That belongs in `docs/legal-implementation-map.md`,
+which ties each legal requirement to the engine's position on it and the tests that guard it.
+
+The reason is not tidiness. A code pointer inside the store rots silently and becomes a false
+statement in the one document you are supposed to be able to trust: this library asserted for
+months that the Vorabpauschale deduction lived in
+`RealizedGainLoss.accumulated_vorabpauschale`, a field that does not exist and never did. A
+legal fact cannot go stale from a refactor. An identifier can.
+
+Direction matters and only one direction is allowed: **code cites the reference; the reference
+never cites code.** `tests/test_reference_purity.py` enforces this.
 
 ### The Ground Truth Rule (non-negotiable)
 
@@ -214,6 +232,8 @@ requirement not already written into `reference/`. Extend the store first, via
 - `input_data_spec.md` — IBKR CSV column specifications and the `data_import/` naming scheme
 - `reference/INDEX.md` — the tax law library directory
 - `reference/research/research-strategy.md` — how that library may be extended
+- `reference/research/open-legal-questions.md` — points no Tier 1/2 source settles, both readings
+- `docs/legal-implementation-map.md` — each legal requirement → the engine's position → the tests
 - `docs/contribution-standards.md` — what a change must satisfy before it lands
 - `tests/docs/` — behavioural specs and coverage analysis
 - `VALIDATION_REPORT.md` — real-data validation results
