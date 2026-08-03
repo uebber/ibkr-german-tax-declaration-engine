@@ -75,7 +75,7 @@ be66807 tests: config_example completeness guard                         (PR #33
 449767f tests: hermetic caches                                           (PR #33, Fsaupe)
 ```
 
-**Verification at HEAD:** 488 tests pass on a simulated clean clone
+**Verification at HEAD:** 489 tests pass on a simulated clean clone
 (`config_example.py`, no `cache/`) and with the real config. Real-data output is
 **byte-identical to `ebad4e7`** across tax years 2022–2025 — console report,
 `validate_ledgers.py`, and PDF text SHA-256.
@@ -915,10 +915,12 @@ one `EOY_RECONCILIATION_FAILED` naming all of them (one run identifies the whole
 the raise does **not** depend on the optional collector being supplied — an optional argument
 must not decide whether the engine aborts. Calibrated: removing the raise fails 8 tests.
 
-**The accepted cost:** a tax year whose imported trade history does not reach back far enough
-to explain an open position is now unprocessable — 2022 today. The owner chose no override
-flag. The cost basis of such a position is unknown, so its gain was wrong anyway; the remedy
-is to supply the missing years.
+**The accepted cost:** 2022 now aborts. The owner chose no override flag. Note that the
+justification first recorded here — "its history is incomplete, so its gain was wrong anyway"
+— is **false**, and the owner is the one who caught it: the SoY quantity is authoritative, so
+a prior-year gap cannot produce a current-year quantity mismatch at all. 2022's input is
+complete and its correct EoY is zero, which makes the residual an engine defect and the abort
+the right outcome for a different and better reason. See section 8.
 
 **The currency (cash balance) check stays non-fatal, also the owner's call.** Its documented
 causes are input-completeness problems — the cash-balance export's date range, or transaction
@@ -1310,9 +1312,9 @@ Two things to scrutinise when reached:
   `ProcessingError`. Note it also makes those three branches genuinely unreachable, so any future
   test of them has to bypass the public path.
 - ~~**Should an EoY quantity mismatch be FAIL_FAST?**~~ **Resolved by the owner during the #25
-  review: yes, fatal, no override** (`1c4c981`). Consequences now live rather than open: tax
-  year **2022 is unprocessable** until its pre-2021 trade history is supplied, and the
-  reporting paths for a non-zero mismatch count (console `ACHTUNG` line, PDF section) are
+  review: yes, fatal, no override** (`1c4c981`). Consequence: tax year **2022 aborts** — and
+  see the next item, because the reason is not what this document previously said. The
+  reporting paths for a non-zero mismatch count (console `ACHTUNG` line, PDF section) are now
   backstops that production can no longer reach. They are kept and tested deliberately — the
   sentence the PDF branch replaces was wrong for the whole history of that file, and nothing
   should be able to restore it through another path.
@@ -1350,6 +1352,33 @@ Two things to scrutinise when reached:
   German KESt. Instances in `private/real-data-observations.md` (not published).
   Fully researched — see `reference/tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md`,
   section 6 for the required fix. **Not implemented.**
+- **Positions snapshots for 2023 and 2024 recovered from older working trees (2026-08-03).**
+  Four distinct snapshots were found under `~/Code` and identified **by content**, because the
+  filenames in those trees are unreliable — one file labelled `positions_end_of_year_2024.csv`
+  is actually EoY 2025. Verification anchor: the recovered EoY-2024 matches the authoritative
+  `Positions-2025-SoY.csv` symbol-for-symbol. Installed additively into `data_import/`; both
+  years then run clean end-to-end. **Real-data parity for the remaining 14 PRs is no longer
+  limited to 2025 — 2023, 2024 and 2025 are all available.** Instance detail in
+  `private/real-data-observations.md`.
+  Two caveats. **EoY 2021 / SoY 2022 exists nowhere**, so 2022 remains unrunnable and the 320
+  could not be re-measured; it is still a 2026-03-08 figure. And **no cash-balance export
+  exists for any year but 2025**, so the currency EoY check is *skipped* for 2023/2024 — a
+  "0 currency mismatches" verdict for those years is vacuous, and the 2024 −0.51 USD
+  divergence is unmeasurable rather than fixed.
+- **The Vorabpauschale is silently skipped for three funds on live 2025 data (found
+  2026-08-03).** `_calculate_vorabpauschale` logs *"Missing SoY position value or currency.
+  Skipping VP."* at WARNING and the run completes normally, so three instruments the engine
+  has itself classified as funds contribute no deemed income to the declaration. This is the
+  silent-zero shape the AR6 data-gap channel exists to end — finding F4 — observed live in the
+  year being filed, which makes #29's FAIL_FAST wiring a good deal more than housekeeping.
+  Whether VP is actually owed on two of the three (crypto ETPs) turns on their classification, which is
+  a separate question; the point is that the engine treats them as funds and then declares
+  nothing. Verify this is closed when #29 is reached.
+- **Only three forward splits exist in the whole history**, which bounds the hunt for the
+  `XYZ1` residual: `XYZ1` (2022, **long**), `XYZ2` (2022, **short**) and `XYZ3` (2023, long).
+  The 2023 one is in a year that now runs and reconciles clean, so a plain long forward split
+  across SoY is not by itself the defect. The `XYZ2` split is on a short position and sits in
+  the same unrunnable year — a shape nothing in the suite covers.
 - **`data_import/` was lost and has been rebuilt** from the derived `data/` copy with
   `scripts/rebuild_data_import.py --verify` (round trip lossless). Snapshot files survive
   for **one tax year only**, so parity runs are limited to that year until the earlier
@@ -1410,9 +1439,38 @@ Two things to scrutinise when reached:
   `a41dbb9`, and marked so in that file.
 - **Vorabpauschale is booked one assessment year too early** (§18 Abs. 3 InvStG). Pre-existing;
   #21 widens its reach; **#29 fixes it**. Detail in the #21 verdict and section 6.
-- 2022 ledger validation still FAILs — one security's EOY quantity is non-zero when the
-  broker reports zero; pre-existing, caused by trade history predating the 2021 data floor.
-  **As of `1c4c981` this now aborts the engine run for 2022**, by the owner's decision. Instance in `private/real-data-observations.md`.
+- **2022's EoY failure is an engine defect, not a data limitation — the "pre-2021 data floor"
+  explanation carried in this document was wrong, and was checked out of the data on
+  2026-08-03.** The owner's challenge is what exposed it: 2022 has a SoY snapshot, and
+  `reconcile_with_soy_position` pins the ledger to the reported SoY quantity in *every* branch
+  (reconstruction, fallback, reported-zero), using the historical replay only for cost basis
+  and acquisition dates. So no prior-year history can move a current-year EoY **quantity**,
+  and the data-floor story was never capable of being true. Arithmetic on the real files
+  confirms the input is complete: prior-year net gives the SoY, the year's pre-split trades and
+  the `FS` action give the post-split position (the CA row's own `Quantity` field
+  independently confirms it), and the year's final sell closes it to exactly the zero the
+  broker reports. Figures in `private/real-data-observations.md`.
+  `tests/test_forward_split_soy_reconciliation.py` reduces the case to its shape and **passes**,
+  so it is not the plain split-across-SoY pattern; the residual implies a pre-split ledger
+  larger than it should be, pointing at a sell that under-consumed or a buy counted twice.
+  Pinning it needs the 2022 Positions snapshots, lost in the `data_import/` rebuild. It is also
+  unconfirmed whether the recorded figure came from the engine or from `validate_ledgers.py`,
+  which reconciles independently. **As of `1c4c981` this aborts the 2022 run**, which is the
+  correct outcome for a defect of this kind.
+- **Lesson, and it is the same one this review keeps recording against the train.** The
+  data-floor claim was a plausible rationale stated without checking — the exact provenance
+  failure catalogued in section 4, committed here by the reviewer rather than by Fsaupe, and
+  it had already reached `README.md`, `PRD.md`, `spec_fifo.md` and the user-facing German
+  error message before the owner questioned it. Corrected in all five places.
+  Provenance checked rather than assumed: the claim first appears in `1cc2bc0`, a
+  review-session document; it is absent from `main`, from every Fsaupe commit message in
+  #16-#40, and from every `pr/*` tree. **Fsaupe did not write it.** The one adjacent statement
+  they do make is #18's, and it is correct and points the right way — an unhandled `BM`
+  corporate action "left a phantom bond holding (EOY mismatch)", which is the class of cause
+  the `XYZ1` residual most likely belongs to. Distinguish it from the *genuine* floor artefact
+  recorded under #22 (two ISINs whose replayed running position goes negative because the
+  first row is a `C` sell with no prior `O`): that one is real, lives in the historical replay,
+  and cannot reach an EoY quantity, which the SoY snapshot pins. Instance in `private/real-data-observations.md`.
 
 ---
 
