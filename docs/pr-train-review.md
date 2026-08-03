@@ -1,6 +1,6 @@
 # PR Train Review — state, rationale, and how to resume
 
-**Branch:** `hermetic-tests-first` (local only, never pushed)
+**Branch:** `review/pr-train-integration` (published; base `main` @ `ebad4e7`)
 **Base:** `main` @ `ebad4e7`
 **Status as of 2026-08-02:** 11 of 25 PRs reviewed and accepted; 14 not yet reviewed.
 **Next up:** #26 (train 11). Rebase remaining branches from `345bd49`; see section 5.
@@ -1538,28 +1538,31 @@ them, more coordination for us. Either way the structural rule above keeps both 
 
 ---
 
-## 10. How to resume
+## 10. How to verify this branch
 
 ```bash
-# the branch lives in the main repo's object store; /tmp worktrees were disposable
-git worktree add /tmp/review hermetic-tests-first
-cp src/config.py /tmp/review/src/config.py          # config.py is gitignored
-ln -s "$PWD/data_import" /tmp/review/data_import    # data_import is gitignored
+git fetch origin review/pr-train-integration
+git switch review/pr-train-integration
 
-# clean-clone protocol (what CI should do)
-cd /tmp/review && rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q
+# clean-clone protocol — what CI should do, and what every "green" claim here rests on
+rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q     # 489 passed
 
-# PR refs (re-fetch if absent)
+# the PR refs the verdicts refer to
 git fetch origin 'refs/pull/*/head:refs/remotes/pr/*'
 ```
+
+Real-data checks (`scripts/parity_check.sh`) need a populated `data_import/` and are therefore
+reproducible only by the maintainer; every parity result quoted above names the assessment year
+it was measured on.
 
 **Review method that worked** — worth repeating rather than reinventing:
 1. Never trust the PR description; diff the code and verify claims empirically.
 2. Always run a **baseline control** — the same check on unmodified `main` in an equally
    clean worktree — before attributing a failure to a PR. This is what distinguished #33's
-   real defect from the two pre-existing clean-clone failures.
+   real defect from two pre-existing clean-clone failures.
 3. Verify **red-first** by reverting `src/` and re-running the PR's new tests.
-4. Run **real-data parity** (`validate_ledgers.py` + `src.main --report-tax-declaration` for
-   each year, plus PDF text SHA) against the baseline; normalise timestamps and log lines.
+4. Run **real-data parity** against the baseline, normalising timestamps and per-run UUIDs;
+   take a same-tree control capture first, so ambient nondeterminism is not read as a change.
 5. For any behavioural change, check the cited provision **actually exists** in `reference/`
    and says what the PR claims.
+6. For any new guard, break the thing it watches and confirm it fails.
