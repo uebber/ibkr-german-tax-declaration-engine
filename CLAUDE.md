@@ -1,190 +1,219 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repository.
+
+This file states **how the project is built, run, verified and validated**, and the discipline
+that governs anything with a legal consequence. It deliberately contains **no tax content** —
+no form line numbers, rates, thresholds or year rules. Those live in `reference/`, which is the
+only place they may live. If you find a legal fact stated here, it is a defect: remove it and
+cite the reference instead.
 
 ## Project Overview
 
-IBKR German Tax Declaration Engine - A Python tool that automates generation of figures for German tax declarations (Anlage KAP, KAP-INV, SO) based on Interactive Brokers Flex Query CSV reports. It handles FIFO calculations, currency conversion (ECB rates), corporate actions, option processing, and investment fund taxation (Teilfreistellung).
+Generates the figures for a German tax declaration (Anlage KAP, KAP-INV, SO) from Interactive
+Brokers Flex Query CSV exports. It handles FIFO lot tracking, currency conversion at ECB rates,
+corporate actions, options and futures, and investment-fund taxation.
 
-## Development Setup
+The output is a number a person puts on a tax return. That single fact sets the standard for
+everything below: **a wrong number that looks plausible is worse than a crash.**
 
-This project uses `uv` for Python package management. Install uv first: https://docs.astral.sh/uv/getting-started/installation/
+## Setup
 
-```bash
-# Install dependencies (creates .venv automatically)
-uv sync
-```
-
-## Common Commands
+Uses `uv`. Install it first: https://docs.astral.sh/uv/getting-started/installation/
 
 ```bash
-# Run the engine (uses settings from src/config.py)
-uv run python -m src.main
-
-# Run with interactive asset classification
-uv run python -m src.main --interactive
-
-# Generate tax declaration report and PDF
-uv run python -m src.main --report-tax-declaration
-
-# Custom PDF output
-uv run python -m src.main --report-tax-declaration --pdf-output-file my_report.pdf
-
-# Diagnostic output
-uv run python -m src.main --group-by-type
-
-# View all CLI options
-uv run python -m src.main --help
-
-# Run all tests
-uv run pytest
-
-# Run tests with verbose output
-uv run pytest -v
-
-# Run spec-driven FIFO tests (Groups 1-5)
-uv run pytest tests/test_fifo_groups.py -v
-
-# Run loss offsetting tests (Group 6)
-uv run pytest tests/test_group6_loss_offsetting.py -v
-
-# Run currency FIFO tests (Group 7)
-uv run pytest tests/test_group7_currency_fifo.py -v
-
-# Run stock merger FIFO lot transfer tests
-uv run pytest tests/test_stock_merger_fifo.py -v
-
-# Run options lifecycle tests
-uv run pytest tests/test_options_lifecycle.py -v
+uv sync                                    # creates .venv and installs dependencies
+cp src/config_example.py src/config.py     # config.py is gitignored; it holds personal data
 ```
+
+`src/config.py` carries the default tax year, taxpayer identity for reports, the interactive
+classification switch, and Flex Query IDs. `config_example.py` is the tracked template and must
+define every attribute `src/` reads — a test enforces this.
+
+## Running
+
+```bash
+uv run python -m src.main --tax-year YYYY --report-tax-declaration
+uv run python -m src.main --help           # all options
+```
+
+Common flags: `--interactive` / `--no-interactive` (asset classification), `--pdf-output-file`,
+`--download` / `--download-only` (fetch from the IBKR Flex Web Service first), `--group-by-type`
+and `--debug-asset-summary` (diagnostics).
+
+## Verification
+
+```bash
+uv run pytest                              # full suite
+uv run pytest tests/test_<area>.py -v      # one area
+```
+
+**Clean-clone protocol — the only run that proves anything.** The suite must pass on a checkout
+with no developer state. Tests once read the developer's real `cache/` and passed on
+classifications absent from the repo:
+
+```bash
+rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q
+```
+
+**A green suite is weaker evidence than it looks.** Coverage is uneven and the gaps are not
+where the diff is. Before trusting a passing run on a change:
+
+- **Probe by mutation.** Break the behaviour deliberately, in each way it can break, and confirm
+  a test fails. Sites the suite reaches fail loudly; sites it does not are silent.
+- **Calibrate every new guard.** A check that cannot observe what it claims to check is worth
+  nothing, and it will be green. Write the tree that should trip it and confirm it does.
+- **Verify red-first.** Revert the change, confirm the new tests fail, and report the count.
+
+Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support/`;
+`tests/docs/` holds the behavioural specs they encode.
+
+## Validation against real data
+
+- `validate_ledgers.py` — reconciles start-of-year and end-of-year positions per tax year.
+- `scripts/parity_check.sh` — captures a full run (console, log, PDF) and compares two captures,
+  for proving a refactor is output-neutral. It is cache-hermetic and order-sensitive; read its
+  header before relying on it. Parity results are **year-specific** — always name the assessment
+  year you measured, and take a same-tree control capture first so ambient nondeterminism is not
+  read as a change.
+
+See also the reconciliation invariant under Engineering rules — the engine enforces it on every
+run, not only when validating against real data.
 
 ## Architecture
 
-### Core Processing Flow
+Processing flow:
 
-1. **Data Preparation** (`src/data_preparation.py`) - Resolves and concatenates files from `data_import/` by tax year
-2. **Parsing Layer** (`src/parsers/`) - Parses IBKR CSV files, builds asset alias map via `AssetResolver`
-3. **Domain Layer** (`src/domain/`) - Data structures for assets, events, and calculation results
-4. **Enrichment** (`src/processing/enrichment.py`) - Currency conversion to EUR using ECB rates
-5. **Classification** (`src/classification/`) - Categorizes assets (STOCK, INVESTMENT_FUND, OPTION, etc.)
-6. **Calculation Engine** (`src/engine/`) - FIFO ledger management, gain/loss calculations, corporate action processing
-7. **Loss Offsetting** (`src/engine/loss_offsetting.py`) - Aggregates figures for tax form lines
-8. **Reporting** (`src/reporting/`) - Console and PDF report generation
+1. **Data preparation** (`src/data_preparation.py`) — resolves and concatenates input files by tax year
+2. **Parsing** (`src/parsers/`) — CSV to raw records; `src/identification/asset_resolver.py` maintains one `Asset` per instrument across all files
+3. **Enrichment** (`src/processing/`) — EUR conversion at ECB rates; links withholding tax and option exercises to their counterparts
+4. **Classification** (`src/classification/`) — assigns each asset its category, interactively or from cache
+5. **Calculation** (`src/engine/`) — FIFO ledgers, corporate actions, realised gains
+6. **Aggregation** (`src/engine/loss_offsetting.py`) — figures per reporting category
+7. **Reporting** (`src/reporting/`) — console and PDF
 
-### Key Modules
+Seams worth knowing before changing the engine:
 
-- `src/identification/asset_resolver.py` - Global alias map maintaining unique Asset objects across all input files
-- `src/engine/fifo_manager.py` - FIFO lot tracking for long/short positions, including drain/receive for stock mergers and position flip splitting
-- `src/engine/calculation_engine.py` - Main calculation orchestration; builds the historical replay stream
-- `src/engine/replay.py` - `ReplayStream`: one ordered stream rebuilding all pre-tax-year ledger state (securities, mergers, currencies) under a documented phase contract
-- `src/engine/event_processors/` - Processors for trades, corporate actions, options, and currency conversions
-- `src/processing/option_trade_linker.py` - Links option exercises/assignments to stock trades
-- `src/pipeline_runner.py` - Orchestrates the full processing pipeline
+- `src/engine/fifo_manager.py` — lot tracking for long and short positions; start-of-year reconciliation
+- `src/engine/replay.py` — one ordered stream rebuilding all pre-tax-year ledger state; its ordering contract is load-bearing and has its own tests
+- `src/engine/ledger_views.py`, `src/utils/account_utils.py` — ledgers keyed by (account, asset), with aggregate views
+- `src/engine/event_processors/` — one processor per event kind
+- `src/tax_law/` — year-parameterised legal values (`registry.py`) and domain rules (`holding_period.py`), each citing `reference/`
+- `src/processing/data_gaps.py` — the one channel for "the input cannot support this computation"
+- `src/reporting/form_rules.py` — year-specific form structure
+- `src/domain/` — assets, events, results, enums, exceptions
 
-### Domain Model
+## Ground truth: the `reference/` library
 
-- **Assets** (`domain/assets.py`): `Asset`, `Stock`, `Bond`, `InvestmentFund`, `Option`, `Cfd`, `PrivateSaleAsset`, `CashBalance`
-- **Events** (`domain/events.py`): `FinancialEvent` base class with subtypes `TradeEvent`, `CashFlowEvent`, `CorporateActionEvent`, `OptionLifecycleEvent`, etc.
-- **Results** (`domain/results.py`): `RealizedGainLoss`, `VorabpauschaleData`
-- **Enums** (`domain/enums.py`): `AssetCategory`, `FinancialEventType`, `RealizationType`, `TaxReportingCategory`
+`reference/` is the **single source of truth for every legal requirement this engine
+implements**. `reference/INDEX.md` is its directory; `reference/research/coverage-matrix.md`
+maps every supported event and asset to its legal source.
 
-## Configuration
+### The Ground Truth Rule (non-negotiable)
 
-Edit `src/config.py` before running:
-- `TAX_YEAR` - Default year to process (can be overridden with `--tax-year`)
-- `TAXPAYER_NAME`, `ACCOUNT_ID` - For PDF reports
-- `IS_INTERACTIVE_CLASSIFICATION` - Enable/disable interactive asset classification
-- `FLEX_QUERY_IDS` - IBKR Flex Query IDs for automatic download
+**Never implement, change, or justify legally relevant behaviour from a source outside
+`reference/`.** Not from web search, not from a linked PDF, not from your own knowledge of German
+tax law, not from what the existing code appears to assume.
 
-## Numerical Precision
+**Legally relevant** means anything that can change a declared figure or where it lands —
+including the expected values of any test asserting one.
 
-All financial calculations use Python's `Decimal` type with `INTERNAL_CALCULATION_PRECISION` (28 decimal places). Initialize Decimals from strings, not floats:
-```python
-# Correct
-amount = Decimal("123.45")
-# Wrong - loses precision
-amount = Decimal(123.45)
-```
+The order of operations is always:
 
-## German Tax Form Mapping
+1. **Look it up in `reference/`.** Read the file; do not assume it says what you expect.
+2. **If covered:** the reference is authoritative — over general knowledge, and over the code.
+3. **If not covered, or stale, ambiguous or contradicted: stop.** Do not proceed on recall or an
+   ad-hoc lookup. **Extend the store first, and only as `reference/research/research-strategy.md`
+   prescribes** — that document defines the source tiers, the validation protocol, and the
+   required procedure for adding a file. It is the only sanctioned way the library may grow.
+4. **Then implement**, citing the reference in the code comment, test docstring or commit message,
+   so the figure stays traceable to its source.
 
-- **Anlage KAP**: Stock/derivative gains/losses (Zeilen 19-24), foreign WHT (Zeile 41)
-- **Anlage KAP-INV**: Investment fund distributions and gains (GROSS figures, Zeilen 4-8, 14, 17, 20, 23, 26)
-- **Anlage SO**: Private sales under §23 EStG (holding period < 1 year)
+Research done in conversation and not written into `reference/` is not ground truth. If a question
+cannot be resolved to the standard `research-strategy.md` sets, record the gap and raise it —
+do not close it with a guess.
 
-## Input Data
+If code and a reference file conflict, **surface it**; do not silently follow the code.
 
-CSV files from IBKR Flex Query reports are placed in the `data_import/` directory using a standardized naming scheme. The application reads from `data_import/` and prepares working copies in `data/`.
+## Engineering rules
 
-**IMPORTANT: Files in `data_import/` must NEVER be modified by the application. It is a read-only source directory.**
+### SoY → EoY must reconcile (non-negotiable)
 
-### Naming Scheme (`data_import/`)
+**After the ledger has run, the calculated end-of-year position must equal the position the
+broker reports. There is no tolerance for disagreement and no override.**
 
-```
-Trades-{YYYY}.csv               # One file per year
-Cash_Transactions-{YYYY}.csv    # One file per year
-Corporate_Actions-{YYYY}.csv    # One file per year
-Cash_Balance-{YYYY}.csv         # One file per year
-Options_EAE-{YYYY}.csv          # One file per year (optional, for cash-settled index options)
-Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
-Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
-```
+The start-of-year quantity is *taken from* the positions snapshot, not reconstructed — the
+historical replay supplies cost basis and acquisition dates, never the running quantity. So the
+end-of-year quantity follows from that snapshot plus the tax year's own events, and it has
+exactly one correct answer. When the engine's answer differs from the broker's, an event is
+missing or was processed incorrectly: an absent trade or corporate action, an unlinked option
+exercise, one instrument resolved under two identifiers. At least one disposal is then matched
+against the wrong lots, which makes the reported gain wrong and not merely the quantity.
 
-Transaction files (Trades, Cash_Transactions, Corporate_Actions, Options_EAE) for all years up to and including the tax year are concatenated automatically to provide full historical FIFO cost basis. Position and Cash Balance files are used only for the selected tax year.
+The engine checks every asset, then aborts naming all of them. It does not emit figures, form
+lines or a PDF from a ledger that does not reconcile.
 
-Critical requirement: Trades file **must** include `Open/CloseIndicator` column ('O'/'C') for accurate trade classification.
+Two things to hold on to, because both have already misled people here:
 
-See `input_data_spec.md` for detailed column specifications.
+- **An incomplete prior-year trade history cannot cause this.** Missing earlier years change the
+  cost basis and acquisition dates of carried-in positions; they cannot move the quantity, which
+  the snapshot pins. A mismatch always points at the tax year's own input, or at the engine's
+  handling of it. Do not go looking for old data, and do not relax the check on that theory.
+- **It does not prove the lots are right.** The comparison is of net quantity. A defect that
+  misassigns lots without changing the net — the wrong lot consumed, a wrong acquisition date,
+  a wrong basis — reconciles clean. A green reconciliation is a floor, not a guarantee.
 
-## Tax Law Reference Library
+Cash-balance (currency) reconciliation is deliberately *not* fatal: its causes are input
+completeness rather than a ledger disagreeing about a holding. It is recorded as a data gap so it
+reaches the report instead of only the log.
 
-The `reference/` directory contains curated, authoritative German tax and legal sources that serve as ground truth for this engine. See `reference/INDEX.md` for the full directory.
+### Everything else
 
-**When writing or modifying tax logic, tests, or form mappings:**
-1. Consult the relevant reference file BEFORE implementing. Read it — don't assume.
-2. If a reference file covers the topic, treat it as authoritative over general knowledge.
-3. Key files by area:
-   - Loss offsetting / form lines: `reference/tax-law/estg-20-abs6-verlustverrechnung.md`, `reference/tax-forms/anlage-kap-zeilen.md`
-   - Investment funds: `reference/investment-tax-law/` (InvStG 16, 18, 19, 20)
-   - Private sales (Gold ETC, Crypto): `reference/tax-law/estg-23-private-veraeusserung.md`
-   - Options / derivatives: `reference/tax-law/estg-20-kapitalvermoegen.md` (Abs. 1 Nr. 11, Abs. 2 Nr. 3)
-   - FX / currency gains: `reference/bmf-guidance/fremdwaehrung-konten.md`
-   - Vorabpauschale / Basiszins: `reference/investment-tax-law/invstg-18-vorabpauschale.md`, `reference/bmf-guidance/basiszins-vorabpauschale.md`
-4. The coverage matrix at `reference/research/coverage-matrix.md` maps every supported event/asset to its legal source.
-5. If a conflict arises between engine code and reference files, flag it to the user — do not silently follow the code.
+**Fail fast; never substitute a value.** Do not swallow errors, default a missing value, or skip a
+row to keep a run alive when the value is required for a correct figure. Raise `DataIntegrityError`
+in parsing and event creation, `ProcessingError` in the engine. Route "the input cannot support
+this computation" conditions through `src/processing/data_gaps.py`, and choose the severity
+honestly — recording a condition as a warning asserts the declared figures are still safe. When you
+do raise, check every case first and report them together, so one run identifies the whole problem.
 
-## Private vs. Published Data
+**Verify your rationale, not just your citations.** A reason given in a comment, a commit message or
+a document is a claim, and a plausible one is the hardest kind to catch. Check it, or mark it
+unverified. The most damaging error in this repository's history was an engineering rationale that
+was not merely unproven but incapable of being true, and it propagated into four documents and a
+user-facing message before anyone tested it.
 
-This repository is **public**. It processes one person's real brokerage data, so there is a
-hard line between what lives in the working copy and what is committed.
+**Use `Decimal`, constructed from strings.** All money and quantity arithmetic runs at
+`INTERNAL_CALCULATION_PRECISION`. `Decimal("123.45")`, never `Decimal(123.45)`.
 
-**Never committed — gitignored, working copy only:**
-`data_import/`, `data/`, `cache/`, `parity/`, `private/`, `src/config.py`, `ibkr_token`,
-`tax_report_*.pdf`. These hold trades, positions, balances, classifications, credentials
-and generated declarations.
+**`data_import/` is read-only.** It is the source of truth for input; the application must never
+write to it. Working copies go in `data/`. See `input_data_spec.md` for the naming scheme and
+column specifications.
 
-**Committed — must contain no account data:** everything else. In particular `reference/`,
-`docs/`, `PRD.md`, `input_data_spec.md` and `tests/`.
+**This repository is public.** Account data must never reach a commit — no holdings, identifiers or
+amounts. Public documents state the mechanism; instance data stays in gitignored notes.
 
-The rule for documentation: **state the mechanism and anything derivable from law; keep the
-instance local.** A claim may say that a withholding row was observed at exactly 26.375% of
-gross (that rate is public law and is the point being made); it may not name the issuer, the
-amount, the account number or the position size. Account-specific evidence belongs in
-`private/real-data-observations.md`, which is gitignored, and the public document points
-there.
+## Ground rules
 
-Concretely, never commit: IBKR account numbers (`U…`), Flex Query IDs, the taxpayer's name,
-held ISINs/tickers together with quantities or amounts, transaction IDs, or figures copied
-out of a generated report. Use the placeholders from `src/config_example.py`
-(`U1234567`) in examples.
+After modifying or extending application code: never change pre-existing tests without asking the
+user and explaining why it is, without doubt, necessary.
 
-Before committing documentation that cites real behaviour, check:
-`git grep -nIE 'U[0-9]{7}' -- .` must return only placeholder matches.
+After modifying or extending test code: never change pre-existing application code without asking
+the user and explaining why it is, without doubt, necessary.
 
-## Ground Rules
+Never fit tests to the application. Fit them to the requirement, and ask when the requirement is
+ambiguous — do not make tests pass for their own sake.
 
-After modifying or extending application code: Never change pre-existing tests without asking the user and explaining why this is, without doubt, necessary!!
+Never change legally relevant behaviour in application code or tests on the strength of a legal
+requirement not already written into `reference/`. Extend the store first, via
+`reference/research/research-strategy.md`.
 
-After modifying or extending test code: Never change pre-existing application code without asking the user and explaining why this is, without doubt, necessary!!
+## Repository documentation
 
-Never fit tests to the application, always fit them to the requirements, ask the user in case of ambiguity, don't just try to make tests pass for the sake of it.
+- `PRD.md` — product requirements; the functional spec the engine is built against
+- `README.md` — user-facing setup, Flex Query configuration, manual data export
+- `input_data_spec.md` — IBKR CSV column specifications and the `data_import/` naming scheme
+- `reference/INDEX.md` — the tax law library directory
+- `reference/research/research-strategy.md` — how that library may be extended
+- `docs/contribution-standards.md` — what a change must satisfy before it lands
+- `tests/docs/` — behavioural specs and coverage analysis
+- `VALIDATION_REPORT.md` — real-data validation results

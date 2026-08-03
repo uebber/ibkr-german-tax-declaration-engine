@@ -44,6 +44,8 @@ Build a curated, high-quality reference library of German tax law sources coveri
 | Bundesverfassungsgericht (BVerfG) | https://www.bundesverfassungsgericht.de | Constitutional Court (pending: 2 BvL 3/21) |
 
 **Use for:** Authoritative interpretation, constitutional challenges, binding precedent.
+**Never as sole source.** A decision interprets a provision — cite the provision too, and check
+whether a later decision or a BMF-Schreiben has overtaken it.
 
 ### Tier 5 -- Professional Commentary (use for interpretation only)
 
@@ -57,11 +59,41 @@ Build a curated, high-quality reference library of German tax law sources coveri
 
 ## Validation Protocol
 
-1. **Every claim** must trace back to at least a Tier 1 or Tier 2 source
-2. **Year-specific rules** must reference the exact amendment law (e.g., JStG 2024, BGBl. I Nr. 387)
-3. **Tax rates/thresholds** must cite the specific paragraph and sentence number
-4. **Form line mappings** must be verified against the official form for the specific tax year
-5. **Cross-check** any Tier 4/5 interpretation against Tier 1 statute text
+Every item below exists because its absence let a wrong figure, or a wrong justification for a
+right figure, into this engine.
+
+1. **Every claim** traces back to at least a Tier 1 or Tier 2 source. Tier 3 fixes form
+   structure; Tier 4 and Tier 5 may support an interpretation but **never stand alone**.
+2. **Cite to the sentence, not the section** — every citation, not only rates and thresholds.
+   `§ 108 AO` is true of the anniversary rule *and* pulls in `§ 108 Abs. 3 AO`, which this engine
+   does not implement. **The unstated Absatz is where the unimplemented rule hides.** Having
+   named the sentence, state what else the cited unit contains and whether the engine implements
+   it.
+3. **Year-specific rules** name the exact amendment law (e.g. JStG 2024, BGBl. I Nr. 387) and,
+   where the amendment says so, the fact that it applies to *all open cases* rather than from a
+   given year. A repeal with no first year of application is not the same as a rule that starts
+   in a particular year, and the two are easy to conflate.
+4. **Form line mappings** are verified against the official form **for that specific tax year**.
+   Never project a mapping onto an earlier year that has not been checked: a line that exists
+   today may be printed *frei* on an older form. Forward carry-over is sound — a form structure
+   holds until a later year changes it — backward projection is not, and the engine should refuse
+   years below the earliest verified one.
+5. **Each value carries its own provenance.** For a table of rates or thresholds, every row cites
+   the individual document it was read off, with date and identifier. **Agreement between copies
+   is not verification.** Two rows of a Basiszins table were silently inherited from a different
+   statute and survived because three copies of the numbers agreed with one another; a chain of
+   annual notices that each name their predecessor is what actually authenticates such a series.
+6. **State the applicable tax years** and the regime floor. A provision that did not exist before
+   a given year must say so, or the engine will compute a figure for a year in which the concept
+   had not been introduced.
+7. **Record open questions as open.** Where Tier 1 and Tier 2 do not settle a point the engine has
+   to answer either way, write both readings, the engine's choice, the reason, and the authority
+   pointing the other way — then add it to the *Open Legal Questions* section of
+   `coverage-matrix.md`. An unresolved question recorded is ground truth; an unresolved question
+   silently resolved is not.
+8. **On correcting a reference, check what cited the old reading.** Grep the code, the tests and
+   the docs. A reference that changes while the code keeps its former justification leaves the two
+   in conflict, which is the state this rule exists to prevent.
 
 ## Scope: Supported Taxable Events & Asset Types
 
@@ -92,18 +124,24 @@ Build a curated, high-quality reference library of German tax law sources coveri
 ### Loss Offsetting Rules
 - General capital loss offsetting -- EStG 20 Abs. 6
 - Stock loss ring-fencing -- EStG 20 Abs. 6 Satz 4
-- Derivative loss restriction (abolished 2025) -- EStG 20 Abs. 6 Satz 5 a.F.
+- Derivative loss restriction (repealed for all open cases by JStG 2024; see
+  `estg-20-abs6-verlustverrechnung.md` -- not "from 2025", and the separate form lines outlive
+  the restriction) -- EStG 20 Abs. 6 Satz 5 a.F.
 - Private sale loss rules -- EStG 23 Abs. 3 Satz 7-8
 
 ## Directory Structure
 
 ```
 reference/
+  Anltg_KAP_{24,25}.md      # Official form instructions (OCR), with source PDFs
+  Anltg_KAP_INV_{24,25}.md
+  INDEX.md                  # Library directory
   tax-law/                  # Primary statute texts and analysis
     estg-20-kapitalvermoegen.md
     estg-23-private-veraeusserung.md
     estg-20-abs6-verlustverrechnung.md
     estg-32d-abgeltungsteuer.md
+    estg-34d-auslaendische-einkuenfte.md
   investment-tax-law/       # InvStG-specific references
     invstg-16-investmentertraege.md
     invstg-18-vorabpauschale.md
@@ -120,7 +158,46 @@ reference/
   research/                 # Meta-documentation
     research-strategy.md    # This file
     coverage-matrix.md      # Event/asset vs. source mapping
+    inlaendisch-auslaendisch-relevance.md
 ```
+
+## Extending the Library (required procedure)
+
+The `reference/` library is the only admissible source of legal requirements for the engine. Application code and tests may not encode a legal rule that is not written here first. When a needed rule is missing, stale, or ambiguous, extend the library before touching code:
+
+1. **State the question** precisely: the event/asset, the tax year, and the figure or form line it affects.
+2. **Locate sources** using the tier table above. Prefer Tier 1 (statute) and Tier 2 (BMF/EStH). Tier 4/5 may support interpretation but never stand alone.
+3. **Verify against the Validation Protocol above** — all eight items, not only the tier check.
+4. **Write the reference file** into the matching subdirectory of the structure above. Each file records: the statutory text or an accurate summary, the precise citation, the source URL and its tier, the retrieval date, applicable tax years, and the concrete implication for the engine.
+5. **Update the meta-docs**: add the file to `reference/INDEX.md`, and add or amend the relevant rows in `coverage-matrix.md` (asset type, taxable event, loss offsetting, year-specific rules, as applicable).
+6. **Then implement**, citing the reference file in the code comment, test docstring, or commit message.
+
+If a question cannot be resolved to Tier 1/2 standard, record what was found, mark the gap explicitly, and raise it with the user. Do not close the gap with general knowledge or an uncited web result.
+
+## Retrieval notes
+
+Hard-won and otherwise rediscovered each time. None of this changes what counts as a source —
+only how to get at one.
+
+- **BMF publishes only the two most recent Schreiben** of a recurring series. Older ones come from
+  Internet Archive snapshots of the original BMF PDF, or occasionally an industry-body mirror.
+- **WebFetch is blocked for `web.archive.org`.** Use `curl` and the CDX API to find and fetch a
+  snapshot.
+- **WebFetch cannot read PDFs.** Download and use `pdftotext -layout`, which preserves the column
+  structure that form and table extraction depends on.
+- **`esth.bundesfinanzministerium.de` and `ao.bundesfinanzministerium.de` are Radware-blocked** for
+  both `curl` and WebFetch, and are not archived. Mirrors of the EStH exist and are usable for
+  locating a passage, but the citation must still resolve to the official text.
+- **`gesetze-im-internet.de` serves ISO-8859-1.** Decode explicitly or German characters corrupt.
+- **A series of annual notices self-authenticates.** Each BMF letter's BEZUG line names its
+  predecessor together with that predecessor's BStBl page, so every citation but the newest can be
+  confirmed by a second official document. Use this rather than trusting a summary table.
+- **Official forms** are retrievable per year from the form portals; the accompanying Anleitung is
+  the document that states which line takes which figure.
+
+Record the retrieval date and the URL actually used in the reference file. A source that was
+reachable once and is not reachable now is still a source, provided the file says where it came
+from.
 
 ## Maintenance
 
@@ -128,3 +205,7 @@ reference/
 - Update form line references when new tax year forms are released
 - Track pending BVerfG decisions (especially 2 BvL 3/21 on stock loss ring-fencing)
 - Update Basiszins annually after BMF publication (typically January)
+- When a reference is corrected, re-check every citation of it in code, tests and docs (Validation
+  Protocol item 8)
+- Re-check the *Open Legal Questions* section of `coverage-matrix.md` after each BFH decision or
+  BMF-Schreiben that touches a listed question
