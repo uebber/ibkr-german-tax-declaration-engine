@@ -28,26 +28,46 @@ domestic/foreign concept of 34d EStG is a different question with no expression 
 [`../research/inlaendisch-auslaendisch-relevance.md`](../research/inlaendisch-auslaendisch-relevance.md)
 and [GT-CREDIT-011].
 
-### [GT-FORM-002] The "zusaetzlich" rule -- Zeilen 20 to 25 restate part of 18/19
+### [GT-FORM-002] "zusaetzlich" and "ausschliesslich" are two different instructions (VZ 2024)
 
-Anleitung 2024: *"Alle Veraeusserungstatbestaende tragen Sie bitte zusaetzlich in die Zeilen 20
-und / oder 22 und / oder 23 ein."*
+The Anleitung uses both words, and the difference decides whether a figure appears **twice** on the
+form or **only once**. All four sentences below are verbatim from `Anltg_KAP_24.md`, in the block
+on Zeilen 18 und 19, read 2026-08-03:
 
-Zeilen 20-25 are therefore **not** separate income; they break out what is already inside Zeilen
-18/19 so that the Finanzamt can apply the ring-fencing and the separate loss pots. A figure
-appears twice on the form by design.
+| Instruction | Verbatim | Effect |
+|---|---|---|
+| **zusaetzlich** | *"Alle Veraeusserungstatbestaende tragen Sie bitte zusaetzlich in die Zeilen 20 und / oder 22 und / oder 23 ein."* | also inside Zeile 18/19 |
+| **zusaetzlich** | *"Einkuenfte aus Stillhalterpraemien und Gewinne aus Termingeschaeften tragen Sie bitte zusaetzlich in Zeile 21 ein."* | also inside Zeile 18/19 |
+| **ausschliesslich** | *"Verluste aus Termingeschaeften erklaeren Sie bitte ausschliesslich in Zeile 24."* | **not** in Zeile 18/19 |
+| **ausschliesslich** | *"Verluste aus der ganzen oder teilweisen Uneinbringlichkeit einer Kapitalforderung, aus der Ausbuchung oder Uebertragung wertloser Wirtschaftsgueter i. S. d. § 20 Abs. 1 EStG auf einen Dritten oder aus einem sonstigen Ausfall solcher Wirtschaftsgueter erklaeren Sie bitte ausschliesslich in Zeile 25."* | **not** in Zeile 18/19, and **not** in Zeile 22 |
 
-| Zeile | Content | EStG basis |
-|-------|---------|------------|
-| 20 | Gewinne aus der Veraeusserung von Aktien | 20 Abs. 2 Satz 1 Nr. 1 |
-| 21 | Stillhalterpraemien und Gewinne aus Termingeschaeften | 20 Abs. 1 Nr. 11, Abs. 2 Satz 1 Nr. 3 |
-| 22 | Verluste ohne Aktien und ohne Termingeschaefte | 20 Abs. 6 |
-| 23 | Verluste aus der Veraeusserung von Aktien | 20 Abs. 6 Satz 4 |
-| 24 | Verluste aus Termingeschaeften | 20 Abs. 6 Satz 5 a.F. |
-| 25 | Verluste aus Kapitalforderungsausfall und wertloser Ausbuchung | 20 Abs. 2 Satz 1 Nr. 7, Abs. 4 |
+So Zeilen 20, 21, 22 and 23 break out what is already inside Zeilen 18/19 -- a figure appears twice
+by design. **Zeilen 24 and 25 do not.** They are the sole home of the two loss kinds routed to
+them, and those losses are excluded from the Zeile 19 net figure.
+
+| Zeile | Content | EStG basis | Also in 18/19? |
+|-------|---------|------------|----------------|
+| 20 | Gewinne aus der Veraeusserung von Aktien | 20 Abs. 2 Satz 1 Nr. 1 | yes |
+| 21 | Stillhalterpraemien und Gewinne aus Termingeschaeften | 20 Abs. 1 Nr. 11, Abs. 2 Satz 1 Nr. 3 | yes |
+| 22 | Verluste ohne Aktien, ohne Termingeschaefte und ohne die Zeile-25-Faelle | 20 Abs. 6 | yes |
+| 23 | Verluste aus der Veraeusserung von Aktien | 20 Abs. 6 Satz 4 | yes |
+| 24 | Verluste aus Termingeschaeften | 20 Abs. 2 Satz 1 Nr. 3 | **no -- ausschliesslich** |
+| 25 | Verluste aus Kapitalforderungsausfall und wertloser Ausbuchung | 20 Abs. 2 Satz 1 Nr. 7, Abs. 4 | **no -- ausschliesslich** |
 
 Which of these lines exists in which assessment year is **not** uniform -- see the per-year
 Kennzahlen table cited under Source, and [GT-FORM-005] below.
+
+> **Correction, 2026-08-03.** This section was headed *"Zeilen 20 to 25 restate part of 18/19"* and
+> stated flatly that *"Zeilen 20-25 are therefore not separate income; they break out what is
+> already inside Zeilen 18/19"*. That is false for Zeilen 24 and 25, both of which the Anleitung
+> marks *ausschliesslich* in the very block the section quotes -- the quoted sentence names only
+> Zeilen 20, 22 and 23, and the section generalised it to a range it does not cover. It also
+> omitted the Zeile 21 sentence entirely. The Zeile 22 row additionally read *"Verluste ohne Aktien
+> und ohne Termingeschaefte"*, which would route the Zeile-25 losses into Zeile 22 -- exactly what
+> [GT-FORM-003] says the Anleitung forbids, so the file contradicted itself one section later.
+> The same over-broad reading is corrected in
+> [`../tax-law/estg-20-abs6-verlustverrechnung.md`](../tax-law/estg-20-abs6-verlustverrechnung.md)
+> [GT-FORM-010] (Validation Protocol items 2 and 8).
 
 ### [GT-FORM-003] Zeile 25 -- Forderungsausfall and wertlose Ausbuchung (VZ 2024)
 

@@ -22,13 +22,23 @@ Teilfreistellung weg, so gilt der Investmentanteil als veraeussert und an dem Fo
 angeschafft."*
 
 Two triggers, one consequence. The unit is **deemed disposed of** and **deemed reacquired the
-following day**. This is a taxable event: it realises the gain accrued up to that point under the
-old regime, and it resets the acquisition date and cost basis for everything after it.
+following day**. The fiction *quantifies* the gain accrued up to that point under the old regime
+and resets the acquisition date and cost basis for everything after it. **It does not tax that
+gain in the year it occurs** — Abs. 3 defers the Zufluss to the actual disposal; see
+[GT-INVSTG-043], which is the provision that decides which return the figure lands on.
 
 The trigger is a change in the *applicable rate* — which follows from the fund's type under
 2 Abs. 6/7/9 InvStG — not a change in the fund's holdings as such. A fund whose
 Kapitalbeteiligungsquote drifts without its Anlagebedingungen changing does not, by that fact
 alone, trigger Abs. 1 Satz 1.
+
+**But drift is not the only way the type can lapse without an amendment to the Anlagebedingungen.**
+2 Abs. 6 Satz 4 InvStG: *"In dem Zeitpunkt, in dem der Investmentfonds wesentlich gegen die
+Anlagebedingungen verstoesst und dabei die Aktienfonds-Kapitalbeteiligungsquote unterschreitet,
+endet die Eigenschaft als Aktienfonds."* (2 Abs. 7 Satz 4 applies it to Mischfonds.) A material
+breach coupled with the quota falling short ends the fund type on the spot — which is a case of
+*"fallen die Voraussetzungen der Teilfreistellung weg"* and so does trigger Abs. 1 Satz 1. See
+[GT-INVSTG-026].
 
 ## [GT-INVSTG-041] Abs. 1 Satz 2 -- lapse of an Abs. 4 proof
 
@@ -57,6 +67,35 @@ The remaining Saetze of Abs. 2 concern Betriebsvermoegen — the Einlagewert und
 Satz 1 zweiter Halbsatz Buchstabe c EStG, and the deferral of Wertminderungen and Wertaufholungen
 under 6 Abs. 1 Nr. 2 EStG until the actual disposal. Out of scope for a Privatvermoegen holder;
 recorded per Validation Protocol item 2.
+
+## [GT-INVSTG-043] Abs. 3 -- the gain is deferred to the actual disposal
+
+*"Der Gewinn aus der fiktiven Veraeusserung nach Absatz 1 gilt in dem Zeitpunkt als zugeflossen, in
+dem der Investmentanteil tatsaechlich veraeussert wird oder nach § 19 Absatz 2 oder 3 als
+veraeussert gilt. Der Gewinn aus der fiktiven Veraeusserung nach Absatz 1 unterliegt dem
+gesonderten Steuertarif fuer Einkuenfte aus Kapitalvermoegen nach § 32d des
+Einkommensteuergesetzes, wenn im Zeitpunkt der fiktiven Veraeusserung die Voraussetzungen fuer
+eine Besteuerung nach § 20 Absatz 1 Nummer 3 des Einkommensteuergesetzes vorlagen und keine
+abweichende Zuordnung zu anderen Einkunftsarten nach § 20 Absatz 8 Satz 1 des
+Einkommensteuergesetzes vorzunehmen war."*
+
+> Retrieved 2026-08-03 from gesetze-im-internet.de/invstg_2018/__22.html.
+
+**Satz 1 decides the assessment year, and it is not the year of the fiction.** The deemed disposal
+fixes the *amount* at the Abs. 2 Ruecknahmepreis; the amount is deemed to flow only when the unit
+is **actually** disposed of, or deemed disposed of under 19 Abs. 2 or Abs. 3. A holder who never
+sells never declares it. So a rate change produces, at the moment it happens, a figure to be
+**recorded and carried**, not a figure to be declared.
+
+**Satz 2** preserves the Abgeltungsteuer character of that deferred gain by reference to the
+conditions *at the time of the fiction*, not at the time of the eventual disposal.
+
+> **Added 2026-08-03 (Validation Protocol items 2 and 6).** This file described only Abs. 1 and
+> Abs. 2 and stated the fiction *"realises the gain accrued up to that point"*, which reads as
+> current taxation. **§ 22 has three Absaetze**, and the third is the one that decides the year.
+> Getting this wrong puts a real figure on the wrong return in both directions: it would declare a
+> deferred gain early, and it would omit the accumulated deferred gain when the unit is finally
+> sold.
 
 ---
 

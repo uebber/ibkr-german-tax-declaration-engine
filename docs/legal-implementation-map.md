@@ -65,6 +65,9 @@ end in VZ 2024 or earlier should be reviewed by hand.**
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
 | GT-ESTG20-011 | implements | `src/engine/fifo_manager.py` | `test_precision.py`, `test_fifo_groups.py` | Proceeds − costs − basis, all `Decimal` at `INTERNAL_CALCULATION_PRECISION`. |
+| GT-ESTG20-022 | implements | `src/processing/` EUR conversion at ECB rates; `src/engine/fifo_manager.py` stores per-lot EUR basis | `test_group7_currency_fifo.py`, `test_group9_variable_fx.py`, `test_precision.py` | Abs. 4 Satz 1 Hs. 2 — each leg at its own date. **The statute names no rate source**; the engine uses ECB reference rates, which is a choice no located Tier 1/2 source prescribes for the Veranlagung. BMF 14.05.2025 Rz. 247 prescribes the Devisenbriefkurs only for the Steuerabzug by an inländische Zahlstelle, which does not apply here. |
+| GT-ESTG20-023 | implements | derivative close/expiry/settlement paths in `src/engine/event_processors/` | `test_options_lifecycle.py`, `test_futures.py` | Abs. 4 Satz 5 — Differenzausgleich less directly related costs, and the same Satz governs a worthless expiry (BMF Rz. 27). Newly stated in the store; the engine already computed derivative results this way, but the store had only the Abs. 4 Satz 1 formula. |
+| GT-ESTG20-024 | out of scope | — | — | Sparer-Pauschbetrag (Abs. 9). Applied by the Finanzamt; the engine reports gross figures and has no representation of Zeilen 16/17. The Satz 1 exclusion of actual Werbungskosten is nonetheless why only directly-related disposal costs reduce a gain — that part *is* how the engine computes. |
 | GT-ESTG20-012 | implements | `src/engine/fifo_manager.py` — FIFO lot consumption | `test_fifo_groups.py`, `tests/docs/spec_fifo.md` | Mandatory fiction; no specific-identification alternative is offered. |
 | GT-ESTG20-013 | **deviates** | `src/engine/ledger_views.py`, `src/utils/account_utils.py` | `test_ledger_views.py`, `test_multi_account_harness.py` | See below. |
 | GT-ESTG20-014 | not reached | — | — | Own-depot transfer is not a disposal. No input represents one; a per-depot implementation would have to relocate lots rather than close and reopen them. |
@@ -113,8 +116,8 @@ that question: pooling is wrong under both readings.
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
 | GT-FORM-001 | implements | everything routes to Zeile 19 | `test_group6_loss_offsetting.py` | Correct **because the broker is foreign**. A German Zahlstelle would need Zeile 18; nothing implements that. |
-| GT-FORM-002 | implements | `src/engine/loss_offsetting.py:249-275` | `test_group6_loss_offsetting.py` | Zeile 19 is a net figure; Zeilen 20/22/23 restate parts of it. |
-| GT-FORM-003 | **deviates** | — | — | **Zeile 25 has no representation.** Forderungsausfall and wertlose Ausbuchung losses fall into `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22), which the 2024 Anleitung expressly forbids — *"ausschließlich in Zeile 25"*. No input in the maintainer's data produces such a loss today, so the path is unexercised, but nothing detects one if it appears. |
+| GT-FORM-002 | implements | `src/engine/loss_offsetting.py:249-275` | `test_group6_loss_offsetting.py` | Zeile 19 is a net figure; Zeilen 20/21/22/23 restate parts of it, Zeilen 24/25 do not (*ausschließlich*). The engine gets the Zeile 24 half right and the Zeile 25 half wrong — next row. |
+| GT-FORM-003 | **deviates** | — | — | **Zeile 25 has no representation.** Forderungsausfall and wertlose Ausbuchung losses fall into `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22), which the 2024 Anleitung expressly forbids — *"ausschließlich in Zeile 25"*. Because *ausschließlich* also excludes them from Zeilen 18/19, the same defect **understates nothing but misplaces twice**: the loss appears in Zeile 22 where it may not, and inside the Zeile 19 net figure where it may not. No input in the maintainer's data produces such a loss today, so the path is unexercised, but nothing detects one if it appears. |
 | GT-FORM-004 | **deviates** | — | — | Same shape: a worthless-share write-off should go to Zeile 23 in VZ 2025, and there is no event kind for it. |
 | GT-FORM-005 | not reached | — | — | Nothing is written to Zeilen 21/24 for VZ 2025 under either reading, so no figure turns on the open question. See Q3. |
 | GT-FORM-006 | implements | `ANLAGE_KAP_FOREIGN_TAX_PAID` — sum of withholding events | `test_withholding_tax_linker.py` | Neither ceiling is applied; the Finanzamt applies § 32d Abs. 5 Sätze 1 and 3. See GT-CREDIT-005/006. |
@@ -123,7 +126,7 @@ that question: pooling is wrong under both readings.
 | GT-FORM-009 | implements | classification decides the Anlage | `test_futures.py::TestFuturesClassification`, `test_section23_holding_period.py` | Fund → KAP-INV, private sale asset → SO, Einlagenrückgewähr (`CAPITAL_REPAYMENT`) → not taxable. |
 | GT-FORM-010 | implements | `src/tax_law/registry.py` `FormYearRules(separate_derivative_lines=True)` for 2021 and 2024 | `test_tax_law_registry.py::TestFormYearRules` | |
 | GT-FORM-011 | implements | `FormYearRules(separate_derivative_lines=False)` for 2025 | `test_tax_law_registry.py::TestFormYearRules::test_2024_vs_2025_form_structure` | |
-| GT-FORM-012 | implements | `src/tax_law/registry.py:139-145` — 2021 is the earliest entry; earlier years **raise** | `test_tax_law_registry.py::test_years_before_the_earliest_verified_form_raise`, `test_every_configured_year_2021_to_2023_matches_2024` | Backward projection refused because Zeilen 21/24 were *frei* on the VZ 2020 form. Forward carry-over is a deliberate silent default. |
+| GT-FORM-012 | implements | `src/tax_law/registry.py:139-145` — 2021 is the earliest entry; `get_form_rules` **raises** for any earlier year rather than falling back | `test_tax_law_registry.py::test_years_before_the_earliest_verified_form_raise`, `test_every_configured_year_2021_to_2023_matches_2024` | Backward projection refused because Zeilen 21/24 were *frei* on the VZ 2020 form. Forward carry-over is a deliberate silent default. The raising behaviour used to be stated in the reference file itself, naming the function; moved here 2026-08-03 under the Purity Rule. |
 
 **`FormYearRules`** (`src/tax_law/registry.py`, re-exported by `src/reporting/form_rules.py`) is
 the single place year-specific form structure lives. Entries for **2021** (covering 2021–2023 by
@@ -216,6 +219,14 @@ someone to classify a fund at 50.5 % as Sonstiger Fonds (0 %) when it is an Akti
 | GT-INVSTG-040 | not reached | — | — | A change of Teilfreistellungssatz triggers a deemed disposal and reacquisition. No input signals a fund's type changing; the classification cache would simply be edited, silently. |
 | GT-INVSTG-041 | out of scope | — | — | Lapse of a § 20 Abs. 4 proof. |
 | GT-INVSTG-042 | not reached | — | — | The Rücknahmepreis to use for the fiction. |
+| GT-INVSTG-043 | not reached | — | — | Abs. 3 Satz 1 — the fiktive-Veräußerung gain is deemed to flow only on the **actual** disposal. Nothing reaches it because GT-INVSTG-040 is not reached either, but it changes what a fix would have to do: see below. |
+
+**GT-INVSTG-043 changes the shape of the GT-INVSTG-040 gap.** Implementing § 22 is not "emit a
+disposal in the year the rate changes". Abs. 3 Satz 1 defers the Zufluss to the actual disposal, so
+a correct implementation must **carry** a per-lot deferred gain across years and release it when
+the units are sold — the same multi-year per-lot record the Zeile 53 deduction needs
+(GT-INVSTG-034), and the engine holds neither. Emitting the gain in the year of the fiction would
+declare income a year or more early and then omit it at the real disposal.
 
 **GT-INVSTG-040 is the sharpest of the "not reached" rows.** Editing a fund's cached
 classification changes the Teilfreistellung applied from that run onward, with no deemed disposal
@@ -250,6 +261,7 @@ and nothing distinguishes them.
 | GT-ESTG23-010 | implements | `src/engine/loss_offsetting.py` — § 23 pool separate from § 20 | `test_group6_loss_offsetting.py` | Carryback and carryforward are the Finanzamt's step. |
 | GT-ESTG23-011 | **not implemented — human input** | `src/classification/asset_classifier.py:30` | — | Whether an instrument is a § 23 asset comes from classification, not from any property the engine reads. A cash-settled ETC may well be a Kapitalforderung under § 20 instead. |
 | GT-ESTG23-012 | implements | `SECTION_23_ESTG_TAXABLE_GAIN` / `_TAXABLE_LOSS` / `_EXEMPT_HOLDING_PERIOD_MET` | `test_section23_holding_period_guards.py::TestSpeculationPeriodFlagIsTruthful` | Dates that cannot decide the question raise `ProcessingError` rather than defaulting to exempt — an undecidable § 23 case is unreported income, not tax-free income. |
+| GT-ESTG23-013 | implements | `src/engine/fifo_manager.py` — currency ledgers consume lots first-in-first-out | `test_group7_currency_fifo.py` | Nr. 2 Satz 3, the statutory FIFO fiction for *gleichartige Fremdwährungsbeträge*. **This is the Tier 1 grounding the currency FIFO always needed and never had.** Until this audit the store cited § 20 Abs. 4 Satz 7, which is confined to vertretbare Wertpapiere in Sammelverwahrung and cannot reach a currency balance. The engine's behaviour is unchanged and was already right; what changes is that it is now sourced. Applies from 31.07.2014 (Art. 2 G. v. 25.07.2014, BGBl. I S. 1266) — earlier assessment years have no statutory ordering for currency. |
 
 **GT-ESTG23-004, open question Q1 — reading chosen: no extension.** The period ends on the
 anniversary day whatever weekday it falls on. Reasons: it follows FG Köln 02.06.1997, the only
@@ -351,12 +363,32 @@ To fix, three things are needed together:
 | GT-FX-004 | not reached | — | — | Retroactivity to VZ 2009 and the 2025 bank withholding duty both concern German Zahlstellen. |
 | GT-FX-005 | **choice under uncertainty** | as GT-FX-001 | same | § 20 throughout. Reason: the administrative position, and a margin account's balances bear interest. The § 23 reading would make gains after a year tax-free, so the choice is not conservative in the taxpayer's favour — it is the one that follows the administration. |
 | GT-FX-006 | **choice under uncertainty** | short currency positions tracked and taxed symmetrically with long ones | `test_group7_currency_fifo.py` | No guidance addresses a negative balance in Privatvermögen. Symmetry is an assumption. |
-| GT-FX-007 | **choice under uncertainty** | currency legs of securities trades measured separately (`FX_IMPLICIT_*`) | `test_group9_variable_fx.py`, `test_group10_options_variable_fx.py` | The conservative reading, and what BMF Rz. 131 is cited for — subject to the sourcing gap recorded in `reference/bmf-guidance/fremdwaehrung-konten.md`. |
+| GT-FX-007 | **choice under uncertainty — now unsourced outright** | currency legs of securities trades measured separately (`FX_IMPLICIT_*`) | `test_group9_variable_fx.py`, `test_group10_options_variable_fx.py` | See below. |
+| GT-FX-008 | implements | `src/engine/fifo_manager.py` — currency lots consumed FIFO | `test_group7_currency_fifo.py` | FIFO for currency, now sourced on both branches: BMF 14.05.2025 Rz. 131 for § 20, § 23 Abs. 1 S. 1 Nr. 2 S. 3 for § 23 ([GT-ESTG23-013]). Same ordering either way, so the unresolved classification in GT-FX-005 does not put the lot order in doubt. |
 
-**The currency area is the weakest-sourced part of the store and the most heavily implemented part
-of the engine.** Four of seven claims are choices under uncertainty, resting on a BMF circular
-cited by Randziffer that has never been retrieved. That combination — high implementation
-confidence, low source confidence — is worth remembering before treating any FX figure as settled.
+**GT-FX-007 — the citation that supported this was checked and does not say it.** BMF 14.05.2025
+was retrieved on 2026-08-03 and Rz. 131 read in full. It addresses Fremdwährungs*beträge* —
+accounts, deposits, payment balances — and says nothing about the currency leg of a securities
+transaction. The store had cited it for separate measurement; it does not carry that. The engine's
+`FX_IMPLICIT_*` treatment is unchanged and remains the conservative reading (it cannot understate
+income), but it is now recorded as **reasoned, not sourced**, and it is the most heavily exercised
+FX path in the engine. Combined with the blind spot noted at the end of this section — reversing
+the order of every historical currency event leaves the suite green — this is the area to treat
+with the most caution.
+
+**The currency area, restated after the 2026-08-03 audit.** The BMF circular that carried this
+area had never been retrieved; it now has been, and the picture is better in most places and worse
+in one:
+
+- **Better:** GT-FX-001, -002, -003 and -004 are verified Tier 2 verbatim (Rz. 131, Rz. 324), and
+  currency FIFO has a Tier 1 anchor it never had (GT-FX-008 / GT-ESTG23-013). Rz. 131 also supplies
+  detail the engine should be checked against and the store never carried: **prolongation of a
+  daily-callable deposit and a change of interest rate are not disposals**, but a balance becoming
+  interest-bearing for the first time, or ceasing to be, *is* an event.
+- **Worse:** GT-FX-007's only citation turned out not to say what it was cited for.
+
+So the earlier summary — "four of seven claims resting on a circular never retrieved" — no longer
+holds. Three choices under uncertainty remain (GT-FX-005, -006, -007) and they are genuine ones.
 
 **Known blind spot:** per `docs/contribution-standards.md` §3, reversing the chronological order
 of every historical currency event leaves the whole suite green. Currency changes must be probed

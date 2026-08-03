@@ -63,8 +63,17 @@ applies.
 
 ### [GT-CREDIT-006] Satz 3 -- the per-VZ ceiling
 
-Across the Veranlagungszeitraum, the credit is limited to the German tax falling on that year's
-foreign Kapitalertraege.
+*"Die auslaendischen Steuern sind nur bis zur Hoehe der auf die im jeweiligen
+Veranlagungszeitraum bezogenen Kapitalertraege im Sinne des Satzes 1 entfallenden deutschen Steuer
+anzurechnen."* Across the Veranlagungszeitraum, the credit is limited to the German tax falling on
+that year's foreign Kapitalertraege.
+
+**Satz 2**, between the two ceilings and previously unstated (Validation Protocol item 2), extends
+Satz 1 to treaty credits: *"Soweit in einem Abkommen zur Vermeidung der Doppelbesteuerung die
+Anrechnung einer auslaendischen Steuer einschliesslich einer als gezahlt geltenden Steuer auf die
+deutsche Steuer vorgesehen ist, gilt Satz 1 entsprechend."* This is the route by which a **fiktive
+Quellensteuer** under a DBA is credited -- the figure the form takes on Zeile 42, separately from
+the Zeile 41 amount. Retrieved 2026-08-03.
 
 The form takes the figure on **Zeile 41**, *"noch nicht angerechnete auslaendische Steuer"*
 (verified identical in the 2024 and 2025 Anleitung). The declared amount is the foreign tax

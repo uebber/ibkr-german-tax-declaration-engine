@@ -60,9 +60,13 @@ No domestic/foreign distinction for Aktienfonds, Mischfonds, or Sonstige Fonds. 
 
 Only where the Abgeltungsteuer regime is displaced:
 
-- **Teileinkünfteverfahren** (§32d Abs. 2 Nr. 3): ≥25% participation in a corporation — triggers
-  tarifliche ESt, Anlage AUS, and the §34c per-country limitation. Note this is Abs. 2, which the
-  §34c carve-out does **not** name: the carve-out reaches Abs. 1 and Abs. 3 bis 6 only.
+- **Teileinkünfteverfahren** (§32d Abs. 2 Nr. 3): on application, where the taxpayer holds
+  **at least 25 %** of the corporation (Buchst. a) **or** at least 1 % *and* can exert
+  maßgeblichen unternehmerischen Einfluss on it through a berufliche Tätigkeit (Buchst. b).
+  Triggers tarifliche ESt, Anlage AUS, and the §34c per-country limitation. Note this is Abs. 2,
+  which the §34c carve-out does **not** name: the carve-out reaches Abs. 1 and Abs. 3 bis 6 only.
+  (Buchst. b added 2026-08-03 — Validation Protocol item 2. The 25 % branch is not the only one,
+  and the 1 % branch is the one a shareholding employee or director falls into.)
 - **DBA compliance audits**: The Finanzamt may request per-country supporting documentation for
   Z41 to verify DBA treaty rates. A per-country breakdown of withholding tax is what satisfies
   that request; it is evidential, not a figure on the form.

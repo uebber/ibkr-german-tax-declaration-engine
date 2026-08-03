@@ -67,8 +67,8 @@ deemed to flow on 02.01.2019 and declared in VZ 2019.
 | 2022 | -0.05% | 03.01.2022 | negative -> 0 | 07.01.2022 | IV C 1 - S 1980-1/19/10038 :005 | BStBl I 2022 S. 122 |
 | 2023 | 2.55% | 02.01.2023 | 1.785% | 04.01.2023 | IV C 1 - S 1980-1/19/10038 :007 | BStBl I 2023 S. 178 |
 | 2024 | 2.29% | 02.01.2024 | 1.603% | 05.01.2024 | IV C 1 - S 1980-1/19/10038 :008 | BStBl I 2024 S. 154 |
-| 2025 | 2.53% | 02.01.2025 | 1.771% | 10.01.2025 | IV C 1 - S 1980/00230/009/002 | BStBl I |
-| 2026 | 3.20% | 02.01.2026 | 2.240% | 13.01.2026 | IV C 1 - S 1980/00230/012/001 | BStBl I |
+| 2025 | 2.53% | 02.01.2025 | 1.771% | 10.01.2025 | IV C 1 - S 1980/00230/009/002 | BStBl I 2025 S. 273 |
+| 2026 | 3.20% | 02.01.2026 | 2.240% | 13.01.2026 | IV C 1 - S 1980/00230/012/001 | BStBl I (page not yet cited by a successor) |
 
 **Verification status (2026-08-02): complete, every row read off the BMF-Schreiben itself.**
 Date, GZ and percentage come from the document; the reference date is the Boersentag the
@@ -77,9 +77,20 @@ was not a trading day in those years). The letters authenticate each other: ever
 carries a BEZUG line naming its predecessor **with the BStBl page**, so 2018 S. 249 is
 confirmed by the 2019 letter, 2019 S. 58 by the 2020 letter, 2020 S. 218 by the 2021 letter,
 2021 S. 56 by the 2022 letter, 2022 S. 122 by the 2023 letter and 2023 S. 178 by the 2024
-letter. The 2024 letter closes with *"Dieses Schreiben wird im Bundessteuerblatt Teil I
-veroeffentlicht"*; its own page (S. 154) is cited by the BMF elsewhere and is the one entry
-in the chain not confirmed by a successor letter.
+letter, and **2025 S. 273 by the 2026 letter** -- whose BEZUG line reads *"Schreiben des
+Bundesministeriums der Finanzen vom 10. Januar 2025, BStBl I S. 273"* (re-read from the BMF PDF
+2026-08-03). The 2024 letter closes with *"Dieses Schreiben wird im Bundessteuerblatt Teil I
+veroeffentlicht"*; its own page (S. 154) is cited by the BMF elsewhere. Only the newest row, 2026,
+is now unconfirmed by a successor -- as it must be until the 2027 letter appears.
+
+> **Corrected 2026-08-03.** The 2025 row carried a bare *"BStBl I"* with no page, although the
+> 2026 letter already cited in the Source block above names it in its BEZUG line. The file's own
+> verification note claimed the table was *"complete, every row read off the BMF-Schreiben
+> itself"* while a citation that the chain-of-BEZUG method was designed to supply sat unfilled.
+> The 2026 value (3.20 %) was re-read from the 13.01.2026 PDF on the same day and is confirmed:
+> *"Die Deutsche Bundesbank hat hierfuer auf den 2. Januar 2026 anhand der Zinsstrukturdaten einen
+> Wert von 3,20 Prozent fuer Bundeswertpapiere mit jaehrlicher Kuponzahlung und einer Restlaufzeit
+> von 15 Jahren errechnet."*
 
 **On the negative years, the BMF is explicit** -- 06.01.2021: *"Aufgrund des negativen
 Basiszins wird keine Vorabpauschale erhoben."* 07.01.2022 says the same for 2022. That is also

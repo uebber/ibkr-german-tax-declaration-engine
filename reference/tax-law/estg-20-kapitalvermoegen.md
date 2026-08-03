@@ -40,8 +40,17 @@ Key rules:
 - Premium is taxable upon receipt under Abs. 1 Nr. 11
 - Glattstellungsgeschaeft (closing/buy-back): paid premium is a **negative Einnahme at the time
   of payment**. See the timing caveat below -- the *from when* is not settled here.
-- Physical exercise: premium does NOT reduce under Nr. 11; instead affects cost basis of underlying trade (Abs. 2)
-- Barausgleich (cash settlement) by Stillhalter: loss from Termingeschaeft under Abs. 2 Satz 1 Nr. 3a (per BFH VIII R 55/13)
+- Physical exercise: premium does NOT reduce under Nr. 11; the Stillhalter has a Veraeusserungs-
+  geschaeft in the Basiswert under Abs. 2, and *"die vereinnahmte Optionspraemie ... wird bei der
+  Ermittlung des Veraeusserungsgewinns nicht beruecksichtigt"* (BMF 14.05.2025 Rz. 26)
+- Barausgleich (cash settlement) by Stillhalter: loss from a Termingeschaeft under **Abs. 2 Satz 1
+  Nr. 3 Buchstabe a** -- BMF 14.05.2025 Rz. 26 states that pinpoint expressly, citing **BFH-Urteil
+  vom 20.10.2016 - VIII R 55/13, BStBl II 2017 S. 264**
+
+> **Correction, 2026-08-03.** The Barausgleich bullet previously cited *"Abs. 2 Satz 1 Nr. 3a"*.
+> **There is no Nr. 3a in Abs. 2** -- see [GT-ESTG20-007]. The BFH decision was also cited by file
+> number alone, with no date and no Fundstelle, so it could not be checked. Both taken from BMF
+> 14.05.2025 Rz. 26, retrieved and read 2026-08-03. Validation Protocol items 1 and 2.
 
 #### Open question -- from which VZ does the "negative Einnahmen" wording apply? (NOT resolved)
 
@@ -96,9 +105,29 @@ security it belongs to.
 > Validation Protocol item 2.
 
 ### [GT-ESTG20-007] Satz 1 Nr. 3 -- Termingeschaefte (Derivatives)
-Gains from derivatives/forward transactions.
 
-**Sub-section 3a:** Gains from Barausgleich (cash settlement) of Termingeschaefte.
+**Nr. 3 has two Buchstaben and no Nummer 3a.** Statutory text (retrieved 2026-08-03):
+
+- **Buchst. a:** *"der Gewinn bei Termingeschaeften, durch die der Steuerpflichtige einen
+  Differenzausgleich oder einen durch den Wert einer veraenderlichen Bezugsgroesse bestimmten
+  Geldbetrag oder Vorteil erlangt"* -- this is the limb that catches **Barausgleich / cash
+  settlement**.
+- **Buchst. b:** *"der Gewinn aus der Veraeusserung eines als Termingeschaeft ausgestalteten
+  Finanzinstruments"* -- the disposal of the instrument itself, as distinct from settling it.
+
+The gain figure for a Termingeschaeft is not computed under Abs. 4 Satz 1 but under **Abs. 4
+Satz 5** -- see [GT-ESTG20-023].
+
+> **Correction, 2026-08-03.** This entry previously read *"Sub-section 3a: Gains from Barausgleich
+> (cash settlement) of Termingeschaefte"*, and the citation *"Abs. 2 Satz 1 Nr. 3a"* was repeated
+> under [GT-ESTG20-004], in `../bmf-guidance/abgeltungsteuer-einzelfragen.md` and in
+> `../research/coverage-matrix.md`. **Abs. 2 Satz 1 has no Nummer 3a**; the Nummern run 1-8 and
+> Nr. 3 is subdivided by Buchstaben. The confusable neighbour is Abs. **1** Nr. 3a
+> (Spezial-Investmentertraege), which does exist and is a different thing entirely. Verified
+> against gesetze-im-internet.de/estg/__20.html and against the table of contents and Rz. 26 of
+> BMF 14.05.2025, which writes *"§ 20 Absatz 2 Satz 1 Nummer 3 Buchstabe a EStG"* in full.
+> Corrected in all four places together (Validation Protocol items 2 and 8). Buchst. b was also
+> unstated -- item 2.
 
 ### [GT-ESTG20-008] Satz 1 Nr. 7 -- Gains from capital claims
 Gains from redemption/sale of capital claims (Kapitalforderungen jeder Art).
@@ -163,19 +192,95 @@ additionally entered in Zeile 22 as a positive amount (Zeile 23 is reserved for 
 ---
 
 ## [GT-ESTG20-010] Abs. 3 -- Special Benefits
-Special benefits or advantages granted in addition to or in place of income under Abs. 1 and 2.
+
+**Satz 1:** Special benefits or advantages (*besondere Entgelte oder Vorteile*) granted in addition
+to, or in place of, the income described in Abs. 1 and 2 are also Einkuenfte aus Kapitalvermoegen.
+
+**Satz 2** (previously unstated -- Validation Protocol item 2): such a benefit also exists *"wenn
+Bestandsprovisionen, Verwaltungsentgelte oder sonstige Aufwendungen durch den Schuldner der
+Kapitalertraege nach Absatz 1 oder 2 oder durch einen Dritten erstattet werden"* -- a rebate of
+trailer fees or management charges is itself taxable capital income.
+
+**Abs. 3a exists and is not Abs. 3.** It directs that corrections within the meaning of § 43a
+Abs. 3 Satz 7 are taken into account only at the time named there (Satz 1), and that where the
+auszahlende Stelle certifies it has not made and will not make the correction, the taxpayer may
+claim it under § 32d Abs. 4 und 6 (Satz 2). Both are addressed to a Steuerabzug that a foreign
+broker does not perform. Recorded because the Absatz sits between two that this file does state.
 
 ---
 
 ## Abs. 4 -- Gain Calculation
 
-### [GT-ESTG20-011] Satz 1 -- the gain
+### [GT-ESTG20-011] Satz 1 erster Halbsatz -- the gain
 
 **Gain = Sale proceeds - Transaction costs - Acquisition costs (Anschaffungskosten)**
 
-Abs. 4 has **nine Saetze**. Satz 1 defines the gain; **Satz 7** supplies the
-lot-identification fiction that decides *which* Anschaffungskosten are used when several
-lots of the same security are held.
+Statutory text: *"Gewinn im Sinne des Absatzes 2 ist der Unterschied zwischen den Einnahmen aus
+der Veraeusserung nach Abzug der Aufwendungen, die im unmittelbaren sachlichen Zusammenhang mit
+dem Veraeusserungsgeschaeft stehen, und den Anschaffungskosten"*.
+
+Note the deduction is limited to costs standing in an *unmittelbarer sachlicher Zusammenhang* with
+the disposal. It is not a general Werbungskostenabzug -- Abs. 9 excludes that.
+
+#### What the other eight Saetze of Abs. 4 contain (Validation Protocol item 2)
+
+Abs. 4 has **nine Saetze**, and three of them carry rules of their own that this library states
+separately because a figure turns on each:
+
+| Satz | Content | Where stated |
+|---|---|---|
+| 1, 1. Hs. | the gain | here, [GT-ESTG20-011] |
+| 1, 2. Hs. | **currency conversion, leg by leg** | [GT-ESTG20-022] |
+| 2 | verdeckte Einlage: gemeiner Wert replaces the proceeds; gain assessed in the calendar year of the Einlage | -- |
+| 3 | asset moved into Privatvermoegen by Entnahme/Betriebsaufgabe: the § 6 Abs. 1 Nr. 4 or § 16 Abs. 3 value replaces the Anschaffungskosten | -- |
+| 4 | Abs. 2 Satz 1 Nr. 6 (Versicherungsleistungen): contributions count as Anschaffungskosten | -- |
+| 5 | **the gain on a Termingeschaeft** | [GT-ESTG20-023] |
+| 6 | unentgeltlicher Erwerb: the predecessor's acquisition is attributed to the Einzelrechtsnachfolger | -- |
+| 7 | **FIFO fiction** | [GT-ESTG20-012] |
+| 8, 9 | Zinsschein separated from the Stammrecht, and the allocation of that value | -- |
+
+Saetze 2, 3, 4 and 6 do not reach a directly held private portfolio bought for consideration.
+
+### [GT-ESTG20-022] Satz 1 zweiter Halbsatz -- currency conversion, each leg at its own date
+
+Statutory text: *"bei nicht in Euro getaetigten Geschaeften sind die Einnahmen im Zeitpunkt der
+Veraeusserung und die Anschaffungskosten im Zeitpunkt der Anschaffung in Euro umzurechnen."*
+
+> Retrieved 2026-08-03 from gesetze-im-internet.de/estg/__20.html.
+
+This is the Tier 1 basis for converting a foreign-currency disposal: **the two legs are translated
+at two different dates**, the proceeds at the disposal date and the cost at the acquisition date.
+The gain is therefore computed in EUR and necessarily carries the currency movement between the
+two dates; it is not a foreign-currency difference translated once.
+
+The provision fixes *that* each leg is converted at its own moment. It does **not** name an
+exchange-rate source, and no Tier 1 or Tier 2 source prescribing one for the Veranlagung has been
+located -- BMF 14.05.2025 Rz. 247 prescribes the *Devisenbriefkurs* only for the
+Kapitalertragsteuerabzug by an inlaendische Zahlstelle, which is a different operation.
+
+> **Added 2026-08-03 (Validation Protocol item 2).** Abs. 4 Satz 1's second Halbsatz was absent
+> from this library, which stated only the first. The omission is the load-bearing kind: every
+> figure derived from a non-EUR transaction depends on this sentence, and the store carried no
+> ground truth for it at all.
+
+### [GT-ESTG20-023] Satz 5 -- the gain on a Termingeschaeft
+
+Statutory text: *"Gewinn bei einem Termingeschaeft ist der Differenzausgleich oder der durch den
+Wert einer veraenderlichen Bezugsgroesse bestimmte Geldbetrag oder Vorteil abzueglich der
+Aufwendungen, die im unmittelbaren sachlichen Zusammenhang mit dem Termingeschaeft stehen."*
+
+> Retrieved 2026-08-03 from gesetze-im-internet.de/estg/__20.html.
+
+A Termingeschaeft gain is **not** computed by the Satz 1 proceeds-minus-basis formula. The measure
+is the Differenzausgleich (or the value-linked amount) less directly related expenses. BMF
+14.05.2025 Rz. 27 applies the same Satz to the **expiry of a long option**: *"sind die fuer den
+Erwerb der Kaufoption entstandenen Aufwendungen bei der Ermittlung des Gewinns (oder Verlusts) im
+Sinne des § 20 Absatz 4 Satz 5 EStG zu beruecksichtigen"* (BFH vom 12.01.2016 - IX R 48/14,
+IX R 49/14, IX R 50/14, BStBl II S. 456, 459, 462), including a knock-out expiry.
+
+> **Added 2026-08-03 (Validation Protocol item 2).** The library stated only the Abs. 4 Satz 1
+> formula and applied it to derivatives by implication. Satz 5 is the provision that actually
+> governs them, and it is the one the administration cites for a worthless expiry.
 
 ### [GT-ESTG20-012] Satz 7 -- FIFO fiction (Verbrauchsreihenfolge)
 
@@ -252,12 +357,11 @@ Until 2026-08-02 this section read, without any source:
 The *"unless specific identification is possible"* clause is **wrong** and is removed.
 It is contradicted by Rz. 97 S. 3 (customer instructions on which security to sell are
 irrelevant for income tax) and by Rz. 99 (FIFO applies even to Streifbandverwahrung, so
-individual custody is not an escape either). The clause was a live hazard rather than a
-harmless imprecision: IBKR itself supports lot-matching methods (LIFO, specific lot,
-MaxLoss) and its realized-P&L output may reflect them, so an engine change that adopted
-IBKR's lot matching would have been endorsed by this library while being contrary to
-Rz. 97 S. 3. The "per depot" half was substantively correct but unsourced; it is now
-carried by Rz. 97 S. 2.
+individual custody is not an escape either). Brokers do offer lot-matching methods other
+than FIFO, and a realised-P&L figure taken from a broker may reflect one; the deleted
+clause would have sanctioned adopting such a figure, contrary to Rz. 97 S. 3. That is why
+it was a live hazard rather than a harmless imprecision. The "per depot" half was
+substantively correct but unsourced; it is now carried by Rz. 97 S. 2.
 
 #### Open question -- foreign custody (NOT settled, do not cite as resolved)
 
@@ -349,6 +453,46 @@ See dedicated file: [estg-20-abs6-verlustverrechnung.md](estg-20-abs6-verlustver
 
 ## [GT-ESTG20-021] Abs. 8 -- Subsidiarity (Subsidiaritaet)
 
-Capital income that belongs to income from agriculture/forestry, trade/business, self-employment,
-or rental is attributed to those income types instead. Everything else in this file assumes the
-holding is in Privatvermoegen.
+**Satz 1:** Capital income that belongs to income from agriculture/forestry, trade/business,
+self-employment, or rental is attributed to those income types instead. Everything else in this
+file assumes the holding is in Privatvermoegen.
+
+**Satz 2:** *"Absatz 4a findet insoweit keine Anwendung."* Where the subsidiarity rule bites, the
+corporate-action rollover of Abs. 4a is switched off as well. Recorded per Validation Protocol
+item 2.
+
+---
+
+## [GT-ESTG20-024] Abs. 9 -- Sparer-Pauschbetrag, and the exclusion of actual Werbungskosten
+
+**Satz 1:** *"Bei der Ermittlung der Einkuenfte aus Kapitalvermoegen ist als Werbungskosten ein
+Betrag von 1 000 Euro abzuziehen (Sparer-Pauschbetrag); der Abzug der tatsaechlichen
+Werbungskosten ist ausgeschlossen."*
+
+**Satz 2:** EUR 2 000 jointly for zusammen veranlagte Ehegatten. **Satz 3** splits the joint amount
+in half per spouse and shifts the unused part of one spouse's share to the other. **Satz 4:**
+neither amount may exceed the Kapitalertraege as offset under Abs. 6.
+
+> Retrieved 2026-08-03 from gesetze-im-internet.de/estg/__20.html. The EUR 1 000 / 2 000 figures
+> apply **from 01.01.2023**; before that the Sparer-Pauschbetrag was EUR 801 / 1 602. The date and
+> the two amounts are pinned at Tier 1 by **§ 52 Abs. 43 Satz 1 EStG**, which directs that a
+> Freistellungsauftrag given *"vor dem 1. Januar 2023 unter Beachtung des § 20 Absatz 9 in der bis
+> dahin geltenden Fassung"* be uplifted by **24,844 Prozent** -- and 801 x 1,24844 = 1 000
+> exactly, which authenticates the old figure from the new one without a second source.
+
+Two reasons this belongs in the store, both of which the library already depended on without
+stating:
+
+1. The **exclusion of actual Werbungskosten** in Satz 1 is why only costs in *unmittelbarem
+   sachlichem Zusammenhang* with a disposal reduce a gain ([GT-ESTG20-011]); a custody fee or a
+   data subscription does not.
+2. The Anlage KAP-INV Zeile 53 instruction quoted at [GT-FORM-033] makes the Vorabpauschale
+   deduction available where the year's total Kapitaleinkuenfte *"den Sparer-Pauschbetrag nicht
+   ueberschritten haben"* -- so the amount is an input to that condition.
+
+The Pauschbetrag itself is applied by the Finanzamt at the Veranlagung; it is not entered as a
+figure on Anlage KAP other than as the portion already used through Freistellungsauftraege
+(Zeilen 16/17).
+
+> **Added 2026-08-03 (Validation Protocol item 2).** § 20 Abs. 9 was absent from the library while
+> two of its statements leaned on it.

@@ -25,10 +25,34 @@ record; the pointers below say where to look.
 | 22.12.2009 | BStBl I 2010, S. 94 | Original Abgeltungsteuer guidance |
 | 19.05.2022 | BStBl I 2022, S. 742 | Major rewrite |
 | 20.12.2022 | BStBl I 2023, S. 46 | Amendment |
-| 11.07.2023 | (BMF) | Amendment |
-| 14.05.2025 | (BMF) | Complete rewrite superseding 19.05.2022 version |
+| 11.07.2023 | BStBl I 2023, S. 1471 | Amendment |
+| 14.05.2025 | GZ IV C 1 - S 2252/00075/016/070 | Neufassung of the 19.05.2022 version; 137 pages, Rz. 1-325 |
 
-The 14.05.2025 version is the current authoritative document, superseding all prior versions.
+The 14.05.2025 version is the current authoritative document. Its own opening line is
+*"wird das BMF-Schreiben vom 19. Mai 2022 (BStBl I S. 742) wie folgt neu gefasst"*, and **Rz. 324**
+names the three letters it displaces: *"vom 19. Mai 2022 (BStBl I S. 742), 20. Dezember 2022
+(BStBl I 2023 S. 46) und vom 11. Juli 2023 (BStBl I S. 1471)"*.
+
+> **Retrieved 2026-08-03.** The document had never been read in the course of building this
+> library; both the 11.07.2023 Fundstelle and the supersession list above are taken from it. The
+> earlier table marked two rows *"(BMF)"* for want of a citation.
+
+### Application and Nichtbeanstandung
+
+- **Rz. 324:** *"Fuer die Abgeltungsteuer auf Kapitalertraege und Veraeusserungsgewinne sind die
+  Grundsaetze dieses Schreibens auf alle offenen Faelle anzuwenden. Im Uebrigen ist dieses
+  Schreiben auf Kapitalertraege, die nach dem 31. Dezember 2008 zufliessen, sowie erstmals fuer
+  den Veranlagungszeitraum 2009 anzuwenden."*
+- **Rz. 325** permits Rz. 8, 8a, 23, 24, 26, 27, 30-32, 34, 36, 38, 42, 43, 46, 47, 59, 60, 61,
+  61a, 63, 118, 194, 226, 227, 229a, 233 and 234 to be applied in the 19.05.2022 wording before
+  01.01.2026 -- but **only *"Fuer den Kapitalertragsteuerabzug"***, which a foreign broker does not
+  perform. It is not a Nichtbeanstandung for the Veranlagung.
+
+### Randziffer numbering is version-specific
+
+The 14.05.2025 text is a Neufassung, so its Randziffern do not necessarily carry the 19.05.2022
+numbering. **Every citation into this document must name the document date.** All Randziffern
+cited anywhere in this library are from the 14.05.2025 version unless stated otherwise.
 
 ---
 
@@ -48,13 +72,20 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
 
 ### Specific interpretations
 
-#### Options
-- Stillhalterpraemie taxable upon receipt (Nr. 11)
-- Glattstellung: closing premium = negative income at time of payment
-- Exercise (physical delivery): premium becomes cost basis component of underlying
-- Expiration worthless (long): loss under 20 Abs. 2 Nr. 3
-- Expiration worthless (short): no further tax consequence beyond premium already taxed
-- Cash settlement: gain/loss under 20 Abs. 2 Nr. 3a
+#### Options (Rz. 9-47; the load-bearing ones are 25-27)
+- Stillhalterpraemie taxable upon receipt (Nr. 11) -- Rz. 25
+- Glattstellung: premiums paid and their Nebenkosten are negative Kapitalertrag *"zum Zeitpunkt
+  der Zahlung"* -- Rz. 25
+- Exercise (physical delivery) by the Stillhalter: a disposal of the Basiswert under Abs. 2, and
+  the premium *"wird bei der Ermittlung des Veraeusserungsgewinns nicht beruecksichtigt"* -- Rz. 26
+- Expiration worthless (long): the acquisition cost is taken into account under **20 Abs. 4
+  Satz 5** -- Rz. 27, also for a knock-out expiry
+- Expiration worthless (short): no further tax consequence beyond the premium already taxed
+- Cash settlement by the Stillhalter: loss from a Termingeschaeft under **20 Abs. 2 Satz 1 Nr. 3
+  Buchstabe a** -- Rz. 26, citing BFH vom 20.10.2016 - VIII R 55/13, BStBl II 2017 S. 264
+
+> **Correction, 2026-08-03.** The cash-settlement line read *"20 Abs. 2 Nr. 3a"*. There is no
+> Nr. 3a in Abs. 2 -- see [GT-ESTG20-007]. Rz. 26 writes the pinpoint out in full.
 
 #### Lot identification (Fifo-Methode, Rz. 97-99)
 - Rz. 97: FIFO under 20 Abs. 4 S. 7 is applied **auf das einzelne Depot bezogen**; a
@@ -81,6 +112,9 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
 
 ## Applicability
 
-This BMF-Schreiben represents the **Finanzverwaltung's binding interpretation** (Verwaltungsauffassung). While not law itself (Tier 2), tax offices are bound by it. Taxpayers can deviate but may face dispute.
+This BMF-Schreiben represents the **Finanzverwaltung's binding interpretation**
+(Verwaltungsauffassung). While not law itself (Tier 2), tax offices are bound by it. Taxpayers can
+deviate but may face dispute.
 
-For test validation purposes: this document defines the "expected behavior" of tax administration and is the best source for checking engine correctness against administrative practice.
+Where it and a statute diverge, the statute governs and the divergence is a point to record, not
+to resolve silently.

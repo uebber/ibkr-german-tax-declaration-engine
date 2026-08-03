@@ -147,15 +147,17 @@ reference/
   INDEX.md                  # Library directory
   tax-law/                  # Primary statute texts and analysis
     estg-20-kapitalvermoegen.md
-    estg-23-private-veraeusserung.md
     estg-20-abs6-verlustverrechnung.md
+    estg-23-private-veraeusserung.md
     estg-32d-abgeltungsteuer.md
     estg-34d-auslaendische-einkuenfte.md
+    estg-36-45a-kapitalertragsteuer-anrechnung.md
   investment-tax-law/       # InvStG-specific references
     invstg-16-investmentertraege.md
     invstg-18-vorabpauschale.md
     invstg-19-veraeusserungsgewinne.md
     invstg-20-teilfreistellung.md
+    invstg-22-teilfreistellungssatz-aenderung.md
   tax-forms/                # Form line mappings by year
     anlage-kap-zeilen.md
     anlage-kap-inv-zeilen.md
@@ -180,7 +182,7 @@ The `reference/` library is the only admissible source of legal requirements for
 
 1. **State the question** precisely: the event/asset, the tax year, and the figure or form line it affects.
 2. **Locate sources** using the tier table above. Prefer Tier 1 (statute) and Tier 2 (BMF/EStH). Tier 4/5 may support interpretation but never stand alone.
-3. **Verify against the Validation Protocol above** — all eight items, not only the tier check.
+3. **Verify against the Validation Protocol above** — all **nine** items, not only the tier check.
 4. **Write the reference file** into the matching subdirectory of the structure above. Each file
    records: the statutory text or an accurate summary, the precise citation, the source URL and
    its tier, the retrieval date, applicable tax years, and **a stable claim ID on the heading of
@@ -216,6 +218,11 @@ only how to get at one.
   snapshot.
 - **WebFetch cannot read PDFs.** Download and use `pdftotext -layout`, which preserves the column
   structure that form and table extraction depends on.
+- **A BMF download that returns empty is often a User-Agent block, not a dead link.** The
+  Einzelfragen-zur-Abgeltungsteuer circular was recorded here as unretrievable after WebFetch and a
+  bare `curl` both returned nothing; `curl -L` with an ordinary browser User-Agent returned all
+  137 pages on the first attempt (2026-08-03). Retry with a User-Agent before recording a
+  retrieval gap — that gap had stood long enough to be described as the library's weakest point.
 - **`esth.bundesfinanzministerium.de` and `ao.bundesfinanzministerium.de` are Radware-blocked** for
   both `curl` and WebFetch, and are not archived. Mirrors of the EStH exist and are usable for
   locating a passage, but the citation must still resolve to the official text.

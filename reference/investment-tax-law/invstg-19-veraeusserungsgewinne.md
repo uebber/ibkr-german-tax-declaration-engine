@@ -81,7 +81,7 @@ read 2026-08-03).
 
 | Zeile | Official heading | Content |
 |-------|------------------|---------|
-| 51 | Anschaffungskosten | acquisition cost (or the fiktive 31.12.2017 value for Alt-Anteile) |
+| 51 | Anschaffungskosten | acquisition cost (for nicht bestandsgeschuetzte Alt-Anteile, the fiktive value at the close of 31.12.2017) |
 | **53** | **Waehrend der Besitzzeit angesetzte Vorabpauschalen** | **the Satz 3-4 deduction** |
 | 54 | -- | Veraeusserungsgewinn / -verlust; transferred to Zeilen 14/17/20/23/26 by fund type |
 | 55 | Gewinne aus der Veraeusserung von bestandsgeschuetzten Alt-Anteilen | the 56 Abs. 6 S. 1 Nr. 2 InvStG portion; transferred to Zeilen 15/18/21/24/27 |

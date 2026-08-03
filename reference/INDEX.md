@@ -28,15 +28,15 @@ tagged on the headings here. See the Purity Rule in CLAUDE.md.
 
 ## Tax Forms (Zeilen-Referenz)
 
-- [Anlage KAP -- Zeilen](tax-forms/anlage-kap-zeilen.md) -- KAP form line mappings (Z19-24, Z41), year-specific differences
+- [Anlage KAP -- Zeilen](tax-forms/anlage-kap-zeilen.md) -- KAP form line mappings (Z4/5, Z7, Z18-25, Z37-41), the *zusaetzlich* / *ausschliesslich* split, year-specific differences
 - [Anlage KAP-INV -- Zeilen](tax-forms/anlage-kap-inv-zeilen.md) -- KAP-INV form lines (Z4-55), gross reporting principle
 - [Anlage SO -- Zeilen](tax-forms/anlage-so-zeilen.md) -- SO form lines for private sales (Z48-55)
 
 ## BMF Guidance (Administrative Circulars)
 
-- [Einzelfragen Abgeltungsteuer](bmf-guidance/abgeltungsteuer-einzelfragen.md) -- Central BMF guidance (14.05.2025), options, corporate actions, FX
-- [Basiszins Vorabpauschale](bmf-guidance/basiszins-vorabpauschale.md) -- Published rates 2016-2026, BMF source links
-- [Fremdwaehrung Konten](bmf-guidance/fremdwaehrung-konten.md) -- FX gain classification (20 vs. 23 EStG), paradigm shift 2022
+- [Einzelfragen Abgeltungsteuer](bmf-guidance/abgeltungsteuer-einzelfragen.md) -- Central BMF guidance (14.05.2025, Rz. 1-325); retrieved in full 2026-08-03. Index into the document, plus its version history and application rule
+- [Basiszins Vorabpauschale](bmf-guidance/basiszins-vorabpauschale.md) -- Published rates 2018-2026, one BMF-Schreiben cited per row
+- [Fremdwaehrung Konten](bmf-guidance/fremdwaehrung-konten.md) -- FX gain classification (20 vs. 23 EStG); BMF 14.05.2025 Rz. 131 verbatim
 
 ## Existing Form Instructions (OCR)
 

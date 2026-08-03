@@ -24,8 +24,15 @@ Losses from capital income (Kapitalvermoegen) may NOT be offset against income f
 ### [GT-ESTG20-031] Satz 2 -- Intra-category carryforward
 Capital losses reduce capital income in subsequent assessment periods (Veranlagungszeitraeume).
 
-### [GT-ESTG20-032] Satz 3 -- Spousal pooling
-For jointly assessed spouses (Zusammenveranlagung), joint loss offsetting occurs before loss determination (Verlustfeststellung).
+### [GT-ESTG20-032] Satz 3 -- Verlustfeststellung, and spousal pooling
+
+*"§ 10d Absatz 4 ist sinngemaess anzuwenden; im Fall von zusammenveranlagten Ehegatten erfolgt ein
+gemeinsamer Verlustausgleich vor der Verlustfeststellung."*
+
+Two rules in one sentence. The **first Halbsatz** is the one that makes the capital-loss carry-
+forward a formally *festgestellter* Verlustvortrag under § 10d Abs. 4 rather than a running
+balance -- previously unstated here (Validation Protocol item 2). The **second** is the spousal
+pooling: for jointly assessed spouses, the joint offset happens before that Feststellung.
 
 ### [GT-ESTG20-033] Satz 4 -- Stock loss ring-fencing (STILL IN FORCE)
 **Losses from the sale of shares (Aktien) may ONLY be offset against gains from the sale of shares.**
@@ -98,15 +105,27 @@ Verlustverrechnungsbeschraenkungen](https://www.lfst.bayern.de/aktuelles/gesetzl
 
 | Form Line | Content |
 |-----------|---------|
-| Zeile 19 | Stock gains - stock losses + other income - other losses + derivative gains |
+| Zeile 19 | Stock gains - stock losses + other income - other losses + derivative gains. **Excludes** derivative losses and Ausfall/Ausbuchung losses, both of which the Anleitung reserves *ausschliesslich* to Zeilen 24 and 25 |
 | Zeile 20 | Stock gains (gross, for Aktienverlusttopf) |
-| Zeile 21 | Derivative gains (Termingeschaefte, gross) |
-| Zeile 22 | Other (non-stock, non-derivative) losses |
+| Zeile 21 | Stillhalterpraemien and derivative gains (gross) |
+| Zeile 22 | Other losses -- non-stock, non-derivative, **and not the Zeile 25 cases** |
 | Zeile 23 | Stock losses (absolute value) |
-| Zeile 24 | Derivative losses (absolute value) |
+| Zeile 24 | Derivative losses (absolute value) -- *ausschliesslich* here |
+| Zeile 25 | Losses from Uneinbringlichkeit einer Kapitalforderung, Ausbuchung / Uebertragung wertloser Wirtschaftsgueter, sonstiger Ausfall -- *ausschliesslich* here |
 
-Zeilen 21 and 24 remained on the form after the cap was abolished: the form for a published year
-does not change retroactively.
+Zeilen 21, 24 and 25 remained on the form after the cap was abolished: the form for a published
+year does not change retroactively.
+
+> **Correction, 2026-08-03.** This table omitted **Zeile 25** entirely, described Zeile 22 as
+> taking all non-stock non-derivative losses, and gave a Zeile 19 formula that subtracted "other
+> losses" without the carve-out. Together those three would put a Forderungsausfall or a wertlose
+> Ausbuchung into Zeilen 19 and 22, which the 2024 Anleitung forbids in terms
+> (*"ausschliesslich in Zeile 25"*). The Termingeschaeft half was already right -- derivative
+> losses were correctly excluded from the Zeile 19 formula -- so the table was internally
+> inconsistent about the two lines the Anleitung treats identically. Source: `Anltg_KAP_24.md`,
+> block on Zeilen 18 und 19, read 2026-08-03; the four verbatim sentences are set out at
+> [`../tax-forms/anlage-kap-zeilen.md`](../tax-forms/anlage-kap-zeilen.md) [GT-FORM-002].
+> Validation Protocol items 2 and 8.
 
 ### [GT-FORM-011] VZ >= 2025 -- derivatives merged into Zeilen 19 and 22
 
@@ -115,11 +134,18 @@ does not change retroactively.
 | Zeile 19 | Stock gains - stock losses + other income - other losses + derivative gains - derivative losses |
 | Zeile 20 | Stock gains (gross) |
 | Zeile 21 | nothing entered |
-| Zeile 22 | All non-stock losses including derivative losses |
-| Zeile 23 | Stock losses (absolute value) |
+| Zeile 22 | All non-stock losses including derivative losses and Forderungsausfall / wertlose Ausbuchung |
+| Zeile 23 | Stock losses (absolute value), **including the wertlose Ausbuchung of Aktien** |
 | Zeile 24 | nothing entered |
+| Zeile 25 | nothing entered |
 
-Whether Zeilen 21 and 24 were physically removed from the VZ 2025 form or retained and left
+The 2025 Anleitung routes all of it through Zeilen 18/19 plus Zeile 22, with shares split off to
+Zeile 23: *"Tragen Sie die Ihnen entstandenen Verluste dann in die Zeilen 18 und / oder 19 und
+zusaetzlich in Zeile 22 ein. Wenn es sich um Verluste aus der wertlosen Ausbuchung von Aktien
+handelt, tragen Sie die Verluste nicht in Zeile 22, sondern zusaetzlich in Zeile 23 ein."* Neither
+*"Zeile 24"* nor *"Zeile 25"* occurs anywhere in `Anltg_KAP_25.md`.
+
+Whether Zeilen 21, 24 and 25 were physically removed from the VZ 2025 form or retained and left
 unused is **not established** -- see
 [`../research/open-legal-questions.md`](../research/open-legal-questions.md). Nothing is entered
 on them either way, so no figure turns on it.
@@ -146,10 +172,11 @@ those years.
 and 24 are printed *"frei"* and the word "Termingeschäfte" does not occur anywhere in the
 form. The separate Termingeschäft lines were introduced with the VZ 2021 form, together with
 the (since repealed) 20 Abs. 6 Satz 5 restriction that made the split necessary. Carrying the
-2021+ projection backwards would put figures on lines that do not exist, so
-`get_form_rules` **raises** for a tax year before 2021 rather than falling back. Forward
-carry-over (an unpublished future form inherits the latest verified structure) remains a
-silent default -- a structure stays in force until a later year changes it.
+2021+ projection backwards would therefore put figures on lines that do not exist. **VZ 2021 is
+the earliest year for which this library states a verified Anlage KAP structure, and no structure
+is stated for any earlier year.** Forward carry-over is sound in the other direction -- a
+structure stays in force until a later year changes it -- so an unpublished future form inherits
+the latest verified structure.
 
 Sources for the retrieved forms: official Formularstand identifiers as printed
 (2020AnlKAP051, 2021AnlKAP051); PDFs mirrored at steuern.de / steuerklassen.com /

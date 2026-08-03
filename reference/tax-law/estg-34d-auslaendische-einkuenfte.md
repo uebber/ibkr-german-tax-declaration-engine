@@ -72,10 +72,17 @@ Satz 1 grants the credit and then withdraws it for Abgeltungsteuer income in the
 > anzurechnen, die auf die Einkuenfte aus diesem Staat entfaellt; **das gilt nicht fuer
 > Einkuenfte aus Kapitalvermoegen, auf die § 32d Absatz 1 und 3 bis 6 anzuwenden ist.**"*
 
-**Satz 3** completes it: *"Bei der Ermittlung des zu versteuernden Einkommens und der
-auslaendischen Einkuenfte sind die Einkuenfte nach Satz 1 zweiter Halbsatz nicht zu
+**Satz 3 erster Halbsatz** completes it: *"Bei der Ermittlung des zu versteuernden Einkommens und
+der auslaendischen Einkuenfte sind die Einkuenfte nach Satz 1 zweiter Halbsatz nicht zu
 beruecksichtigen"* -- the carved-out income is also excluded from the
 Anrechnungshoechstbetrag arithmetic in Satz 2.
+
+Satz 3's **second** Halbsatz is a separate rule and was previously unstated (Validation Protocol
+item 2): *"bei der Ermittlung der auslaendischen Einkuenfte sind die auslaendischen Einkuenfte
+nicht zu beruecksichtigen, die in dem Staat, aus dem sie stammen, nach dessen Recht nicht besteuert
+werden."* **Satz 5** caps the credit at the foreign tax attributable to the Einkuenfte received in
+the Veranlagungszeitraum -- the § 34c analogue of the 32d Abs. 5 Satz 3 ceiling. Both belong to the
+mechanism the carve-out switches off for Abgeltungsteuer income, and neither reaches it.
 
 > **Correction, 2026-08-03.** This file, and `research/inlaendisch-auslaendisch-relevance.md`,
 > both attributed the carve-out to **34c Abs. 1 Satz 4**. Satz 4 is about Betriebsausgaben:
@@ -145,5 +152,9 @@ is the *Schuldner* concept the statute uses (Wohnsitz / Geschaeftsleitung / Sitz
 | ISIN country prefix | All securities with an ISIN | Reasonable -- country of registration usually equals issuer domicile | Fails for e.g. Luxembourg-registered funds of US issuers |
 | Issuer country on the positions statement | Held positions | Same as the first, restricted to holdings | Says nothing about income from a position already closed |
 
-Both are accepted in practice as proxies, but neither is the statutory test, and a declaration
-resting on one should say so.
+All three are used in practice as proxies, but **none of them is the statutory test**, and a
+declaration resting on one should say so.
+
+> **Correction, 2026-08-03.** This sentence read *"Both are accepted in practice ... but neither is
+> the statutory test"* while the table above it lists three proxies. A miscount, but the kind that
+> makes a reader stop trusting the table.

@@ -51,8 +51,16 @@ IMPLEMENTATION_PATTERNS: list[tuple[str, re.Pattern]] = [
     # document and URL suffixes, which are legitimate in citations.
     ("dotted attribute",
      re.compile(r"`[A-Za-z_]\w*\.(?!html\b|pdf\b|md\b|csv\b|de\b|com\b|org\b)[a-z_]\w*`")),
-    ("engine heading", re.compile(r"^\s*#{1,6}\s.*\bengines?\b", re.IGNORECASE)),
-    ("engine prose", re.compile(r"\b(?:the|this)\s+engine\b|\bengine'?s\b", re.IGNORECASE)),
+    # Backticked snake_case: a bare function or variable name, which the dotted
+    # and ALLCAPS patterns both miss. `get_form_rules` survived in the store for
+    # exactly that reason, together with a sentence describing what it raises.
+    # German legal citations contain no underscores, so this cannot collide.
+    ("snake_case identifier", re.compile(r"`[a-z][a-z0-9]*(?:_[a-z0-9]+)+`")),
+    # Bare "engine" in any grammatical position. The earlier form required "the"
+    # or "this" in front, and three violations slipped past it as "an engine
+    # change", "engine correctness" and "engine-relevant". No German legal term
+    # contains the word.
+    ("engine prose", re.compile(r"\bengines?\b", re.IGNORECASE)),
     ("input data file", re.compile(r"\bdata_import\b|\b[\w-]+\.csv\b")),
 ]
 

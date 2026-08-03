@@ -66,16 +66,27 @@ not a Freibetrag: once exceeded, the entire gain is taxable, not just the excess
 Carryback to the preceding year and carryforward to subsequent years operate per 10d EStG
 analogously (23 Abs. 3 Saetze 7-8).
 
-### [GT-FORM-023] Lot identification for 23 EStG assets -- unsourced, open
+### [GT-FORM-023] Lot identification for 23 EStG assets -- open, except for currency
 
-**§ 23 EStG contains no lot-identification rule**, and none has been located for it at Tier 1 or
-Tier 2. The FIFO fiction of 20 Abs. 4 Satz 7 EStG is by its terms confined to *vertretbare
-Wertpapiere in Sammelverwahrung* and does not reach an "anderes Wirtschaftsgut" under 23.
+**§ 23 EStG contains exactly one lot-identification rule, and it is confined to currency.**
+§ 23 Abs. 1 Satz 1 Nr. 2 **Satz 3** EStG fixes FIFO for *gleichartige Fremdwaehrungsbetraege* --
+see [GT-ESTG23-013]. For every other "anderes Wirtschaftsgut" — Gold and commodity ETCs, Crypto
+ETPs, the instruments this form block is actually used for — **no ordering rule has been located at
+Tier 1 or Tier 2.**
 
-> **Correction, 2026-08-03.** This file previously asserted that FIFO for 23 EStG assets
-> *"follows the general principle applied by the Finanzverwaltung for fungible assets"*. No
-> source was given, and none has been found. That sentence was doing load-bearing work -- a lot
-> ordering decides which acquisition date is compared against the disposal date, and therefore
-> whether the gain is taxable at all -- while resting on nothing. Recorded as open in
-> [`../research/open-legal-questions.md`](../research/open-legal-questions.md) rather than
-> restated.
+The FIFO fiction of 20 Abs. 4 Satz 7 EStG does not fill the gap: it is confined by its own wording
+to *vertretbare Wertpapiere in Sammelverwahrung nach § 5 DepotG* and does not reach an "anderes
+Wirtschaftsgut" under § 23.
+
+The contrast is the point. The legislature wrote a consumption order into § 23 for one class of
+asset and not for the others, which makes the silence harder to read as an implied general FIFO
+rather than easier.
+
+> **Correction, 2026-08-03.** Two rounds. This file first asserted that FIFO for § 23 assets
+> *"follows the general principle applied by the Finanzverwaltung for fungible assets"*, unsourced;
+> that was removed. The replacement then over-corrected to *"§ 23 EStG contains no
+> lot-identification rule"* — false as written, since Nr. 2 Satz 3 is one, and the library had
+> simply never recorded that Satz. A lot ordering decides which acquisition date is compared
+> against the disposal date and therefore whether the gain is taxable at all, so both the false
+> positive and the false negative mattered. Recorded as open, with its true scope, in
+> [`../research/open-legal-questions.md`](../research/open-legal-questions.md) Q6.

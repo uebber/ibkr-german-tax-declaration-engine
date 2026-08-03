@@ -45,8 +45,10 @@ BMF 16.05.2025 (section on Zahlstellensteuerprinzip, 43 Abs. 1 Satz 1 Nr. 1a):
 investor receives the dividend net of 25% KESt + 5.5% SolZ = **26.375%**, and must declare
 the **gross** dividend.
 
-**Detection rule (engine-relevant):** a withholding entry at exactly 26.375% of the gross
-dividend on a German-issuer security is German KESt+SolZ, not foreign WHT.
+**The arithmetic signature:** 25% x 1.055 = **26.375%**. A withholding amount standing in exactly
+that ratio to the gross dividend on a German-issuer security is German KESt plus SolZ, not
+auslaendische Quellensteuer. See [GT-CREDIT-025] for what that identity does and does not
+establish.
 
 ---
 
@@ -125,10 +127,28 @@ The taxpayer must initiate this via the broker; it is not automatic. Fees may ap
 
 ## [GT-CREDIT-024] 5. 36a EStG (Cum/Cum) -- generally not binding for retail
 
-36a can disallow **3/5** of the KESt credit where the Mindesthaltedauer / Mindestwert-
-aenderungsrisiko conditions are unmet (Anlage KAP Zeile 46). **36a Abs. 5 Nr. 1** provides a
-**EUR 20,000** Bagatellgrenze, measured on the Kapitalertraege of the Veranlagungszeitraum;
-below it the full credit stands regardless of holding period.
+**Abs. 1 Satz 1** makes full crediting of the withheld tax on 43 Abs. 1 Satz 1 Nr. 1a
+Kapitalertraege conditional on **three** requirements, not two: uninterrupted wirtschaftliches
+Eigentum during the Mindesthaltedauer (Nr. 1), bearing the Mindestwertaenderungsrisiko throughout
+it (Nr. 2), **and** not being obliged to pass the income on, wholly or mainly, directly or
+indirectly, to another person (Nr. 3). **Satz 2:** if any is missing, *"sind drei Fuenftel der
+Kapitalertragsteuer nicht anzurechnen"*. Declared on Anlage KAP Zeile 46.
+
+**Abs. 5 gives two independent escapes, joined by *oder*** -- meeting either one disapplies
+Abs. 1 bis 4 entirely:
+
+- **Nr. 1:** the relevant Kapitalertraege in the Veranlagungszeitraum are *"**nicht mehr als**
+  20 000 Euro"*.
+- **Nr. 2:** the taxpayer has been uninterrupted wirtschaftlicher Eigentuemer of the shares or
+  Genussscheine for **at least one year** at the time the income accrues.
+
+> **Corrections, 2026-08-03 (Validation Protocol item 2).** Two, both from the statutory text
+> retrieved 2026-08-03 from gesetze-im-internet.de/estg/__36a.html. First, the threshold is
+> *"nicht mehr als 20 000 Euro"* -- inclusive. This entry said *"below it"*, which excludes exactly
+> EUR 20 000 and would deny relief at the boundary. Second, **Abs. 5 Nr. 2 was unstated
+> altogether**: a buy-and-hold retail investor is out of § 36a on the one-year test whatever the
+> amount, which is the escape that actually covers the case this file is about. Abs. 1 Satz 1 Nr. 3
+> was likewise unstated.
 
 ---
 
@@ -140,13 +160,31 @@ distinction has to be inferred. Two signatures, of which the second is decisive:
 1. The withholding row's description names the source country of the issuer (e.g. a `DE`
    marker) rather than the broker's jurisdiction.
 2. **The withheld amount is exactly 26.375 % of the gross dividend** -- 25 % Kapitalertragsteuer
-   plus 5.5 % Solidaritaetszuschlag *on the tax*, i.e. 25 % x 1.055. No DBA rate produces that
-   figure: the common treaty rates on German dividends are 15 % and 26.375 % is above the
-   statutory maximum any treaty allows a source state to keep.
+   plus 5.5 % Solidaritaetszuschlag *on the tax*, i.e. 25 % x 1.055. That composite arises from
+   the German rate structure (32d Abs. 1 EStG together with the SolZG); it is not a round rate of
+   the kind a source state announces.
 
-The arithmetic identity is what makes this checkable rather than a guess, and it is the test any
-classification should key on. Confirmed against several German issuers across several assessment
-years; the instance data is account data and is not published.
+**What the identity establishes, and what it does not.** The arithmetic is checkable rather than a
+guess, and it has been confirmed against several German issuers across several assessment years;
+the instance data is account data and is not published. But it is a **signature, not a proof**, and
+two limits belong with it:
+
+- A DBA does not bear on this case at all. Treaty rates cap what a *source* state may keep from a
+  payment to a resident of the *other* state. A German-resident investor receiving a
+  German-issuer dividend is in a purely domestic relationship; there is no treaty to apply, and
+  the full 26.375 % is due. The comparison to treaty rates is therefore beside the point, not
+  supporting evidence.
+- Whether some *foreign* jurisdiction's withholding happens to equal 26.375 % is an empirical
+  question about that jurisdiction's rate table, and **no source has been consulted for it here.**
+  The signature should be read together with the issuer's domicile, not on its own.
+
+> **Correction, 2026-08-03.** This section previously argued that *"no DBA rate produces that
+> figure: the common treaty rates on German dividends are 15 % and 26.375 % is above the statutory
+> maximum any treaty allows a source state to keep."* The conclusion is right and the reasoning is
+> not: no treaty limit applies to a domestic dividend paid to a German resident in the first place,
+> so the premise is inapposite rather than merely unsourced, and the sweep of *"any treaty"* was
+> never checked. Recorded per CLAUDE.md's rule on verifying a rationale rather than only a
+> citation.
 
 Consequence if the distinction is missed: German KESt gets declared as anrechenbare
 *auslaendische* Steuer on Zeile 41, where it does not belong and where the Zeile 7 / 37 / 38 / 39

@@ -66,7 +66,12 @@ The two interleaved line sets are distinct transitional rules for pre-2018 units
   Alt-Anteilen"* i. S. d. 56 Abs. 6 Satz 1 Nr. 2 InvStG (acquired before 01.01.2009 and held in
   Privatvermoegen since). Gains **only**; losses are not netted here. Carried over from Zeile 55.
   These amounts are *already included* in the Zeilen 14/17/20/23/26 figures; the separate entry
-  exists so the Finanzamt can apply the EUR 100 000 Freibetrag.
+  exists so the Finanzamt can apply the EUR 100 000 Freibetrag. The Anleitung zur Anlage KAP states
+  it in the Zeile 10 block: *"Die ab dem 1. Januar 2018 eintretenden Wertveraenderungen von
+  bestandsgeschuetzten Alt-Anteilen ... sind steuerpflichtig, soweit sie den Freibetrag i. H. v.
+  100.000 EUR ueberschreiten. ... Der Freibetrag wird von Ihrem Finanzamt beruecksichtigt."*
+  (`Anltg_KAP_25.md`, read 2026-08-03; identical in the 2024 Anleitung. Where the Freibetrag has
+  already been drawn on in earlier years, Zeile 20 der Anlage Sonstiges must also be completed.)
 - **Zeilen 16, 19, 22, 25, 28** -- gains and losses from the **fiktive Veraeusserung** of
   *nicht* bestandsgeschuetzte Alt-Anteile i. S. d. 56 Abs. 2 i. V. m. Abs. 3 Satz 1 InvStG,
   deemed sold at the close of 31.12.2017. Carried over from Zeile 56.
@@ -108,7 +113,7 @@ Veraeusserung von Investmentanteilen"*. It is filled per individual sale.
 |-------|---------|
 | 49 | Anzahl der veraeusserten Anteile |
 | 50 | Veraeusserungspreis |
-| 51 | Anschaffungskosten (or the fiktive value at 01.01.2018 for Alt-Anteile) |
+| 51 | Anschaffungskosten (for nicht bestandsgeschuetzte Alt-Anteile, the fiktive Veraeusserungs-/Anschaffungswert at the close of 31.12.2017 per 56 Abs. 2 i. V. m. Abs. 3 Satz 1 InvStG) |
 | 52 | Veraeusserungskosten |
 | **53** | **Waehrend der Besitzzeit angesetzte Vorabpauschalen** (vor Teilfreistellung) |
 | 54 | Veraeusserungsgewinn / -verlust |

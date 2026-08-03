@@ -101,7 +101,20 @@ Prozent** ihres Aktivvermoegens in Kapitalbeteiligungen anlegen
 > said *"mehr als 50 %"* (`Anltg_KAP_INV_24.md`); the statute was not checked against it.
 
 Abs. 6 Satz 2 extends the definition to a Dach-Investmentfonds bound by its Anlagebedingungen to
-invest so as to maintain the quota through its Ziel-Investmentfonds.
+invest so as to maintain the quota through its Ziel-Investmentfonds; Satz 3 limits that extension
+to Ziel-Investmentfonds valued at least weekly.
+
+**Satz 4 ends the status, and it is a trigger for the § 22 fiction:** *"In dem Zeitpunkt, in dem
+der Investmentfonds wesentlich gegen die Anlagebedingungen verstoesst und dabei die
+Aktienfonds-Kapitalbeteiligungsquote unterschreitet, endet die Eigenschaft als Aktienfonds."* Abs. 7
+Satz 4 applies it to Mischfonds. So the fund type can lapse without any amendment to the
+Anlagebedingungen — a material breach plus a shortfall is enough — and that lapse is a case of
+*"fallen die Voraussetzungen der Teilfreistellung weg"* under
+[22 Abs. 1 Satz 1](invstg-22-teilfreistellungssatz-aenderung.md), [GT-INVSTG-040].
+
+> **Added 2026-08-03 (Validation Protocol item 2).** Satz 4 was unstated, and its absence made the
+> neighbouring statement in the § 22 file — that quota drift alone does not trigger the fiction —
+> read as broader than it is.
 
 ### [GT-INVSTG-027] Abs. 7 Satz 1 -- Mischfonds: *mindestens 25 Prozent*
 
@@ -136,8 +149,15 @@ to a higher minimum.
   Auslands-Immobiliengesellschaften.
 - **Satz 3:** Auslands-Immobiliengesellschaften are those investing *"ausschliesslich"* in
   auslaendische Immobilien.
-- **Satz 4:** the parallel look-through — units in an Immobilienfonds count as Immobilien in Hoehe
-  von 51 Prozent of their value.
+- **Satz 4:** the parallel look-through — units in an Immobilienfonds or Auslands-Immobilienfonds
+  count as Immobilien in Hoehe von 51 Prozent of their value.
+- **Satz 5:** where the target fund's Anlagebedingungen commit to a higher minimum than 51 percent,
+  that higher percentage applies instead.
+- **Satz 6:** shares in Koerperschaften, Personenvereinigungen or Vermoegensmassen whose
+  Bruttovermoegen consists of at least 65 percent immovable property count as Immobilien **in Hoehe
+  von 65 Prozent** of their value, subject to a 15 percent Ertragsbesteuerung condition.
+
+> Saetze 5 and 6 added 2026-08-03 per Validation Protocol item 2; Abs. 9 does not stop at Satz 4.
 
 > **Correction, 2026-08-03.** Earlier revisions cited *"Abs. 9 Nr. 1"* and *"Abs. 9 Nr. 2"*.
 > **Abs. 9 has no Nummern**; the distinction is Satz 1 versus Satz 2. The old text also described
