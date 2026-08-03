@@ -338,6 +338,59 @@ class TestWithholdingTaxLinker:
             TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal("0.00")
         ) == Decimal("31.50"), "Zeile 41 aggregates the withholding events' EUR amounts (GT-FORM-006)"
 
+    @pytest.mark.xfail(strict=True, reason="GT-CREDIT-025: no country filter on Zeile 41")
+    def test_german_kest_is_excluded_from_zeile_41(self, tmp_path):
+        """German Kapitalertragsteuer must not be declared as anrechenbare
+        ausländische Steuer.
+
+        legal_basis: GT-FORM-007 — "German Kapitalertragsteuer withheld on a
+        German issuer's dividend is **not** an ausländische Steuer and does not
+        belong in Zeile 41." It is credited through Zeile 7 with Zeilen 37/38/39.
+
+        This is the known defect GT-CREDIT-025, recorded in
+        `docs/legal-implementation-map.md` as prose. It is marked
+        xfail(strict=True) so that it is an instrument rather than a note: it
+        fails today because the sum has no country filter, and the day the filter
+        lands it will XPASS, which strict=True turns into a failure — forcing the
+        marker to be removed rather than leaving a stale xfail behind.
+
+        Note the fix is larger than this assertion: GT-FORM-007 puts the credit
+        on Zeilen 7/37/38/39, which have no representation at all, so excluding
+        the amount here without adding those lines would drop the credit rather
+        than move it. That is why this test states the requirement and does not
+        attempt the fix.
+        """
+        from src.engine.loss_offsetting import LossOffsettingEngine
+        from src.domain.enums import TaxReportingCategory
+        from src.identification.asset_resolver import AssetResolver
+        from src.classification.asset_classifier import AssetClassifier
+
+        resolver = AssetResolver(asset_classifier=AssetClassifier(
+            cache_file_path=str(tmp_path / "cls.json")))
+        german = resolver.get_or_create_asset(
+            raw_isin="DE0007164600", raw_conid="CONSAP", raw_symbol="SAP",
+            raw_currency="EUR", raw_ibkr_asset_class="STK",
+            raw_description="SAP SE", raw_ibkr_sub_category="COMMON",
+        )
+
+        kest = self.create_withholding_tax_event(amount=Decimal("26.375"), currency="EUR")
+        kest.asset_internal_id = german.internal_asset_id
+        kest.source_country_code = "DE"
+        kest.gross_amount_eur = Decimal("26.375")
+
+        engine = LossOffsettingEngine(
+            realized_gains_losses=[],
+            vorabpauschale_items=[],
+            current_year_financial_events=[kest],
+            asset_resolver=resolver,
+            tax_year=2023,
+        )
+        form = engine.calculate_reporting_figures()
+
+        assert form.form_line_values.get(
+            TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal("0.00")
+        ) == Decimal("0.00"), "German KESt is not an ausländische Steuer (GT-FORM-007)"
+
     def test_is_sequential_transaction_id(self):
         """Test the sequential transaction ID logic."""
         wht_event = self.create_withholding_tax_event(transaction_id="1000002")
