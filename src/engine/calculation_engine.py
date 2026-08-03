@@ -1002,8 +1002,9 @@ def _calculate_vorabpauschale(
         eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
         if eoy_value_foreign is None or eoy_currency is None:
             # Fund fully disposed of during the year. The Abs. 3 Zufluss then falls after the
-            # disposal, so no VP arises. Recorded as an open question in coverage-matrix.md:
-            # this is inferred from Abs. 3, not stated by a located Tier 1/2 source.
+            # disposal, so no VP arises. This is inferred from Abs. 3, not stated by a located
+            # Tier 1/2 source: see reference/research/open-legal-questions.md Q5 for both
+            # readings, and docs/legal-implementation-map.md GT-INVSTG-016 for this choice.
             logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} position value. Skipping VP.")
             continue
 

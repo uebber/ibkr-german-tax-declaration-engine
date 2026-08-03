@@ -6,13 +6,19 @@
 - **EStH 2024 Anhang 19 II:** [esth.bundesfinanzministerium.de -- Anhang 19 II](https://ao.bundesfinanzministerium.de/esth/2024/C-Anhaenge/Anhang-19/II/anhang-19-II.html)
 - **EStH 2025 Anhang 19 II:** [esth.bundesfinanzministerium.de -- Anhang 19 II](https://esth.bundesfinanzministerium.de/esth/2025/B-Anhaenge/Anhang-19/II/inhalt.html)
 
-## Relevance to Engine
+## Scope
 
-This is THE central administrative guidance document for capital income taxation. It contains the BMF's binding interpretation on virtually every edge case the engine handles: option treatment, corporate actions, loss offsetting, FX gains, Stueckzinsen, and more.
+The central administrative guidance on capital income taxation. It carries the
+Finanzverwaltung's interpretation of most of the edge cases § 20 EStG throws up: option
+treatment, corporate actions, loss offsetting, currency gains, Stueckzinsen, lot identification.
+
+This file is an **index into that document**, not a substitute for it. Where a Randziffer is
+load-bearing, the verbatim text lives in the statute file it interprets, with its own retrieval
+record; the pointers below say where to look.
 
 ---
 
-## Version History
+## [GT-ESTG20-060] Version History
 
 | Date | Reference | Notes |
 |------|-----------|-------|
@@ -26,7 +32,7 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
 
 ---
 
-## Key Topics Covered (relevant to engine)
+## Key topics
 
 ### I. Kapitalvermoegen (20 EStG)
 
@@ -40,7 +46,7 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
 7. **Kapitalmasnahmen** (20 Abs. 4a) -- corporate action treatment (mergers, splits, spin-offs)
 8. **Verlustverrechnung** (20 Abs. 6) -- loss offsetting rules including stock ring-fencing
 
-### Specific Interpretations Relevant to Engine
+### Specific interpretations
 
 #### Options
 - Stillhalterpraemie taxable upon receipt (Nr. 11)
@@ -58,8 +64,8 @@ The 14.05.2025 version is the current authoritative document, superseding all pr
   number); the customer **may** determine which securities are allocated to which depot
 - Rz. 99: Fifo applies to **Streifbandverwahrung** as well
 - Wording is identical in the 18.01.2016 version -- stable practice, not a 2025 change
-- Full verbatim text and the engine's known deviation:
-  [estg-20-kapitalvermoegen.md](../tax-law/estg-20-kapitalvermoegen.md), "Abs. 4 -- Satz 7"
+- Full verbatim text: [estg-20-kapitalvermoegen.md](../tax-law/estg-20-kapitalvermoegen.md),
+  [GT-ESTG20-013]
 
 #### Corporate Actions
 - Stock-for-stock merger: steuerneutral, cost basis rollover (20 Abs. 4a)

@@ -2,69 +2,80 @@
 
 ## Source
 
-- **Form download:** [formulare-bfinv.de -- Formular-Management-System](https://www.formulare-bfinv.de/)
+- **Legal basis (Tier 1):** 22 Nr. 2, 23 Abs. 1 Satz 1 Nr. 2 EStG -- see
+  [`../tax-law/estg-23-private-veraeusserung.md`](../tax-law/estg-23-private-veraeusserung.md)
+- **ELSTER Help 2024 (Tier 3):** [elster.de -- Anleitung SO](https://www.elster.de/eportal/helpGlobal?themaGlobal=help_est_ufa_12_2024)
 - **EStH 2024 -- 23 EStG:** [esth.bundesfinanzministerium.de](https://esth.bundesfinanzministerium.de/esth/2024/A-Einkommensteuergesetz/II-Einkommen-2-24b/8-Die-einzelnen-Einkunftsarten-13-24b/g-Sonstige-Einkuenfte-22-23/Paragraf-23/inhalt.html)
 - **EStH 2024 -- Anhang 26 Private Veraeusserungsgeschaefte:** [esth.bundesfinanzministerium.de](https://esth.bundesfinanzministerium.de/esth/2024/C-Anhaenge/Anhang-26/inhalt.html)
-- **ELSTER Help 2024:** [elster.de -- Anleitung SO](https://www.elster.de/eportal/helpGlobal?themaGlobal=help_est_ufa_12_2024)
-- **Legal basis:** EStG 22 Nr. 2, 23 Abs. 1 Nr. 2
 
-## Relevance to Engine
-
-Reports gains/losses from sale of "other assets" (Gold ETCs, Crypto ETPs, etc.) within the 1-year speculation period.
-
----
-
-## Structure of Anlage SO (2024)
-
-The Anlage SO covers two main categories:
-1. **Leistungen** (22 Nr. 3 EStG) -- not used by this engine
-2. **Private Veraeusserungsgeschaefte** (22 Nr. 2, 23 EStG) -- used by this engine
-
-### Private Veraeusserungsgeschaefte Sections
-
-The form distinguishes:
-- Grundstuecke und grundstuecksgleiche Rechte (10-year period, 23 Abs. 1 Nr. 1)
-- Kryptowaehrungen/virtuelle Waehrungen (1-year period, Zeilen 41-47)
-- Andere Wirtschaftsgueter (1-year period, Zeilen 48-55)
+> **Sourcing status.** The form download reference is a portal root
+> (`https://www.formulare-bfinv.de/`), not a per-year document, and no Anleitung zur Anlage SO
+> for a specific assessment year is held in this repository -- unlike Anlage KAP and KAP-INV,
+> whose Anleitungen are transcribed here. The line numbers below have therefore **not** been
+> verified per year to the standard Validation Protocol item 4 requires. Scheduled for re-audit.
 
 ---
 
-## Lines Used by Engine
+## Structure
 
-### Zeilen 48-55: Andere Wirtschaftsgueter
+Anlage SO covers two things, of which only the second is relevant here:
+
+1. **Leistungen** (22 Nr. 3 EStG)
+2. **Private Veraeusserungsgeschaefte** (22 Nr. 2, 23 EStG)
+
+Within the second, the form separates:
+
+- Grundstuecke und grundstuecksgleiche Rechte (ten-year period, 23 Abs. 1 Satz 1 Nr. 1)
+- Kryptowaehrungen / virtuelle Waehrungen (one-year period, Zeilen 41-47)
+- **Andere Wirtschaftsgueter** (one-year period, Zeilen 48-55)
+
+## [GT-FORM-020] Zeilen 48-55 -- Andere Wirtschaftsgueter
 
 | Zeile | Content |
 |-------|---------|
-| 48 | Art des Wirtschaftsguts (description) |
+| 48 | Art des Wirtschaftsguts |
 | 49 | Anschaffungsdatum |
 | 50 | Veraeusserungsdatum |
 | 51 | Veraeusserungspreis |
 | 52 | Anschaffungskosten |
 | 53 | Werbungskosten |
-| 54 | Gewinn/Verlust |
-| 55 | (Sum / additional info) |
+| 54 | Gewinn / Verlust |
+| 55 | Summe / weitere Angaben |
 
-**Engine mapping:**
-- `SECTION_23_ESTG_TAXABLE_GAIN` -> positive amount in Zeile 54
-- `SECTION_23_ESTG_TAXABLE_LOSS` -> negative amount in Zeile 54
-- `SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET` -> not reported (holding period > 1 year = tax-exempt)
+A disposal outside the Jahresfrist is not reported at all: it is not a
+Veraeusserungsgeschaeft under 23 Abs. 1 Satz 1 Nr. 2 and there is no line for it.
 
 ---
 
-## Key Rules
+## Key rules
 
-### Freigrenze (Exemption Threshold) -- 23 Abs. 3 Satz 5 EStG
-- EUR 1,000 per calendar year, from VZ 2024; EUR 600 before. Raised by the
-  **Wachstumschancengesetz vom 27.03.2024 (BGBl. 2024 I Nr. 108)** -- *not* by the JStG 2024,
-  as this file previously stated. See `tax-law/estg-23-private-veraeusserung.md`.
-- Applies to total gain from ALL private sales combined
-- If exceeded, the ENTIRE gain is taxable (Freigrenze, not Freibetrag)
-- Engine does not apply this threshold; it reports the gross figure
+### [GT-FORM-021] Freigrenze -- 23 Abs. 3 Satz 5 EStG
 
-### Loss Offsetting
-- 23 EStG losses can only offset 23 EStG gains
-- No cross-offsetting with 20 EStG capital income
-- Loss carryback to preceding year and carryforward to subsequent years possible (per 10d analogously)
+EUR 1 000 per calendar year from VZ 2024; EUR 600 before. Raised by the **Wachstumschancengesetz
+vom 27.03.2024 (BGBl. 2024 I Nr. 108)** -- *not* by the JStG 2024, as this file previously
+stated. The statutory wording is *"weniger als 1 000 Euro"*, so a Gesamtgewinn of exactly
+EUR 1 000 is **not** exempt. Full text and the amendment provenance:
+[`../tax-law/estg-23-private-veraeusserung.md`](../tax-law/estg-23-private-veraeusserung.md).
 
-### FIFO
-The engine applies FIFO to determine which lots are sold and their holding periods. This follows the general principle applied by the Finanzverwaltung for fungible assets.
+It applies to the combined gain from **all** private sales in the year, and it is a Freigrenze,
+not a Freibetrag: once exceeded, the entire gain is taxable, not just the excess.
+
+### [GT-FORM-022] Loss offsetting
+
+23 EStG losses offset 23 EStG gains only -- no cross-offsetting with 20 EStG capital income.
+Carryback to the preceding year and carryforward to subsequent years operate per 10d EStG
+analogously (23 Abs. 3 Saetze 7-8).
+
+### [GT-FORM-023] Lot identification for 23 EStG assets -- unsourced, open
+
+**§ 23 EStG contains no lot-identification rule**, and none has been located for it at Tier 1 or
+Tier 2. The FIFO fiction of 20 Abs. 4 Satz 7 EStG is by its terms confined to *vertretbare
+Wertpapiere in Sammelverwahrung* and does not reach an "anderes Wirtschaftsgut" under 23.
+
+> **Correction, 2026-08-03.** This file previously asserted that FIFO for 23 EStG assets
+> *"follows the general principle applied by the Finanzverwaltung for fungible assets"*. No
+> source was given, and none has been found. That sentence was doing load-bearing work -- a lot
+> ordering decides which acquisition date is compared against the disposal date, and therefore
+> whether the gain is taxable at all -- while resting on nothing. Recorded as open in
+> [`../research/open-legal-questions.md`](../research/open-legal-questions.md) rather than
+> restated.

@@ -13,15 +13,18 @@ Period arithmetic pulls in three further Tier 1 provisions, cited verbatim below
 - [gesetze-im-internet.de -- 187 BGB](https://www.gesetze-im-internet.de/bgb/__187.html) (Fristbeginn)
 - [gesetze-im-internet.de -- 188 BGB](https://www.gesetze-im-internet.de/bgb/__188.html) (Fristende)
 
-## Relevance to Engine
+## Scope
 
-Governs taxation of "other assets" (andere Wirtschaftsguetern) sold within the 1-year speculation period. In this engine: Gold ETCs, Crypto ETPs, and similar assets classified as `PRIVATE_SALE_ASSET`.
+Taxation of *andere Wirtschaftsgueter* disposed of within the one-year Jahresfrist -- in a
+brokerage portfolio typically Gold and commodity ETCs and Crypto ETPs, which are claims on a
+physical commodity or a crypto asset rather than securities under 20 EStG.
 
-Also applies to foreign currency gains on non-interest-bearing accounts (see bmf-guidance/fremdwaehrung-konten.md).
+Also reaches foreign currency gains on non-interest-bearing accounts; see
+[`../bmf-guidance/fremdwaehrung-konten.md`](../bmf-guidance/fremdwaehrung-konten.md).
 
 ---
 
-## Abs. 1 Satz 1 Nr. 2 -- Other Assets (Andere Wirtschaftsgueter)
+## [GT-ESTG23-001] Abs. 1 Satz 1 Nr. 2 -- Other Assets (Andere Wirtschaftsgueter)
 
 Statutory text, **Satz 1 Nr. 2 Satz 1**: *"Veraeusserungsgeschaefte bei anderen
 Wirtschaftsguetern, bei denen der Zeitraum zwischen Anschaffung und Veraeusserung nicht mehr
@@ -40,7 +43,7 @@ taeglichen Gebrauchs."*
 Two separate questions, with separate sources: *which dates* enter the calculation, and *how
 the one-year period is measured* from them.
 
-#### Which dates -- the obligatorisches Geschaeft (Tier 2)
+#### [GT-ESTG23-002] Which dates -- the obligatorisches Geschaeft (Tier 2)
 
 **H 23 EStH, Stichwort "Veraeusserungsfrist"**: *"Fuer die Berechnung der Veraeusserungsfrist
 des § 23 Abs. 1 EStG ist grundsaetzlich das der Anschaffung oder Veraeusserung zu Grunde
@@ -56,11 +59,10 @@ So the **binding contract date** counts, not the transfer of ownership and not s
 > mirror of the official Hinweis on 2026-08-02. The three BFH decisions it cites are Tier 4
 > and carry BStBl references, so the claim is checkable independently of the mirror.
 
-**Engine mapping:** the engine uses IBKR's `TradeDate`, which is the execution date of the
-order, i.e. the date the contract became binding on both sides. `SettleDate` is never used
-for the holding period. This is the correct column under the rule above.
+The practical consequence for broker data: the **trade date** is the date the contract became
+binding on both sides and is therefore the date this rule points at. The settlement date is not.
 
-#### How the year is measured -- anniversary arithmetic (Tier 1)
+#### [GT-ESTG23-003] How the year is measured -- anniversary arithmetic (Tier 1)
 
 § 23 fixes no arithmetic of its own, so the general rule of the Abgabenordnung applies.
 
@@ -114,10 +116,10 @@ Worked cases -- note that none of these is a 365-day count:
 | 2023-02-28 | 2024-02-28 | 2024-02-29 (366 d) | no -- the 28th exists in 2024, Abs. 3 idle |
 
 A `days <= 365` shortcut agrees with the statute except when the holding spans a 29 February,
-where it wrongly exempts an anniversary-day disposal. That was the engine's rule until the
-`HoldingPeriod` domain rule replaced it.
+where it wrongly exempts an anniversary-day disposal -- row three of the table above. Day
+counting is not a safe substitute for the anniversary comparison.
 
-#### Open question -- does § 108 Abs. 3 AO extend the Jahresfrist? (NOT resolved at Tier 1/2)
+#### [GT-ESTG23-004] Open question -- does § 108 Abs. 3 AO extend the Jahresfrist? (NOT resolved at Tier 1/2)
 
 **§ 108 Abs. 3 AO:** *"Faellt das Ende einer Frist auf einen Sonntag, einen gesetzlichen
 Feiertag oder einen Sonnabend, so endet die Frist mit dem Ablauf des naechstfolgenden
@@ -155,47 +157,45 @@ Neither reading is settled at Tier 1 or Tier 2:
 > is not reported by the commentaries that cite it). It is recorded here as *reported by*
 > Littmann/Bitz/Pust, not as read.
 
-**What the engine does, and why:** it implements the **no-extension** reading -- the period
-ends on the anniversary day whatever weekday that is. That follows the only § 23-specific
-authority located, is what the commentary describes as practice, and needs no
-Land-specific Feiertagskalender (§ 108 Abs. 3 AO's *"gesetzlicher Feiertag"* is not uniform
-across the Laender, which would itself be an unresolved input). **This is a choice between two
-defensible readings, not a settled rule**, and it is capable of changing a declared figure. If
-a disposal falls in the window between a weekend/holiday anniversary and the next working day,
-the figure should be reviewed by hand.
+A further practical objection to the extension reading, independent of the authorities: § 108
+Abs. 3 AO's *"gesetzlicher Feiertag"* is not uniform across the Laender, so applying it would
+make the Jahresfrist depend on a Land-specific Feiertagskalender -- itself an unresolved input.
 
-#### Not implemented -- two further Nr. 2 / Nr. 3 rules
+**Both readings are defensible and the difference changes a declared figure.** Where a disposal
+falls between a weekend or holiday anniversary and the next working day, the figure should be
+reviewed by hand. Registered in
+[`../research/open-legal-questions.md`](../research/open-legal-questions.md).
 
-- **Nr. 2 Satz 4:** *"Bei Wirtschaftsguetern im Sinne von Satz 1, aus deren Nutzung als
-  Einkunftsquelle zumindest in einem Kalenderjahr Einkuenfte erzielt werden, erhoeht sich der
-  Zeitraum auf zehn Jahre."* The engine applies one year unconditionally. Correct for the
-  instruments it classifies as `PRIVATE_SALE_ASSET` today (Gold/commodity ETCs and Crypto ETPs
-  held through a broker produce no income from the asset itself), but it would be wrong for an
-  income-producing "anderes Wirtschaftsgut".
-- **Nr. 3:** *"Veraeusserungsgeschaefte, bei denen die Veraeusserung der Wirtschaftsgueter
-  frueher erfolgt als der Erwerb."* Short positions in "andere Wirtschaftsgueter" are a private
-  Veraeusserungsgeschaeft under Nr. 3, which contains **no holding period at all**. The engine
-  instead applies the Nr. 2 Jahresfrist to a short cover (`consume_short_lots_for_cover`), so a
-  short held longer than a year would be reported exempt where Nr. 3 makes it taxable. No such
-  position exists in the maintainer's data (checked 2026-08-02: no sell-to-open on any
-  `PRIVATE_SALE_ASSET`), so the path is unexercised -- but it is wrong if it is ever reached.
+#### [GT-ESTG23-005] Nr. 2 Satz 4 -- the ten-year period
 
-**Engine implementation:** `is_within_section23_speculation_period()` in
-`src/tax_law/holding_period.py` -- the anniversary comparison above, implemented once and
-called from the three `FifoLedger` disposal paths. `holding_period_days` on the
-`RealizedGainLoss` is informational only and must not be used for the taxability decision.
+*"Bei Wirtschaftsguetern im Sinne von Satz 1, aus deren Nutzung als Einkunftsquelle zumindest in
+einem Kalenderjahr Einkuenfte erzielt werden, erhoeht sich der Zeitraum auf zehn Jahre."*
 
-### Inherited Assets (Unentgeltlicher Erwerb)
+The one-year period is therefore conditional: an "anderes Wirtschaftsgut" that produced income in
+even one calendar year carries a **ten**-year Frist. Gold and commodity ETCs and Crypto ETPs held
+through a broker produce no income from the asset itself, so Satz 4 is idle for them -- but that
+is a property of those instruments, not of the provision.
+
+#### [GT-ESTG23-006] Nr. 3 -- disposal before acquisition
+
+*"Veraeusserungsgeschaefte, bei denen die Veraeusserung der Wirtschaftsgueter frueher erfolgt als
+der Erwerb."*
+
+A short position in an "anderes Wirtschaftsgut" is a privates Veraeusserungsgeschaeft under
+Nr. 3, and **Nr. 3 contains no holding period at all**. Applying the Nr. 2 Jahresfrist to a short
+cover would exempt a short held longer than a year that Nr. 3 makes taxable.
+
+### [GT-ESTG23-007] Inherited Assets (Unentgeltlicher Erwerb)
 For assets acquired without consideration (gift, inheritance), the acquirer inherits the original acquisition date of the predecessor for purposes of this provision.
 
 ---
 
 ## Abs. 3 -- Gain Calculation and Exemption Threshold
 
-### Gain Calculation
+### [GT-ESTG23-008] Gain Calculation
 **Gain/Loss = Sale price - Acquisition/production costs - Advertising expenses (Werbungskosten)**
 
-### Exemption Threshold (Freigrenze) -- Abs. 3 Satz 5
+### [GT-ESTG23-009] Exemption Threshold (Freigrenze) -- Abs. 3 Satz 5
 
 Statutory text: *"Gewinne bleiben steuerfrei, wenn der aus den privaten Veraeusserungsgeschaeften
 erzielte Gesamtgewinn im Kalenderjahr weniger als 1 000 Euro betragen hat."*
@@ -213,49 +213,44 @@ erzielte Gesamtgewinn im Kalenderjahr weniger als 1 000 Euro betragen hat."*
 > "01.01.2024 -- Wachstumschancengesetz, 27.03.2024, BGBl. I Nr. 108". Validation Protocol
 > item 3.
 
-**Important:** This is a Freigrenze (exemption threshold), NOT a Freibetrag (allowance). If the threshold is exceeded, the ENTIRE gain is taxable.
+**Important:** This is a Freigrenze (exemption threshold), NOT a Freibetrag (allowance). If the
+threshold is exceeded, the ENTIRE gain is taxable. It is applied to the Gesamtgewinn from all
+private sales in the calendar year, which is a figure only the taxpayer's full return can
+produce -- a single portfolio's gains are not necessarily the whole of it.
 
-**Engine note:** The engine currently does not apply the Freigrenze automatically -- it reports the full gain/loss for Anlage SO, and the taxpayer/tax office handles the threshold.
-
-### Loss Offsetting (Satz 7-8)
+### [GT-ESTG23-010] Loss Offsetting (Satz 7-8)
 - Losses may only be offset against gains from private sales (Abs. 1) in the same calendar year
 - Losses may NOT be deducted under 10d EStG
 - However, losses reduce private sale income in the immediately preceding assessment period or subsequent periods (per 10d EStG analogously)
 - This creates a separate loss carryback/forward pool for 23 EStG
 
-**Engine mapping:** `SECTION_23_ESTG_TAXABLE_GAIN` / `SECTION_23_ESTG_TAXABLE_LOSS` -> Anlage SO
+---
+
+## [GT-ESTG23-011] Which instruments fall under 23 EStG rather than 20 EStG
+
+| Instrument | Rationale |
+|------------|-----------|
+| Gold ETCs (e.g. Xetra-Gold) | A claim to delivery of physical gold, not a security under 20 EStG |
+| Commodity ETCs | A claim on a physical commodity |
+| Crypto ETPs | Tracks a crypto asset; an "anderes Wirtschaftsgut" |
+
+These represent claims on physical commodities or crypto assets -- neither Kapitalforderungen nor
+shares in corporations. The BFH has confirmed that Xetra-Gold is a claim to delivery of physical
+gold, so gains and losses fall under 23 EStG rather than 20 EStG (BFH VIII R 4/15, VIII R 7/17,
+VIII R 35/14).
+
+The classification is per instrument and cannot be read off an asset class label: an ETC that is
+cash-settled rather than physically backed may well be a Kapitalforderung under 20 EStG.
 
 ---
 
-## Assets Covered by This Engine Under 23 EStG
-
-| Asset | IBKR Type | Rationale |
-|-------|-----------|-----------|
-| Gold ETCs (e.g., Xetra-Gold) | Commodity ETC | Physical gold claim, not a security under 20 EStG |
-| Crypto ETPs | Crypto ETP | Tracks crypto, treated as "other asset" |
-| Commodity ETCs | Commodity ETC | Physical commodity claim |
-
-### Why not 20 EStG?
-These instruments represent claims on physical commodities or crypto assets, not capital claims (Kapitalforderungen) or shares in corporations. The BFH has confirmed that Xetra-Gold constitutes a claim on physical gold delivery, making gains/losses subject to 23 EStG rather than 20 EStG (BFH VIII R 4/15, VIII R 7/17, VIII R 35/14).
-
----
-
-## Form Mapping
+## [GT-ESTG23-012] Form placement
 
 | Situation | Form | Line |
 |-----------|------|------|
-| Gain within speculation period | Anlage SO | Zeile 54 (other assets) |
-| Loss within speculation period | Anlage SO | Zeile 54 (negative) |
-| Holding period > 1 year | Not reported | Tax-exempt |
+| Gain within the Jahresfrist | Anlage SO | Zeile 54 |
+| Loss within the Jahresfrist | Anlage SO | Zeile 54 (negative) |
+| Disposal after the Jahresfrist | not reported | outside 23 Abs. 1 Satz 1 Nr. 2 |
 
-**Engine mapping** (`RealizedGainLoss`, set in `FifoLedger` from the domain rule above):
-- `is_within_speculation_period = True` -> `is_taxable_under_section_23 = True` and
-  `SECTION_23_ESTG_TAXABLE_GAIN` / `SECTION_23_ESTG_TAXABLE_LOSS` by sign
-- `is_within_speculation_period = False` -> `SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET`
-  (record-keeping only)
-- `is_taxable_under_section_23` is the flag `loss_offsetting.py` reads. For a
-  `PRIVATE_SALE_ASSET` the two carry the same value; they diverge for other categories, where
-  no speculation period exists.
-- Dates that cannot decide the question (unparseable, or a disposal before the acquisition)
-  raise `ProcessingError` rather than defaulting to exempt -- an undecidable §23 case is
-  unreported income, not a tax-free one.
+Line detail: [`../tax-forms/anlage-so-zeilen.md`](../tax-forms/anlage-so-zeilen.md),
+[GT-FORM-020].

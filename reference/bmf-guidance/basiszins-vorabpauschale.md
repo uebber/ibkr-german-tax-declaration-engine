@@ -12,15 +12,16 @@
   plus the 2019 letter from the BVL mirror. Each was read in full; their GZ, date, value and
   BStBl citation are in the table below.
 
-## Relevance to Engine
+## [GT-INVSTG-050] Scope
 
-The Basiszins is a required input for the Vorabpauschale calculation. It is published
-annually by the BMF and lives in the law-as-data registry `src/tax_law/registry.py`
-(`BASISZINS_PCT`) -- it is law, not user configuration.
+The Basiszins is the rate the Basisertrag of 18 Abs. 1 Satz 2 InvStG is computed from. It is
+published annually by the BMF in the Bundessteuerblatt under 18 Abs. 4 InvStG. **It is law, not
+a configurable parameter**, and the table below is the authoritative statement of it in this
+library.
 
 ---
 
-## Which year's Basiszins belongs in which return
+## [GT-INVSTG-051] Which year's Basiszins belongs in which return
 
 This is the single most error-prone part of the Vorabpauschale, so it is stated before the
 table:
@@ -81,9 +82,11 @@ veroeffentlicht"*; its own page (S. 154) is cited by the BMF elsewhere and is th
 in the chain not confirmed by a successor letter.
 
 **On the negative years, the BMF is explicit** -- 06.01.2021: *"Aufgrund des negativen
-Basiszins wird keine Vorabpauschale erhoben."* 07.01.2022 says the same for 2022. That is
-the same result the engine reaches by computing a non-positive Basisertrag, so the two rows
-are values, not gaps.
+Basiszins wird keine Vorabpauschale erhoben."* 07.01.2022 says the same for 2022. That is also
+what the Abs. 1 arithmetic produces: a negative Basiszins gives a non-positive Basisertrag and
+hence no Vorabpauschale. **2021 and 2022 are published values that happen to be negative, not
+years for which no rate was published** -- a distinction that matters, because a missing rate
+and a negative one call for opposite responses.
 
 ### Not a Basiszins under 18 Abs. 4 InvStG: 2016 and 2017
 
@@ -98,7 +101,7 @@ years. **Both rows removed; do not restore them.**
 
 ---
 
-## Determination Method
+## [GT-INVSTG-052] Determination Method
 
 Per InvStG 18 Abs. 4:
 
@@ -108,22 +111,16 @@ Per InvStG 18 Abs. 4:
 
 ---
 
-## Engine Configuration
+## [GT-INVSTG-053] Two ways a year can be absent from the table, meaning opposite things
 
-In the law-as-data registry `src/tax_law/registry.py` — the published table 2018-2026,
-values in percent as Decimals (`BASISZINS_PCT`). The registry is the single source the
-engine AND the tests read.
+- **Before 2018** -- no Basiszins was ever published, because the Vorabpauschale did not exist
+  (56 Abs. 1 Satz 1 InvStG). The absence is correct and complete.
+- **2018 or later** -- a rate *was* published and is missing here. The absence is a defect in
+  this document, and computing no Vorabpauschale on the strength of it would understate deemed
+  income.
 
-A year MISSING from the table makes the engine skip the Vorabpauschale (it cannot invent a
-rate). The two cases are distinguished, because they mean opposite things:
+The two must never be conflated: one is the law having nothing to say, the other is this file
+being incomplete.
 
-- year **before 2018** — no Vorabpauschale existed (56 Abs. 1 S. 1 InvStG). Logged at INFO;
-  nothing is being missed.
-- year **2018 or later** — a rate was published and is not in the table. Logged as a
-  WARNING: skipping would understate deemed income.
-
-`tests/test_tax_law_registry.py::TestBasiszinsReferenceConsistency` parses the table in
-**this file** and asserts the registry matches it row for row, so the two cannot drift.
-
-**Maintenance:** Add the new rate annually after the BMF publication (typically January),
-here AND in `src/tax_law/registry.py`. The test fails until both are updated.
+**Maintenance:** the BMF publishes the new rate in January. Add the row here when it appears.
+The table above is the authority; anything that mirrors it is downstream of it and must follow.

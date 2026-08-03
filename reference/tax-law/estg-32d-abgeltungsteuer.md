@@ -5,13 +5,15 @@
 - **Primary:** [gesetze-im-internet.de -- 32d EStG](https://www.gesetze-im-internet.de/estg/__32d.html)
 - **With annotations:** [dejure.org -- 32d EStG](https://dejure.org/gesetze/EStG/32d.html)
 
-## Relevance to Engine
+## Scope
 
-Defines the flat tax rate (Abgeltungsteuer) and the Guenstigerpruefung option. The engine calculates gross figures; the actual tax rate application is handled by the Finanzamt.
+The flat tax rate (Abgeltungsteuer), the Veranlagungspflicht that makes a declaration necessary
+at all, the foreign tax credit, and the Guenstigerpruefung option. Applying the rate is the
+Finanzamt's step, not the taxpayer's: the declaration carries gross figures.
 
 ---
 
-## Abs. 1 -- Flat Tax Rate
+## [GT-CREDIT-001] Abs. 1 -- Flat Tax Rate
 
 The income tax on capital income that does not fall under 20 Abs. 8 EStG is **25 percent** (Abgeltungsteuer).
 
@@ -22,15 +24,15 @@ Plus Solidaritaetszuschlag (5.5% of tax = effective 1.375%) and optional Kirchen
 - With Kirchensteuer (8%): 27.819%
 - With Kirchensteuer (9%): 27.995%
 
-## Abs. 3 -- Veranlagungspflicht (why this engine exists)
+## [GT-CREDIT-002] Abs. 3 -- Veranlagungspflicht (why a declaration is required at all)
 
 Capital income **not subject to inlaendischer Steuerabzug** must be declared in the
-Einkommensteuererklaerung; it is then assessed at the Abs. 1 rate. Every figure this engine
-produces falls under Abs. 3: IBKR is a foreign broker, so there is no inlaendische Zahlstelle, no
-Steuerabzug and no Steuerbescheinigung. This is also why Abs. 5 is reachable at all -- Abs. 5
-Satz 1 opens *"In den Faellen der Absaetze 3 und 4"*.
+Einkommensteuererklaerung; it is then assessed at the Abs. 1 rate. Income received through a
+foreign broker is exactly that case: no inlaendische Zahlstelle, no Steuerabzug, no
+Steuerbescheinigung. This is also why Abs. 5 is reachable at all -- Abs. 5 Satz 1 opens
+*"In den Faellen der Absaetze 3 und 4"*.
 
-## Abs. 4 -- Antrag auf Ueberpruefung des Steuereinbehalts
+## [GT-CREDIT-003] Abs. 4 -- Antrag auf Ueberpruefung des Steuereinbehalts
 
 *Not* the Guenstigerpruefung. Abs. 4 lets a taxpayer whose income **has** borne
 Kapitalertragsteuer request an assessment under Abs. 3 Satz 2 -- e.g. to use an unexhausted
@@ -39,10 +41,10 @@ Sparer-Pauschbetrag, a loss not yet taken into account under 43a Abs. 3, a Verlu
 *"Ueberpruefung des Steuereinbehalts dem Grunde und der Hoehe nach"* -- not the Zeile 4 one
 (`reference/Anltg_KAP_24.md`, Zeile 5; identical in the 2025 Anleitung; read 2026-08-03).
 
-Not reachable from this engine's inputs on their own: there is no Steuereinbehalt to review on
-foreign-broker income. It matters only for a taxpayer who also holds a German depot.
+Foreign-broker income cannot reach Abs. 4 on its own: there is no Steuereinbehalt to review. It
+matters only for a taxpayer who also holds a German depot.
 
-## Abs. 5 -- Foreign Tax Credit
+## [GT-CREDIT-004] Abs. 5 -- Foreign Tax Credit
 
 *"[...] die auf auslaendische Kapitalertraege festgesetzte und gezahlte und um einen entstandenen
 Ermaessigungsanspruch gekuerzte auslaendische Steuer, jedoch hoechstens 25 Prozent auslaendische
@@ -50,20 +52,25 @@ Steuer auf den einzelnen steuerpflichtigen Kapitalertrag, auf die deutsche Steue
 (Satz 1).
 
 This is a **self-standing** credit mechanism, not an application of 34c Abs. 1 -- 34c Abs. 1
-expressly excludes income to which 32d Abs. 1 and 3 bis 6 applies. Two ceilings, both often
-missed:
+Satz 1 *zweiter Halbsatz* expressly excludes income to which 32d Abs. 1 und 3 bis 6 applies
+(see `estg-34d-auslaendische-einkuenfte.md` for the verbatim carve-out). Two ceilings, both
+often missed:
 
-- **Satz 1** -- per *individual* Kapitalertrag, at most 25 % foreign tax. No per-country
-  Anrechnungshoechstbetrag applies.
-- **Satz 3** -- across the VZ, credit is limited to the German tax falling on the foreign
-  Kapitalertraege of that VZ.
+### [GT-CREDIT-005] Satz 1 -- the per-Kapitalertrag ceiling
 
-**Engine mapping:** `ANLAGE_KAP_FOREIGN_TAX_PAID` (Zeile 41, *"noch nicht angerechnete
-auslaendische Steuer"* -- verified identical in the 2024 and 2025 Anleitung) -- sum of all
-`WithholdingTaxEvent` amounts. **Neither ceiling is applied by the engine**; it reports the
-withheld amount and the Finanzamt applies Satz 1 and Satz 3.
+At most 25 % foreign tax per *individual* Kapitalertrag. No per-country Anrechnungshoechstbetrag
+applies.
 
-## Abs. 6 -- Guenstigerpruefung (assessment at the individual rate)
+### [GT-CREDIT-006] Satz 3 -- the per-VZ ceiling
+
+Across the Veranlagungszeitraum, the credit is limited to the German tax falling on that year's
+foreign Kapitalertraege.
+
+The form takes the figure on **Zeile 41**, *"noch nicht angerechnete auslaendische Steuer"*
+(verified identical in the 2024 and 2025 Anleitung). The declared amount is the foreign tax
+withheld; the Finanzamt applies Satz 1 and Satz 3.
+
+## [GT-CREDIT-007] Abs. 6 -- Guenstigerpruefung (assessment at the individual rate)
 
 *"Auf Antrag des Steuerpflichtigen werden anstelle der Anwendung der Absaetze 1, 3 und 4 die
 nach § 20 ermittelten Kapitaleinkuenfte den Einkuenften im Sinne des § 2 hinzugerechnet und der
@@ -86,6 +93,8 @@ identical in the 2025 Anleitung; read 2026-08-03).
 
 ---
 
-## Not Directly Implemented
+## What the declaration does not contain
 
-The engine computes pre-tax figures for the Steuererklaerung. It does not calculate the actual Abgeltungsteuer amount, as this depends on individual circumstances (Guenstigerpruefung, Sparerpauschbetrag, Kirchensteuer).
+The Abgeltungsteuer amount itself is not a figure the taxpayer enters. It follows from the
+declared gross income together with circumstances the declaration does not carry --
+Guenstigerpruefung, Sparer-Pauschbetrag, Kirchensteuer -- and is computed by the Finanzamt.

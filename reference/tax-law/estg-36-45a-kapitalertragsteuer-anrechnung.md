@@ -25,7 +25,7 @@ is the failure mode this file exists to prevent.
 
 ---
 
-## 1. The withholding happens upstream, not at the broker
+## [GT-CREDIT-020] 1. The withholding happens upstream, not at the broker
 
 A foreign broker cannot be required to withhold German KESt -- only an **inlaendisches**
 institution can be an auszahlende Stelle (44 Abs. 1 Satz 4 Nr. 1 lit. a EStG; lit. bb
@@ -50,7 +50,7 @@ dividend on a German-issuer security is German KESt+SolZ, not foreign WHT.
 
 ---
 
-## 2. Form placement -- verified against the official Anleitung, 2024 AND 2025
+## [GT-CREDIT-021] 2. Form placement -- verified against the official Anleitung, 2024 AND 2025
 
 Both years carry identical wording.
 
@@ -72,13 +72,13 @@ wrong line and claims the wrong credit mechanism.
 
 Note the interaction with Zeile 18/19: those are for income that has **NOT** been subject to
 inlaendischer Steuerabzug. A German dividend that suffered KESt upstream belongs in
-**Zeile 7**, not Zeile 19 -- unlike every other income type in this engine's inputs.
-See `reference/research/inlaendisch-auslaendisch-relevance.md`, which resolves the Z18/Z19
+**Zeile 7**, not Zeile 19 -- and it is the one income type reaching a foreign depot for which
+that is so. See `../research/inlaendisch-auslaendisch-relevance.md`, which resolves the Z18/Z19
 question by intermediary but does not cover the certified-withholding case.
 
 ---
 
-## 3. Credit requires a Steuerbescheinigung -- statutory bar
+## [GT-CREDIT-022] 3. Credit requires a Steuerbescheinigung -- statutory bar
 
 **36 Abs. 2 Satz 1 Nr. 2 EStG** credits *"die durch Steuerabzug erhobene Einkommensteuer"*
 to the extent it falls on *"die bei der Veranlagung erfassten Einkuenfte"*, provided
@@ -99,7 +99,7 @@ constellations. A foreign broker is not an eligible issuer.
 
 ---
 
-## 4. The certificate IS obtainable -- BMF 16.05.2025
+## [GT-CREDIT-023] 4. The certificate IS obtainable -- BMF 16.05.2025
 
 This is the part that resolves the apparent deadlock, and it is **settled administrative
 guidance, not interpretation**:
@@ -123,37 +123,35 @@ The taxpayer must initiate this via the broker; it is not automatic. Fees may ap
 
 ---
 
-## 5. 36a EStG (Cum/Cum) -- generally not binding for retail
+## [GT-CREDIT-024] 5. 36a EStG (Cum/Cum) -- generally not binding for retail
 
 36a can disallow **3/5** of the KESt credit where the Mindesthaltedauer / Mindestwert-
 aenderungsrisiko conditions are unmet (Anlage KAP Zeile 46). **36a Abs. 5 Nr. 1** provides a
-**EUR 20,000** Bagatellgrenze; below it the full credit stands. Retail dividend volumes in
-this engine's typical scope are far below that threshold.
+**EUR 20,000** Bagatellgrenze, measured on the Kapitalertraege of the Veranlagungszeitraum;
+below it the full credit stands regardless of holding period.
 
 ---
 
-## 6. Engine status -- KNOWN DEFECT (not yet fixed)
+## [GT-CREDIT-025] 6. How to tell German KESt from foreign withholding in a broker statement
 
-`src/engine/loss_offsetting.py` sums **every** `WithholdingTaxEvent` into
-`ANLAGE_KAP_FOREIGN_TAX_PAID` (Zeile 41) with **no country filter**, and the engine has no
-representation of Zeile 7 / 37 / 38 / 39 at all.
+A foreign broker's statement does not label the two differently in any structured field, so the
+distinction has to be inferred. Two signatures, of which the second is decisive:
 
-Confirmed against real data: dividends of German issuers held at IBKR Ireland carry
-`Withholding Tax` rows described `... - DE TAX`, and the withheld amount is **exactly
-26.375% of the gross** -- 25% KESt plus 5.5% SolZ on the KESt. That arithmetic is the
-signature that identifies such a row as German Kapitalertragsteuer rather than foreign
-withholding, and it is the test the fix should key on. (Several issuers across several
-years match. Issuer names and amounts are account data and are recorded locally in
-`private/real-data-observations.md`, which is not published.)
+1. The withholding row's description names the source country of the issuer (e.g. a `DE`
+   marker) rather than the broker's jurisdiction.
+2. **The withheld amount is exactly 26.375 % of the gross dividend** -- 25 % Kapitalertragsteuer
+   plus 5.5 % Solidaritaetszuschlag *on the tax*, i.e. 25 % x 1.055. No DBA rate produces that
+   figure: the common treaty rates on German dividends are 15 % and 26.375 % is above the
+   statutory maximum any treaty allows a source state to keep.
 
-Effect: German KESt is declared as anrechenbare **auslaendische** Steuer in Zeile 41.
+The arithmetic identity is what makes this checkable rather than a guess, and it is the test any
+classification should key on. Confirmed against several German issuers across several assessment
+years; the instance data is account data and is not published.
 
-Required to fix:
-1. Classify `WithholdingTaxEvent` by issuer country / German-KESt signature rather than
-   treating all withholding as foreign.
-2. Add Zeile 7 (certified gross income), Zeile 37 (KESt), Zeile 38 (SolZ), Zeile 39 (KiSt).
-3. Surface the Steuerbescheinigung requirement to the user -- without it the credit is
-   barred by 36 Abs. 2 Satz 2, so the report should tell them to request one via the broker.
+Consequence if the distinction is missed: German KESt gets declared as anrechenbare
+*auslaendische* Steuer on Zeile 41, where it does not belong and where the Zeile 7 / 37 / 38 / 39
+credit route -- and the Steuerbescheinigung requirement that goes with it -- never comes into
+play.
 
 ---
 

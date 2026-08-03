@@ -6,34 +6,29 @@
 - **With annotations:** [dejure.org -- 20 EStG](https://dejure.org/gesetze/EStG/20.html)
 - **Current version:** As amended by Jahressteuergesetz 2024 (BGBl. I 2024 Nr. 387), effective 01.01.2025
 
-## Relevance to Engine
+## Scope
 
-This is the central statute for all capital income taxation. It defines what constitutes capital income (Abs. 1), capital gains (Abs. 2), gain calculation (Abs. 4), corporate action treatment (Abs. 4a), and loss offsetting (Abs. 6).
+The central statute for capital income. It defines what constitutes capital income (Abs. 1),
+capital gains (Abs. 2), gain calculation (Abs. 4), corporate action treatment (Abs. 4a), and
+loss offsetting (Abs. 6, in its own file).
 
 ---
 
 ## Abs. 1 -- Income Types (Laufende Einkuenfte)
 
-### Nr. 1 -- Dividends
+### [GT-ESTG20-001] Nr. 1 -- Dividends
 Dividends and other distributions from corporations (Koerperschaften).
 
-**Engine mapping:** `DIVIDEND_CASH` event -> `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE`
-
-### Nr. 3 -- Investmentertraege
+### [GT-ESTG20-002] Nr. 3 -- Investmentertraege
 *"Investmentertraege nach § 16 des Investmentsteuergesetzes"*. This is the hook through which all
 fund income (Ausschuettungen, Vorabpauschale, Veraeusserungsgewinne) becomes Einkuenfte aus
-Kapitalvermoegen. Nr. 3a does the same for Spezial-Investmentertraege nach § 34 InvStG -- out of
-scope for this engine.
+Kapitalvermoegen, and it is why fund income is declared on Anlage KAP-INV rather than Anlage KAP.
+Nr. 3a does the same for Spezial-Investmentertraege nach § 34 InvStG.
 
-**Engine mapping:** all `ANLAGE_KAP_INV_*` categories; see `investment-tax-law/`. Declared on
-Anlage KAP-INV, not Anlage KAP.
-
-### Nr. 7 -- Interest
+### [GT-ESTG20-003] Nr. 7 -- Interest
 Interest from capital claims of any kind (Kapitalforderungen jeder Art).
 
-**Engine mapping:** `INTEREST_RECEIVED` event -> `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE`
-
-### Nr. 11 -- Stillhalterpraemien (Option Premiums)
+### [GT-ESTG20-004] Nr. 11 -- Stillhalterpraemien (Option Premiums)
 Premiums received for granting options (Einraeumung von Optionen).
 
 Statutory text (retrieved 2026-08-03): *"Stillhalterpraemien, die fuer die Einraeumung von
@@ -47,8 +42,6 @@ Key rules:
   of payment**. See the timing caveat below -- the *from when* is not settled here.
 - Physical exercise: premium does NOT reduce under Nr. 11; instead affects cost basis of underlying trade (Abs. 2)
 - Barausgleich (cash settlement) by Stillhalter: loss from Termingeschaeft under Abs. 2 Satz 1 Nr. 3a (per BFH VIII R 55/13)
-
-**Engine mapping:** Short option events, `OPTION_EXPIRED_SHORT`, `OPTION_CASH_SETTLED_SHORT`
 
 #### Open question -- from which VZ does the "negative Einnahmen" wording apply? (NOT resolved)
 
@@ -67,12 +60,11 @@ What is not established:
 - Tier 5 sources disagree openly: Haufe Finance Office states application from 01.01.2024; Haufe
   Steuer Office Excellence states from the day after promulgation.
 
-**What the engine does:** it books the paid premium at the payment date in every year. That
-matches the new statutory wording, and it matches the administration's practice even before it
-(BMF 18.01.2016 Rz. 25 ff., carried into BMF 19.05.2022 and 14.05.2025) -- but it is contrary to
-BFH VIII R 27/21 for any VZ before the amendment took effect. **A straddling Stillhalter/
-Glattstellung pair in VZ 2024 or earlier should be reviewed by hand.** Recorded in
-`research/coverage-matrix.md`.
+The administration's practice, even before the amendment, was to book the paid premium at the
+payment date (BMF 18.01.2016 Rz. 25 ff., carried into BMF 19.05.2022 and 14.05.2025). That is
+the reading the new statutory wording adopts, and it is contrary to BFH VIII R 27/21 for any VZ
+before the amendment took effect. **A straddling Stillhalter/Glattstellung pair in VZ 2024 or
+earlier should be reviewed by hand.** Registered in `research/open-legal-questions.md`.
 
 > **Correction, 2026-08-03.** This section previously asserted the change was "codified in
 > statute effective 01.01.2024" as settled fact. The codification is real; the date was
@@ -83,12 +75,10 @@ Glattstellung pair in VZ 2024 or earlier should be reviewed by hand.** Recorded 
 
 ## Abs. 2 -- Capital Gains (Veraeusserungsgewinne)
 
-### Satz 1 Nr. 1 -- Sale of shares in corporations (Aktien)
+### [GT-ESTG20-005] Satz 1 Nr. 1 -- Sale of shares in corporations (Aktien)
 Gains from sale of shares in any corporation (Koerperschaft, Personenvereinigung, Vermoegensmasse).
 
-**Engine mapping:** `LONG_POSITION_SALE` / `SHORT_POSITION_COVER` for STOCK category -> `ANLAGE_KAP_AKTIEN_GEWINN`
-
-### Satz 1 Nr. 2 -- Sale of Dividenden-/Zinsscheine apart from the Stammrecht
+### [GT-ESTG20-006] Satz 1 Nr. 2 -- Sale of Dividenden-/Zinsscheine apart from the Stammrecht
 
 **Not bonds.** Nr. 2 covers the sale of *"Dividendenscheinen und sonstigen Anspruechen durch den
 Inhaber des Stammrechts, wenn die dazugehoerigen Aktien oder sonstigen Anteile nicht
@@ -99,29 +89,23 @@ security it belongs to.
 
 > Retrieved 2026-08-03 from gesetze-im-internet.de/estg/__20.html.
 
-**Engine mapping: none.** The engine has no event for a detached coupon sale.
-
 > **Correction, 2026-08-03.** This entry previously read "Sale of other capital claims -- gains
-> from sale of interest-bearing instruments (Anleihen, Zertifikate, etc.)" and carried the BOND
-> engine mapping. That is Nr. 7, not Nr. 2 -- as this same file states correctly under
-> "Satz 1 Nr. 7" and again in the Satz 2 section below. The file contradicted itself and the
-> wrong half was the one carrying an engine mapping. Validation Protocol item 2.
+> from sale of interest-bearing instruments (Anleihen, Zertifikate, etc.)". That is Nr. 7, not
+> Nr. 2 -- as this same file states correctly under "Satz 1 Nr. 7" and again in the Satz 2
+> section below. The file contradicted itself, and the wrong half was the one being relied on.
+> Validation Protocol item 2.
 
-### Satz 1 Nr. 3 -- Termingeschaefte (Derivatives)
+### [GT-ESTG20-007] Satz 1 Nr. 3 -- Termingeschaefte (Derivatives)
 Gains from derivatives/forward transactions.
 
 **Sub-section 3a:** Gains from Barausgleich (cash settlement) of Termingeschaefte.
 
-**Engine mapping:** `OPTION_TRADE_CLOSE_LONG/SHORT`, `OPTION_EXPIRED_LONG`, `OPTION_CASH_SETTLED_LONG/SHORT` -> `ANLAGE_KAP_TERMIN_GEWINN` (<=2024) or `ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT` (>=2025)
-
-### Satz 1 Nr. 7 -- Gains from capital claims
+### [GT-ESTG20-008] Satz 1 Nr. 7 -- Gains from capital claims
 Gains from redemption/sale of capital claims (Kapitalforderungen jeder Art).
 
 Statutory text: *"der Gewinn aus der Veraeusserung von sonstigen Kapitalforderungen jeder Art im Sinne des Absatzes 1 Nummer 7"*
 
-**Engine mapping:** Bond sales, FX gains on interest-bearing accounts
-
-### Satz 2 -- Disposal fiction (Einloesung, Rueckzahlung, Abtretung)
+### [GT-ESTG20-009] Satz 2 -- Disposal fiction (Einloesung, Rueckzahlung, Abtretung)
 
 **This is the provision that makes a bond redemption at maturity a taxable disposal.**
 
@@ -151,7 +135,7 @@ that a redemption counts as a disposal at all.
 
 #### Form placement (Tier 3 -- verified against the official Anleitung)
 
-Verified against BOTH tax years the engine supports: Anleitung zur Anlage KAP **2024**
+Verified against BOTH assessment years held in this repository: Anleitung zur Anlage KAP **2024**
 (`reference/Anltg_KAP_24.md`, Zeilen 18/19) and **2025** (`reference/Anltg_KAP_25.md`,
 same wording at Zeile 19 and the identical "zusaetzlich" rule). The placement below is
 unchanged by JStG 2024 -- that amendment removed Zeilen 21/24 (Termingeschaefte), which
@@ -167,29 +151,25 @@ Anleitung zur Anlage KAP 2024, Zeilen 18/19:
   und / oder 22 und / oder 23 ein."*
 
 The Z18/Z19 split turns on the **intermediary** (broker location), NOT on issuer domicile
--- see `reference/research/inlaendisch-auslaendisch-relevance.md`. Because IBKR is an Irish
-broker, all income from this engine's inputs lands in Zeile 19 regardless of where the bond
-issuer sits. **This mapping is conditional on that fact**; it is not a property of bond
-maturities as such. A bond redeemed through a German Zahlstelle would belong in Zeile 18.
+-- see `reference/research/inlaendisch-auslaendisch-relevance.md`. Income received through a
+foreign broker lands in Zeile 19 regardless of where the bond issuer sits. **The placement is
+conditional on that fact**; it is not a property of bond maturities as such. A bond redeemed
+through a German Zahlstelle would belong in Zeile 18.
 
 Applying the "zusaetzlich" rule: a bond maturity **gain** nets into Zeile 19 only (Zeile 20
 is reserved for Aktien). A bond maturity **loss** subtracts within Zeile 19 and is
 additionally entered in Zeile 22 as a positive amount (Zeile 23 is reserved for Aktien).
 
-**Engine mapping:** IBKR corporate action `Type="BM"` -> synthetic `TRADE_SELL_LONG` ->
-`RealizationType.LONG_POSITION_SALE` -> `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE` (Zeile 19)
-if positive, `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22) if negative. EUR conversion of both
-legs follows the engine's general enrichment rule (ECB rate at each event date), not a
-provision specific to Satz 2.
-
 ---
 
-## Abs. 3 -- Special Benefits
+## [GT-ESTG20-010] Abs. 3 -- Special Benefits
 Special benefits or advantages granted in addition to or in place of income under Abs. 1 and 2.
 
 ---
 
 ## Abs. 4 -- Gain Calculation
+
+### [GT-ESTG20-011] Satz 1 -- the gain
 
 **Gain = Sale proceeds - Transaction costs - Acquisition costs (Anschaffungskosten)**
 
@@ -197,9 +177,7 @@ Abs. 4 has **nine Saetze**. Satz 1 defines the gain; **Satz 7** supplies the
 lot-identification fiction that decides *which* Anschaffungskosten are used when several
 lots of the same security are held.
 
-**Engine implementation:** `FifoManager` with lot-level tracking.
-
-### Satz 7 -- FIFO fiction (Verbrauchsreihenfolge)
+### [GT-ESTG20-012] Satz 7 -- FIFO fiction (Verbrauchsreihenfolge)
 
 Statutory text: *"Bei vertretbaren Wertpapieren, die einem Verwahrer zur Sammelverwahrung
 im Sinne des § 5 des Depotgesetzes [...] anvertraut worden sind, ist zu unterstellen, dass
@@ -226,7 +204,7 @@ What the statute does and does not say:
 - It does **not** offer a specific-identification alternative. Its only condition is the
   form of custody (Sammelverwahrung per § 5 DepotG).
 
-#### Depot-relatedness (Tier 2 -- BMF, this is where "je Depot" comes from)
+#### [GT-ESTG20-013] Depot-relatedness (Tier 2 -- BMF, this is where "je Depot" comes from)
 
 BMF-Schreiben vom 14. Mai 2025, GZ IV C 1 - S 2252/00075/016/070, *"Einzelfragen zur
 Abgeltungsteuer"*, section I.4.b **Rz. 97-99**. Neufassung of BMF 19.05.2022
@@ -294,31 +272,28 @@ structure. No Tier 1 or Tier 2 source located that settles this. Per-account FIF
 defensible reading and matches the administration's evident intent, but it is reasoned,
 not sourced.
 
-Practical consequence: this engine's outputs are Veranlagungsfaelle under § 32d Abs. 3
-(foreign broker, no inlaendische Zahlstelle, no Steuerbescheinigung), so no bank has
+Practical consequence: a declaration prepared from foreign-broker data is a Veranlagungsfall
+under § 32d Abs. 3 (no inlaendische Zahlstelle, no Steuerbescheinigung), so no bank has
 applied FIFO and the taxpayer both computes and evidences it. § 90 Abs. 2 AO imposes an
 erhoehte Mitwirkungspflicht for foreign matters, so a per-depot result must be evidenced
 by per-account holdings, not merely asserted.
 
-**Engine mapping and known deviation:** the ledger registries are keyed by
-`(account_key, asset_id)`, but every write uses a single `DEFAULT_ACCOUNT` constant and no
-account identifier is read anywhere in `src/engine/`, `src/domain/` or `src/processing/`
--- i.e. the key is a seam and FIFO is still pooled across accounts. This **deviates from
-Rz. 97 S. 2**. It is currently without effect on the maintainer's own declaration, whose input
-data contains exactly one `ClientAccountID`; per-depot and pooled FIFO coincide when there
-is one depot. For any taxpayer
-holding one ISIN in two accounts the pooled result is wrong. Flagged here per the
-CLAUDE.md ground rule that code/reference conflicts are surfaced, not silently followed.
-Note that a transfer between the taxpayer's own depots is **not** a Veraeusserung under
-Abs. 2 (no change of beneficial owner, no consideration): acquisition date and cost carry
-over to the receiving depot, so a per-depot implementation must relocate lots rather than
-close and reopen them. The § 43 / § 43a Depotuebertrag rules (BMF Rz. 162-173, 184a-193)
-are Kapitalertragsteuer provisions addressed to German institutions and do not apply to a
-foreign broker; they cannot be cited for the disposal question.
+#### [GT-ESTG20-014] A transfer between the taxpayer's own depots is not a disposal
+
+Moving a holding from one of the taxpayer's own depots to another is **not** a Veraeusserung
+under Abs. 2: there is no change of beneficial owner and no consideration. Acquisition date and
+acquisition cost carry over to the receiving depot. A per-depot lot computation must therefore
+*relocate* lots on such a transfer, not close and reopen them -- reopening would reset the
+holding period and the basis.
+
+The § 43 / § 43a Depotuebertrag rules (BMF Rz. 162-173, 184a-193) are Kapitalertragsteuer
+provisions addressed to German institutions. They do not apply to a foreign broker and cannot be
+cited for the disposal question.
 
 ### Abs. 4a -- Corporate Actions (Kapitalmasnahmen)
 
-**Satz 1-2: Stock-for-stock mergers/exchanges**
+#### [GT-ESTG20-015] Satz 1-2: Stock-for-stock mergers/exchanges
+
 When shares are exchanged for shares of another corporation due to corporate measures (gesellschaftsrechtliche Massnahmen), the new shares step into the tax position of the old shares. No taxable event occurs.
 
 Conditions:
@@ -327,18 +302,20 @@ Conditions:
 
 Additional cash consideration (Barzuzahlung) is taxable under Abs. 1 Nr. 1.
 
-**Satz 5: Zuteilung without consideration (foreign corporations)**
+#### [GT-ESTG20-016] Satz 5: Zuteilung without consideration (foreign corporations)
+
 Shares allocated without consideration by a corporation with *"weder Geschaeftsleitung noch Sitz
 im Inland"*: income and acquisition cost are both set to EUR 0, and the cost basis of the shares
 that gave rise to the allocation is unchanged. **Conditional** -- the statute adds *"wenn die
 Voraussetzungen der Saetze 3, 4 und 7 nicht vorliegen"*, i.e. Satz 5 is the residual case after
-the Wandelanleihe (Satz 3), Bezugsrecht (Satz 4) and Abspaltung (Satz 7) rules. The engine
-applies the EUR 0 treatment without testing those three conditions.
+the Wandelanleihe (Satz 3), Bezugsrecht (Satz 4) and Abspaltung (Satz 7) rules.
 
-**Satz 7: Spin-offs (Abspaltungen)**
+#### [GT-ESTG20-017] Satz 7: Spin-offs (Abspaltungen)
+
 Asset transfer via Abspaltung: Satz 1 and 2 apply analogously.
 
-**Satz 6: Timing**
+#### [GT-ESTG20-018] Satz 6: Timing
+
 *"Soweit es auf die steuerliche Wirksamkeit einer Kapitalmassnahme im Sinne der vorstehenden
 Saetze 1 bis 5 ankommt, ist auf den Zeitpunkt der Einbuchung in das Depot des Steuerpflichtigen
 abzustellen."*
@@ -348,20 +325,19 @@ abzustellen."*
 > does not govern the Abspaltung case in Satz 7. Retrieved 2026-08-03 from
 > gesetze-im-internet.de/estg/__20.html. Validation Protocol item 2.
 
-**Saetze 3 and 4 -- present in the statute, not implemented**
-- Satz 3: Wandel-/Umtauschanleihen -- where the holder or issuer exercises a right to deliver
-  shares instead of cash at maturity, the cost of the claim becomes the disposal price of the
-  claim *and* the acquisition cost of the shares received.
-- Satz 4: Bezugsrechte -- the portion of the old shares' acquisition cost attributable to the
-  subscription right is set at EUR 0.
+#### [GT-ESTG20-019] Satz 3: Wandel-/Umtauschanleihen
 
-Neither has an engine event. Recorded per Validation Protocol item 2.
+Where the holder or issuer exercises a right to deliver shares instead of cash at maturity, the
+cost of the claim becomes the disposal price of the claim *and* the acquisition cost of the
+shares received.
 
-**Engine mapping:**
-- `CORP_MERGER_STOCK` -> tax-neutral cost basis transfer (FifoManager drain/receive)
-- `CORP_MERGER_CASH` -> `CASH_MERGER_PROCEEDS` realization
-- `CORP_SPLIT_FORWARD` -> lot quantity/cost adjustment
-- `CORP_STOCK_DIVIDEND` -> new shares with EUR 0 cost basis (if foreign)
+#### [GT-ESTG20-020] Satz 4: Bezugsrechte
+
+The portion of the old shares' acquisition cost attributable to the subscription right is set at
+EUR 0.
+
+Saetze 3 and 4 are recorded per Validation Protocol item 2: both are inside the cited Absatz, and
+neither is a consequence of Satz 5 -- indeed Satz 5 is expressly the residual case *after* them.
 
 ---
 
@@ -371,6 +347,8 @@ See dedicated file: [estg-20-abs6-verlustverrechnung.md](estg-20-abs6-verlustver
 
 ---
 
-## Abs. 8 -- Subsidiarity (Subsidiaritaet)
+## [GT-ESTG20-021] Abs. 8 -- Subsidiarity (Subsidiaritaet)
 
-Capital income that belongs to income from agriculture/forestry, trade/business, self-employment, or rental is attributed to those income types instead. This engine assumes all positions are in Privatvermoegen (private assets).
+Capital income that belongs to income from agriculture/forestry, trade/business, self-employment,
+or rental is attributed to those income types instead. Everything else in this file assumes the
+holding is in Privatvermoegen.

@@ -1,7 +1,13 @@
 # Reference Library -- German Tax Law Sources
 
-Curated collection of tax and legal sources for the IBKR German Tax Declaration Engine.
-All sources are ranked by authority tier (see research/research-strategy.md).
+Curated collection of German tax and legal sources. All sources are ranked by authority tier
+(see research/research-strategy.md).
+
+**This library states law and nothing else.** It names no module, class, field, test or data
+file. Implementation positions -- what is implemented, what deviates, what is out of scope, and
+which tests guard each -- are recorded in
+[`docs/legal-implementation-map.md`](../docs/legal-implementation-map.md), keyed by the claim IDs
+tagged on the headings here. See the Purity Rule in CLAUDE.md.
 
 ## Tax Law (EStG)
 
@@ -17,7 +23,8 @@ All sources are ranked by authority tier (see research/research-strategy.md).
 - [InvStG 16 -- Investmentertraege](investment-tax-law/invstg-16-investmentertraege.md) -- Definition of taxable fund income
 - [InvStG 18 -- Vorabpauschale](investment-tax-law/invstg-18-vorabpauschale.md) -- Deemed minimum income, Basiszins, calculation formula
 - [InvStG 19 -- Veraeusserungsgewinne](investment-tax-law/invstg-19-veraeusserungsgewinne.md) -- Fund sale gain calculation, VP deduction
-- [InvStG 20 -- Teilfreistellung](investment-tax-law/invstg-20-teilfreistellung.md) -- Partial exemption rates by fund type (30%/15%/60%/80%)
+- [InvStG 20 -- Teilfreistellung](investment-tax-law/invstg-20-teilfreistellung.md) -- Partial exemption rates by fund type (30%/15%/60%/80%); fund type definitions and their thresholds
+- [InvStG 22 -- Aenderung des Teilfreistellungssatzes](investment-tax-law/invstg-22-teilfreistellungssatz-aenderung.md) -- fiktive Veraeusserung when the applicable rate changes or its conditions lapse
 
 ## Tax Forms (Zeilen-Referenz)
 
@@ -40,6 +47,7 @@ All sources are ranked by authority tier (see research/research-strategy.md).
 
 ## Research Meta-Documentation
 
-- [Research Strategy](research/research-strategy.md) -- Source ranking (5 tiers), validation protocol, scope
-- [Coverage Matrix](research/coverage-matrix.md) -- Event/asset vs. source mapping, completeness check, open legal questions
+- [Research Strategy](research/research-strategy.md) -- Source ranking (5 tiers), validation protocol, claim IDs, how the library may be extended
+- [Coverage Matrix](research/coverage-matrix.md) -- Event/asset vs. source mapping, completeness check
+- [Open Legal Questions](research/open-legal-questions.md) -- points no Tier 1/2 source settles: both readings and both authorities, for each
 - [Inlaendisch vs. Auslaendisch: relevance](research/inlaendisch-auslaendisch-relevance.md) -- why the 34d distinction has no expression on the declaration under Abgeltungsteuer

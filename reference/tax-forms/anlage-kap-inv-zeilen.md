@@ -7,25 +7,31 @@
 - **2025 Instructions:** Already in repository: `reference/Anltg_KAP_INV_25.md`
 - **Legal basis:** InvStG 16, 18, 19, 20
 
-## Relevance to Engine
+## Scope
 
-Maps investment fund events to form lines. All amounts are reported as GROSS (brutto, before Teilfreistellung).
+Which fund event goes on which line of Anlage KAP-INV. All amounts are entered GROSS (brutto,
+before Teilfreistellung) -- see [GT-FORM-034].
 
----
-
-## Distribution Lines (Ausschuettungen brutto)
-
-| Zeile | Fund Type | Engine TaxReportingCategory |
-|-------|-----------|----------------------------|
-| 4 | Aktienfonds | `ANLAGE_KAP_INV_AKTIENFONDS_AUSSCHUETTUNG_GROSS` |
-| 5 | Mischfonds | `ANLAGE_KAP_INV_MISCHFONDS_AUSSCHUETTUNG_GROSS` |
-| 6 | Immobilienfonds | `ANLAGE_KAP_INV_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS` |
-| 7 | Auslands-Immobilienfonds | `ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_AUSSCHUETTUNG_GROSS` |
-| 8 | Sonstige Fonds | `ANLAGE_KAP_INV_SONSTIGE_FONDS_AUSSCHUETTUNG_GROSS` |
+The form is organised by **fund type**, in the same order in every block: Aktienfonds,
+Mischfonds, Immobilienfonds, Auslands-Immobilienfonds, Sonstige Fonds. The type determines the
+Teilfreistellung the Finanzamt then applies
+([`../investment-tax-law/invstg-20-teilfreistellung.md`](../investment-tax-law/invstg-20-teilfreistellung.md)).
 
 ---
 
-## Vorabpauschale Lines (brutto)
+## [GT-FORM-030] Zeilen 4-8 -- Ausschuettungen (brutto)
+
+| Zeile | Fund type |
+|-------|-----------|
+| 4 | Aktienfonds |
+| 5 | Mischfonds |
+| 6 | Immobilienfonds |
+| 7 | Auslands-Immobilienfonds |
+| 8 | Sonstige Fonds |
+
+---
+
+## [GT-FORM-031] Zeilen 9-13 -- Vorabpauschale (brutto)
 
 **These take the Vorabpauschale for the *preceding* calendar year.** Zeilen 9-13 of the VZ `Y`
 form take *"die Ihnen im Jahr `Y` als zugeflossen geltenden Vorabpauschalen"*, and the
@@ -33,25 +39,25 @@ Vorabpauschale for `Y-1` is deemed to flow on the first working day of `Y` (18 A
 The 2024 Anleitung says it outright: *"Die Vorabpauschale fuer 2023 gilt am 2. Januar 2024 als
 zugeflossen."* See `investment-tax-law/invstg-18-vorabpauschale.md`.
 
-| Zeile | Fund Type | Engine TaxReportingCategory |
-|-------|-----------|----------------------------|
-| 9 | Aktienfonds | `ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO` |
-| 10 | Mischfonds | `ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO` |
-| 11 | Immobilienfonds | `ANLAGE_KAP_INV_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO` |
-| 12 | Auslands-Immobilienfonds | `ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO` |
-| 13 | Sonstige Fonds | `ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO` |
+| Zeile | Fund type |
+|-------|-----------|
+| 9 | Aktienfonds |
+| 10 | Mischfonds |
+| 11 | Immobilienfonds |
+| 12 | Auslands-Immobilienfonds |
+| 13 | Sonstige Fonds |
 
 ---
 
-## Sale Gain/Loss Lines (Veraeusserungsgewinn/-verlust brutto)
+## [GT-FORM-032] Zeilen 14/17/20/23/26 -- Veraeusserungsgewinn und -verlust (brutto)
 
-| Zeile | Fund Type | Engine TaxReportingCategory |
-|-------|-----------|----------------------------|
-| 14 | Aktienfonds | `ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS` |
-| 17 | Mischfonds | `ANLAGE_KAP_INV_MISCHFONDS_GEWINN_GROSS` |
-| 20 | Immobilienfonds | `ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS` |
-| 23 | Auslands-Immobilienfonds | `ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS` |
-| 26 | Sonstige Fonds | `ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS` |
+| Zeile | Fund type |
+|-------|-----------|
+| 14 | Aktienfonds |
+| 17 | Mischfonds |
+| 20 | Immobilienfonds |
+| 23 | Auslands-Immobilienfonds |
+| 26 | Sonstige Fonds |
 
 The two interleaved line sets are distinct transitional rules for pre-2018 units, not one
 (Anleitung headings, read 2026-08-03):
@@ -65,18 +71,15 @@ The two interleaved line sets are distinct transitional rules for pre-2018 units
   *nicht* bestandsgeschuetzte Alt-Anteile i. S. d. 56 Abs. 2 i. V. m. Abs. 3 Satz 1 InvStG,
   deemed sold at the close of 31.12.2017. Carried over from Zeile 56.
 
-Neither is produced by this engine: it has no pre-2018 acquisition data and no
-Alt-Anteil classification. A taxpayer holding such units must complete these lines by hand.
+Both require data from before the InvStG 2018 regime began -- an acquisition date before
+01.01.2009 for the bestandsgeschuetzte case, and a 31.12.2017 valuation for the fiktive
+Veraeusserung.
 
 ---
 
-## Vorabpauschale Deduction on Sale -- Zeile 53
+## [GT-FORM-033] Zeile 53 -- Vorabpauschale deduction on disposal
 
-| Zeile | Description | Engine TaxReportingCategory |
-|-------|-------------|----------------------------|
-| 53 | Waehrend der Besitzzeit angesetzte Vorabpauschalen (brutto) | none -- **not computed**, see below |
-
-Per InvStG 19 Abs. 1 Satz 3-4 the sale gain is reduced by the gross (not TF-adjusted)
+Per 19 Abs. 1 Saetze 3-4 InvStG the disposal gain is reduced by the gross (pre-Teilfreistellung)
 Vorabpauschalen assessed during the holding period **of the units disposed of**.
 
 Anleitung zur Anlage KAP-INV 2024 and 2025, Zeile 53 (identical wording, read 2026-08-03):
@@ -88,15 +91,11 @@ Anleitung zur Anlage KAP-INV 2024 and 2025, Zeile 53 (identical wording, read 20
 > diese Vorabpauschalen der Besteuerung unterworfen haben (Zeile 9 bis 13)."*
 
 **Correction, 2026-08-03 (Validation Protocol items 4 and 8).** This section previously named
-**Zeile 55** and an engine category `ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55`. That was wrong:
-Zeile 55 is *"Gewinne aus der Veraeusserung von bestandsgeschuetzten Alt-Anteilen"*. The file
-contradicted itself -- the detail-line table below already listed Zeile 53 correctly -- and the
-engine implemented the wrong branch. The figure it emitted was additionally the wrong quantity:
-the sum of the current tax year's gross Vorabpauschalen, rather than those accumulated over the
-holding period of the units actually sold. The engine now emits no Zeile 53 figure and records a
-data gap where fund units were disposed of. Mirrored corrections in
-`investment-tax-law/invstg-19-veraeusserungsgewinne.md`,
-`investment-tax-law/invstg-18-vorabpauschale.md` and `research/coverage-matrix.md`.
+**Zeile 55**. That was wrong: Zeile 55 is *"Gewinne aus der Veraeusserung von
+bestandsgeschuetzten Alt-Anteilen"*. The file contradicted itself -- the detail-line table below
+already listed Zeile 53 correctly. Mirrored corrections in
+`../investment-tax-law/invstg-19-veraeusserungsgewinne.md`,
+`../investment-tax-law/invstg-18-vorabpauschale.md` and `../research/coverage-matrix.md`.
 
 ---
 
@@ -121,10 +120,13 @@ Z15/18/21/24/27; Z56 to Z16/19/22/25/28.
 
 ---
 
-## Gross Reporting Principle
+## [GT-FORM-034] Gross reporting principle
 
-All amounts on Anlage KAP-INV are GROSS (before Teilfreistellung).
+Every amount on Anlage KAP-INV is entered **gross**, before Teilfreistellung. The Finanzamt
+applies the Teilfreistellung during the assessment, deriving the rate from the fund type the
+line itself indicates. This is why the form is organised by fund type at all: the line number
+*is* the rate declaration.
 
-**Why:** The Finanzamt applies the Teilfreistellung during assessment. The taxpayer reports the full unreduced amount. This is explicitly stated in the form instructions.
-
-The Teilfreistellung rates (30%/15%/60%/80%/0%) are applied automatically by the tax office based on the fund type indicated.
+The rates are stated once in the library, in
+[`../investment-tax-law/invstg-20-teilfreistellung.md`](../investment-tax-law/invstg-20-teilfreistellung.md);
+they are deliberately not repeated here.
