@@ -12,6 +12,7 @@ from src.domain.assets import (
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
 from src.domain.events import FinancialEvent, OptionLifecycleEvent, TradeEvent
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
+from src.domain.exceptions import DataIntegrityError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
 from src.utils.sorting_utils import get_event_sort_key
@@ -101,43 +102,29 @@ class ParsingOrchestrator:
             logger.info(f"Loaded {len(self.raw_options_eae)} raw OptionEAE records.")
 
     def process_positions(self):
-        # ... (implementation is the same)
+        # IBKR emits one position row per account. Assets are resolved account-agnostically
+        # (by ISIN/Conid) and German tax aggregates across a person's accounts, so when the
+        # same security is held in several accounts the rows must be SUMMED (quantity, cost
+        # basis, position value) rather than overwritten. Per-unit mark price is identical
+        # across accounts and is taken as-is.
         logger.info("Processing start-of-year positions...")
-        for raw_pos in self.raw_positions_start:
-            asset = self.asset_resolver.get_or_create_asset(
-                raw_isin=raw_pos.isin, raw_conid=raw_pos.conid, raw_symbol=raw_pos.symbol,
-                raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
-                raw_description=raw_pos.description,
-                description_source_type="position",
-                raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-                raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
-                raw_underlying_conid=raw_pos.underlying_conid,
-                raw_underlying_symbol=raw_pos.underlying_symbol
-            )
-            asset.soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0)) # Changed from initial_quantity_soy
-            asset.soy_cost_basis_amount = safe_decimal(raw_pos.cost_basis_money) # Changed from initial_cost_basis_money_soy
-            asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
-            asset.soy_market_price = safe_decimal(raw_pos.mark_price)
-            asset.soy_position_value = safe_decimal(raw_pos.position_value)
-            asset.soy_mark_price_currency = raw_pos.currency_primary
+        for asset, agg in self._aggregate_positions(self.raw_positions_start).values():
+            asset.soy_quantity = agg["qty"]
+            asset.soy_cost_basis_amount = agg["cost"]
+            asset.soy_cost_basis_currency = agg["currency"]
+            asset.soy_market_price = agg["price"]
+            asset.soy_position_value = agg["value"]
+            asset.soy_mark_price_currency = agg["currency"]
+            self._warn_if_co_held(asset, agg, "SoY")
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
 
         logger.info("Processing end-of-year positions...")
-        for raw_pos in self.raw_positions_end:
-            asset = self.asset_resolver.get_or_create_asset(
-                raw_isin=raw_pos.isin, raw_conid=raw_pos.conid, raw_symbol=raw_pos.symbol,
-                raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
-                raw_description=raw_pos.description,
-                description_source_type="position",
-                raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-                raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
-                raw_underlying_conid=raw_pos.underlying_conid,
-                raw_underlying_symbol=raw_pos.underlying_symbol
-            )
-            asset.eoy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.eoy_market_price = safe_decimal(raw_pos.mark_price) # Changed from eoy_mark_price
-            asset.eoy_position_value = safe_decimal(raw_pos.position_value)
-            asset.eoy_mark_price_currency = raw_pos.currency_primary
+        for asset, agg in self._aggregate_positions(self.raw_positions_end).values():
+            asset.eoy_quantity = agg["qty"]
+            asset.eoy_market_price = agg["price"]
+            asset.eoy_position_value = agg["value"]
+            asset.eoy_mark_price_currency = agg["currency"]
+            self._warn_if_co_held(asset, agg, "EoY")
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
 
         # Preceding calendar year's snapshots. Used ONLY by the Vorabpauschale, which for a VZ Y
@@ -154,6 +141,84 @@ class ParsingOrchestrator:
             asset = self._resolve_asset_from_position(raw_pos)
             asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
+
+    def _warn_if_co_held(self, asset, agg, snapshot_label):
+        """Warn when one security sits in more than one account in the same snapshot.
+
+        The engine merges accounts into a single FIFO queue per security, so a disposal consumes
+        the oldest lot across all accounts. Applied per single custody account, a different lot
+        can be consumed and the reported gain differs. That Depot boundary is Tier 2 -- BMF
+        14.05.2025, GZ IV C 1 - S 2252/00075/016/070, Rz. 97 Satz 2 -- not statutory: § 20 Abs. 4
+        Satz 7 EStG supplies the FIFO fiction but never says "je Depot", and whether the boundary
+        transposes to a foreign broker's sub-accounts is unresolved. See
+        reference/tax-law/estg-20-kapitalvermoegen.md [GT-ESTG20-013] and open question Q2; the
+        engine's position is recorded against that claim in docs/legal-implementation-map.md.
+
+        Co-holding is the input shape that makes the pooling observable. A transfer is not
+        co-holding -- it shows in only one account per snapshot."""
+        accounts = agg.get("accounts") or set()
+        if len(accounts) > 1:
+            logger.warning(
+                f"Security {asset.get_classification_key()} is held in multiple accounts "
+                f"({', '.join(sorted(accounts))}) in the {snapshot_label} snapshot. FIFO is "
+                f"computed account-agnostically (merged across accounts), so a gain realised on a "
+                f"sale from one account may differ from a per-Depot computation (BMF 14.05.2025 "
+                f"Rz. 97 Satz 2). Known deviation [GT-ESTG20-013]."
+            )
+
+    def _aggregate_positions(self, raw_positions):
+        """Resolve each raw position row to its account-agnostic asset and sum quantity,
+        cost basis and position value across accounts. Returns {asset_id: (asset, agg)}.
+
+        Amounts are summed only after the rows are shown to be commensurable: every row for one
+        asset must report the same currency, or the sum would add two currencies and label the
+        total with whichever row happened to come last. All disagreements are collected and
+        reported together, so one run identifies the whole problem.
+
+        The per-unit mark price is assumed equal across accounts and the last row's value is
+        taken. That assumption is NOT enforced -- unlike currency it reaches no declared figure
+        (only diagnostic reporting), so a disagreement is not worth aborting a run for.
+        """
+        aggregated: dict = {}
+        currency_conflicts: dict = {}
+        for raw_pos in raw_positions:
+            asset = self._resolve_asset_from_position(raw_pos)
+            _, agg = aggregated.setdefault(asset.internal_asset_id, (asset, {
+                "qty": Decimal(0), "cost": Decimal(0),
+                "value": Decimal(0), "price": None, "currency": None,
+                "accounts": set(),
+            }))
+            if agg["currency"] is None:
+                agg["currency"] = raw_pos.currency_primary
+            elif raw_pos.currency_primary != agg["currency"]:
+                currency_conflicts.setdefault(
+                    asset.get_classification_key(), {agg["currency"]}
+                ).add(raw_pos.currency_primary)
+            row_qty = safe_decimal(raw_pos.position, default=Decimal(0))
+            agg["qty"] += row_qty
+            if row_qty != Decimal(0) and raw_pos.client_account_id:
+                agg["accounts"].add(raw_pos.client_account_id)
+            cost = safe_decimal(raw_pos.cost_basis_money)
+            if cost is not None:
+                agg["cost"] += cost
+            value = safe_decimal(raw_pos.position_value)
+            if value is not None:
+                agg["value"] += value
+            agg["price"] = safe_decimal(raw_pos.mark_price)
+
+        if currency_conflicts:
+            detail = "; ".join(
+                f"{key} in {sorted(str(c) for c in ccys)}"
+                for key, ccy in sorted(currency_conflicts.items())
+                for ccys in [ccy]
+            )
+            raise DataIntegrityError(
+                f"{len(currency_conflicts)} instrument(s) report more than one CurrencyPrimary "
+                f"across account rows in the same positions snapshot. Cost basis and position "
+                f"value cannot be summed across currencies, and the total would carry whichever "
+                f"currency was read last. Affected: {detail}"
+            )
+        return aggregated
 
     def _resolve_asset_from_position(self, raw_pos):
         """Resolve (or create) the Asset a raw position record refers to.
@@ -453,18 +518,52 @@ class ParsingOrchestrator:
             except (ValueError, TypeError):
                 pass  # malformed date, skip validation
 
+        # IBKR emits one cash-balance row per account. CashBalance assets are resolved
+        # account-agnostically (CASH_BALANCE:<currency>), and German tax aggregates across a
+        # person's accounts, so same-currency rows from different accounts must be SUMMED —
+        # not overwritten (which would keep only the last account's balance).
+        # Per currency: [summed SOY, summed EOY, any single account row was non-tiny].
+        # A row with no CurrencyPrimary is refused rather than skipped: its balance cannot be
+        # assigned to any currency ledger, and discarding it would drop that balance out of the
+        # FX computation silently. All such rows are collected and reported together.
+        unnamed_currency_rows = [
+            rb for rb in self.raw_cash_balances if not (rb.currency_primary or "").strip()
+        ]
+        if unnamed_currency_rows:
+            detail = "; ".join(
+                f"account {rb.client_account_id or 'unknown'} "
+                f"(StartingCash {rb.starting_cash}, EndingCash {rb.ending_cash})"
+                for rb in unnamed_currency_rows
+            )
+            raise DataIntegrityError(
+                f"{len(unnamed_currency_rows)} cash-balance row(s) report no CurrencyPrimary. "
+                f"Such a balance cannot be attributed to a currency ledger, and continuing would "
+                f"drop it from the FX computation without trace. Affected: {detail}"
+            )
+
+        summed_by_currency: dict = {}
         for raw_balance in self.raw_cash_balances:
+            currency = (raw_balance.currency_primary or "").upper()
             # Skip EUR (base currency) and BASE_SUMMARY (IBKR aggregate row)
-            if raw_balance.currency_primary and raw_balance.currency_primary.upper() in ("EUR", "BASE_SUMMARY"):
+            if currency in ("EUR", "BASE_SUMMARY"):
                 logger.debug(f"Skipping cash balance row: {raw_balance.currency_primary}")
                 balances_skipped += 1
                 continue
+            acc = summed_by_currency.setdefault(currency, [Decimal("0"), Decimal("0"), False])
+            acc[0] += raw_balance.starting_cash
+            acc[1] += raw_balance.ending_cash
+            if (abs(raw_balance.starting_cash) >= MIN_BALANCE_THRESHOLD
+                    or abs(raw_balance.ending_cash) >= MIN_BALANCE_THRESHOLD):
+                acc[2] = True
 
-            # Skip tiny balances (below threshold)
-            if (abs(raw_balance.starting_cash) < MIN_BALANCE_THRESHOLD and
-                abs(raw_balance.ending_cash) < MIN_BALANCE_THRESHOLD):
-                logger.debug(f"Skipping tiny cash balance {raw_balance.currency_primary}: "
-                           f"SOY={raw_balance.starting_cash}, EOY={raw_balance.ending_cash}")
+        for currency, (soy_total, eoy_total, any_row_significant) in summed_by_currency.items():
+            # Drop a currency only if it is genuinely dust: both the summed balance is tiny AND
+            # no individual account row was significant. This keeps a currency that is actively
+            # held but nets to ~0 across accounts (e.g. +5000 / -5000) — its currency ledger is
+            # still needed so intra-year FX conversions are tracked.
+            if (abs(soy_total) < MIN_BALANCE_THRESHOLD and abs(eoy_total) < MIN_BALANCE_THRESHOLD
+                    and not any_row_significant):
+                logger.debug(f"Skipping tiny cash balance {currency}: SOY={soy_total}, EOY={eoy_total}")
                 balances_skipped += 1
                 continue
 
@@ -472,26 +571,37 @@ class ParsingOrchestrator:
             cash_asset = self.asset_resolver.get_or_create_asset(
                 raw_isin=None,
                 raw_conid=None,
-                raw_symbol=raw_balance.currency_primary,
-                raw_currency=raw_balance.currency_primary,
+                raw_symbol=currency,
+                raw_currency=currency,
                 raw_ibkr_asset_class="CASH",
-                raw_description=f"Cash Balance {raw_balance.currency_primary}",
+                raw_description=f"Cash Balance {currency}",
                 description_source_type="cash_balance_csv"
             )
 
             # Set SOY/EOY quantities (can be negative for short positions)
-            cash_asset.soy_quantity = raw_balance.starting_cash
-            cash_asset.eoy_quantity = raw_balance.ending_cash
+            cash_asset.soy_quantity = soy_total
+            cash_asset.eoy_quantity = eoy_total
 
-            position_type = "LONG" if raw_balance.starting_cash >= Decimal("0") else "SHORT"
-            eoy_position_type = "LONG" if raw_balance.ending_cash >= Decimal("0") else "SHORT"
+            position_type = "LONG" if soy_total >= Decimal("0") else "SHORT"
+            eoy_position_type = "LONG" if eoy_total >= Decimal("0") else "SHORT"
 
-            logger.debug(f"Cash {raw_balance.currency_primary}: "
-                        f"SOY={raw_balance.starting_cash} ({position_type}), "
-                        f"EOY={raw_balance.ending_cash} ({eoy_position_type})")
+            logger.debug(f"Cash {currency} (summed across accounts): "
+                        f"SOY={soy_total} ({position_type}), "
+                        f"EOY={eoy_total} ({eoy_position_type})")
             balances_processed += 1
 
         logger.info(f"Processed {balances_processed} cash balance positions, skipped {balances_skipped}")
+
+        # No co-holding warning for currencies, deliberately. The per-Depot boundary that makes
+        # pooling a deviation for securities does not reach a currency balance: it comes from
+        # BMF 14.05.2025 Rz. 97 Satz 2, which scopes itself to "die Anwendung der Fifo-Methode im
+        # Sinne des § 20 Absatz 4 Satz 7 EStG", and § 20 Abs. 4 Satz 7 is conditioned on
+        # vertretbare Wertpapiere in Sammelverwahrung (§ 5 DepotG) -- a Fremdwährungsguthaben is
+        # neither. Currency FIFO is grounded instead in BMF Rz. 131 (§ 20 branch) and § 23 Abs. 1
+        # Satz 1 Nr. 2 Satz 3 EStG (§ 23 branch); neither draws an account boundary, so the merged
+        # per-currency queue is what those rules prescribe, not a departure from them. See
+        # reference/bmf-guidance/fremdwaehrung-konten.md [GT-FX-008], whose 2026-08-03 correction
+        # records this, and reference/tax-law/estg-23-private-veraeusserung.md [GT-ESTG23-013].
 
     def _ensure_soy_quantities_are_set(self):
         # ... (implementation is the same)

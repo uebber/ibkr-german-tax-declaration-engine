@@ -69,7 +69,7 @@ end in VZ 2024 or earlier should be reviewed by hand.**
 | GT-ESTG20-023 | implements | derivative close/expiry/settlement paths in `src/engine/event_processors/` | `test_options_lifecycle.py`, `test_futures.py` | Abs. 4 Satz 5 — Differenzausgleich less directly related costs, and the same Satz governs a worthless expiry (BMF Rz. 27). Newly stated in the store; the engine already computed derivative results this way, but the store had only the Abs. 4 Satz 1 formula. |
 | GT-ESTG20-024 | out of scope | — | — | Sparer-Pauschbetrag (Abs. 9). Applied by the Finanzamt; the engine reports gross figures and has no representation of Zeilen 16/17. The Satz 1 exclusion of actual Werbungskosten is nonetheless why only directly-related disposal costs reduce a gain — that part *is* how the engine computes. |
 | GT-ESTG20-012 | implements | `src/engine/fifo_manager.py` — FIFO lot consumption | `test_fifo_groups.py`, `tests/docs/spec_fifo.md` | Mandatory fiction; no specific-identification alternative is offered. |
-| GT-ESTG20-013 | **deviates** | `src/engine/ledger_views.py`, `src/utils/account_utils.py` | `test_ledger_views.py`, `test_multi_account_harness.py` | See below. |
+| GT-ESTG20-013 | **deviates** | `src/engine/ledger_views.py`, `src/utils/account_utils.py`; detected in `src/parsers/parsing_orchestrator.py` | `test_ledger_views.py`, `test_multi_account_harness.py`, `test_multi_account_aggregation.py` | See below. |
 | GT-ESTG20-014 | not reached | — | — | Own-depot transfer is not a disposal. No input represents one; a per-depot implementation would have to relocate lots rather than close and reopen them. |
 
 **GT-ESTG20-013 — known deviation.** The ledger registries are keyed by `(account_key, asset_id)`,
@@ -78,6 +78,21 @@ anywhere in `src/engine/`, `src/domain/` or `src/processing/`. The key is a seam
 across accounts. **This deviates from BMF Rz. 97 Satz 2.** It has no effect where the input covers
 a single depot, because per-depot and pooled FIFO coincide then. For a taxpayer holding one ISIN
 in two accounts the pooled result is wrong.
+
+The input shape that makes it bite is now **detected but not corrected**: `parsing_orchestrator.py`
+warns when one security carries a non-zero quantity in more than one account within the same
+snapshot, in either the start- or end-of-year snapshot. The warning reaches the log only — it is
+not routed through the data-gap channel and so does not appear in the report. Whether it should be
+is an open engineering question, noted because a WARNING in the log is a weaker signal than a
+figure that may be wrong deserves.
+
+**Currencies are deliberately excluded from that warning.** This claim's Depot boundary comes from
+BMF Rz. 97 Satz 2, which scopes itself to the Fifo-Methode *"im Sinne des § 20 Absatz 4 Satz 7
+EStG"*, and that Satz is conditioned on vertretbare Wertpapiere in Sammelverwahrung (§ 5 DepotG).
+Per `[GT-FX-008]` it therefore cannot reach a currency balance. Currency FIFO is grounded in BMF
+Rz. 131 and § 23 Abs. 1 Satz 1 Nr. 2 Satz 3 EStG (`[GT-ESTG23-013]`), neither of which draws an
+account boundary — so the engine's merged per-currency queue is not a deviation, and no located
+Tier 1/2 source establishes a per-account boundary for *gleichartige Fremdwährungsbeträge*.
 
 **Open question Q2 — reading chosen: not reached.** Whether the *"einzelnes Depot"* boundary
 transposes to a foreign broker's sub-accounts is unresolved, and the engine is account-agnostic,
