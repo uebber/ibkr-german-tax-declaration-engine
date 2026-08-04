@@ -12,6 +12,7 @@ from src.domain.assets import (
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
 from src.domain.events import FinancialEvent, OptionLifecycleEvent, TradeEvent
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
+from src.domain.exceptions import DataIntegrityError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
 from src.utils.sorting_utils import get_event_sort_key
@@ -49,6 +50,10 @@ class ParsingOrchestrator:
         # Preceding calendar year's snapshots -- Vorabpauschale only. See Asset.prior_year_*.
         self.raw_positions_prior_start: List[RawPositionRecord] = []
         self.raw_positions_prior_end: List[RawPositionRecord] = []
+        # Which prior-year snapshot fields were read onto which asset, so the pipeline can
+        # verify they are still there once classification has run. See
+        # _verify_prior_year_snapshot_survived_classification.
+        self._prior_year_snapshot_fields: Dict[uuid.UUID, Dict[str, Any]] = {}
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
         self.raw_options_eae: List[RawOptionsEAERecord] = []
@@ -149,11 +154,85 @@ class ParsingOrchestrator:
             asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
             asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
             asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
+            self._record_prior_year_snapshot_fields(asset, (
+                "prior_year_soy_quantity", "prior_year_soy_position_value",
+                "prior_year_soy_mark_price_currency",
+            ))
 
         for raw_pos in self.raw_positions_prior_end:
             asset = self._resolve_asset_from_position(raw_pos)
             asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
+            self._record_prior_year_snapshot_fields(asset, (
+                "prior_year_eoy_position_value", "prior_year_eoy_mark_price_currency",
+            ))
+
+    def _record_prior_year_snapshot_fields(self, asset: Asset, field_names: Tuple[str, ...]) -> None:
+        """Note which prior-year snapshot values this asset now carries.
+
+        An alias is kept alongside the field names because the asset object recorded here need
+        not be the one the engine sees. Two later rows whose identifiers overlap are merged, and
+        the merge deletes the losing asset and repoints its aliases at the winner. Looking the
+        alias up again resolves to whichever asset ends up owning the instrument.
+        """
+        present = {name for name in field_names if getattr(asset, name, None) is not None}
+        if not present:
+            return
+        record = self._prior_year_snapshot_fields.setdefault(
+            asset.internal_asset_id, {"fields": set(), "alias": None})
+        record["fields"].update(present)
+        if record["alias"] is None and asset.aliases:
+            record["alias"] = next(iter(asset.aliases))
+
+    def _verify_prior_year_snapshot_survived_classification(self) -> None:
+        """Every prior-year snapshot value read above must still be on its asset.
+
+        Classification replaces an asset's Python type by building a new object and copying
+        the old one's fields across (`AssetResolver.replace_asset_type`). A field the copy
+        does not list is dropped, and the drop is invisible: the Vorabpauschale then finds no
+        year-start Ruecknahmepreis and skips the fund, so its deemed income leaves the
+        declaration with nothing recorded anywhere. This checks the values that were read are
+        the values the engine will see, and reports every affected asset at once.
+
+        Two conditions bound what it reports, and both are deliberate:
+
+        - **Only investment funds.** 18 InvStG reaches nothing else, so nothing else can lose a
+          declared figure this way. The prior-year snapshot is read for every instrument in the
+          file, and aborting a run because a share or a bond lost a value it has no use for
+          would stop a declaration that is not at risk.
+        - **Only where a value was actually read.** A fund bought during the Vorabpauschale year
+          has no prior-year snapshot row and is never registered, so a legitimate absence cannot
+          trip this.
+
+        The asset is looked up by alias rather than by id, so an instrument that was merged into
+        another after its snapshot was read is followed to the asset that now owns it.
+        """
+        losses: List[str] = []
+        checked = 0
+        for asset_id, record in self._prior_year_snapshot_fields.items():
+            asset = self.asset_resolver.assets_by_internal_id.get(asset_id)
+            if asset is None and record["alias"] is not None:
+                # Merged into another asset; the surviving one is what the engine will read.
+                asset = self.asset_resolver.alias_map.get(record["alias"])
+            if not isinstance(asset, InvestmentFund):
+                continue
+            checked += 1
+            lost = sorted(name for name in record["fields"] if getattr(asset, name, None) is None)
+            if lost:
+                losses.append(f"{asset.get_classification_key()} ({asset.description}): {', '.join(lost)}")
+
+        if losses:
+            raise DataIntegrityError(
+                "The preceding year's position snapshot was read for "
+                f"{checked} investment fund(s) but no longer reaches the calculation for "
+                f"{len(losses)} of them. The Vorabpauschale for that year (18 Abs. 1 InvStG) is "
+                "computed from these values, so the affected funds would drop out of Anlage "
+                "KAP-INV Zeilen 9-13 without a figure and without a warning. This is an engine "
+                "defect, not an input problem: the values were read and then lost -- either by a "
+                "field missing from AssetResolver._extract_common_asset_fields, or by a merge of "
+                "two identifiers that carried the aliases across but not the values. Affected: "
+                + "; ".join(losses)
+            )
 
     def _resolve_asset_from_position(self, raw_pos):
         """Resolve (or create) the Asset a raw position record refers to.
@@ -643,6 +722,7 @@ class ParsingOrchestrator:
             self.discover_assets_from_transactions()
             self.asset_resolver.link_derivatives()
             self.finalize_asset_classifications()
+            self._verify_prior_year_snapshot_survived_classification()
             self._ensure_soy_quantities_are_set()
 
             event_factory = DomainEventFactory(asset_resolver=self.asset_resolver)

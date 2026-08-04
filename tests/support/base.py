@@ -70,6 +70,8 @@ class FifoTestCaseBase:
                       trades_data: Optional[List[List[Any]]] = None,
                       positions_start_data: Optional[List[List[Any]]] = None,
                       positions_end_data: Optional[List[List[Any]]] = None,
+                      positions_prior_start_data: Optional[List[List[Any]]] = None,
+                      positions_prior_end_data: Optional[List[List[Any]]] = None,
                       cash_transactions_data: Optional[List[List[Any]]] = None,
                       corporate_actions_data: Optional[List[List[Any]]] = None,
                       cash_balance_data: Optional[List[List[Any]]] = None,
@@ -106,7 +108,23 @@ class FifoTestCaseBase:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 with open(path, "w", encoding="utf-8-sig") as f:
                     f.write(creator_func([])) # Write empty CSV (headers only)
-        
+
+        # Prior-year snapshots are written ONLY when the scenario supplies them, and the
+        # path is passed only then. An empty file is not equivalent to an absent one here:
+        # the engine reads "a prior-year snapshot was supplied" from the presence of the
+        # path, and a headers-only file would suppress the FAIL_FAST gap that a genuinely
+        # missing snapshot must raise.
+        prior_paths = {"positions_prior_start_file_path": None,
+                       "positions_prior_end_file_path": None}
+        for key, path_key, data in (
+            ("positions_prior_start_file_path", "pos_prior_start", positions_prior_start_data),
+            ("positions_prior_end_file_path", "pos_prior_end", positions_prior_end_data),
+        ):
+            if data is not None:
+                with open(paths[path_key], "w", encoding="utf-8-sig") as f:
+                    f.write(create_positions_csv_string(data))
+                prior_paths[key] = paths[path_key]
+
         try:
             # Ensure IS_INTERACTIVE_CLASSIFICATION is False for tests (auto-undone at teardown)
             import src.config as app_config_module_interactive
@@ -121,7 +139,8 @@ class FifoTestCaseBase:
                 interactive_classification_mode=False,
                 tax_year_to_process=tax_year,
                 custom_rate_provider=custom_rate_provider,
-                cash_balance_file_path=paths["cash_balance"]
+                cash_balance_file_path=paths["cash_balance"],
+                **prior_paths,
             )
             return results
 

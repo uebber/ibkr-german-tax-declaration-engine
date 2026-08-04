@@ -81,6 +81,11 @@ def mock_config_paths(temp_data_dir, monkeypatch):
         "cash": data_path("cash_transactions.csv"),
         "pos_start": data_path("positions_start_of_year.csv"),
         "pos_end": data_path("positions_end_of_year.csv"),
+        # Preceding calendar year's snapshots. The Vorabpauschale declared in VZ Y is the
+        # one computed for calendar Y-1 (18 Abs. 3 InvStG), so it reads these rather than
+        # the tax year's own. See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+        "pos_prior_start": data_path("positions_prior_year_start.csv"),
+        "pos_prior_end": data_path("positions_prior_year_end.csv"),
         "corp_actions": data_path("corporate_actions.csv"),
         "cash_balance": data_path("cash_balance.csv"),
         "classification_cache": cache_path("user_classifications.json"),

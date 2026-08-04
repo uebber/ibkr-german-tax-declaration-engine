@@ -60,6 +60,18 @@ class AssetResolver:
             "soy_quantity": asset.soy_quantity, # Renamed from initial_quantity_soy
             "soy_cost_basis_amount": asset.soy_cost_basis_amount, # Renamed from initial_cost_basis_money_soy
             "soy_cost_basis_currency": asset.soy_cost_basis_currency, # Renamed from initial_cost_basis_currency_soy
+            # The preceding calendar year's snapshot, read by the Vorabpauschale. A positions
+            # row is resolved without its SubCategory, so unless the description says "ETF" the
+            # fund is created as a Stock and becomes an InvestmentFund only when the user's
+            # classification is applied -- which is after this snapshot has been read onto it.
+            # Omitting these here left such a fund with no year-start Ruecknahmepreis, so
+            # 18 Abs. 1 InvStG had nothing to compute from and the figure vanished from
+            # Zeilen 9-13 with nothing recorded.
+            "prior_year_soy_quantity": asset.prior_year_soy_quantity,
+            "prior_year_soy_position_value": asset.prior_year_soy_position_value,
+            "prior_year_soy_mark_price_currency": asset.prior_year_soy_mark_price_currency,
+            "prior_year_eoy_position_value": asset.prior_year_eoy_position_value,
+            "prior_year_eoy_mark_price_currency": asset.prior_year_eoy_mark_price_currency,
             "eoy_quantity": asset.eoy_quantity,
             "eoy_mark_price_currency": asset.eoy_mark_price_currency,
             "eoy_market_price": asset.eoy_market_price, # Renamed from eoy_mark_price
