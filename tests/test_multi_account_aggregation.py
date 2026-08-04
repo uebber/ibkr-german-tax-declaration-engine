@@ -241,6 +241,85 @@ class TestSecurityPositionMultiAccount:
 
 
 # ---------------------------------------------------------------------------
+# B2. Prior-year snapshots summed across accounts
+#     Same per-account row shape, a third pair of snapshots. These feed only the
+#     Vorabpauschale reference figures (18 Abs. 3 InvStG), never cost basis or
+#     reconciliation.
+# ---------------------------------------------------------------------------
+
+class TestPriorYearPositionMultiAccount:
+
+    def test_prior_year_soy_quantity_and_value_summed(self):
+        orch = _orchestrator()
+        orch.raw_positions_prior_start = [
+            _pos("US0000000010", qty="100", cost="0", value="1000", price="10", account="U10000001"),
+            _pos("US0000000010", qty="50", cost="0", value="500", price="10", account="U10000002"),
+        ]
+        orch.process_positions()
+        asset = _find(orch.asset_resolver, isin="US0000000010")
+        assert asset.prior_year_soy_quantity == Decimal("150")
+        assert asset.prior_year_soy_position_value == Decimal("1500")
+
+    def test_prior_year_eoy_value_summed(self):
+        orch = _orchestrator()
+        orch.raw_positions_prior_end = [
+            _pos("US0000000011", qty="100", cost="0", value="1200", price="12", account="U10000001"),
+            _pos("US0000000011", qty="50", cost="0", value="600", price="12", account="U10000002"),
+        ]
+        orch.process_positions()
+        asset = _find(orch.asset_resolver, isin="US0000000011")
+        assert asset.prior_year_eoy_position_value == Decimal("1800")
+
+    def test_closed_row_in_second_account_does_not_zero_the_prior_year_quantity(self):
+        """The worst case, and the reason this is not a rounding-scale defect.
+
+        IBKR emits a zero row for a closed position, so a fund held in one account can carry a
+        second row with quantity 0. Assigned per row, the zero row lands last and the fund's
+        prior-year quantity becomes 0 — and ``calculation_engine`` skips any fund whose
+        ``prior_year_soy_quantity <= 0`` with a bare ``continue`` and no log line at any level.
+        The Vorabpauschale for that fund is then omitted from the declaration silently.
+        """
+        orch = _orchestrator()
+        orch.raw_positions_prior_start = [
+            _pos("US0000000014", qty="100", cost="0", value="1000", price="10", account="U10000001"),
+            _pos("US0000000014", qty="0", cost="0", value="0", price="10", account="U10000002"),
+        ]
+        orch.raw_positions_prior_end = [
+            _pos("US0000000014", qty="100", cost="0", value="1200", price="12", account="U10000001"),
+            _pos("US0000000014", qty="0", cost="0", value="0", price="12", account="U10000002"),
+        ]
+        orch.process_positions()
+        asset = _find(orch.asset_resolver, isin="US0000000014")
+        # > 0, so the fund is not skipped, and the value that drives Basisertrag survives.
+        assert asset.prior_year_soy_quantity == Decimal("100")
+        assert asset.prior_year_soy_position_value == Decimal("1000")
+        assert asset.prior_year_eoy_position_value == Decimal("1200")
+
+    def test_prior_year_single_account_unchanged(self):
+        orch = _orchestrator()
+        orch.raw_positions_prior_start = [
+            _pos("US0000000012", qty="80", cost="0", value="800", price="10", account="U10000001"),
+        ]
+        orch.process_positions()
+        asset = _find(orch.asset_resolver, isin="US0000000012")
+        assert asset.prior_year_soy_quantity == Decimal("80")
+        assert asset.prior_year_soy_position_value == Decimal("800")
+
+    def test_prior_year_co_holding_does_not_warn(self, caplog):
+        """No per-Depot warning for these snapshots: they feed the Vorabpauschale, which is
+        computed from a fund's quantity and its year-start/year-end values. No FIFO lot is
+        consumed, so the pooled-vs-per-Depot lot-order question does not arise here."""
+        orch = _orchestrator()
+        orch.raw_positions_prior_start = [
+            _pos("US0000000013", qty="100", cost="0", value="1000", account="U10000001"),
+            _pos("US0000000013", qty="50", cost="0", value="500", account="U10000002"),
+        ]
+        with caplog.at_level(logging.WARNING):
+            orch.process_positions()
+        assert not any("multiple accounts" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # C. Co-holding detection: warn when a security is in >1 account in one snapshot
 #    (merged FIFO is account-agnostic; per-Depot precision not modelled).
 #    Must NOT fire for a transfer (same ISIN in only one account per snapshot).

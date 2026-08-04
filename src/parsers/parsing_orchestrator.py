@@ -130,17 +130,19 @@ class ParsingOrchestrator:
         # Preceding calendar year's snapshots. Used ONLY by the Vorabpauschale, which for a VZ Y
         # declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). These must not
         # feed cost basis, reconciliation or any other consumer.
+        # Summed per account for the same reason as the tax-year snapshots above. No co-holding
+        # warning here: the Vorabpauschale is computed from a fund's quantity and its year-start
+        # and year-end values, consuming no FIFO lot, so the pooled-vs-per-Depot lot-order
+        # question these snapshots cannot raise.
         logger.info("Processing prior-year positions (Vorabpauschale reference prices)...")
-        for raw_pos in self.raw_positions_prior_start:
-            asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
-            asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
+        for asset, agg in self._aggregate_positions(self.raw_positions_prior_start).values():
+            asset.prior_year_soy_quantity = agg["qty"]
+            asset.prior_year_soy_position_value = agg["value"]
+            asset.prior_year_soy_mark_price_currency = agg["currency"]
 
-        for raw_pos in self.raw_positions_prior_end:
-            asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
-            asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
+        for asset, agg in self._aggregate_positions(self.raw_positions_prior_end).values():
+            asset.prior_year_eoy_position_value = agg["value"]
+            asset.prior_year_eoy_mark_price_currency = agg["currency"]
 
     def _warn_if_co_held(self, asset, agg, snapshot_label):
         """Warn when one security sits in more than one account in the same snapshot.
