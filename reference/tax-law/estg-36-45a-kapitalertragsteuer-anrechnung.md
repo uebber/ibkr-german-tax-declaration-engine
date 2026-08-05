@@ -152,22 +152,14 @@ Abs. 1 bis 4 entirely:
 
 ---
 
-## [GT-CREDIT-025] 6. How to tell German KESt from foreign withholding in a broker statement
+## [GT-CREDIT-025] 6. The German rate composite, and why it is not a foreign rate
 
-A foreign broker's statement does not label the two differently in any structured field, so the
-distinction has to be inferred. Two signatures, of which the second is decisive:
+**The German withholding on a dividend is 26.375 % of the gross** -- 25 % Kapitalertragsteuer
+(32d Abs. 1 EStG) plus 5.5 % Solidaritaetszuschlag *on the tax* (SolZG), i.e. 25 % x 1.055. It is
+a composite of two German rates, not a rate any source state announces.
 
-1. The withholding row's description names the source country of the issuer (e.g. a `DE`
-   marker) rather than the broker's jurisdiction.
-2. **The withheld amount is exactly 26.375 % of the gross dividend** -- 25 % Kapitalertragsteuer
-   plus 5.5 % Solidaritaetszuschlag *on the tax*, i.e. 25 % x 1.055. That composite arises from
-   the German rate structure (32d Abs. 1 EStG together with the SolZG); it is not a round rate of
-   the kind a source state announces.
-
-**What the identity establishes, and what it does not.** The arithmetic is checkable rather than a
-guess, and it has been confirmed against several German issuers across several assessment years;
-the instance data is account data and is not published. But it is a **signature, not a proof**, and
-two limits belong with it:
+**What the composite establishes, and what it does not.** It is checkable arithmetic rather than a
+guess. But it is a **signature, not a proof**, and two limits belong with it:
 
 - A DBA does not bear on this case at all. Treaty rates cap what a *source* state may keep from a
   payment to a resident of the *other* state. A German-resident investor receiving a
@@ -177,6 +169,9 @@ two limits belong with it:
 - Whether some *foreign* jurisdiction's withholding happens to equal 26.375 % is an empirical
   question about that jurisdiction's rate table, and **no source has been consulted for it here.**
   The signature should be read together with the issuer's domicile, not on its own.
+
+How the composite is recognised in a particular broker's data, and how reliable that recognition
+is, is not a question of law and is recorded against this claim in the implementation map.
 
 > **Correction, 2026-08-03.** This section previously argued that *"no DBA rate produces that
 > figure: the common treaty rates on German dividends are 15 % and 26.375 % is above the statutory

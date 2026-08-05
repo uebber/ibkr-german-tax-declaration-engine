@@ -358,18 +358,35 @@ representation of Zeilen 7, 37, 38 or 39 at all. German Kapitalertragsteuer with
 German issuer's dividend is therefore declared as anrechenbare *ausländische* Steuer, on the wrong
 line and through the wrong credit mechanism.
 
-Confirmed against real data: German-issuer dividends held at a foreign broker carry withholding
-rows whose amount is **exactly 26.375 % of the gross** — 25 % KESt plus 5.5 % SolZ on the tax.
-That arithmetic is the signature to key a fix on; no DBA rate produces it. Several issuers across
-several assessment years match. Issuer names and amounts are account data and stay in the
-maintainer's gitignored notes.
+### Recognising German KESt in IBKR data
 
-To fix, three things are needed together:
-1. classify withholding by issuer country or by the 26.375 % signature rather than treating all of
-   it as foreign;
-2. add Zeile 7 (certified gross income), 37 (KESt), 38 (SolZ), 39 (KiSt);
-3. tell the user to obtain a Steuerbescheinigung — without it § 36 Abs. 2 Satz 2 bars the credit
-   outright, so the figure is worthless without the document.
+This is an input-data question, not a legal one, which is why it is recorded here and not in the
+store. Two signals, and neither is sufficient alone.
+
+**1. `IssuerCountryCode`, where IBKR populates it.** The column exists in the Cash Transactions
+export, is parsed onto the withholding event, and is authoritative when non-empty. **Its
+availability is a function of export vintage:** essentially absent from older exports, partial in
+2024, fully populated in 2025. `XX` occurs as a value and is not a country. A country filter alone
+therefore fixes recent assessment years and leaves older ones untouched.
+
+**2. The 26.375 % composite** ([GT-CREDIT-025]), for the years where no country code exists.
+Measured against real data, the observed rates cluster at 26.369–26.375 % — the withheld amount is
+*not* reproducible from the paired gross by any simple rounding rule. Three hypotheses were tested
+against the German-signature rows and each matched exactly half of them: one-step
+`round(gross × 0.26375, 2)`, two-step KESt-then-SolZ with half-up rounding, and the same with
+round-down. **So any tolerance used here is empirical, not derived, and must be recorded as such.**
+Observed deviation from the one-step figure reaches two cents.
+
+**Why the credit cannot simply be moved to Zeilen 7/37/38/39.** [GT-FORM-007] routes it there, but
+Zeilen 7–15 are defined as the figures *taken from* the Steuerbescheinigung of the inländische
+auszahlende Stelle, and § 36 Abs. 2 Satz 2 bars the credit outright when no certificate is
+presented ([GT-CREDIT-022]). Zeile 7 is a transcription of a document the taxpayer holds, not a
+figure this engine can compute. Populating it from calculated values would fabricate the one thing
+the form defines as copied.
+
+What a fix can therefore do: stop declaring German KESt as ausländische Steuer on Zeile 41, and
+tell the user the amount, the correct route, and that the certificate must be obtained from the
+German custodian through the broker.
 
 ---
 
