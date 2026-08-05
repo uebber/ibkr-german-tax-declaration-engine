@@ -221,8 +221,24 @@ holdings, identifiers, amounts — stays in gitignored working copies; only outc
 | 2024 | **PASS** | 276 | 6 346 |
 | 2025 | **PASS** | 421 | 4 128 |
 
-**Asset EOY mismatches: 0. Currency EOY mismatches: 0.** The SoY → EoY invariant holds on real
-input for every year that can be computed.
+**Asset EOY mismatches: 0.** The SoY → EoY invariant holds on real input for every year that can
+be computed.
+
+**Currency EOY mismatches: 0 — and that verdict is vacuous for VZ 2024.** A cash-balance export
+exists for 2025 only, so for 2024 the currency check has nothing to compare the ledger against and
+reports zero because it compared nothing. Read the currency result as meaningful for VZ 2025 and
+as *unmeasured* for VZ 2024. Supplying `Cash_Balance-2024.csv` would make it real.
+
+### Provenance of the position snapshots
+
+`Positions-2023-*` and `Positions-2024-*` were recovered from older working trees on 2026-08-03
+and identified **by content, not by filename** — filenames in those trees are unreliable, one
+labelled as end-of-2024 being in fact end-of-2025. The verification anchor was that the recovered
+EoY-2024 matches the authoritative `Positions-2025-SoY.csv` symbol for symbol.
+
+**No snapshot exists anywhere for end-2021 / start-2022.** That is why VZ 2023 cannot be computed
+and why VZ 2022 cannot be run at all, and it is a property of the available input rather than
+something a code change can fix.
 
 VZ 2023 fails on `VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING` and the failure is correct: the
 Vorabpauschale declared in VZ 2023 is the one computed for calendar 2022 (§ 18 Abs. 3 InvStG), and
