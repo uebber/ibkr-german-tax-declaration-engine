@@ -61,6 +61,22 @@ end in VZ 2024 or earlier should be reviewed by hand.**
 | GT-ESTG20-008 | implements | bond disposals; currency disposals via `FX_*` realization types | `test_bond_maturity.py`, `test_group7_currency_fifo.py` | |
 | GT-ESTG20-009 | implements | IBKR corporate action `BM` → synthetic sell → `LONG_POSITION_SALE` | `test_bond_maturity.py::TestBondMaturity` | The Einlösung fiction is what makes a redemption at maturity a disposal at all. |
 
+
+**Q11 — reading chosen: Termingeschaeft (Reading A).** An unallocated spot precious-metal position
+held at the broker ("London Gold", no expiry, no underlying, monthly carrying fee) is classified
+as a derivative and declared on the Termingeschaeft lines. Chosen by the taxpayer, not derived:
+`reference/research/open-legal-questions.md` Q11 records three readings and no Tier 1/2 source
+chooses between them. The reason given is that § 23 requires physical backing with an exclusive
+delivery or proceeds claim (BMF 14.05.2025 Rz. 57, [GT-ESTG23-011]) and the broker evidences
+neither, so the § 23 route is unavailable; between the two remaining readings the Termingeschaeft
+one was taken.
+
+**This choice lives in a gitignored classification cache and nowhere else in the repository.** It
+is recorded here because that is the only public record of it. If the cache is rebuilt and the
+instrument classified differently, this row is wrong and the declared figures move. Reading C
+(sonstige Kapitalforderung, § 20 Abs. 2 Satz 1 Nr. 7 → Zeile 19/22) is not currently expressible
+at all — see the missing-category gap.
+
 ### Abs. 4 — gain calculation and lot identification
 
 | Claim | Position | Module | Guarding tests | Notes |

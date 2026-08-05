@@ -319,4 +319,4 @@ Nothing enforces these. They hold for every category.
 - `reference/research/open-legal-questions.md` — points no Tier 1/2 source settles, both readings
 - `docs/legal-implementation-map.md` — each legal requirement → the engine's position → the tests
 - `tests/docs/` — behavioural specs and coverage analysis
-- `VALIDATION_REPORT.md` — real-data validation results
+- `VALIDATION_REPORT.md` — the test suite audited against `reference/`, plus the real-data validation log
