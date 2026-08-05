@@ -163,3 +163,81 @@ Practical form: for each factual claim in your description, name how it was meas
   is public, nothing checks it, and three separate commits have been cleanups after account data
   had already been published. Public documents state the mechanism; instance data stays in the
   maintainer's gitignored notes. Instruments in this documentation appear as `XYZ1`, `XYZ2`, …
+
+---
+
+## 7. Leave no half-converted tree
+
+This gate exists because of an archaeology that went differently than expected, and then proved
+itself within hours.
+
+**The question was whether to keep a `chore` category.** The argument for one is conventional:
+every repository needs somewhere to put dependency bumps, tooling and config. The argument
+against is that `rules.md` premised the whole model on each change being *measured against its
+category's target*, and `chore`'s only conceivable criterion is "the suite still passes" — which
+measures nothing about the change itself. A category with no target is not a category. It is
+where unmeasurable work parks.
+
+**Checking the history rather than the convention settled it, and not the way either reading
+predicted.** `chore` has never once carried a dependency bump here. `pyproject.toml` and
+`uv.lock` have changed eight times in the repository's life and every one of them rode with a
+`feat`. The generic justification for the category was simply false about this codebase. First
+lesson, and a cheap one: before importing a convention, look at what the convention has actually
+held here.
+
+**What it did hold decomposed cleanly.** Five `chore` commits exist in total. Three were
+disclosure control — pseudonymising instrument identifiers, separating published content from
+private account data, sanitising public artifacts. That is not untargetable work; it has the
+sharpest target in the repository, and it now lives in `fix-nonfunc`. The remaining two are the
+interesting ones:
+
+- *drop the unused typing import the data-gap channel arrived with*
+- *finish the LedgerKey conversion in the type annotations*
+
+**Both are the same shape: a previous change converted most of a thing and left the rest.**
+Filing them as `chore` framed them as tidying, which is what made them look harmless. They are
+not tidying. They are the visible residue of an incomplete conversion, and they were visible only
+because someone happened to notice.
+
+### Then the shape turned up carrying a real figure
+
+Hours after that criterion was written, `9f5a92e` — a maintainer commit five back on the
+integration branch — turned out to be a live instance. It moved the Vorabpauschale to declare the
+prior calendar year, which required every consumer to select on `declaration_year` rather than
+`tax_year`. It converted `src/engine/loss_offsetting.py`, `src/reporting/console_reporter.py`,
+and `src/reporting/pdf_generator.py:1226`. It left `pdf_generator.py:944`.
+
+Same file. Same selector. Same semantics. And the converted site at line 1226 carries an
+explanatory comment about why the change was necessary, so this was not a change anyone
+misunderstood.
+
+The consequence was not an untidy import. After that commit, line 944's condition can never be
+true, so the per-fund-type Vorabpauschale itemisation silently returned empty. Caught by an
+outside contributor in #43, not by the suite, and not by the author who had just written the
+comment explaining the very rule being violated one screen below.
+
+### What the gate actually asks
+
+Not "be tidy." The danger sign here was a conversion that was **understood and still
+incomplete** — knowing precisely why a change is needed does not mean having found every place
+it is needed. So:
+
+- **Enumerate the sites, and show the enumeration is exhausted.** `grep` for the old form and
+  report the count, before and after. A conversion PR that cannot say how many sites it found
+  has not looked.
+- **The last site is the dangerous one**, because by then the pattern feels finished. Both of
+  the original `chore` tails and the `9f5a92e` miss were the final one or two sites of an
+  otherwise complete change.
+- **A comment explaining the conversion is not evidence the conversion happened.** Line 1226 had
+  the best documentation in the file and its twin was still wrong.
+
+### And the lesson about the taxonomy itself
+
+Dropping `chore` was not tidying either. **A category that collects leftovers hides the fact that
+leftovers exist.** Once there was nowhere to file "small residue of an earlier change," the two
+commits that had been filed there had to be named as what they were — and naming them produced a
+defect class that then caught a real understatement of a declared figure.
+
+That is the strongest argument in this document for the whole categorical scheme: not that the
+categories sort work neatly, but that refusing a residual bucket forces every change to say what
+it is, and some of them turn out to be saying something.
