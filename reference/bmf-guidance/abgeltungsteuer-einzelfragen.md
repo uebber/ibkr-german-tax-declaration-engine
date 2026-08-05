@@ -72,6 +72,42 @@ cited anywhere in this library are from the 14.05.2025 version unless stated oth
 
 ### Specific interpretations
 
+#### [GT-ESTG20-038] What counts as a Termingeschaeft (Rz. 9)
+
+Rz. 9 defines the term the statute leaves open. A Termingeschaeft is any financial instrument
+structured as an Options- or Festgeschaeft, settled with a time delay, whose price depends
+directly or indirectly on one of five listed Bezugsgroessen. Two of the five bear on contracts
+over currencies and precious metals:
+
+- *"dem Kurs von **Devisen** oder Rechnungseinheiten"*
+- *"dem Boersen- oder Marktpreis von Waren oder **Edelmetallen**"*
+
+The Randziffer then enumerates the forms, and the enumeration is explicit rather than analogical:
+
+> *"Zu den Termingeschaeften gehoeren insbesondere Optionsgeschaefte, Swaps,
+> Devisentermingeschaefte und Forwards oder Futures, vgl. Rn. 36 und 37 sowie **Contracts for
+> Difference (CFDs)**. CFDs sind Vertraege zwischen zwei Parteien, die auf die Kursentwicklung
+> eines bestimmten Basiswerts spekulieren. Basiswerte koennen beispielsweise Aktien, Indizes,
+> **Waehrungspaare** oder Zinssaetze sein. Zertifikate und Optionsscheine gehoeren nicht zu den
+> Termingeschaeften, vgl. Rn. 8 f."*
+
+**A CFD on a currency pair is therefore a Termingeschaeft twice over** -- once through the Devisen
+Bezugsgroesse, once through the named Basiswert. A CFD on a precious metal falls under the
+Edelmetalle Bezugsgroesse.
+
+**The negative boundary is stated in the same sentence and matters as much:** Zertifikate and
+Optionsscheine are *not* Termingeschaefte (Rn. 8 f.). The enumeration is *"insbesondere"*, so it
+is open -- but the two exclusions are closed.
+
+What the cited unit also contains: the remaining three Bezugsgroessen (Boersen-/Marktpreis of
+Wertpapiere and of Geldmarktinstrumente, and Zinssaetze oder andere Ertraege), and a
+cross-reference to Rn. 36-37 for Forwards and Futures.
+
+Applicable tax years: the 14.05.2025 version applies to all open cases unless a Randziffer says
+otherwise; the Termingeschaeft definition is not year-limited. Retrieved 2026-08-05 from
+https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Abgeltungsteuer/2025-05-14-einzelfragen-zur-abgeltungsteuer.pdf
+(page 9 of 137).
+
 #### Options (Rz. 9-47; the load-bearing ones are 25-27)
 - Stillhalterpraemie taxable upon receipt (Nr. 11) -- Rz. 25
 - Glattstellung: premiums paid and their Nebenkosten are negative Kapitalertrag *"zum Zeitpunkt
