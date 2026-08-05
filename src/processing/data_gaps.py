@@ -33,12 +33,10 @@ nobody can see. WARNING here means "the engine cannot decide this for you and
 will not pretend it did" — the figures must be reconciled by hand before the
 declaration is filed.
 
-Conditions NOT routed through this channel (each still handled at its own site,
-each recorded as an open item in docs/pr-train-review.md): the event-separation
-loop's silent drop of an unsortable event, ``_apply_historical_currency_event``
-swallowing every exception at DEBUG level, and Pass 2's warn-and-continue on a
-missing merger source ledger. Wiring those up is future work, not a property of
-this module.
+Conditions NOT routed through this channel, each still handled at its own site:
+``_apply_historical_currency_event`` swallowing every exception at DEBUG level
+(issue #49), and Pass 2's warn-and-continue on a missing merger source ledger
+(issue #50). Wiring those up is future work, not a property of this module.
 
 The collector travels with the pipeline result (``ProcessingOutput.data_gaps``)
 and the reporting layer renders all collected gaps.

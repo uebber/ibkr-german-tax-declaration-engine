@@ -57,9 +57,8 @@ Three boundaries that decide categories people get wrong:
   - a dead reference to something this repo does not contain is `fix-ux`. It misleads a reader,
     hides no failure, moves no figure.
   - an inert leftover is `refactor`, and on its own it will not clear the bar below. **That is
-    the answer, not a gap.** A category that waved these through is exactly what was removed, and
-    two of the commits it had waved through turned out to name a defect class —
-    `docs/contribution-standards.md` §7.
+    the answer, not a gap.** A category that waves these through lets residue accumulate
+    unexamined, and residue is how a half-converted tree stays invisible.
 
 `refactor` is **restricted**: permitted only when it is highly beneficial for a specific, imminent
 `feat-*` or `fix-*`, and demonstrably reduces complexity. Speculative restructuring is not a
@@ -67,13 +66,20 @@ change this repository accepts.
 
 ### Gates
 
+Each gate carries the failure it prevents. Read the second line before deciding a gate is
+overhead.
+
 **Every change:**
 
-- Clean-clone suite green (see Verification).
-- No silent default. Anything unresolvable raises, after collecting every case.
-- No account data, and no reference to a document this repo does not contain.
-- The standing constraints below honoured; any departure explicitly asked for and answered.
-- Every factual claim in the description says how it was measured.
+- **Clean-clone suite green** (see Verification).
+  Developer state passes tests the repository cannot.
+- **No silent default.** Anything unresolvable raises, after collecting every case.
+  A substituted value understates income invisibly; a crash does not.
+- **No account data, and no reference to a document this repo does not contain.**
+  This repository is public, and a pointer to something absent is a false statement.
+- **The standing constraints below honoured**, any departure explicitly asked for and answered.
+- **Every factual claim in the description says how it was measured.**
+  An unmeasured claim reads exactly like a measured one.
 
 **Band A adds:**
 
@@ -84,6 +90,9 @@ change this repository accepts.
   `coverage-matrix.md` in step where the store changed.
 - `feat-func` / `fix-func`: red-first verified with the actual count; parity measured with the
   assessment year named; no half-converted tree left behind.
+  A test that was never red proves nothing about the fix. Parity without a year is
+  unfalsifiable — a change keyed to a form-year rule is identical for one assessment year and
+  different for another. And a conversion can be fully understood and still incomplete.
 - `ks-maint`: no red-first and no parity — it changes nothing. Instead, **every claim the audit
   touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will
   close it. A row left at `implements` because no code was touched, when the audit just moved the
@@ -95,12 +104,14 @@ change this repository accepts.
   does not touch `src/` — the statement that it does not.
 - Zero map rows changed, zero claim IDs changed.
 - `refactor`: probed site by site, not merely run; no half-converted tree left behind.
+  A green suite proves the covered sites were converted and says nothing about the rest.
+  Probing one ledger-lookup site at a time once found five of fourteen the suite cannot observe
+  at all.
 - `fix-nonfunc`: **calibrated against a deliberately broken tree, stated in the description** —
   the red-first count for a code fix, the mutation the new test now catches for a blind-spot
   closure, what was grepped across the whole tree for a disclosure fix.
-
-`docs/contribution-standards.md` records why each gate exists, with the incident behind it. Read
-it when a gate looks like overhead.
+  An instrument nobody broke on purpose reports green whether or not it can see anything. This
+  is the most expensive gate here and the one with the worst compliance record.
 
 ## Setup
 
@@ -141,8 +152,22 @@ rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q
 ```
 
 **A green suite is weaker evidence than it looks.** Coverage is uneven and the gaps are not where
-the diff is; `docs/contribution-standards.md` §3 lists the known blind spots. This is why the
-gates above ask for mutation probes and calibration rather than a passing run.
+the diff is. This is why the gates ask for mutation probes and calibration rather than a passing
+run.
+
+**Where the suite is blind.** Probe these by mutation; running the suite will not tell you.
+
+- **The historical FX/currency replay.** Reversing the chronological order of every historical
+  currency event leaves the suite green. The same mutation on securities fails a test.
+- **The ends of a new channel.** When the data-gap channel was added, its second recording site
+  and its entire report-rendering block could each be deleted with the suite green. Probe the
+  ends, not the middle.
+- **Anything a start-of-year snapshot can rebuild.** Pass 3 reconciles against the Positions
+  file, so a defect that loses lots stays invisible in quantity, cost basis, proceeds *and* gain
+  — only the acquisition date is wrong. A test asserting those four figures on a scenario with an
+  SoY snapshot is weaker than it looks.
+
+Add to this list whenever a probe finds a site the suite cannot observe.
 
 Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support/`;
 `tests/docs/` holds the behavioural specs they encode.
@@ -282,6 +307,5 @@ Nothing enforces these. They hold for every category.
 - `reference/INDEX.md` — the tax law library directory
 - `reference/research/open-legal-questions.md` — points no Tier 1/2 source settles, both readings
 - `docs/legal-implementation-map.md` — each legal requirement → the engine's position → the tests
-- `docs/contribution-standards.md` — why each gate above exists, with the incident behind it
 - `tests/docs/` — behavioural specs and coverage analysis
 - `VALIDATION_REPORT.md` — real-data validation results

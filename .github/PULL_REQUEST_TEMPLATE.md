@@ -1,7 +1,7 @@
 <!--
 One category per PR. No mixing. If this change needs two, it is two PRs — store before code.
-The categories and their gates are in CLAUDE.md; why each gate exists is in
-docs/contribution-standards.md.
+The categories are in CLAUDE.md, under 'Before you start'. Each gate there states the
+failure it prevents; read that line before deciding a gate is overhead.
 -->
 
 ## Category

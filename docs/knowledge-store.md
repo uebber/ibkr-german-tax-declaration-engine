@@ -21,6 +21,11 @@ The rule barring legally relevant behaviour from any source outside `reference/`
 CLAUDE.md, not here. It lives there because nothing enforces it, and an agent that has not read it
 will not know to open this document at all.
 
+**What it reaches**, since this is the rule that most often sends a change back: form-line
+mappings, Teilfreistellung rates, loss-offsetting and ring-fencing, holding periods, thresholds,
+caps, Basiszins values, withholding-tax treatment, event classification with a tax consequence,
+and the expected values in any test asserting one of those.
+
 What it delegates here is step 3: when the store does not cover a point, or covers it stalely or
 ambiguously, **extend the store first** — by the procedure in *Evolving the store* below, and by
 no other route. Research done in conversation and not written into `reference/` is not ground

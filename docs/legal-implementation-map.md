@@ -410,6 +410,6 @@ in one:
 So the earlier summary — "four of seven claims resting on a circular never retrieved" — no longer
 holds. Three choices under uncertainty remain (GT-FX-005, -006, -007) and they are genuine ones.
 
-**Known blind spot:** per `docs/contribution-standards.md` §3, reversing the chronological order
+**Known blind spot:** per CLAUDE.md's *Where the suite is blind*, reversing the chronological order
 of every historical currency event leaves the whole suite green. Currency changes must be probed
 by mutation, not by running the suite.
