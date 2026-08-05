@@ -152,13 +152,33 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-010 | implements | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. |
+| GT-INVSTG-010 | implements | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
 | GT-INVSTG-011 | **deviates** | — | — | **Abs. 2 pro-rata is not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
-| GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. |
+| GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | |
-| GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, populated by `src/data_preparation.py` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear` | Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. |
+| GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
 | GT-INVSTG-015 | implements | gross on Zeilen 9–13 | `test_vorabpauschale.py::TestTeilfreistellungNegativeDistribution` | |
 | GT-INVSTG-016 | **choice under uncertainty** | funds with no end-of-year position are skipped | `test_vorabpauschale.py` | See below. |
+
+**GT-INVSTG-010 and GT-INVSTG-014 — reached only for some funds until 2026-08-04.** A positions
+row is resolved without its `SubCategory`, so the description is the only fund signal that
+survives: an instrument described as an ETF is created as an `InvestmentFund` outright, and any
+other fund is created as a `Stock` and retyped when the user's classification is applied — which
+is after the prior-year snapshot has been read onto it. Retyping copies a hand-listed set of
+fields and the `prior_year_*` fields were not on it, so a retyped fund reached § 18's
+computation with no year-start Rücknahmepreis and was skipped, with nothing recorded. A fund
+created as a fund was unaffected. **On this repository's own data the distinction is not a
+mitigation:** no fund description contains "ETF", so every one was retyped and Zeilen 9–13 were
+empty on every run, whether or not deemed income was due.
+
+Two guards now stand where that failed. The values read are checked against the values the
+engine will see (`ParsingOrchestrator._verify_prior_year_snapshot_survived_classification`,
+`DataIntegrityError`, naming every affected fund); it follows an alias rather than an id, so an
+instrument merged into another after its snapshot was read is followed to the survivor, and it
+reports investment funds only, since nothing else can lose a declared figure this way. And the
+itemisation is exercised with a record present (`test_pdf_vorabpauschale.py`) — the PDF read the
+pre-rename `tax_year` field and would have raised `AttributeError` on the first run that
+produced one.
 
 **GT-INVSTG-010, Satz 4 — partial.** The Rücknahmepreis is the primary measure and a market price
 substitutes only where none was set. The engine uses the broker's position mark price

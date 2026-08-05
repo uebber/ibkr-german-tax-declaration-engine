@@ -504,7 +504,9 @@ class PdfReportGenerator:
             "Tägliche EZB-Wechselkurse für Währungsumrechnungen.",
             f"Verwendung von `Decimal`-Arithmetik mit interner Arbeitspräzision von {app_config.INTERNAL_CALCULATION_PRECISION} Stellen und Rundungsmodus '{app_config.DECIMAL_ROUNDING_MODE}'. Endbeträge werden für die Berichterstattung quantisiert.",
             f"Teilfreistellung gemäß deutschem Steuerrecht für {self.tax_year} (keine Alt-Anteile berücksichtigt).",
-            f"Vorabpauschale für {self.tax_year} berechnet gemäß § 18 InvStG.",
+            f"Vorabpauschale für {self.tax_year - 1} berechnet gemäß § 18 InvStG; sie gilt am "
+            f"ersten Werktag {self.tax_year} als zugeflossen (§ 18 Abs. 3 InvStG) und wird in "
+            f"diesem Veranlagungszeitraum erklärt.",
         ]
         if self._has_cross_year_short_positions():
             notes.append(
@@ -941,7 +943,11 @@ class PdfReportGenerator:
 
         filtered = []
         for vop in self.vorabpauschale_items:
-            if vop.tax_year == self.tax_year and vop.gross_vorabpauschale_eur != Decimal('0'):
+            # `declaration_year` is the VZ this Vorabpauschale belongs on: the VP for
+            # calendar X flows on the first working day of X+1 (18 Abs. 3 InvStG), so a
+            # VZ `tax_year` report itemises the records computed for `tax_year - 1`.
+            # Selecting on the computation year would empty this section instead.
+            if vop.declaration_year == self.tax_year and vop.gross_vorabpauschale_eur != Decimal('0'):
                 _, _, fund_type = self._get_asset_details(vop.asset_internal_id)
                 if fund_type == target_fund_type:
                     filtered.append(vop)
