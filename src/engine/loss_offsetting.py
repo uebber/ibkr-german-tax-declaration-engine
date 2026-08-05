@@ -1,5 +1,6 @@
 # src/engine/loss_offsetting.py
 import logging
+import uuid
 from decimal import Decimal, Context
 from collections import defaultdict
 from typing import List, Dict, Optional
@@ -40,6 +41,8 @@ class LossOffsettingEngine:
         self.tax_year = tax_year
         self.apply_conceptual_derivative_loss_capping = apply_conceptual_derivative_loss_capping
         self.data_gap_collector = data_gap_collector
+        # Built lazily by _income_gross_eur_by_event_id for the German-KESt rate test.
+        self._income_gross_cache: Optional[Dict[uuid.UUID, Decimal]] = None
 
         self.ctx = Context(prec=global_config.INTERNAL_CALCULATION_PRECISION, rounding=global_config.DECIMAL_ROUNDING_MODE) # Renamed INTERNAL_WORKING_PRECISION
         self.TWO_PLACES = global_config.OUTPUT_PRECISION_AMOUNTS # Renamed from PRECISION_TOTAL_AMOUNTS
@@ -65,6 +68,96 @@ class LossOffsettingEngine:
 
         return net_dist_eur.quantize(self.TWO_PLACES, context=self.ctx)
 
+
+    # The German composite rate, 25% KESt x 1.055 SolZ = 26.375%
+    # (reference/tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md [GT-CREDIT-025]).
+    # The band around it is EMPIRICAL, not derived. Measured against real broker data, the
+    # withheld amount is not reproducible from the paired gross by any simple rounding rule:
+    # one-step round(gross x 0.26375, 2), two-step KESt-then-SolZ half-up, and two-step
+    # round-down each reproduced exactly half of the known-German rows, with observed
+    # deviations up to two cents. Rationale for the width is recorded in
+    # docs/legal-implementation-map.md under GT-CREDIT-025; do not restate it as derived.
+    _KEST_RATE_LOW = Decimal("26.30")
+    _KEST_RATE_HIGH = Decimal("26.45")
+    # IBKR emits this as a country code but it denotes "unknown/multiple", not a jurisdiction.
+    _NON_COUNTRY_CODES = frozenset({"XX"})
+
+    def _is_german_kest(self, event: WithholdingTaxEvent) -> bool:
+        """Is this withholding German Kapitalertragsteuer rather than foreign tax?
+
+        legal_basis: [GT-FORM-007] — German KESt on a German issuer's dividend is not an
+        auslaendische Steuer and does not belong on Zeile 41. [GT-CREDIT-025] gives the
+        26.375% composite that identifies it.
+
+        Two signals, in order of authority. The issuer country decides when the broker
+        supplies one; its availability depends on export vintage, so older data falls back
+        to the rate composite. Both limits are recorded against GT-CREDIT-025 in
+        docs/legal-implementation-map.md.
+
+        A row that matches neither is treated as foreign, which is the pre-existing
+        behaviour: this method narrows Zeile 41, it never widens it.
+        """
+        code = (event.source_country_code or "").strip().upper()
+        if code and code not in self._NON_COUNTRY_CODES:
+            return code == "DE"
+
+        # No usable country code: fall back to the rate composite against the linked income.
+        if event.taxed_income_event_id is None or event.gross_amount_eur is None:
+            return False
+        gross = self._income_gross_eur_by_event_id().get(event.taxed_income_event_id)
+        if gross is None or gross <= 0:
+            return False
+        rate_pct = abs(event.gross_amount_eur) / gross * Decimal("100")
+        return self._KEST_RATE_LOW <= rate_pct <= self._KEST_RATE_HIGH
+
+    def _income_gross_eur_by_event_id(self) -> Dict[uuid.UUID, Decimal]:
+        """Gross EUR income per event id, for the rate test. Built once per run."""
+        if self._income_gross_cache is None:
+            self._income_gross_cache = {
+                e.event_id: e.gross_amount_eur
+                for e in self.current_year_financial_events
+                if isinstance(e, CashFlowEvent) and e.gross_amount_eur is not None
+            }
+        return self._income_gross_cache
+
+    def _record_german_kest_gap(self, count: int, total_eur: Decimal) -> None:
+        """Report German KESt that was excluded from Zeile 41 and cannot be declared for you.
+
+        [GT-FORM-007] routes the credit to Zeile 7 with Zeilen 37/38/39. The engine does not
+        fill those: Zeilen 7-15 are the figures *taken from* the Steuerbescheinigung of the
+        inlaendische auszahlende Stelle, and 36 Abs. 2 Satz 2 bars the credit outright when no
+        certificate is presented ([GT-CREDIT-022]). Zeile 7 transcribes a document the taxpayer
+        holds; computing it here would fabricate the one figure the form defines as copied.
+
+        Severity is WARNING, and the direction is what makes that honest: removing the amount
+        from Zeile 41 *reduces* the credit claimed, so the declaration becomes more
+        conservative, not income-understating. The taxpayer must obtain the certificate and
+        fill Zeilen 7/37/38 by hand to recover the credit.
+        """
+        if count == 0:
+            return
+        detail = (
+            f"{count} withholding row(s) totalling EUR {total_eur.quantize(self.TWO_PLACES, context=self.ctx)} "
+            f"were identified as German Kapitalertragsteuer (25% KESt plus 5.5% SolZ) rather than "
+            f"foreign withholding tax, and have been EXCLUDED from Anlage KAP Zeile 41, which is "
+            f"for anrechenbare auslaendische Steuer only. This tax is creditable, but through "
+            f"Zeile 7 with Zeilen 37/38/39 — and only on presentation of a Steuerbescheinigung "
+            f"(36 Abs. 2 Satz 2 EStG). Those lines are transcribed from that certificate, so the "
+            f"engine cannot fill them. Request the Steuerbescheinigung from the German custodian "
+            f"via your broker and complete Zeilen 7/37/38 by hand, or the credit is lost."
+        )
+        if self.data_gap_collector is not None:
+            self.data_gap_collector.record(
+                code="ANLAGE_KAP_GERMAN_KEST_NOT_DECLARABLE",
+                subject=f"Anlage KAP Zeilen 7/37/38 ({self.tax_year})",
+                detail=detail,
+                severity=GapSeverity.WARNING,
+            )
+        else:
+            logger.warning(
+                "Data gap [ANLAGE_KAP_GERMAN_KEST_NOT_DECLARABLE] "
+                "Anlage KAP Zeilen 7/37/38 (%d): %s", self.tax_year, detail
+            )
 
     def _record_zeile_53_gap_if_funds_disposed(self) -> None:
         """Report that Anlage KAP-INV Zeile 53 cannot be filled by the engine.
@@ -230,12 +323,21 @@ class LossOffsettingEngine:
         # says so. See reference/investment-tax-law/invstg-19-veraeusserungsgewinne.md.
         self._record_zeile_53_gap_if_funds_disposed()
 
-        # Calculate foreign tax paid (Zeile 41)
+        # Calculate foreign tax paid (Zeile 41). German KESt is not an auslaendische Steuer and
+        # is excluded here -- see _is_german_kest and _record_german_kest_gap.
+        # legal_basis: reference/tax-forms/anlage-kap-zeilen.md [GT-FORM-007].
         foreign_tax_total = self.ctx.create_decimal(Decimal('0'))
+        german_kest_total = self.ctx.create_decimal(Decimal('0'))
+        german_kest_count = 0
         for event in self.current_year_financial_events:
             if isinstance(event, WithholdingTaxEvent):
                 tax_amount = event.gross_amount_eur if event.gross_amount_eur is not None else self.ctx.create_decimal(Decimal('0'))
+                if self._is_german_kest(event):
+                    german_kest_total = self.ctx.add(german_kest_total, tax_amount)
+                    german_kest_count += 1
+                    continue
                 foreign_tax_total = self.ctx.add(foreign_tax_total, tax_amount)
+        self._record_german_kest_gap(german_kest_count, german_kest_total)
 
         # Store raw component values for reporters (always available regardless of form year)
         result.raw_derivative_gains_gross = derivative_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)

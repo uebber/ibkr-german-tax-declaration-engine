@@ -121,7 +121,7 @@ that question: pooling is wrong under both readings.
 | GT-FORM-004 | **deviates** | — | — | Same shape: a worthless-share write-off should go to Zeile 23 in VZ 2025, and there is no event kind for it. |
 | GT-FORM-005 | not reached | — | — | Nothing is written to Zeilen 21/24 for VZ 2025 under either reading, so no figure turns on the open question. See Q3. |
 | GT-FORM-006 | implements | `ANLAGE_KAP_FOREIGN_TAX_PAID` — sum of withholding events | `test_withholding_tax_linker.py` | Neither ceiling is applied; the Finanzamt applies § 32d Abs. 5 Sätze 1 and 3. See GT-CREDIT-005/006. |
-| GT-FORM-007 | **deviates** | — | — | See GT-CREDIT-025. Zeilen 7/37/38/39 have no representation. |
+| GT-FORM-007 | **partially implements** | `src/engine/loss_offsetting.py` | `test_german_kest_detection.py`, `test_withholding_tax_linker.py` | The negative half is implemented: German KESt is off Zeile 41. The positive half (Zeilen 7/37/38/39) is not computable — see GT-CREDIT-021. |
 | GT-FORM-008 | out of scope | — | — | Zeile 4 (Günstigerprüfung) and Zeile 5 (Überprüfung des Steuereinbehalts) are taxpayer elections, not computed figures. |
 | GT-FORM-009 | implements | classification decides the Anlage | `test_futures.py::TestFuturesClassification`, `test_section23_holding_period.py` | Fund → KAP-INV, private sale asset → SO, Einlagenrückgewähr (`CAPITAL_REPAYMENT`) → not taxable. |
 | GT-FORM-010 | implements | `src/tax_law/registry.py` `FormYearRules(separate_derivative_lines=True)` for 2021 and 2024 | `test_tax_law_registry.py::TestFormYearRules` | |
@@ -342,13 +342,13 @@ at 31.12.2017). Both need pre-2018 data the engine has no source for — an acqu
 | GT-CREDIT-011 | not reached | — | — | The Schuldner-domicile test has no expression on the declaration for a foreign-broker portfolio under Abgeltungsteuer. |
 | GT-CREDIT-012 | not reached | — | — | The § 34c carve-out is why no per-country computation is needed. Nothing to implement. |
 | GT-CREDIT-013 | not reached | — | — | Günstigerprüfung stays inside the carve-out, so it does not restore a per-country mechanism either. |
-| GT-CREDIT-014 | **deviates (silently)** | — | — | Withholding is treated as foreign without testing the debtor's domicile by any proxy. This is the same defect as GT-CREDIT-025, seen from the § 34d side. |
+| GT-CREDIT-014 | **deviates (no longer silently)** | `src/engine/loss_offsetting.py` `_is_german_kest` | `test_german_kest_detection.py` | Domicile is now tested by two proxies — issuer country where the broker supplies one, the 26.375% composite otherwise. Rows matching neither are still treated as foreign, but that is now a stated fallback rather than an untested assumption. |
 | GT-CREDIT-020 | not reached | — | — | German KESt is withheld upstream, not by the broker. |
-| GT-CREDIT-021 | **deviates** | — | — | Zeilen 7/37/38/39 have no representation. |
-| GT-CREDIT-022 | **deviates** | — | — | The Steuerbescheinigung requirement is not surfaced. Without a certificate the credit is barred by § 36 Abs. 2 Satz 2, and the report says nothing about it. |
+| GT-CREDIT-021 | **deviates — by design** | — | `test_german_kest_detection.py::TestTheExcludedAmountReachesTheUser` | Zeilen 7/37/38/39 have no representation, and will not: they transcribe a Steuerbescheinigung the engine does not hold. The amount reaches the user as a data gap instead. |
+| GT-CREDIT-022 | implements | `src/engine/loss_offsetting.py` `_record_german_kest_gap` | `test_german_kest_detection.py::TestTheExcludedAmountReachesTheUser` | The report now names the amount, the Zeilen 7/37/38 route, and that § 36 Abs. 2 Satz 2 bars the credit without a certificate obtained from the German custodian. |
 | GT-CREDIT-023 | not reached | — | — | That the certificate is obtainable on request is a fact about the broker, not a computation. |
 | GT-CREDIT-024 | not reached | — | — | § 36a Cum/Cum, with a EUR 20 000 Bagatellgrenze. |
-| GT-CREDIT-025 | **deviates — KNOWN DEFECT** | `src/engine/loss_offsetting.py` | — | See below. |
+| GT-CREDIT-025 | **implements (detection); deviates (credit route)** | `src/engine/loss_offsetting.py` `_is_german_kest` | `test_german_kest_detection.py`, `test_withholding_tax_linker.py::test_german_kest_is_excluded_from_zeile_41` | German KESt is identified and kept off Zeile 41. It is not re-declared — see below. |
 
 **GT-CREDIT-025 / GT-CREDIT-021 / GT-CREDIT-022 / GT-CREDIT-014 — one defect, four claims.**
 

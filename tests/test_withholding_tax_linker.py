@@ -338,7 +338,6 @@ class TestWithholdingTaxLinker:
             TaxReportingCategory.ANLAGE_KAP_FOREIGN_TAX_PAID, Decimal("0.00")
         ) == Decimal("31.50"), "Zeile 41 aggregates the withholding events' EUR amounts (GT-FORM-006)"
 
-    @pytest.mark.xfail(strict=True, reason="GT-CREDIT-025: no country filter on Zeile 41")
     def test_german_kest_is_excluded_from_zeile_41(self, tmp_path):
         """German Kapitalertragsteuer must not be declared as anrechenbare
         ausländische Steuer.
@@ -347,18 +346,22 @@ class TestWithholdingTaxLinker:
         German issuer's dividend is **not** an ausländische Steuer and does not
         belong in Zeile 41." It is credited through Zeile 7 with Zeilen 37/38/39.
 
-        This is the known defect GT-CREDIT-025, recorded in
-        `docs/legal-implementation-map.md` as prose. It is marked
-        xfail(strict=True) so that it is an instrument rather than a note: it
-        fails today because the sum has no country filter, and the day the filter
-        lands it will XPASS, which strict=True turns into a failure — forcing the
-        marker to be removed rather than leaving a stale xfail behind.
+        Written as xfail(strict=True) while GT-CREDIT-025 was an open defect, so
+        that the day a filter landed it would XPASS and strict would force the
+        marker's removal rather than leave a stale xfail behind. The filter
+        landed; the marker is gone. The mechanism worked as intended.
 
-        Note the fix is larger than this assertion: GT-FORM-007 puts the credit
-        on Zeilen 7/37/38/39, which have no representation at all, so excluding
-        the amount here without adding those lines would drop the credit rather
-        than move it. That is why this test states the requirement and does not
-        attempt the fix.
+        This asserts the **country-code** route only — it sets source_country_code
+        explicitly. The rate-composite fallback, which is what covers export
+        vintages carrying no country code, is pinned separately in
+        test_german_kest_detection.py. Passing this test alone would not mean the
+        defect is fixed.
+
+        The credit is not re-declared anywhere: GT-FORM-007 routes it to Zeilen
+        7/37/38/39, but those are transcribed from a Steuerbescheinigung and
+        § 36 Abs. 2 Satz 2 bars the credit without one, so the engine reports the
+        amount through the data-gap channel instead of computing a line the form
+        defines as copied.
         """
         from src.engine.loss_offsetting import LossOffsettingEngine
         from src.domain.enums import TaxReportingCategory
