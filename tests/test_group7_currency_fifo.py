@@ -19,18 +19,23 @@ Related: GT-FX-006 (short currency positions) and GT-FX-007 (currency embedded
 in a securities trade), both choices under uncertainty — see
 reference/research/open-legal-questions.md and docs/legal-implementation-map.md.
 
-Note the store records that the controlling BMF circular has never been
-retrieved and that its Randziffer numbering is ambiguous across versions, so
-these expectations rest on administrative practice, not on a verified Tier 2
-citation.
+The controlling text is the BMF-Schreiben vom 14.05.2025, retrieved and read in
+full on 2026-08-03 and reproduced verbatim in the store. Cite that date with the
+Randziffer: the 14.05.2025 text is a Neufassung of BMF 19.05.2022, and whether
+the older text numbered it identically is not established.
+
+Which expectations in this file that actually grounds: the § 20 classification of
+a currency balance and the FIFO lot order are verified Tier 2 (Rz. 131, GT-FX-008).
+The short-position specs (CFX_S_*, CFX_IS_*) are NOT — Rz. 131 addresses Guthaben
+throughout and says nothing about a negative balance, so they rest on GT-FX-006,
+a choice under uncertainty (Q8). The embedded currency leg of a securities trade
+is GT-FX-007, recorded as reasoned rather than sourced (Q9).
 """
 
-import logging
 import pytest
 from decimal import Decimal
 from typing import List, Tuple, Any, Optional
 
-logger = logging.getLogger(__name__)
 
 from tests.support.base import FifoTestCaseBase
 from tests.support.mock_providers import MockECBExchangeRateProvider
@@ -117,7 +122,7 @@ def create_fx_trade_csv_row(
     trade_date: str,
     transaction_id: str,
     trade_time: Optional[str] = None,
-) -> Optional[List[Any]]:
+) -> List[Any]:
     """
     Create a CSV row for an FX trade.
 
@@ -129,13 +134,14 @@ def create_fx_trade_csv_row(
       - Negative = sell EUR (buy foreign)
     - TradePrice: Exchange rate (foreign per EUR)
     """
-    # Validate inputs - skip trades with invalid amounts or missing rates
+    # Negative amounts are a SPEC-AUTHORING error, not a real IBKR data shape:
+    # IBKR FX-pair rows encode direction in the SIGN of the EUR-leg quantity,
+    # amounts in specs are absolute. Fail loudly instead of silently dropping
+    # the row (a silent skip made CFX_ERR_002 test nothing since it was written (bdd9688, 2026-03-08)).
     if foreign_amount is not None and foreign_amount < Decimal("0"):
-        logger.warning(f"FX trade {transaction_id}: Skipping - negative foreign_amount {foreign_amount}")
-        return None
+        raise ValueError(f"FX trade {transaction_id}: negative foreign_amount {foreign_amount} in spec")
     if eur_amount is not None and eur_amount < Decimal("0"):
-        logger.warning(f"FX trade {transaction_id}: Skipping - negative eur_amount {eur_amount}")
-        return None
+        raise ValueError(f"FX trade {transaction_id}: negative eur_amount {eur_amount} in spec")
 
     symbol = f"EUR.{foreign_currency}"
 
@@ -373,8 +379,7 @@ def spec_to_trades_data(
                 transaction_id=f"FX_T_{i:04d}",
                 trade_time=fx_trade.time,
             )
-            if csv_row is not None:
-                trades_data.append(csv_row)
+            trades_data.append(csv_row)
 
     # Add security trades (for implicit FX)
     for i, sec_trade in enumerate(spec.security_trades):
@@ -866,7 +871,10 @@ class TestCurrencyFifoRGLs(FifoTestCaseBase):
 
         # Tests that expect a pipeline error (e.g., DataIntegrityError for corrupt data)
         if spec.expect_pipeline_error:
-            with pytest.raises(pytest.fail.Exception, match="data integrity"):
+            # "data integrity" only pins THAT the pipeline refused. A spec that
+            # names the condition it is about pins WHY, via expect_pipeline_error_match.
+            expected_match = spec.expect_pipeline_error_match or "data integrity"
+            with pytest.raises(pytest.fail.Exception, match=expected_match):
                 self._run_pipeline(
                     trades_data=trades_data,
                     positions_start_data=positions_start,
@@ -982,6 +990,37 @@ class TestCurrencyFifoAggregates(FifoTestCaseBase):
 # =============================================================================
 # Spec Loading Verification
 # =============================================================================
+
+class TestSpecRowBuilderRejectsNegativeAmounts:
+    """The row builder raises on a negative spec amount instead of dropping the row.
+
+    legal_basis: infrastructure. No declared figure depends on this test — but the
+    behaviour it pins is why other tests in this file can be trusted. The builder
+    used to log and return None, so a spec authored with a negative amount produced
+    no CSV row at all and its expectations were satisfied by the engine never
+    running. CFX_ERR_002 sat in that state and asserted nothing.
+
+    Real IBKR FX-pair rows encode direction in the sign of the EUR-leg quantity, so
+    an amount in a spec is absolute by definition and a negative one is an authoring
+    error, not an input shape to model.
+    """
+
+    def test_negative_foreign_amount_raises(self):
+        with pytest.raises(ValueError, match="negative foreign_amount"):
+            create_fx_trade_csv_row(
+                account_id="U_TEST", foreign_currency="USD", trade_type="SELL_FOREIGN",
+                foreign_amount=Decimal("-500.00"), eur_amount=Decimal("450.00"),
+                ecb_rate=Decimal("1.11"), trade_date="2023-06-01", transaction_id="FX_NEG_1",
+            )
+
+    def test_negative_eur_amount_raises(self):
+        with pytest.raises(ValueError, match="negative eur_amount"):
+            create_fx_trade_csv_row(
+                account_id="U_TEST", foreign_currency="USD", trade_type="SELL_FOREIGN",
+                foreign_amount=Decimal("500.00"), eur_amount=Decimal("-450.00"),
+                ecb_rate=Decimal("1.11"), trade_date="2023-06-01", transaction_id="FX_NEG_2",
+            )
+
 
 class TestCurrencyFifoSpecsLoaded:
     """Verify that currency FIFO specs are loaded correctly."""

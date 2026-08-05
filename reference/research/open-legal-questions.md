@@ -21,6 +21,7 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q7 | [GT-FX-005] | Are currency gains on an interest-bearing account really § 20 EStG income, or do they remain within § 23 Abs. 1 Satz 1 Nr. 2? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q8 | [GT-FX-006] | How is a short (negative) currency position taxed in Privatvermoegen? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q9 | [GT-FX-007] | Is the currency leg embedded in a foreign securities transaction a separate disposal? | `../bmf-guidance/fremdwaehrung-konten.md` |
+| Q10 | [GT-FX-001] | Is a foreign-currency balance debited to settle a cash-flow item disposed of, measured separately in EUR? | this file |
 
 **Closed 2026-08-03, and recorded here so it is not reopened by habit:** lot identification for
 foreign-currency amounts. It is FIFO under both classifications -- § 23 Abs. 1 Satz 1 Nr. 2 Satz 3
@@ -171,6 +172,33 @@ A related point that is **no longer open**: lot identification for currency. It 
 classifications -- Rz. 131 for the § 20 branch, § 23 Abs. 1 Satz 1 Nr. 2 Satz 3 for the § 23
 branch. The library previously grounded it in § 20 Abs. 4 Satz 7, which cannot reach a currency
 balance.
+
+## Q10 -- currency consumed to settle a cash-flow item
+
+A foreign-currency balance is debited to pay withholding tax, a fee, or a similar item. Is that
+debit a disposal of the currency, measured separately in EUR against the acquisition cost of the
+amount consumed?
+
+**Reading A (a separately measured disposal).** Rz. 131 states the trigger generally before it
+names cases: *"Waehrungsgewinne/-verluste aus der **Veraeusserung oder Rueckzahlung** einer ...
+verzinslichen Kapitalforderung oder eines verzinslichen Fremdwaehrungsguthabens ... sind gemaess
+§ 20 Absatz 2 Satz 1 Nummer 7 und Absatz 4 Satz 1 EStG zu beruecksichtigen."* A payment made out of
+the balance extinguishes part of the Kapitalforderung and so realises the difference between its
+EUR value at acquisition and at extinction, on the same footing as the cases the Randziffer then
+lists. Reading it otherwise lets a currency gain escape measurement whenever the balance is spent
+rather than converted back.
+
+**Reading B (not a separate disposal).** Rz. 131's enumeration is of Rueckzahlung, re-investment
+and transfer to another interest-bearing account. A payment made out of the balance is not among
+them, and the item being settled is itself the taxable event, measured at the rate of its own day.
+On this reading the currency movement is a means of settlement, not a second transaction.
+
+No Tier 1 or Tier 2 statement directly on the point has been located. BMF 14.05.2025 was retrieved
+and Rz. 131 read in full on 2026-08-03; it does not reach the question either way. This is a
+narrower point than Q9, which concerns the currency leg of a securities transaction, and the
+correction recorded there -- that Rz. 131 does not carry separate measurement -- applies here with
+equal force. The choice is not neutral in amount: Reading A produces a gain or loss line that
+Reading B does not.
 
 ---
 

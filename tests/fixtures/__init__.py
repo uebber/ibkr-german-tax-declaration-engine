@@ -571,6 +571,9 @@ class CurrencyFifoTestSpec:
     has_explicit_rgl_expectations: bool = True
     # Whether the pipeline is expected to raise an error (e.g., DataIntegrityError)
     expect_pipeline_error: bool = False
+    # Substring the raised error must carry. Without it a spec only pins THAT the
+    # pipeline failed, not that it failed for the reason the spec is about.
+    expect_pipeline_error_match: Optional[str] = None
     # Skip flag for tests that test unimplemented features
     skip: bool = False
     skip_reason: Optional[str] = None
@@ -853,6 +856,7 @@ def parse_currency_fifo_tests(spec_data: Dict[str, Any]) -> List[CurrencyFifoTes
             has_explicit_rgl_expectations=has_explicit_rgl_expectations,
             notes=test_dict.get("notes"),
             expect_pipeline_error=test_dict.get("expect_pipeline_error", False),
+            expect_pipeline_error_match=test_dict.get("expect_pipeline_error_match"),
             skip=test_dict.get("skip", False),
             skip_reason=test_dict.get("skip_reason"),
         ))

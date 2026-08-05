@@ -5,9 +5,17 @@ Tests that cash flow events (dividends, interest, withholding tax, fees)
 in foreign currency correctly create/consume currency FIFO lots and
 generate FX gains/losses.
 
-Tax Law Basis:
-- BMF Circular May 2022, Para. 131: IBKR FX reserves are interest-bearing
-- FX gains/losses from cash flows → §20 EStG → Anlage KAP Zeile 19
+legal_basis: GT-FX-001 — a currency balance is an asset under § 20 and its
+disposal is measured in EUR. Lot order is GT-FX-008. The § 20 classification
+itself rests on GT-FX-005, a choice under uncertainty recorded in
+`reference/research/open-legal-questions.md` (Q7).
+
+That a *cash-flow debit* (WHT, fee) is itself a separately measured disposal is
+the engine's recorded position — `docs/legal-implementation-map.md`, GT-FX-001,
+`FX_IMPLICIT_CASHFLOW_EXPENSE`/`_INCOME` — not something the store states. Rz. 131
+enumerates Rückzahlung, re-investment and transfer; the coverage matrix has no row
+for a cash-flow debit. These tests pin the engine's behaviour, and are worded to
+claim no more than that.
 
 Test Organization:
 - CFX_CF_DIV_*  : Dividend income creating currency lots
@@ -471,18 +479,18 @@ class TestCashflowMixedScenarios(FifoTestCaseBase):
             if rgl.asset_category_at_realization == AssetCategory.CASH_BALANCE
         ]
 
-        # WHT on same day as dividend → same rate → FX gain/loss = 0
+        # WHT on same day as dividend → same rate → zero FX gain/loss. Pin ONE
+        # outcome: the RGL must exist (the engine treats the WHT consuming 30 USD
+        # from the dividend lot as a disposal — its recorded position, see the
+        # module docstring) and its gain must be exactly 0.00. The previous
+        # accept-0-or-1 assertion could not catch a dropped-RGL regression.
         from src import config as app_config
-        if len(currency_rgls) == 1:
-            rgl = currency_rgls[0]
-            assert rgl.quantity_realized == Decimal("30")
-            assert rgl.gross_gain_loss_eur.quantize(app_config.OUTPUT_PRECISION_AMOUNTS) == Decimal("0.00")
-            assert rgl.realization_type == RealizationType.FX_IMPLICIT_CASHFLOW_EXPENSE
-        elif len(currency_rgls) == 0:
-            # Zero gain/loss might be filtered - acceptable
-            pass
-        else:
-            pytest.fail(f"Expected 0-1 currency RGLs, got {len(currency_rgls)}: {currency_rgls}")
+        assert len(currency_rgls) == 1, \
+            f"Expected exactly 1 currency RGL (zero-gain disposal), got {len(currency_rgls)}: {currency_rgls}"
+        rgl = currency_rgls[0]
+        assert rgl.quantity_realized == Decimal("30")
+        assert rgl.gross_gain_loss_eur.quantize(app_config.OUTPUT_PRECISION_AMOUNTS) == Decimal("0.00")
+        assert rgl.realization_type == RealizationType.FX_IMPLICIT_CASHFLOW_EXPENSE
 
     def test_soy_lot_then_wht_with_fx_gain(self, mock_config_paths):
         """
