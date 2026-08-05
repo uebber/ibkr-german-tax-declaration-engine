@@ -210,3 +210,43 @@ Not open questions -- these have a settled answer today that a decision may chan
 |------|---------|--------------------------------------------|
 | BVerfG 2 BvL 3/21 | Stock loss ring-fencing, § 20 Abs. 6 Satz 4 EStG (referred by BFH, Beschluss vom 17.11.2020, VIII R 11/18) | The separate Aktienverlusttopf, and with it the Zeile 20/23 split, would fall away |
 | §§ 45b, 45c EStG (AbzStEntModG), from 01.01.2027 | Reporting duties changing Steuerbescheinigung issuance for German dividends | Alters the evidential route in [GT-CREDIT-022]; out of scope for VZ <= 2026 |
+
+---
+
+## Q11 -- unallocated spot precious metal held at a broker
+
+**The instrument.** A long position in gold against a currency, carried on a broker's books with
+no maturity and no delivery claim, charged a monthly carrying fee. It is not a dated contract and
+it is not allocated metal.
+
+**Why it is not settled.** Three readings are each defensible and no Tier 1 or Tier 2 source
+located so far chooses between them.
+
+**Reading A -- Termingeschaeft, 20 Abs. 2 Satz 1 Nr. 3.** The Bezugsgroesse fits: BMF 14.05.2025
+Rz. 9 lists *"dem Boersen- oder Marktpreis von Waren oder Edelmetallen"* ([GT-ESTG20-038]).
+**Against it:** the same Randziffer opens by requiring an Options- or Festgeschaeft *"die zeitlich
+verzoegert zu erfuellen sind"*. A rolling spot position with no maturity does not obviously satisfy
+that, and the Bezugsgroesse list qualifies instruments that already meet the definition rather than
+substituting for it.
+
+**Reading B -- private sale under 23 Abs. 1 Satz 1 Nr. 2.** The BFH treats gold-backed paper as if
+it were physical gold where the holder has a *schuldrechtlicher Anspruch auf Lieferung* (VIII R
+35/14, VIII R 19/14, VIII R 4/15, all 12.05.2015; IX R 33/17 of 06.02.2018 on physical
+fulfilment). **Against it:** VIII R 15/18 of 12.04.2021 draws the boundary -- a Gold-ETF is *not*
+treated as physical gold where no delivery claim exists, and *"dass die Gelder ausschliesslich in
+physisches Gold investiert wurden, ist insoweit unerheblich."* An unallocated broker position
+carries no such claim.
+
+**Reading C -- sonstige Kapitalforderung, 20 Abs. 2 Satz 1 Nr. 7.** If the position is a
+cash-settled claim against the broker rather than metal, this is where it would sit.
+**Against it:** the 2015 BFH line holds that a claim directed at delivery of a Sache is not a
+Kapitalforderung -- but that reasoning presupposes a delivery claim, which is the very thing
+absent here, so it neither supports nor excludes this reading.
+
+**What turns on the answer.** Reading A puts the gain on Anlage KAP as a Termingeschaeft. Reading
+B puts it on Anlage SO and makes it tax-free after a year. Reading C puts it on Anlage KAP under a
+different Nummer with different loss-offsetting. The three do not converge.
+
+**Status.** No Tier 1/2 source has been located that addresses unallocated spot metal at a broker
+specifically. Tier 4 constrains the question from both sides without closing it. **Do not resolve
+this from the shape of the product or from what a broker's asset class happens to be called.**
