@@ -1,13 +1,23 @@
 # src/cli.py
 import argparse
-import src.config as config # For default settings
+
+# NOTE: this module deliberately does NOT import src.config. Parsing is purely
+# syntactic; every run-defining value is left as None when the user did not
+# supply it, and is resolved against the user config exactly once, in
+# RunContext.from_config() (see src/run_context.py). Binding a config value as
+# an argparse default here would put a second config read upstream of that
+# boundary and make the tri-state unobservable.
 
 def parse_arguments():
-    """Parses command line arguments for the application."""
+    """Parses command line arguments for the application.
+
+    Run-defining options (--tax-year, --interactive/--no-interactive) default to
+    None meaning "not specified"; the boundary resolves them from config.
+    """
     parser = argparse.ArgumentParser(description="IBKR German Tax Declaration Engine")
 
     # Tax year selection
-    parser.add_argument("--tax-year", type=int, default=config.TAX_YEAR, help=f"Tax year to process (default: {config.TAX_YEAR} from config.py).")
+    parser.add_argument("--tax-year", type=int, default=None, help="Tax year to process (default: TAX_YEAR from config.py).")
 
     # Operational modes
     parser.add_argument("--interactive", action="store_true", default=None, help="Enable interactive asset classification. Overrides config if set.")
@@ -27,15 +37,8 @@ def parse_arguments():
     download_group.add_argument("--download-only", action="store_true", help="Download data from IBKR and exit (no processing).")
     download_group.add_argument("--force-download", action="store_true", help="Re-download even if cached files exist.")
 
-    args = parser.parse_args()
-
-    # Handle the tri-state for args.interactive:
-    # If neither --interactive nor --no-interactive is specified, args.interactive will be None.
-    # In this case, we should use the value from config.py.
-    if args.interactive is None:
-        args.interactive = config.IS_INTERACTIVE_CLASSIFICATION
-
-    if args.report_tax_declaration and args.pdf_output_file is None:
-        args.pdf_output_file = f"tax_report_{args.tax_year}.pdf"
-
-    return args
+    # args.tax_year and args.interactive stay None when unspecified; resolving
+    # them is the boundary's job. args.pdf_output_file likewise: its default
+    # name embeds the tax year, which is only known after resolution, so it is
+    # derived in src/main.py.
+    return parser.parse_args()

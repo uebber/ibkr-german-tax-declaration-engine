@@ -1,5 +1,6 @@
 # src/engine/loss_offsetting.py
 import logging
+import uuid
 from decimal import Decimal, Context
 from collections import defaultdict
 from typing import List, Dict, Optional
@@ -12,6 +13,7 @@ from src.domain.exceptions import ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 from src.reporting.form_rules import get_form_rules
+from src.processing.data_gaps import DataGapCollector, GapSeverity
 import src.config as global_config
 
 logger = logging.getLogger(__name__)
@@ -23,13 +25,24 @@ class LossOffsettingEngine:
                  current_year_financial_events: List[FinancialEvent],
                  asset_resolver: AssetResolver,
                  tax_year: int,
-                 apply_conceptual_derivative_loss_capping: bool = global_config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING):
+                 apply_conceptual_derivative_loss_capping: Optional[bool] = None,
+                 # Optional so existing callers keep working. When absent, a Zeile 53 gap is
+                 # logged but not collected into the report -- see
+                 # _record_zeile_53_gap_if_funds_disposed.
+                 data_gap_collector: Optional["DataGapCollector"] = None):
+        # None -> read the user config AT CALL TIME (the previous module-global
+        # default was bound at import time — ambient mutable state).
+        if apply_conceptual_derivative_loss_capping is None:
+            apply_conceptual_derivative_loss_capping = global_config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
         self.realized_gains_losses = realized_gains_losses
         self.vorabpauschale_items = vorabpauschale_items
         self.current_year_financial_events = current_year_financial_events
         self.asset_resolver = asset_resolver
         self.tax_year = tax_year
         self.apply_conceptual_derivative_loss_capping = apply_conceptual_derivative_loss_capping
+        self.data_gap_collector = data_gap_collector
+        # Built lazily by _income_gross_eur_by_event_id for the German-KESt rate test.
+        self._income_gross_cache: Optional[Dict[uuid.UUID, Decimal]] = None
 
         self.ctx = Context(prec=global_config.INTERNAL_CALCULATION_PRECISION, rounding=global_config.DECIMAL_ROUNDING_MODE) # Renamed INTERNAL_WORKING_PRECISION
         self.TWO_PLACES = global_config.OUTPUT_PRECISION_AMOUNTS # Renamed from PRECISION_TOTAL_AMOUNTS
@@ -55,6 +68,145 @@ class LossOffsettingEngine:
 
         return net_dist_eur.quantize(self.TWO_PLACES, context=self.ctx)
 
+
+    # The German composite rate, 25% KESt x 1.055 SolZ = 26.375%
+    # (reference/tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md [GT-CREDIT-025]).
+    # The band around it is EMPIRICAL, not derived. Measured against real broker data, the
+    # withheld amount is not reproducible from the paired gross by any simple rounding rule:
+    # one-step round(gross x 0.26375, 2), two-step KESt-then-SolZ half-up, and two-step
+    # round-down each reproduced exactly half of the known-German rows, with observed
+    # deviations up to two cents. Rationale for the width is recorded in
+    # docs/legal-implementation-map.md under GT-CREDIT-025; do not restate it as derived.
+    _KEST_RATE_LOW = Decimal("26.30")
+    _KEST_RATE_HIGH = Decimal("26.45")
+    # IBKR emits this as a country code but it denotes "unknown/multiple", not a jurisdiction.
+    _NON_COUNTRY_CODES = frozenset({"XX"})
+
+    def _is_german_kest(self, event: WithholdingTaxEvent) -> bool:
+        """Is this withholding German Kapitalertragsteuer rather than foreign tax?
+
+        legal_basis: [GT-FORM-007] — German KESt on a German issuer's dividend is not an
+        auslaendische Steuer and does not belong on Zeile 41. [GT-CREDIT-025] gives the
+        26.375% composite that identifies it.
+
+        Two signals, in order of authority. The issuer country decides when the broker
+        supplies one; its availability depends on export vintage, so older data falls back
+        to the rate composite. Both limits are recorded against GT-CREDIT-025 in
+        docs/legal-implementation-map.md.
+
+        A row that matches neither is treated as foreign, which is the pre-existing
+        behaviour: this method narrows Zeile 41, it never widens it.
+        """
+        code = (event.source_country_code or "").strip().upper()
+        if code and code not in self._NON_COUNTRY_CODES:
+            return code == "DE"
+
+        # No usable country code: fall back to the rate composite against the linked income.
+        if event.taxed_income_event_id is None or event.gross_amount_eur is None:
+            return False
+        gross = self._income_gross_eur_by_event_id().get(event.taxed_income_event_id)
+        if gross is None or gross <= 0:
+            return False
+        rate_pct = abs(event.gross_amount_eur) / gross * Decimal("100")
+        return self._KEST_RATE_LOW <= rate_pct <= self._KEST_RATE_HIGH
+
+    def _income_gross_eur_by_event_id(self) -> Dict[uuid.UUID, Decimal]:
+        """Gross EUR income per event id, for the rate test. Built once per run."""
+        if self._income_gross_cache is None:
+            self._income_gross_cache = {
+                e.event_id: e.gross_amount_eur
+                for e in self.current_year_financial_events
+                if isinstance(e, CashFlowEvent) and e.gross_amount_eur is not None
+            }
+        return self._income_gross_cache
+
+    def _record_german_kest_gap(self, count: int, total_eur: Decimal) -> None:
+        """Report German KESt that was excluded from Zeile 41 and cannot be declared for you.
+
+        [GT-FORM-007] routes the credit to Zeile 7 with Zeilen 37/38/39. The engine does not
+        fill those: Zeilen 7-15 are the figures *taken from* the Steuerbescheinigung of the
+        inlaendische auszahlende Stelle, and 36 Abs. 2 Satz 2 bars the credit outright when no
+        certificate is presented ([GT-CREDIT-022]). Zeile 7 transcribes a document the taxpayer
+        holds; computing it here would fabricate the one figure the form defines as copied.
+
+        Severity is WARNING, and the direction is what makes that honest: removing the amount
+        from Zeile 41 *reduces* the credit claimed, so the declaration becomes more
+        conservative, not income-understating. The taxpayer must obtain the certificate and
+        fill Zeilen 7/37/38 by hand to recover the credit.
+        """
+        if count == 0:
+            return
+        detail = (
+            f"{count} withholding row(s) totalling EUR {total_eur.quantize(self.TWO_PLACES, context=self.ctx)} "
+            f"were identified as German Kapitalertragsteuer (25% KESt plus 5.5% SolZ) rather than "
+            f"foreign withholding tax, and have been EXCLUDED from Anlage KAP Zeile 41, which is "
+            f"for anrechenbare auslaendische Steuer only. This tax is creditable, but through "
+            f"Zeile 7 with Zeilen 37/38/39 — and only on presentation of a Steuerbescheinigung "
+            f"(36 Abs. 2 Satz 2 EStG). Those lines are transcribed from that certificate, so the "
+            f"engine cannot fill them. Request the Steuerbescheinigung from the German custodian "
+            f"via your broker and complete Zeilen 7/37/38 by hand, or the credit is lost."
+        )
+        if self.data_gap_collector is not None:
+            self.data_gap_collector.record(
+                code="ANLAGE_KAP_GERMAN_KEST_NOT_DECLARABLE",
+                subject=f"Anlage KAP Zeilen 7/37/38 ({self.tax_year})",
+                detail=detail,
+                severity=GapSeverity.WARNING,
+            )
+        else:
+            logger.warning(
+                "Data gap [ANLAGE_KAP_GERMAN_KEST_NOT_DECLARABLE] "
+                "Anlage KAP Zeilen 7/37/38 (%d): %s", self.tax_year, detail
+            )
+
+    def _record_zeile_53_gap_if_funds_disposed(self) -> None:
+        """Report that Anlage KAP-INV Zeile 53 cannot be filled by the engine.
+
+        Zeile 53 takes the Vorabpauschalen assessed during the holding period of the units
+        disposed of, gross of Teilfreistellung (19 Abs. 1 S. 3-4 InvStG), and only so far as
+        they were actually brought to tax -- for a foreign broker's units the Anleitung makes
+        that condition explicit. Computing it needs per-lot Vorabpauschale history across every
+        year the lot was held, which this engine does not keep.
+
+        Severity is WARNING, not FAIL_FAST, and the direction matters: omitting the deduction
+        leaves the declared fund gain **overstated**, so the figures are complete and
+        conservative rather than income-understating. That is the WARNING contract in
+        src/processing/data_gaps.py. The taxpayer must supply Zeile 53 by hand from their prior
+        returns before filing.
+
+        Nothing is reported when no fund units were disposed of: Zeile 53 is then legitimately
+        empty and there is no gap.
+        """
+        disposed_funds = {
+            rgl.asset_internal_id
+            for rgl in self.realized_gains_losses
+            if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND
+        }
+        if not disposed_funds:
+            return
+
+        detail = (
+            f"{len(disposed_funds)} investment fund position(s) were disposed of in "
+            f"{self.tax_year}. Anlage KAP-INV Zeile 53 ('Waehrend der Besitzzeit angesetzte "
+            f"Vorabpauschalen', before Teilfreistellung) reduces the disposal gain by the "
+            f"Vorabpauschalen assessed over the holding period of those units, so far as they "
+            f"were declared in earlier years (19 Abs. 1 S. 3-4 InvStG). The engine does not "
+            f"track per-lot Vorabpauschale history and leaves the line empty, which OVERSTATES "
+            f"the declared fund gain. Fill Zeile 53 by hand from the Vorabpauschalen reported "
+            f"on Zeilen 9-13 of your earlier returns for these units."
+        )
+        if self.data_gap_collector is not None:
+            self.data_gap_collector.record(
+                code="KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED",
+                subject=f"Anlage KAP-INV Zeile 53 ({self.tax_year})",
+                detail=detail,
+                severity=GapSeverity.WARNING,
+            )
+        else:
+            logger.warning(
+                "Data gap [KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED] "
+                "Anlage KAP-INV Zeile 53 (%d): %s", self.tax_year, detail
+            )
 
     def calculate_reporting_figures(self) -> LossOffsettingResult:
         result = LossOffsettingResult()
@@ -144,9 +296,11 @@ class LossOffsettingEngine:
                  # Excess amounts are now handled as separate DIVIDEND_CASH events
                  pass
 
-        vp_gross_total_for_z55 = self.ctx.create_decimal(Decimal('0'))
         for vp_item in self.vorabpauschale_items:
-            if vp_item.tax_year == self.tax_year:
+            # `declaration_year` is the VZ this Vorabpauschale belongs on: the VP for calendar
+            # X flows on the first working day of X+1 (18 Abs. 3 InvStG). The engine builds the
+            # items for calendar `tax_year - 1`, so this selects them.
+            if vp_item.declaration_year == self.tax_year:
                 net_vp_eur = vp_item.net_taxable_vorabpauschale_eur
                 if net_vp_eur is None:
                     logger.warning(f"Vorabpauschale item for asset {vp_item.asset_internal_id} has no net_taxable_vorabpauschale_eur. Assuming 0.")
@@ -154,21 +308,36 @@ class LossOffsettingEngine:
 
                 fund_income_net_taxable = self.ctx.add(fund_income_net_taxable, net_vp_eur)
 
-                # Accumulate gross VP for Z55 (all VP from foreign broker = no German WHT withheld)
-                gross_vp = vp_item.gross_vorabpauschale_eur if vp_item.gross_vorabpauschale_eur is not None else Decimal('0')
-                vp_gross_total_for_z55 = self.ctx.add(vp_gross_total_for_z55, gross_vp)
-
         result.conceptual_fund_income_net_taxable = fund_income_net_taxable.quantize(self.TWO_PLACES, context=self.ctx)
 
-        # Z55: Sum of all gross Vorabpauschale for deduction on disposal
-        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55] = vp_gross_total_for_z55.quantize(self.TWO_PLACES, context=self.ctx)
+        # --- Anlage KAP-INV Zeile 53 ---
+        # "Waehrend der Besitzzeit angesetzte Vorabpauschalen", before Teilfreistellung
+        # (19 Abs. 1 S. 3-4 InvStG). This is the Vorabpauschale accumulated over the holding
+        # period OF THE UNITS DISPOSED OF, across every year they were held, and only so far as
+        # it was actually brought to tax.
+        #
+        # The engine cannot compute it: there is no per-lot Vorabpauschale accumulation, and no
+        # record of which prior years' Vorabpauschalen were declared. Until 2026-08-03 this line
+        # carried the sum of the CURRENT year's gross Vorabpauschalen under the label "Z55" --
+        # wrong line, wrong quantity, and plausible enough to file. It now emits nothing and
+        # says so. See reference/investment-tax-law/invstg-19-veraeusserungsgewinne.md.
+        self._record_zeile_53_gap_if_funds_disposed()
 
-        # Calculate foreign tax paid (Zeile 41)
+        # Calculate foreign tax paid (Zeile 41). German KESt is not an auslaendische Steuer and
+        # is excluded here -- see _is_german_kest and _record_german_kest_gap.
+        # legal_basis: reference/tax-forms/anlage-kap-zeilen.md [GT-FORM-007].
         foreign_tax_total = self.ctx.create_decimal(Decimal('0'))
+        german_kest_total = self.ctx.create_decimal(Decimal('0'))
+        german_kest_count = 0
         for event in self.current_year_financial_events:
             if isinstance(event, WithholdingTaxEvent):
                 tax_amount = event.gross_amount_eur if event.gross_amount_eur is not None else self.ctx.create_decimal(Decimal('0'))
+                if self._is_german_kest(event):
+                    german_kest_total = self.ctx.add(german_kest_total, tax_amount)
+                    german_kest_count += 1
+                    continue
                 foreign_tax_total = self.ctx.add(foreign_tax_total, tax_amount)
+        self._record_german_kest_gap(german_kest_count, german_kest_total)
 
         # Store raw component values for reporters (always available regardless of form year)
         result.raw_derivative_gains_gross = derivative_gains_gross.quantize(self.TWO_PLACES, context=self.ctx)
@@ -243,8 +412,10 @@ class LossOffsettingEngine:
         for key, val in kap_inv_gross_gl_collector.items():
             result.form_line_values[key] = val.quantize(self.TWO_PLACES, context=self.ctx)
 
-        for vp_item in self.vorabpauschale_items: # Will be 0 for 2023
-             if vp_item.tax_year == self.tax_year and vp_item.gross_vorabpauschale_eur != Decimal(0):
+        # Gross Vorabpauschale onto Zeilen 9-13, selected by DECLARATION year: the VP for
+        # calendar X is declared in VZ X+1 (18 Abs. 3 InvStG).
+        for vp_item in self.vorabpauschale_items:
+             if vp_item.declaration_year == self.tax_year and vp_item.gross_vorabpauschale_eur != Decimal(0):
                 if vp_item.tax_reporting_category_gross:
                      kap_inv_gross_vop_collector[vp_item.tax_reporting_category_gross] = self.ctx.add(kap_inv_gross_vop_collector[vp_item.tax_reporting_category_gross], vp_item.gross_vorabpauschale_eur)
 

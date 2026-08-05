@@ -5,7 +5,7 @@
 Running `validate_ledgers.py --year 2025` fails with:
 
 ```
-CRITICAL Option asset CONID:717647468 (ID: e68815a6-e046-44c0-91e5-a512c189b064)
+CRITICAL Option asset CONID:CONID_OPT (ID: e68815a6-e046-44c0-91e5-a512c189b064)
   is missing underlying link. Cannot process exercise event 2a273fb5-...
 ValueError: Option asset e68815a6-... missing underlying link for exercise.
 ```
@@ -16,9 +16,9 @@ The pipeline aborts entirely — no results are produced for 2025.
 
 ## Root Cause
 
-The option CONID:717647468 (an ESTX50 call, strike 4950, expiry 2025-07-18) is exercised, but its `underlying_asset_internal_id` is `None`. The engine cannot process the exercise without knowing which stock the option resolves to.
+The option CONID:CONID_OPT (an ESTX50 call, strike 4950, expiry 2025-07-18) is exercised, but its `underlying_asset_internal_id` is `None`. The engine cannot process the exercise without knowing which stock the option resolves to.
 
-The underlying stock (ESTX50, CONID:4356500) is never created as an asset because no trade, position, or corporate action row in the CSV data references it directly. The option's CSV row carries `UnderlyingConid=4356500` and `UnderlyingSymbol=ESTX50`, but these are only stored as metadata on the Option object — they are not used to pre-create the underlying asset.
+The underlying stock (ESTX50, CONID:CONID_UND) is never created as an asset because no trade, position, or corporate action row in the CSV data references it directly. The option's CSV row carries `UnderlyingConid=CONID_UND` and `UnderlyingSymbol=ESTX50`, but these are only stored as metadata on the Option object — they are not used to pre-create the underlying asset.
 
 ---
 
@@ -27,7 +27,7 @@ The underlying stock (ESTX50, CONID:4356500) is never created as an asset becaus
 ### Step 1: Option asset creation (`asset_resolver.py:212-218`)
 
 When a trade CSV row for an option is parsed, `get_or_create_asset()` creates an `Option` with:
-- `underlying_ibkr_conid = "4356500"` (from CSV `UnderlyingConid`)
+- `underlying_ibkr_conid = "CONID_UND"` (from CSV `UnderlyingConid`)
 - `underlying_ibkr_symbol = "ESTX50"` (from CSV `UnderlyingSymbol`)
 - `underlying_asset_internal_id = None` (not yet resolved)
 
@@ -42,10 +42,10 @@ Called after all CSV files are parsed (`parsing_orchestrator.py:583`). For each 
 
 If neither lookup finds an asset, `underlying_asset_internal_id` stays `None`.
 
-### Why it fails for CONID:717647468
+### Why it fails for CONID:CONID_OPT
 
-The underlying ESTX50 stock (CONID:4356500) never appears in any CSV as a direct trade, position, or corporate action. Therefore:
-- `alias_map["CONID:4356500"]` does not exist
+The underlying ESTX50 stock (CONID:CONID_UND) never appears in any CSV as a direct trade, position, or corporate action. Therefore:
+- `alias_map["CONID:CONID_UND"]` does not exist
 - `alias_map["SYMBOL:ESTX50"]` either doesn't exist or is ambiguous (the Option itself may have registered `SYMBOL:ESTX50`)
 
 Result: `underlying_asset_internal_id` remains `None`.
@@ -68,15 +68,15 @@ This is a hard failure — `raise ValueError` — which propagates up to `calcul
 
 ## Additional Complication: Duplicate Lookup Keys
 
-The 2025 validation log shows six "Duplicate key" warnings, all involving CONID:4356500 (ESTX50 underlying):
+The 2025 validation log shows six "Duplicate key" warnings, all involving CONID:CONID_UND (ESTX50 underlying):
 
 ```
-Duplicate key ('2025-07-18', '4356500', '20')   — OPTION_ASSIGNMENT overwritten by OPTION_EXERCISE
-Duplicate key ('2025-07-18', '4356500', '200')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
-Duplicate key ('2025-10-31', '4356500', '300')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
-Duplicate key ('2025-11-21', '4356500', '200')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
-Duplicate key ('2025-12-19', '4356500', '1400') — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
-Duplicate key ('2025-12-19', '4356500', '400')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
+Duplicate key ('2025-07-18', 'CONID_UND', '20')   — OPTION_ASSIGNMENT overwritten by OPTION_EXERCISE
+Duplicate key ('2025-07-18', 'CONID_UND', '200')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
+Duplicate key ('2025-10-31', 'CONID_UND', '300')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
+Duplicate key ('2025-11-21', 'CONID_UND', '200')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
+Duplicate key ('2025-12-19', 'CONID_UND', '1400') — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
+Duplicate key ('2025-12-19', 'CONID_UND', '400')  — OPTION_ASSIGNMENT overwritten by OPTION_ASSIGNMENT
 ```
 
 The option trade linker (`option_trade_linker.py:45-52`) uses a dict keyed by `(date, underlying_conid, qty)`. When two option events produce the same key, the last one wins. This means some option events lose their link to the corresponding stock trade, which may cause incorrect premium adjustments even when the underlying link is otherwise resolved.
@@ -148,7 +148,7 @@ uv run python validate_ledgers.py --year 2025
 The error occurs during the calculation engine phase. To see detailed logs:
 
 ```bash
-uv run python -m src.main --tax-year 2025 2>&1 | grep -i "underlying\|717647468\|4356500\|duplicate key"
+uv run python -m src.main --tax-year 2025 2>&1 | grep -i "underlying\|CONID_OPT\|CONID_UND\|duplicate key"
 ```
 
 ---
@@ -158,7 +158,7 @@ uv run python -m src.main --tax-year 2025 2>&1 | grep -i "underlying\|717647468\
 | Year | Status | Notes |
 |------|--------|-------|
 | 2021 | Unknown | Not validated this session |
-| 2022 | FAIL | AMAZON/SGBS merger lot issue + USD currency gap (unrelated) |
+| 2022 | FAIL | a merger lot issue (see the maintainer's private notes) + USD currency gap (unrelated) |
 | 2023 | PASS | Commission rebate fix resolved USD -55.32 gap |
 | 2024 | WARN | USD -0.51 residual (down from -21.18 after commission fix) |
 | 2025 | FAIL | This issue — option underlying link failure aborts pipeline |

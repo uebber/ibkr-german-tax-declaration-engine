@@ -20,6 +20,7 @@ import pytest
 from decimal import Decimal
 from typing import List, Tuple
 
+from src.processing.data_gaps import DataGapError
 from tests.support.base import FifoTestCaseBase
 from tests.support.mock_providers import MockECBExchangeRateProvider
 from tests.fixtures import FifoTestSpec
@@ -138,6 +139,29 @@ class TestFifoGroups(FifoTestCaseBase):
         mock_rate_provider = MockECBExchangeRateProvider(
             foreign_to_eur_init_value=fx_rate
         )
+        if spec.expected_errors > 0:
+            # A spec that expects EoY mismatches now expects the run to ABORT.
+            # Given a full year of input, SoY + the year's events must reconcile to
+            # the broker's EoY positions; a residual means the ledger and the broker
+            # disagree about what is held, so at least one disposal is missing,
+            # duplicated or matched to the wrong lot, and every figure derived from
+            # that ledger is unsafe. PRD 2.4 requires the quantities to be identical
+            # and the discrepancy to be a critical error. There is no post-mismatch
+            # EOY state to assert any more, which is the point: the engine does not
+            # produce one.
+            with pytest.raises(DataGapError) as excinfo:
+                self._run_pipeline(
+                    trades_data=trades_data,
+                    positions_start_data=positions_start,
+                    positions_end_data=positions_end,
+                    custom_rate_provider=mock_rate_provider,
+                    tax_year=tax_year,
+                )
+            message = str(excinfo.value)
+            assert "EOY_RECONCILIATION_FAILED" in message
+            assert spec.asset_symbol in message or spec.asset_isin in message, message
+            return
+
         actual = self._run_pipeline(
             trades_data=trades_data,
             positions_start_data=positions_start,

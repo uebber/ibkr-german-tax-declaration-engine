@@ -11,6 +11,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
 
+from src.processing.data_gaps import DataGap
 from src.domain.results import LossOffsettingResult, RealizedGainLoss, VorabpauschaleData
 from src.domain.events import FinancialEvent, CashFlowEvent, WithholdingTaxEvent, CorporateActionEvent, \
     CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock
@@ -32,7 +33,9 @@ class PdfReportGenerator:
                  assets_by_id: Dict[uuid.UUID, Asset],
                  tax_year: int,
                  eoy_mismatch_details: Optional[List[Dict[str, Any]]],
-                 report_version: str = "v1.0"):
+                 report_version: str = "v1.0",
+                 eoy_mismatch_count: int = 0,
+                 data_gaps: Optional[List["DataGap"]] = None):
         self.loss_offsetting_result = loss_offsetting_result
         self.all_financial_events = all_financial_events
         self.realized_gains_losses = realized_gains_losses
@@ -41,6 +44,12 @@ class PdfReportGenerator:
         self.tax_year = tax_year
         self.eoy_mismatch_details = eoy_mismatch_details if eoy_mismatch_details else []
         self.report_version = report_version
+        # The per-asset mismatch table above has never been fed by production
+        # (main.py hands it a hardcoded []), so the count and the recorded gaps
+        # are what actually tell this report whether the EoY reconciliation
+        # succeeded. See _add_eoy_reconciliation.
+        self.eoy_mismatch_count = eoy_mismatch_count
+        self.data_gaps: List["DataGap"] = data_gaps if data_gaps else []
 
         self.styles = self._generate_styles()
         self.story: List[Any] = []
@@ -288,7 +297,7 @@ class PdfReportGenerator:
             "ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z11 (Brutto VOP Immofonds)",
             "ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z12 (Brutto VOP Ausl. Immofonds)",
             "ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z13 (Brutto VOP Sonstige Fonds)",
-            "ANLAGE_KAP_INV_ZEILE_55_VORABPAUSCHALE_ABZUG": "KAP-INV Z55 (Anzurechnende Vorabpauschalen)",
+            "ANLAGE_KAP_INV_ZEILE_53_VORABPAUSCHALE_ABZUG": "KAP-INV Z53 (Waehrend der Besitzzeit angesetzte Vorabpauschalen)",
         }
         so_lines_map = {
              "ANLAGE_SO_Z54_NET_GV": "Anlage SO Zeile 54 (G/V §23 EStG)"
@@ -319,7 +328,7 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
             TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO"],
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO"],
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_55_VORABPAUSCHALE_ABZUG"],
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53: kap_inv_lines_map["ANLAGE_KAP_INV_ZEILE_53_VORABPAUSCHALE_ABZUG"],
             "ANLAGE_SO_Z54_NET_GV": so_lines_map["ANLAGE_SO_Z54_NET_GV"],
             "TOTAL_ANRECHENBARE_AUSL_STEUERN": kap_lines_map["ANLAGE_KAP_ZEILE_41"]
         })
@@ -355,7 +364,7 @@ class PdfReportGenerator:
             TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 20
             TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS,  # KAP-INV Zeile 23
             TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS,  # KAP-INV Zeile 26
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55,  # KAP-INV Zeile 55
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53,  # KAP-INV Zeile 53
             "ANLAGE_SO_Z54_NET_GV"  # SO Zeile 54
         ]
 
@@ -495,7 +504,9 @@ class PdfReportGenerator:
             "Tägliche EZB-Wechselkurse für Währungsumrechnungen.",
             f"Verwendung von `Decimal`-Arithmetik mit interner Arbeitspräzision von {app_config.INTERNAL_CALCULATION_PRECISION} Stellen und Rundungsmodus '{app_config.DECIMAL_ROUNDING_MODE}'. Endbeträge werden für die Berichterstattung quantisiert.",
             f"Teilfreistellung gemäß deutschem Steuerrecht für {self.tax_year} (keine Alt-Anteile berücksichtigt).",
-            f"Vorabpauschale für {self.tax_year} berechnet gemäß § 18 InvStG.",
+            f"Vorabpauschale für {self.tax_year - 1} berechnet gemäß § 18 InvStG; sie gilt am "
+            f"ersten Werktag {self.tax_year} als zugeflossen (§ 18 Abs. 3 InvStG) und wird in "
+            f"diesem Veranlagungszeitraum erklärt.",
         ]
         if self._has_cross_year_short_positions():
             notes.append(
@@ -514,10 +525,48 @@ class PdfReportGenerator:
             self.story.append(Paragraph(f"• {note}", self.styles['BodyText']))
 
     def _add_eoy_reconciliation(self):
+        """Report the EoY reconciliation, and never claim one that did not happen.
+
+        The all-clear below used to be unconditional in practice: main.py passes
+        a hardcoded empty ``eoy_mismatch_details``, so every PDF ever generated
+        stated that all calculated end balances match the broker's — including
+        the runs where the engine had just logged the opposite. An EoY quantity
+        mismatch is the signature of a disposal the engine did not process, so
+        that sentence certified the one condition it should have flagged.
+
+        The all-clear is now conditioned on the mismatch count. Where the count
+        is non-zero, the recorded data gaps supply the per-asset detail; if none
+        are available, the report says so rather than filling the silence.
+
+        The securities branch is a **backstop**: a securities EoY mismatch now
+        aborts the run (PRD 2.4), so no PDF is produced with a non-zero count.
+        It is kept because the sentence it replaces was wrong for the whole
+        history of this file, and nothing should be able to restore it by
+        letting a count through some other path. The *currency* balances below
+        are the live case — that check is deliberately non-fatal, so those gaps
+        do reach a generated report.
+        """
         self.story.append(Paragraph("Abstimmung der Endbestände (EOY)", self.styles['H2']))
 
         if not self.eoy_mismatch_details:
-            self.story.append(Paragraph("Alle berechneten Endbestände stimmen mit den gemeldeten Endbeständen überein.", self.styles['BodyText']))
+            if self.eoy_mismatch_count > 0:
+                self.story.append(Paragraph(
+                    f"ACHTUNG: Bei {self.eoy_mismatch_count} Position(en) weicht der berechnete "
+                    "Endbestand vom gemeldeten Endbestand des Brokers ab. Eine Abweichung deutet "
+                    "auf einen nicht verarbeiteten Verkauf oder eine unvollständige Transaktions"
+                    "historie hin; die betroffenen Positionen müssen vor Abgabe der Erklärung "
+                    "manuell abgestimmt werden.", self.styles['BodyText']))
+                eoy_gaps = [g for g in self.data_gaps if g.code == "EOY_QTY_MISMATCH"]
+                for gap in eoy_gaps:
+                    self.story.append(Paragraph(f"• {gap.subject}: {gap.detail}",
+                                                self.styles['BodyText']))
+                if not eoy_gaps:
+                    self.story.append(Paragraph(
+                        "Eine Aufstellung der betroffenen Positionen liegt diesem Bericht nicht "
+                        "vor; siehe Log-Ausgabe des Laufs.", self.styles['BodyText']))
+            elif not self._currency_eoy_gaps():
+                self.story.append(Paragraph("Alle berechneten Endbestände stimmen mit den gemeldeten Endbeständen überein.", self.styles['BodyText']))
+            self._add_currency_eoy_gaps()
             return
 
         data = [["Asset Beschreibung", "ISIN/Symbol", "Ber. EOY Menge (FIFO)", "Gem. EOY Menge (IBKR)", "Differenz"]]
@@ -537,9 +586,30 @@ class PdfReportGenerator:
             # Adjusted col_widths slightly to accommodate potentially wider integer quantity strings if numbers are large
             table = self._create_styled_table(data, col_widths=[5*cm, 3*cm, 3.5*cm, 3.5*cm, 2*cm])
             self.story.append(table)
-        else: 
+        else:
             self.story.append(Paragraph("Keine Abweichungen bei den Endbeständen festgestellt.", self.styles['BodyText']))
-            
+        self._add_currency_eoy_gaps()
+
+    def _currency_eoy_gaps(self) -> List["DataGap"]:
+        return [g for g in self.data_gaps if g.code == "CURRENCY_EOY_MISMATCH"]
+
+    def _add_currency_eoy_gaps(self):
+        """Cash balances are end balances too, and unlike the securities check
+        this one is not fatal — so a generated report can and must carry it.
+        The FX ledger drives the §20 Abs. 2 Nr. 3 currency gains, so a ledger
+        that disagrees with the broker's closing balance puts those figures in
+        question even though the run completed."""
+        gaps = self._currency_eoy_gaps()
+        if not gaps:
+            return
+        self.story.append(Paragraph(
+            f"ACHTUNG: Bei {len(gaps)} Währungskonto/-konten weicht der aus dem FIFO-Bestand "
+            "berechnete Endbestand vom gemeldeten Kontostand ab. Die daraus abgeleiteten "
+            "Fremdwährungsgewinne (§ 20 Abs. 2 Nr. 3 EStG) sind entsprechend unsicher.",
+            self.styles['BodyText']))
+        for gap in gaps:
+            self.story.append(Paragraph(f"• {gap.subject}: {gap.detail}", self.styles['BodyText']))
+
     def _get_asset_details(self, asset_id: uuid.UUID) -> Tuple[str, str, Optional[InvestmentFundType]]:
         asset = self.assets_by_id.get(asset_id)
         if not asset:
@@ -873,7 +943,11 @@ class PdfReportGenerator:
 
         filtered = []
         for vop in self.vorabpauschale_items:
-            if vop.tax_year == self.tax_year and vop.gross_vorabpauschale_eur != Decimal('0'):
+            # `declaration_year` is the VZ this Vorabpauschale belongs on: the VP for
+            # calendar X flows on the first working day of X+1 (18 Abs. 3 InvStG), so a
+            # VZ `tax_year` report itemises the records computed for `tax_year - 1`.
+            # Selecting on the computation year would empty this section instead.
+            if vop.declaration_year == self.tax_year and vop.gross_vorabpauschale_eur != Decimal('0'):
                 _, _, fund_type = self._get_asset_details(vop.asset_internal_id)
                 if fund_type == target_fund_type:
                     filtered.append(vop)
@@ -1153,7 +1227,9 @@ class PdfReportGenerator:
             rgl for rgl in self.realized_gains_losses 
             if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND
         ]
-        fund_vop_for_kap = [vp for vp in self.vorabpauschale_items if vp.tax_year == self.tax_year]
+        # Selected by declaration year: the VP for calendar X appears on the VZ X+1 return
+        # (18 Abs. 3 InvStG).
+        fund_vop_for_kap = [vp for vp in self.vorabpauschale_items if vp.declaration_year == self.tax_year]
 
         for dist_event in fund_distributions_for_kap:
             asset_id = dist_event.asset_internal_id

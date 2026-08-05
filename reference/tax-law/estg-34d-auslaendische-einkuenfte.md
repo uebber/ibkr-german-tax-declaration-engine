@@ -5,13 +5,15 @@
 - **Primary:** [gesetze-im-internet.de -- 34d EStG](https://www.gesetze-im-internet.de/estg/__34d.html)
 - **With annotations:** [dejure.org -- 34d EStG](https://dejure.org/gesetze/EStG/34d.html)
 
-## Relevance to Engine
+## Scope
 
-Defines what constitutes "auslaendische Einkuenfte" (foreign income) for the foreign tax credit mechanism (34c, 32d Abs. 5). Determines whether income has a domestic or foreign source based on the debtor's domicile. Distinct from the Anlage KAP Z18/Z19 form-level distinction which is based on the intermediary (broker), not the issuer.
+Defines what constitutes *auslaendische Einkuenfte* for the foreign tax credit (34c, 32d Abs. 5):
+whether income has a domestic or foreign source, decided by the debtor's domicile. Distinct from
+the Anlage KAP Z18/Z19 form split, which turns on the intermediary (broker), not the issuer.
 
 ---
 
-## Introductory Sentence
+## [GT-CREDIT-010] Introductory Sentence
 
 > Auslaendische Einkuenfte im Sinne des 34c Absatz 1 bis 5 sind [...]
 
@@ -19,7 +21,7 @@ The definition applies specifically in the context of the foreign tax credit und
 
 ---
 
-## Nr. 6 -- Einkuenfte aus Kapitalvermoegen (20 EStG)
+## [GT-CREDIT-011] Nr. 6 -- Einkuenfte aus Kapitalvermoegen (20 EStG)
 
 > Einkuenfte aus Kapitalvermoegen (20), wenn der Schuldner Wohnsitz, Geschaeftsleitung oder Sitz in einem auslaendischen Staat hat oder das Kapitalvermoegen durch auslaendischen Grundbesitz gesichert ist
 
@@ -41,39 +43,83 @@ Income from capital assets is "auslaendisch" if:
 | Veraeusserungsgewinne (bond) | 20 Abs. 2 Nr. 7 | The bond issuer |
 | Termingeschaefte (derivatives) | 20 Abs. 2 Nr. 3 | Debatable; typically the underlying issuer or exchange counterparty |
 
-### Practical examples for IBKR accounts
+### Worked examples -- holdings at a foreign broker
 
-| Transaction | Issuer | 34d classification | Z18 or Z19? |
-|-------------|--------|---------------------|-------------|
-| BMW dividend via IBKR | BMW AG, Muenchen | **Inlaendisch** (German Schuldner) | Z19 (foreign broker) |
-| Apple dividend via IBKR | Apple Inc, USA | **Auslaendisch** (foreign Schuldner) | Z19 (foreign broker) |
-| Gain from selling BMW stock via IBKR | BMW AG, Muenchen | **Inlaendisch** (German issuer) | Z19 (foreign broker) |
-| Gain from selling Apple stock via IBKR | Apple Inc, USA | **Auslaendisch** (foreign issuer) | Z19 (foreign broker) |
-| Interest on IBKR cash balance | IBKR Ireland | **Auslaendisch** (Irish debtor) | Z19 (foreign broker) |
+| Income | Debtor | 34d classification | Z18 or Z19? |
+|--------|--------|---------------------|-------------|
+| Dividend of a German AG | German AG | **Inlaendisch** (German Schuldner) | Z19 (foreign broker) |
+| Dividend of a US corporation | US corporation | **Auslaendisch** (foreign Schuldner) | Z19 (foreign broker) |
+| Gain on selling a German AG's shares | German AG | **Inlaendisch** (German issuer) | Z19 (foreign broker) |
+| Gain on selling a US corporation's shares | US corporation | **Auslaendisch** (foreign issuer) | Z19 (foreign broker) |
+| Interest on a cash balance at an Irish broker | the Irish broker | **Auslaendisch** (Irish debtor) | Z19 (foreign broker) |
 
-Note: The 34d classification and the Z18/Z19 form placement are **independent**. All IBKR income goes to Z19 because the broker is foreign (form instructions: "Ertraege bei auslaendischen Kreditinstituten"). The 34d classification is relevant for WHT credit and Guenstigerpruefung.
+The 34d classification and the Z18/Z19 form placement are **independent**. Every row lands in
+Z19 because the intermediary is foreign (*"Ertraege bei auslaendischen Kreditinstituten"*),
+whatever the debtor's domicile.
 
 ---
 
 ## Relationship to 34c and 32d Abs. 5
 
-### General rule (34c Abs. 1)
-Foreign tax credit is computed per 34c Abs. 1 using the Anrechnungshoechstbetrag (maximum credit = German tax attributable to foreign income).
+### [GT-CREDIT-012] 34c Abs. 1 Satz 1 -- the general credit, and the carve-out in its second Halbsatz
 
-### Exception for Abgeltungsteuer (34c Abs. 1 Satz 4)
-34c Abs. 1 explicitly **excludes** capital income subject to 32d Abs. 1 (Abgeltungsteuer):
-> "das gilt nicht fuer Einkuenfte aus Kapitalvermoegen, auf die 32d Absatz 1 und 3 bis 6 anzuwenden ist"
+Satz 1 grants the credit and then withdraws it for Abgeltungsteuer income in the same sentence:
 
-### Capital income credit mechanism (32d Abs. 5)
-Instead, 32d Abs. 5 provides a direct credit mechanism for foreign WHT on Abgeltungsteuer-subject income. This is simpler than 34c's general Anrechnungshoechstbetrag.
+> *"Bei unbeschraenkt Steuerpflichtigen, die mit auslaendischen Einkuenften in dem Staat, aus dem
+> die Einkuenfte stammen, zu einer der deutschen Einkommensteuer entsprechenden Steuer
+> herangezogen werden, ist die festgesetzte und gezahlte und um einen entstandenen
+> Ermaessigungsanspruch gekuerzte auslaendische Steuer auf die deutsche Einkommensteuer
+> anzurechnen, die auf die Einkuenfte aus diesem Staat entfaellt; **das gilt nicht fuer
+> Einkuenfte aus Kapitalvermoegen, auf die § 32d Absatz 1 und 3 bis 6 anzuwenden ist.**"*
 
-### When 34d classification matters despite Abgeltungsteuer
+**Satz 3 erster Halbsatz** completes it: *"Bei der Ermittlung des zu versteuernden Einkommens und
+der auslaendischen Einkuenfte sind die Einkuenfte nach Satz 1 zweiter Halbsatz nicht zu
+beruecksichtigen"* -- the carved-out income is also excluded from the
+Anrechnungshoechstbetrag arithmetic in Satz 2.
 
-1. **Guenstigerpruefung** (32d Abs. 4): If the taxpayer elects taxation at regular rates, capital income falls back under 34c Abs. 1 and the per-country Anrechnungshoechstbetrag based on 34d applies.
+Satz 3's **second** Halbsatz is a separate rule and was previously unstated (Validation Protocol
+item 2): *"bei der Ermittlung der auslaendischen Einkuenfte sind die auslaendischen Einkuenfte
+nicht zu beruecksichtigen, die in dem Staat, aus dem sie stammen, nach dessen Recht nicht besteuert
+werden."* **Satz 5** caps the credit at the foreign tax attributable to the Einkuenfte received in
+the Veranlagungszeitraum -- the § 34c analogue of the 32d Abs. 5 Satz 3 ceiling. Both belong to the
+mechanism the carve-out switches off for Abgeltungsteuer income, and neither reaches it.
 
-2. **DBA application**: Double taxation agreements may apply different rules for domestic vs. foreign-source capital income.
+> **Correction, 2026-08-03.** This file, and `research/inlaendisch-auslaendisch-relevance.md`,
+> both attributed the carve-out to **34c Abs. 1 Satz 4**. Satz 4 is about Betriebsausgaben:
+> *"Gehoeren auslaendische Einkuenfte der in § 34d Nummer 3, 4, 6, 7 und 8 Buchstabe c genannten
+> Art zum Gewinn eines inlaendischen Betriebes, sind bei ihrer Ermittlung Betriebsausgaben und
+> Betriebsvermoegensminderungen abzuziehen ..."*. The conclusion drawn from it was right; the
+> pinpoint was wrong, which is precisely what Validation Protocol item 2 exists to catch --
+> here the file even quoted the Satz 1 text under a Satz 4 heading. Retrieved 2026-08-03 from
+> gesetze-im-internet.de/estg/__34c.html.
 
-3. **Reporting transparency**: Per-country breakdowns aid Finanzamt verification and DBA compliance.
+### 32d Abs. 5 -- the mechanism that applies instead
+
+32d Abs. 5 provides a direct credit for foreign withholding tax on Abgeltungsteuer income,
+capped per individual Kapitalertrag rather than per country. See
+[estg-32d-abgeltungsteuer.md](estg-32d-abgeltungsteuer.md).
+
+### [GT-CREDIT-013] Guenstigerpruefung does **not** restore the 34c mechanism
+
+The carve-out in Satz 1 zweiter Halbsatz names *"§ 32d Absatz 1 **und 3 bis 6**"*. Abs. 6 is the
+Guenstigerpruefung, so it sits **inside** the carve-out: electing it does not push capital income
+back under 34c Abs. 1, and the per-country Anrechnungshoechstbetrag never applies. 32d Abs. 6
+Satz 2 says the same thing from the other side by keeping the credit under Abs. 5.
+
+> **Correction, 2026-08-03.** This file previously stated that Guenstigerpruefung is *"32d
+> Abs. 4"* and that electing it makes capital income *"fall back under 34c Abs. 1 and the
+> per-country Anrechnungshoechstbetrag"*. Both are wrong: the Guenstigerpruefung is Abs. 6
+> (Abs. 4 is the Ueberpruefung des Steuereinbehalts), and Abs. 6 is inside the 34c carve-out.
+> The library already contradicted itself here -- `estg-32d-abgeltungsteuer.md` and
+> `research/inlaendisch-auslaendisch-relevance.md` both state the correct position.
+> Validation Protocol item 8.
+
+### Where the classification still matters
+
+1. **DBA application** -- treaties may set different rates by source state, which the credit
+   under 32d Abs. 5 is measured against.
+2. **Evidential** -- a per-country breakdown supports the Zeile 41 figure if the Finanzamt asks
+   for treaty-rate substantiation.
 
 ---
 
@@ -85,23 +131,30 @@ The Anlage KAP form instructions use "inlaendisch" and "auslaendisch" in a **pro
 |--|-------------------------|--------------------------|
 | **Criterion** | Domestic-source income not subject to German withholding | Income from foreign institutions / foreign sources |
 | **Form instruction** | "inlaendische Kapitalertraege, die nicht dem Steuerabzug unterlegen haben (z.B. Zinsen aus Privatdarlehen)" | "Ertraege bei auslaendischen Kreditinstituten (z.B. Dividenden und Zinsen einer auslaendischen Schuldnerin)" |
-| **For IBKR accounts** | Not used (IBKR is foreign) | ALL income (because IBKR is a foreign credit institution) |
+| **Holdings at a foreign broker** | Not used | ALL income (the intermediary is a foreign credit institution) |
 | **34d alignment** | Partially overlaps -- but Z18 is about missing Steuerabzug, not necessarily inlaendisch per 34d | Partially overlaps -- but captures all foreign-broker income regardless of issuer domicile |
 
-### Engine implication
-
-The engine correctly routes all IBKR capital income to Z19 (`ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT`). This is correct per the form instructions. A separate 34d-level per-security classification is only needed if the engine adds Guenstigerpruefung support or per-country credit cap calculations.
+Consequence: for a portfolio held wholly at a foreign broker, the 34d classification has no
+expression anywhere on the declaration. It would become operative only for a per-country credit
+computation, which the Abgeltungsteuer regime does not call for -- see
+[GT-CREDIT-013] and `research/inlaendisch-auslaendisch-relevance.md`.
 
 ---
 
-## Data Sources for 34d Classification
+## [GT-CREDIT-014] Proxies for the Schuldner test, and what they cost
 
-If per-security classification is implemented:
+Where a per-security 34d classification is needed, none of the commonly available identifiers
+is the *Schuldner* concept the statute uses (Wohnsitz / Geschaeftsleitung / Sitz):
 
-| Data source | Coverage | Accuracy for 34d | Notes |
-|-------------|----------|-------------------|-------|
-| `issuerCountryCode` (Cash Transactions CSV) | Dividends, interest, WHT | Good -- directly identifies debtor country | Empty in older years (2021-2022); sometimes "XX" |
-| ISIN prefix (`Asset.ibkr_isin`, first 2 chars) | All securities with ISIN | Reasonable -- country of registration usually = issuer domicile | Exceptions: Luxembourg-registered funds of US issuers |
-| Positions CSV `IssuerCountryCode` | Available in CSV | Not currently parsed into Asset | Could enrich Asset model with issuer country |
+| Proxy | Coverage | Accuracy against 34d | Failure mode |
+|-------|----------|----------------------|--------------|
+| Issuer country code reported by the broker | Dividends, interest, withholding tax | Good -- names the debtor's country directly | Absent in older statement years; sometimes reported as "XX" |
+| ISIN country prefix | All securities with an ISIN | Reasonable -- country of registration usually equals issuer domicile | Fails for e.g. Luxembourg-registered funds of US issuers |
+| Issuer country on the positions statement | Held positions | Same as the first, restricted to holdings | Says nothing about income from a position already closed |
 
-Neither source perfectly matches 34d's "Schuldner" concept (Wohnsitz/Geschaeftsleitung/Sitz), but for practical tax declaration purposes both are accepted proxies.
+All three are used in practice as proxies, but **none of them is the statutory test**, and a
+declaration resting on one should say so.
+
+> **Correction, 2026-08-03.** This sentence read *"Both are accepted in practice ... but neither is
+> the statutory test"* while the table above it lists three proxies. A miscount, but the kind that
+> makes a reader stop trusting the table.

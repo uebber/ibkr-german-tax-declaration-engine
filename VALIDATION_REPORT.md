@@ -8,7 +8,14 @@
 
 ## Confirmed Errors
 
-### 1. Derivative Loss Cap Still Applied for Tax Year 2024
+### 1. Derivative Loss Cap Still Applied for Tax Year 2024 -- RESOLVED
+
+**Status:** fixed. `derivative_loss_cap_applies` is now False for every year in
+`src/tax_law/registry.py`, and the four fixture expectations below carry the
+values this finding predicted. The application rule is quoted verbatim in
+`reference/tax-law/estg-20-abs6-verlustverrechnung.md`: 52 Abs. 28 Satz 25 EStG
+n.F., *"ist auf alle offenen Faelle nicht mehr anzuwenden"*. The description
+below is kept as the original finding.
 
 **Severity:** HIGH
 **Legal basis:** EStG 20 Abs. 6 Satz 5 a.F., abolished by JStG 2024 (BGBl. I 2024 Nr. 387, Art. 1 Nr. 10)
@@ -190,9 +197,51 @@ All 28 loss offsetting test cases (LO_ALL_001 through LO_FUND_MISCH_002) were sp
 
 | # | Finding | Severity | Type |
 |---|---------|----------|------|
-| 1 | Derivative loss cap applied for 2024 (abolished retroactively) | HIGH | Test + code error |
+| 1 | Derivative loss cap applied for 2024 (abolished retroactively) | HIGH | Test + code error -- RESOLVED |
 | 2 | `is_taxable_under_section_23` defaults True for non-23 assets | LOW | Code error (dormant) |
 | 3 | Stock dividend treated as taxable income (may conflict with Satz 5) | MEDIUM | Ambiguous test |
 | 4 | Negative dividends/interest ignored in loss offsetting | MEDIUM | Missing handling |
 | 5 | Vorabpauschale partial year reduction not implemented | MEDIUM | Missing feature |
 | 6 | Cross-year option premium timing not tested | LOW | Coverage gap |
+
+---
+
+# Real-data validation log
+
+Ledger reconciliation and output parity against the maintainer's own IBKR export. Instance data —
+holdings, identifiers, amounts — stays in gitignored working copies; only outcomes are recorded here.
+
+## 2026-08-05
+
+**Ledger reconciliation** (`validate_ledgers.py`), 3 assessment years tested:
+
+| VZ | Result | Assets | RGL records |
+|---|---|---|---|
+| 2023 | **FAIL** — expected | — | — |
+| 2024 | **PASS** | 276 | 6 346 |
+| 2025 | **PASS** | 421 | 4 128 |
+
+**Asset EOY mismatches: 0. Currency EOY mismatches: 0.** The SoY → EoY invariant holds on real
+input for every year that can be computed.
+
+VZ 2023 fails on `VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING` and the failure is correct: the
+Vorabpauschale declared in VZ 2023 is the one computed for calendar 2022 (§ 18 Abs. 3 InvStG), and
+the 2022 position snapshots are genuinely absent from the input. This is a data gap, not a defect.
+Supplying `Positions-2022-SoY.csv` and `Positions-2022-EoY.csv` would close it.
+
+Until this run the validator had been unable to validate any year since 2026-08-03; it called the
+pipeline without the prior-year snapshot paths and reported the cause as missing files.
+
+**Output parity**, German-KESt fix on Anlage KAP Zeile 41:
+
+| Capture | Result |
+|---|---|
+| Control, same tree twice, VZ 2024 | console, log and PDF IDENTICAL |
+| Pre- vs post-fix, **VZ 2024** | 3 console lines changed — intended |
+| Pre- vs post-fix, **VZ 2025** | console and PDF IDENTICAL |
+
+VZ 2024 moves exactly as designed: Zeile 41 falls by the amount of one withholding row identified
+as German Kapitalertragsteuer, and a data-gap line appears naming that amount and the
+Steuerbescheinigung requirement. The reduction equals the excluded row to the cent. VZ 2025 does
+not move, because every withholding row that year carries a non-German issuer country and is
+correctly retained as foreign tax.

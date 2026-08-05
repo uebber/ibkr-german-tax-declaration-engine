@@ -6,6 +6,8 @@ from decimal import Decimal, getcontext, Context
 from collections import defaultdict
 from datetime import datetime, date
 
+from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
+from src.processing.data_gaps import DataGapCollector, DataGapError, GapSeverity
 from src.domain.events import (
     FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash,
     CorpActionStockDividend, CorpActionMergerStock, CorporateActionEvent,
@@ -128,6 +130,50 @@ def _format_asset_info(asset_obj) -> str:
     symbol = asset_obj.ibkr_symbol or "N/A"
     return f"'{desc}' (Symbol: {symbol})"
 
+def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
+    """Apply ONE historical stock-for-stock merger — the per-event unit the
+    unified replayer streams in the MERGERS phase. Tax-neutral under §20
+    Abs. 4a Satz 1-2 EStG (the new shares step into the tax position of the
+    old ones), so the lots transfer with their acquisition date and cost
+    basis: reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"."""
+    source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
+    target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
+
+    if source_ledger is None:
+        logger.warning(f"Historical merger {merger_event.event_id}: No source ledger for {merger_event.asset_internal_id}. Skipping.")
+        return
+    if target_ledger is None:
+        logger.error(f"Historical merger {merger_event.event_id}: No target ledger for {merger_event.new_asset_internal_id}. Cannot transfer lots.")
+        raise ValueError(f"Target ledger missing for historical merger {merger_event.event_id}")
+
+    source_long_lots = source_ledger.drain_all_long_lots()
+    source_short_lots = source_ledger.drain_all_short_lots()
+    if not source_long_lots and not source_short_lots:
+        logger.debug(f"Historical merger {merger_event.event_id}: Source ledger {merger_event.asset_internal_id} has no lots. Skipping.")
+        return
+
+    try:
+        target_ledger.receive_all_lots_from_merger(
+            source_long_lots, source_short_lots,
+            merger_event.new_shares_received_per_old, merger_event
+        )
+    except Exception as e:
+        # Rollback source
+        source_ledger.lots.extend(source_long_lots)
+        source_ledger.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
+        source_ledger.short_lots.extend(source_short_lots)
+        source_ledger.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
+        logger.error(f"Historical merger {merger_event.event_id}: Failed to transfer lots. Rolled back. Error: {e}")
+        raise
+
+    assert len(source_ledger.lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no long lots after historical merger"
+    assert len(source_ledger.short_lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no short lots after historical merger"
+
+    logger.info(f"Historical merger: Transferred {len(source_long_lots)} long + {len(source_short_lots)} "
+                 f"short lots from {merger_event.asset_internal_id} to {merger_event.new_asset_internal_id} "
+                 f"(ratio: {merger_event.new_shares_received_per_old})")
+
+
 def run_main_calculations(
     financial_events: List[FinancialEvent],
     asset_resolver: AssetResolver,
@@ -135,16 +181,27 @@ def run_main_calculations(
     exchange_rate_provider: ECBExchangeRateProvider,
     tax_year: int,
     internal_calculation_precision: int, # Renamed from internal_working_precision
-    decimal_rounding_mode: str
+    decimal_rounding_mode: str,
+    data_gap_collector: Optional["DataGapCollector"] = None,
+    # Whether the PRECEDING year's position snapshots were supplied. The Vorabpauschale
+    # declared in VZ `tax_year` is the one for calendar `tax_year - 1` (18 Abs. 3 InvStG), so
+    # their absence is a gap rather than an empty portfolio. Defaults False so a caller that
+    # has not been updated fails loudly instead of silently dropping deemed income.
+    prior_year_positions_available: bool = False
 ) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]: 
     """
     Runs the main calculation logic:
     1. Separates historical and current year events.
     2. Initializes FIFO ledgers based on SOY positions and historical trades.
     3. Processes current year events chronologically using dedicated processors.
-    4. Performs EOY quantity validation (logs errors but does not halt).
-    5. Calculates Vorabpauschale (currently placeholder).
-    6. Returns calculated results (Realized G/L, Vorabpauschale), processed events, and EOY mismatch count.
+    4. Performs EOY quantity validation. A securities mismatch is FATAL (PRD 2.4): every
+       asset is checked, then the run raises DataGapError naming all of them. A currency
+       (cash balance) divergence is recorded as a WARNING data gap and does not halt.
+    5. Calculates the Vorabpauschale FOR calendar `tax_year - 1` (18 Abs. 3 InvStG).
+    6. Returns calculated results (Realized G/L, Vorabpauschale), processed events, and EOY
+       mismatch count. The count is retained in the signature and in ProcessingOutput as a
+       backstop for the reporting layer, but on a successful return it is now always 0 —
+       any other value would have raised.
     """
     logger.info(f"Starting main calculation engine for tax year {tax_year} with {len(financial_events)} events.")
     ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode) # Renamed internal_working_precision
@@ -215,12 +272,18 @@ def run_main_calculations(
     logger.info(f"Separated events: {sum(len(v) for v in historical_events_by_asset.values())} relevant historical events for SOY FIFO reconstruction, "
                 f"{len(current_year_events)} current tax year events.")
 
-    fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}
-    currency_fifo_ledgers: Dict[uuid.UUID, FifoLedger] = {}  # Separate dict for currency ledgers
+    fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip
+    # Separate dict for currency ledgers; same (account_key, asset_id) key shape.
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}
 
-    # === Three-pass SOY initialization ===
-    # Pass 1: Create ledgers and simulate historical events (trades, splits, stock dividends)
-    logger.info("Pass 1: Creating FIFO ledgers and simulating historical events...")
+    # === Unified historical replay (AR5) ===
+    # ONE ordered stream rebuilds all pre-tax-year ledger state — securities
+    # AND currencies — under the documented phase contract (see engine/replay.py):
+    # LEDGER_EVENTS (chronological) -> MERGERS (chronological) -> RECONCILE.
+    from src.engine.replay import ReplayStream, Phase
+    stream = ReplayStream()
+
+    logger.info("Building unified historical replay stream (securities, mergers, currencies)...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if asset_obj.asset_category != AssetCategory.CASH_BALANCE:
             asset_multiplier_val: Optional[Decimal] = None
@@ -240,90 +303,68 @@ def run_main_calculations(
                 fund_type=asset_fund_type
             )
 
-            asset_historical_events_for_soy_init = []
+            # Key each event ONCE and carry the key into the stream. Computing it
+            # again at stream.add() would repeat every warning get_event_sort_key
+            # emits (e.g. a historical trade with no ibkr_transaction_id).
+            sorted_hist_keys_and_events: List[Tuple[Any, FinancialEvent]] = []
             if asset_id in historical_events_by_asset:
                 try:
-                    sort_key_func = lambda e: get_event_sort_key(e, asset_resolver)
-                    asset_historical_events_for_soy_init = sorted(
-                        historical_events_by_asset[asset_id], key=sort_key_func
+                    sorted_hist_keys_and_events = sorted(
+                        ((get_event_sort_key(e, asset_resolver), e)
+                         for e in historical_events_by_asset[asset_id]),
+                        key=lambda keyed: keyed[0],
                     )
                 except ValueError as e:
                     logger.critical(f"Fatal error sorting historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Cannot guarantee deterministic order for FIFO init. Aborting.")
                     raise e
 
-            try:
-                ledger.simulate_historical_events(
-                    asset=asset_obj,
-                    all_historical_events_for_asset=asset_historical_events_for_soy_init,
-                    tax_year=tax_year
+            ledger.begin_historical_simulation(asset_obj)
+            ledger.announce_historical_simulation(asset_obj, len(sorted_hist_keys_and_events))
+            for hist_key, hist_event in sorted_hist_keys_and_events:
+                stream.add(
+                    Phase.LEDGER_EVENTS, hist_key,
+                    (lambda l=ledger, a=asset_obj, e=hist_event:
+                        l.apply_historical_event(a, e, tax_year)),
+                    label=f"sec:{asset_obj.get_classification_key()}",
                 )
-            except ValueError as e:
-                logger.critical(f"Fatal error simulating historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
-                raise e
 
-            fifo_ledgers[asset_id] = ledger
+            fifo_ledgers[(DEFAULT_ACCOUNT, asset_id)] = ledger
+    securities_ledger_count = len(fifo_ledgers)
 
-    # Pass 2: Replay historical mergers in chronological order
     if historical_merger_events:
         logger.info(f"Pass 2: Replaying {len(historical_merger_events)} historical stock merger(s)...")
-        try:
-            sorted_mergers = sorted(historical_merger_events, key=lambda e: get_event_sort_key(e, asset_resolver))
-        except ValueError as e:
-            logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
-            raise e
-
-        for merger_event in sorted_mergers:
-            source_ledger = fifo_ledgers.get(merger_event.asset_internal_id)
-            target_ledger = fifo_ledgers.get(merger_event.new_asset_internal_id)
-
-            if source_ledger is None:
-                logger.warning(f"Historical merger {merger_event.event_id}: No source ledger for {merger_event.asset_internal_id}. Skipping.")
-                continue
-            if target_ledger is None:
-                logger.error(f"Historical merger {merger_event.event_id}: No target ledger for {merger_event.new_asset_internal_id}. Cannot transfer lots.")
-                raise ValueError(f"Target ledger missing for historical merger {merger_event.event_id}")
-
-            source_long_lots = source_ledger.drain_all_long_lots()
-            source_short_lots = source_ledger.drain_all_short_lots()
-            if not source_long_lots and not source_short_lots:
-                logger.debug(f"Historical merger {merger_event.event_id}: Source ledger {merger_event.asset_internal_id} has no lots. Skipping.")
-                continue
-
+        for merger_event in historical_merger_events:
             try:
-                target_ledger.receive_all_lots_from_merger(
-                    source_long_lots, source_short_lots,
-                    merger_event.new_shares_received_per_old, merger_event
-                )
-            except Exception as e:
-                # Rollback source
-                source_ledger.lots.extend(source_long_lots)
-                source_ledger.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
-                source_ledger.short_lots.extend(source_short_lots)
-                source_ledger.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
-                logger.error(f"Historical merger {merger_event.event_id}: Failed to transfer lots. Rolled back. Error: {e}")
-                raise
-
-            assert len(source_ledger.lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no long lots after historical merger"
-            assert len(source_ledger.short_lots) == 0, f"Source ledger {merger_event.asset_internal_id} must have no short lots after historical merger"
-
-            logger.info(f"Historical merger: Transferred {len(source_long_lots)} long + {len(source_short_lots)} "
-                         f"short lots from {merger_event.asset_internal_id} to {merger_event.new_asset_internal_id} "
-                         f"(ratio: {merger_event.new_shares_received_per_old})")
+                merger_key = get_event_sort_key(merger_event, asset_resolver)
+            except ValueError as e:
+                logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
+                raise e
+            stream.add(
+                Phase.MERGERS, merger_key,
+                (lambda m=merger_event: _replay_historical_merger(m, fifo_ledgers)),
+                label="merger",
+            )
     else:
         logger.info("Pass 2: No historical stock mergers to replay.")
 
-    # Pass 3: Reconcile all ledgers against SoY positions (after merger lots are in place)
+    # Reconcile phase: securities ledgers against SoY positions (after merger
+    # lots are in place). Items are added for the SECURITIES ledgers existing
+    # now — currency ledgers reconcile against cash balances separately below.
     logger.info("Pass 3: Reconciling ledgers with SoY positions...")
-    for asset_id, ledger in fifo_ledgers.items():
+    def _reconcile_security_soy(ledger, asset_obj):
+        try:
+            ledger.reconcile_with_soy_position(asset_obj, tax_year)
+        except ValueError as e:
+            logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_obj.internal_asset_id}): {e}. Aborting.")
+            raise e
+    for (ledger_account, asset_id), ledger in fifo_ledgers.items():
         asset_obj = asset_resolver.get_asset_by_id(asset_id)
         if asset_obj:
-            try:
-                ledger.reconcile_with_soy_position(asset_obj, tax_year)
-            except ValueError as e:
-                logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Aborting.")
-                raise e
-
-    logger.info(f"Initialized {len(fifo_ledgers)} FIFO ledgers (three-pass).")
+            stream.add(
+                Phase.RECONCILE, (0,),
+                (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
+                label=f"reconcile-sec:{asset_obj.get_classification_key()}",
+            )
 
     # Initialize currency FIFO ledgers with comprehensive historical replay
     logger.info("Initializing currency FIFO ledgers for foreign currency positions...")
@@ -338,8 +379,10 @@ def run_main_calculations(
             if ccy != "EUR":
                 currencies_to_init.add(ccy)
 
+    currency_replay_counts: Dict[str, list] = {}
     for currency_code in sorted(currencies_to_init):
-        # Ensure CashBalance asset and ledger exist
+        # Ensure CashBalance asset and ledger exist (creation is unordered
+        # setup, not stream work — the stream replays EVENTS).
         _ensure_currency_ledger_exists(
             currency_code, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
             currency_converter, exchange_rate_provider,
@@ -351,35 +394,64 @@ def run_main_calculations(
         if not currency_asset:
             continue
 
-        currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+        currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
         if not currency_ledger:
             continue
 
-        # Replay ALL historical events to build FIFO lots with correct acquisition dates
+        # Stream every historical event with a currency impact; per-currency
+        # relative order = get_event_sort_key (ties: insertion seq), exactly
+        # the previous per-currency sorted replay. Events of different
+        # currencies commute (one ledger each).
         hist_events = historical_currency_events.get(currency_code, [])
         if hist_events:
-            try:
-                sort_key_func = lambda e: get_event_sort_key(e, asset_resolver)
-                sorted_hist = sorted(hist_events, key=sort_key_func)
-            except ValueError as e:
-                logger.error(f"Could not sort historical events for {currency_code}: {e}")
-                sorted_hist = hist_events
+            currency_replay_counts[currency_code] = [0, len(hist_events)]
 
-            replayed = _replay_historical_currency_events(
-                sorted_hist, currency_ledger, currency_code,
-                currency_converter, ctx
-            )
-            logger.info(f"Currency {currency_code}: Replayed {replayed}/{len(hist_events)} historical events")
+            def _apply_ccy_event(event, led=currency_ledger, ccy=currency_code):
+                currency_replay_counts[ccy][0] += _apply_historical_currency_event(
+                    event, led, ccy, currency_converter, ctx
+                )
+
+            for hist_event in hist_events:
+                try:
+                    hist_key = get_event_sort_key(hist_event, asset_resolver)
+                except ValueError as e:
+                    # Fatal, like the securities branch above and the merger branch
+                    # between them: an event that cannot be placed in the chronology
+                    # cannot be replayed, and the replay order fixes the EUR cost
+                    # basis of every currency lot it touches. Unreachable as things
+                    # stand -- the event separation loop at the top of this function
+                    # already builds a sort key for every event and drops the ones
+                    # that raise -- but the previous fallback was worse than dead: it
+                    # sorted the event to (date.min, ()), which is ahead of every
+                    # other item in the phase, not "insertion order" as its comment
+                    # claimed.
+                    logger.critical(f"Fatal error sorting historical currency event {hist_event.event_id} "
+                                    f"for {currency_code}: {e}. Cannot guarantee deterministic order "
+                                    f"for FIFO init. Aborting.")
+                    raise
+                stream.add(
+                    Phase.LEDGER_EVENTS, hist_key,
+                    (lambda e=hist_event, f=_apply_ccy_event: f(e)),
+                    label=f"ccy:{currency_code}",
+                )
 
         # SOY quantity is authoritative - always reconcile to match it.
         # Historical replay provides accurate lot-level cost basis,
         # but the total quantity MUST match the reported SOY balance.
         if isinstance(currency_asset, CashBalance):
-            _reconcile_currency_soy(
-                currency_ledger, currency_asset, tax_year,
-                exchange_rate_provider, ctx
+            stream.add(
+                Phase.RECONCILE, (0,),
+                (lambda l=currency_ledger, a=currency_asset:
+                    _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx)),
+                label=f"reconcile-ccy:{currency_code}",
             )
 
+    # === Run the unified historical replay ===
+    stream.run()
+
+    logger.info(f"Initialized {securities_ledger_count} FIFO ledgers (unified replay).")
+    for ccy, (done, total) in currency_replay_counts.items():
+        logger.info(f"Currency {ccy}: Replayed {done}/{total} historical events")
     logger.info(f"Initialized {len(currency_fifo_ledgers)} currency FIFO ledgers.")
 
     logger.info("Initializing event processors...")
@@ -424,7 +496,7 @@ def run_main_calculations(
         if not asset_object:
             raise ProcessingError(f"Event {event.event_id} ({event.event_type.name}) references unknown asset {event.asset_internal_id}. Asset resolution failure.")
 
-        ledger = fifo_ledgers.get(asset_object.internal_asset_id)
+        ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, asset_object.internal_asset_id))
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):
@@ -588,7 +660,7 @@ def run_main_calculations(
         if asset_obj.asset_category == AssetCategory.CASH_BALANCE:
             continue
 
-        ledger = fifo_ledgers.get(asset_id)
+        ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, asset_id))
         calculated_eoy_qty: Decimal
 
         if ledger:
@@ -614,15 +686,74 @@ def run_main_calculations(
                     f"Difference: {calculated_eoy_qty - reported_eoy_qty}"
                 )
                 eoy_mismatch_errors += 1
+                if data_gap_collector is not None:
+                    data_gap_collector.record(
+                        code="EOY_QTY_MISMATCH",
+                        subject=asset_obj.description or asset_obj.get_classification_key(),
+                        detail=(f"Berechnete EoY-Stückzahl {calculated_eoy_qty} weicht von der im "
+                                f"Broker-Report gemeldeten ({reported_eoy_qty}) ab."),
+                    )
         elif abs(calculated_eoy_qty) > comparison_tolerance: 
             logger.error( 
                 f"EOY MISMATCH for {asset_obj.description or asset_obj.get_classification_key()} (ID: {asset_id}): "
                 f"Calculated EOY Qty: {calculated_eoy_qty}, but asset NOT found in EOY positions report (implying reported EOY Qty is 0)."
             )
             eoy_mismatch_errors += 1 
+            if data_gap_collector is not None:
+                data_gap_collector.record(
+                    code="EOY_QTY_MISMATCH",
+                    subject=asset_obj.description or asset_obj.get_classification_key(),
+                    detail=(f"Berechnete EoY-Stückzahl {calculated_eoy_qty}, aber das Asset fehlt "
+                            f"im EoY-Positionsreport (impliziert 0)."),
+                )
 
     if eoy_mismatch_errors > 0:
-        logger.error(f"EOY Quantity Validation FAILED with {eoy_mismatch_errors} critical mismatches. Processing will continue, but results may be inaccurate.")
+        # The EoY quantity is fully determined by this year's input alone.
+        # reconcile_with_soy_position pins the ledger to the quantity in the SoY positions
+        # report — in the reconstruction branch, the fallback branch and the reported-zero
+        # case alike — so the previous year's trade history can influence cost basis and
+        # acquisition dates but never the running quantity. Reported SoY plus this year's
+        # events therefore has exactly one correct answer, and a residual means an event is
+        # missing or was processed wrongly: an absent trade or corporate action, an option
+        # exercise not linked, or one instrument resolved to two assets. At least one
+        # disposal is then matched against the wrong lots, so the gains computed from this
+        # ledger are wrong too — not merely the quantity.
+        #
+        # PRD.md 2.4 already required the quantities to be identical and the discrepancy to
+        # be a critical error; only the engine's own "processing will continue" softened it
+        # into a warning. CLAUDE.md's fail-fast rule settles which of the two wins: a wrong
+        # number that looks plausible is worse than a crash.
+        #
+        # Reported as a batch, after the loop, so one run names every affected position
+        # instead of stopping at the first.
+        subjects = "; ".join(
+            g.subject for g in (data_gap_collector.gaps if data_gap_collector else [])
+            if g.code == "EOY_QTY_MISMATCH"
+        )
+        detail = (
+            f"Die EoY-Abstimmung schlägt für {eoy_mismatch_errors} Position(en) fehl: der aus "
+            f"dem gemeldeten SoY-Bestand und den Ereignissen des Steuerjahres berechnete "
+            f"Endbestand weicht vom Broker-Report ab. Betroffen: {subjects or 'siehe Log'}. "
+            f"Der SoY-Bestand wird aus dem Positionsbericht übernommen, nicht aus der "
+            f"Vorjahreshistorie — die Stückzahl ist damit allein durch die Ereignisse dieses "
+            f"Jahres bestimmt, und eine Abweichung bedeutet, dass ein Ereignis fehlt oder "
+            f"falsch verarbeitet wurde (fehlende Trades, Kapitalmaßnahmen, Options-Ausübungen, "
+            f"oder ein Instrument, das unter zwei Kennungen geführt wird). Solange die "
+            f"Abweichung besteht, ist mindestens eine Veräußerung falsch zugeordnet und die "
+            f"daraus berechneten Gewinne sind unzutreffend."
+        )
+        if data_gap_collector is not None:
+            # Records, logs CRITICAL, and raises DataGapError (a ProcessingError).
+            data_gap_collector.record(
+                code="EOY_RECONCILIATION_FAILED",
+                subject=f"Steuerjahr {tax_year}",
+                detail=detail,
+                severity=GapSeverity.FAIL_FAST,
+            )
+        # Reached only when no collector was supplied (direct callers). The abort must not
+        # be contingent on an optional argument.
+        logger.critical(f"EOY Quantity Validation FAILED with {eoy_mismatch_errors} critical mismatches.")
+        raise DataGapError(f"[EOY_RECONCILIATION_FAILED] Steuerjahr {tax_year}: {detail}")
     else:
         logger.info("EOY Quantity Validation passed or no critical mismatches found against reported EOY positions.")
 
@@ -641,7 +772,7 @@ def run_main_calculations(
         if reported_eoy is None:
             continue
 
-        ledger = currency_fifo_ledgers.get(asset_id)
+        ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, asset_id))
         if ledger:
             long_qty = sum(lot.quantity for lot in ledger.lots)
             short_qty = sum(lot.quantity_shorted for lot in ledger.short_lots)
@@ -658,6 +789,22 @@ def run_main_calculations(
                 f"Diff={diff:.2f}"
             )
             currency_eoy_mismatches += 1
+            # WARNING, not FAIL_FAST, and deliberately unlike the securities check
+            # above: the listed causes are input-completeness problems (cash-balance
+            # export date range, deposits/withdrawals/margin interest absent from the
+            # cash-transactions file) rather than a ledger that disagrees with the
+            # broker about a holding. Recorded so it reaches the report instead of
+            # living only in the log — an FX ledger that is short still moves the
+            # §20 Abs. 2 Nr. 3 gains computed from it.
+            if data_gap_collector is not None:
+                data_gap_collector.record(
+                    code="CURRENCY_EOY_MISMATCH",
+                    subject=str(asset_obj.currency),
+                    detail=(f"FIFO-Bestand {calculated_eoy:.2f} weicht vom gemeldeten "
+                            f"Kontostand {reported_eoy:.2f} ab (Differenz {diff:.2f}). "
+                            f"Mögliche Ursachen: Zeitraum der Cash-Balance-Datei, oder "
+                            f"nicht erfasste Ein-/Auszahlungen, Margin-Zinsen oder Gebühren."),
+                )
         else:
             logger.debug(f"Currency EOY OK {asset_obj.currency}: FIFO={calculated_eoy:.2f}, Reported={reported_eoy:.2f}")
 
@@ -669,15 +816,60 @@ def run_main_calculations(
     else:
         logger.info("Currency EOY validation passed.")
 
-    # Vorabpauschale calculation
+    # --- Vorabpauschale ---
+    # The VP declared in VZ `tax_year` is the one computed FOR calendar `tax_year - 1`: it is
+    # deemed to flow on the first working day of `tax_year` (18 Abs. 3 InvStG), and Zeilen 9-13
+    # take "die Ihnen im Jahr <tax_year> als zugeflossen geltenden Vorabpauschalen". Until
+    # 2026-08-03 the engine computed the VP for the tax year itself and declared it in that same
+    # year -- one year early, with the wrong Basiszins and the wrong reference prices.
+    # See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    vorabpauschale_year = tax_year - 1
+
+    funds_held = any(
+        isinstance(a, InvestmentFund) for a in asset_resolver.assets_by_internal_id.values()
+    )
+    if funds_held and not prior_year_positions_available:
+        # Cannot compute deemed income that is certainly due. Substituting the tax year's own
+        # snapshot is what produced the wrong figure; emitting nothing would understate income.
+        detail = (
+            f"Vorabpauschale for calendar {vorabpauschale_year} cannot be computed: "
+            f"Positions-{vorabpauschale_year}-SoY.csv and/or Positions-{vorabpauschale_year}-EoY.csv "
+            f"is not present in data_import/. The VZ {tax_year} declaration must report the "
+            f"Vorabpauschale for {vorabpauschale_year} (18 Abs. 3 InvStG; Anlage KAP-INV "
+            f"Zeilen 9-13 take the amounts deemed to flow in {tax_year}), and that needs "
+            f"{vorabpauschale_year}'s start and end position snapshots. Add those files, or "
+            f"establish by hand that no investment fund was held during {vorabpauschale_year}."
+        )
+        if data_gap_collector is not None:
+            data_gap_collector.record(
+                code="VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING",
+                subject=f"Vorabpauschale {vorabpauschale_year}",
+                detail=detail,
+                severity=GapSeverity.FAIL_FAST,
+            )  # records, logs CRITICAL and raises DataGapError
+        else:
+            # No collector wired: a FAIL_FAST condition must still stop the run rather than
+            # fall through to an absent Vorabpauschale.
+            raise DataGapError(
+                f"[VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING] "
+                f"Vorabpauschale {vorabpauschale_year}: {detail}"
+            )
+
+    prior_year_distributions_by_asset: Dict[uuid.UUID, Decimal] = _collect_fund_distributions_for_year(
+        financial_events, vorabpauschale_year, asset_resolver, ctx
+    )
+
     vorabpauschale_data_items = _calculate_vorabpauschale(
         asset_resolver=asset_resolver,
-        current_year_events=current_year_events,
+        distributions_by_asset=prior_year_distributions_by_asset,
         currency_converter=currency_converter,
-        tax_year=tax_year,
+        vorabpauschale_year=vorabpauschale_year,
         ctx=ctx,
     )
-    logger.info(f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records.")
+    logger.info(
+        f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records "
+        f"for calendar {vorabpauschale_year} (declared in VZ {tax_year})."
+    )
 
     processed_income_events_for_output: List[FinancialEvent] = list(current_year_events)
 
@@ -701,73 +893,119 @@ def _get_vp_reporting_category(fund_type: InvestmentFundType) -> Optional['TaxRe
     return mapping.get(fund_type)
 
 
+def _collect_fund_distributions_for_year(
+    financial_events: List[FinancialEvent],
+    calendar_year: int,
+    asset_resolver: AssetResolver,
+    ctx: Context,
+) -> Dict[uuid.UUID, Decimal]:
+    """Sum gross EUR fund distributions per asset within one calendar year.
+
+    Separate from the engine's historical/current-year split, which buckets only the event
+    kinds the FIFO replay needs and drops `DISTRIBUTION_FUND` before the tax year. The
+    Vorabpauschale for calendar `calendar_year` is reduced by that year's distributions
+    (18 Abs. 1 S. 1 InvStG), which for a VZ Y run are *prior-year* events.
+
+    Only positive distributions reduce the Basisertrag; a negative amount is a correction
+    booking, not a distribution, and must not inflate the deemed income.
+    """
+    totals: DefaultDict[uuid.UUID, Decimal] = defaultdict(lambda: ctx.create_decimal(Decimal('0')))
+    for event in financial_events:
+        if not isinstance(event, CashFlowEvent):
+            continue
+        if event.event_type != FinancialEventType.DISTRIBUTION_FUND:
+            continue
+        try:
+            event_date_obj = get_event_sort_key(event, asset_resolver)[0]
+        except ValueError as e:
+            logger.error(
+                f"Fund distribution {event.event_id} has an invalid date or identifier ({e}); "
+                f"it cannot be attributed to a Vorabpauschale year."
+            )
+            continue
+        if event_date_obj.year != calendar_year:
+            continue
+        gross_eur = event.gross_amount_eur if event.gross_amount_eur is not None else Decimal('0')
+        if gross_eur > Decimal('0'):
+            totals[event.asset_internal_id] = ctx.add(totals[event.asset_internal_id], gross_eur)
+    return dict(totals)
+
+
 def _calculate_vorabpauschale(
     asset_resolver: AssetResolver,
-    current_year_events: List[FinancialEvent],
+    distributions_by_asset: Dict[uuid.UUID, Decimal],
     currency_converter: CurrencyConverter,
-    tax_year: int,
+    vorabpauschale_year: int,
     ctx: Context,
 ) -> List[VorabpauschaleData]:
     """
-    Calculate Vorabpauschale for all investment funds held at start of year.
-    Formula per § 18 InvStG:
-      1. Basisertrag = fund_value_soy_eur * basiszins * 0.7
-      2. If Basisertrag <= 0 -> VP = 0
-      3. VP = max(0, Basisertrag - distributions_eur)
-      4. Cap: VP <= max(0, fund_value_eoy_eur - fund_value_soy_eur)
-      5. Apply Teilfreistellung
+    Calculate the Vorabpauschale FOR calendar year `vorabpauschale_year`.
+
+    **`vorabpauschale_year` is not the Veranlagungszeitraum.** The VP for calendar X is deemed
+    to flow on the first working day of X+1 (18 Abs. 3 InvStG) and is declared on Zeilen 9-13
+    of the *X+1* Anlage KAP-INV. Callers preparing a VZ Y return must pass Y-1. All position
+    values and distributions read here are therefore those of `vorabpauschale_year`, taken from
+    the `Asset.prior_year_*` fields, not the tax year's own SoY/EoY snapshot.
+
+    Formula per 18 InvStG, sentence by sentence:
+      Abs. 1 S. 2  Basisertrag = Ruecknahmepreis_Jahresbeginn * basiszins * 0.7
+      Abs. 1 S. 3  Basisertrag capped at (last price of year - first price) + distributions
+      Abs. 1 S. 1  VP = max(0, Basisertrag - distributions)
+      Abs. 4       basiszins from the published BMF table for `vorabpauschale_year`
+    Teilfreistellung (20 InvStG) is applied to derive the net figure; the gross figure is what
+    goes on the form.
+
+    Not implemented, and deliberately so rather than silently approximated -- see
+    reference/investment-tax-law/invstg-18-vorabpauschale.md, "Known deviations":
+    Abs. 2 (pro-rata reduction in the acquisition year) and Abs. 1 S. 4 (Boersen- oder
+    Marktpreis only where no Ruecknahmepreis was set).
     """
     from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
-    basiszins_str = config.BASISZINS_BY_YEAR.get(tax_year)
-    if basiszins_str is None:
-        logger.info(f"No Basiszins configured for tax year {tax_year}. Skipping Vorabpauschale calculation.")
+    from src.tax_law.registry import basiszins_pct
+    basiszins = basiszins_pct(vorabpauschale_year)  # None -> loud warning inside the registry
+    if basiszins is None:
         return []
 
-    basiszins = Decimal(basiszins_str)
     base_return_rate = ctx.multiply(basiszins, Decimal("0.01"))  # Convert percentage to factor
     factor_70 = Decimal("0.7")
 
-    # Conversion dates: Jan 2 for SoY (Jan 1 is never a business day), Dec 31 for EoY
-    soy_conversion_date = date(tax_year, 1, 2)
-    eoy_conversion_date = date(tax_year, 12, 31)
-
-    # Collect distributions per asset during the tax year
-    distributions_by_asset: DefaultDict[uuid.UUID, Decimal] = defaultdict(lambda: ctx.create_decimal(Decimal('0')))
-    for event in current_year_events:
-        if isinstance(event, CashFlowEvent) and event.event_type == FinancialEventType.DISTRIBUTION_FUND:
-            gross_eur = event.gross_amount_eur if event.gross_amount_eur is not None else Decimal('0')
-            if gross_eur > Decimal('0'):
-                distributions_by_asset[event.asset_internal_id] = ctx.add(
-                    distributions_by_asset[event.asset_internal_id], gross_eur
-                )
+    # Conversion dates within the Vorabpauschale year: Jan 2 for the year-start price
+    # (Jan 1 is never a business day), Dec 31 for the last price set in the year.
+    soy_conversion_date = date(vorabpauschale_year, 1, 2)
+    eoy_conversion_date = date(vorabpauschale_year, 12, 31)
 
     results: List[VorabpauschaleData] = []
 
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if not isinstance(asset_obj, InvestmentFund):
             continue
-        if asset_obj.soy_quantity is None or asset_obj.soy_quantity <= Decimal('0'):
+        # Held at the start of the Vorabpauschale year? Units acquired later get no VP here;
+        # Abs. 2's pro-rata reduction is not implemented (see the docstring).
+        if asset_obj.prior_year_soy_quantity is None or asset_obj.prior_year_soy_quantity <= Decimal('0'):
             continue
 
-        # Convert SoY position value to EUR
-        soy_value_foreign = asset_obj.soy_position_value
-        soy_currency = asset_obj.soy_mark_price_currency or asset_obj.currency
+        # Ruecknahmepreis at the start of the Vorabpauschale year (Abs. 1 S. 2)
+        soy_value_foreign = asset_obj.prior_year_soy_position_value
+        soy_currency = asset_obj.prior_year_soy_mark_price_currency or asset_obj.currency
         if soy_value_foreign is None or soy_currency is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Missing SoY position value or currency. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Missing start-of-{vorabpauschale_year} position value or currency. Skipping VP.")
             continue
 
         fund_value_soy_eur = currency_converter.convert_to_eur(soy_value_foreign, soy_currency, soy_conversion_date)
         if fund_value_soy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert SoY value to EUR. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} value to EUR. Skipping VP.")
             continue
 
-        # Convert EoY position value to EUR
-        eoy_value_foreign = asset_obj.eoy_position_value
-        eoy_currency = asset_obj.eoy_mark_price_currency or asset_obj.currency
+        # Last Ruecknahmepreis set in the Vorabpauschale year (Abs. 1 S. 3 cap)
+        eoy_value_foreign = asset_obj.prior_year_eoy_position_value
+        eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
         if eoy_value_foreign is None or eoy_currency is None:
-            # Fund fully sold during year — no VP needed (VP is for positions held at EoY)
-            logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No EoY position value. Skipping VP.")
+            # Fund fully disposed of during the year. The Abs. 3 Zufluss then falls after the
+            # disposal, so no VP arises. This is inferred from Abs. 3, not stated by a located
+            # Tier 1/2 source: see reference/research/open-legal-questions.md Q5 for both
+            # readings, and docs/legal-implementation-map.md GT-INVSTG-016 for this choice.
+            logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} position value. Skipping VP.")
             continue
 
         fund_value_eoy_eur = currency_converter.convert_to_eur(eoy_value_foreign, eoy_currency, eoy_conversion_date)
@@ -808,7 +1046,7 @@ def _calculate_vorabpauschale(
         TWO_PLACES = config.OUTPUT_PRECISION_AMOUNTS
         vp_data = VorabpauschaleData(
             asset_internal_id=asset_id,
-            tax_year=tax_year,
+            vorabpauschale_year=vorabpauschale_year,
             fund_value_start_year_eur=fund_value_soy_eur.quantize(TWO_PLACES, context=ctx),
             fund_value_end_year_eur=fund_value_eoy_eur.quantize(TWO_PLACES, context=ctx),
             distributions_during_year_eur=distributions_eur.quantize(TWO_PLACES, context=ctx),
@@ -871,8 +1109,8 @@ def _create_excess_dividend_event(original_event, excess_amount, asset_object, c
 def _ensure_currency_ledger_exists(
     currency_code: str,
     asset_resolver: AssetResolver,
-    currency_fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
-    fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
+    fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
     currency_converter: CurrencyConverter,
     exchange_rate_provider: ECBExchangeRateProvider,
     internal_calculation_precision: int,
@@ -890,7 +1128,7 @@ def _ensure_currency_ledger_exists(
     existing_asset = asset_resolver.get_cash_balance_asset(currency_code.upper())
     if existing_asset:
         # Asset exists; ensure ledger also exists
-        if existing_asset.internal_asset_id not in fifo_ledgers:
+        if (DEFAULT_ACCOUNT, existing_asset.internal_asset_id) not in fifo_ledgers:
             new_ledger = FifoLedger(
                 asset_internal_id=existing_asset.internal_asset_id,
                 asset_category=AssetCategory.CASH_BALANCE,
@@ -900,8 +1138,8 @@ def _ensure_currency_ledger_exists(
                 internal_working_precision=internal_calculation_precision,
                 decimal_rounding_mode=decimal_rounding_mode,
             )
-            currency_fifo_ledgers[existing_asset.internal_asset_id] = new_ledger
-            fifo_ledgers[existing_asset.internal_asset_id] = new_ledger
+            currency_fifo_ledgers[(DEFAULT_ACCOUNT, existing_asset.internal_asset_id)] = new_ledger
+            fifo_ledgers[(DEFAULT_ACCOUNT, existing_asset.internal_asset_id)] = new_ledger
             logger.info(f"{context_label}: Created currency ledger for existing {currency_code} asset")
         return
 
@@ -922,17 +1160,17 @@ def _ensure_currency_ledger_exists(
             internal_working_precision=internal_calculation_precision,
             decimal_rounding_mode=decimal_rounding_mode,
         )
-        currency_fifo_ledgers[new_asset.internal_asset_id] = new_ledger
-        fifo_ledgers[new_asset.internal_asset_id] = new_ledger
+        currency_fifo_ledgers[(DEFAULT_ACCOUNT, new_asset.internal_asset_id)] = new_ledger
+        fifo_ledgers[(DEFAULT_ACCOUNT, new_asset.internal_asset_id)] = new_ledger
         logger.info(f"{context_label}: Created CashBalance asset and ledger for {currency_code}")
 
 
 def _process_cashflow_currency_impact(
     event: FinancialEvent,
     asset_resolver: AssetResolver,
-    currency_fifo_ledgers: Dict[uuid.UUID, 'FifoLedger'],
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
     currency_processor: 'CurrencyConversionProcessor',
-    fifo_ledgers: Optional[Dict[uuid.UUID, 'FifoLedger']] = None,
+    fifo_ledgers: Optional[Dict[Tuple[str, uuid.UUID], 'FifoLedger']] = None,
     currency_converter: Optional[CurrencyConverter] = None,
     exchange_rate_provider: Optional[ECBExchangeRateProvider] = None,
     internal_calculation_precision: int = 28,
@@ -987,7 +1225,7 @@ def _process_cashflow_currency_impact(
             logger.debug(f"Cashflow {event.event_id}: Could not create CashBalance asset for {cash_currency}")
             return results
 
-    currency_ledger = currency_fifo_ledgers.get(currency_asset.internal_asset_id)
+    currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
     if not currency_ledger:
         # Create ledger on-the-fly (no prior balance, first cash flow in this currency)
         ledger_kwargs = dict(
@@ -1000,9 +1238,9 @@ def _process_cashflow_currency_impact(
             decimal_rounding_mode=decimal_rounding_mode,
         )
         currency_ledger = FifoLedger(**ledger_kwargs)
-        currency_fifo_ledgers[currency_asset.internal_asset_id] = currency_ledger
+        currency_fifo_ledgers[(DEFAULT_ACCOUNT, currency_asset.internal_asset_id)] = currency_ledger
         if fifo_ledgers is not None:
-            fifo_ledgers[currency_asset.internal_asset_id] = currency_ledger
+            fifo_ledgers[(DEFAULT_ACCOUNT, currency_asset.internal_asset_id)] = currency_ledger
         logger.info(f"Cashflow {event.event_id}: Created currency ledger for {cash_currency} (first cash flow)")
 
     eur_per_unit = eur_amount / foreign_amount
@@ -1135,27 +1373,29 @@ def _collect_historical_currency_event(
             historical_currency_events[ccy].append(event)
 
 
-def _replay_historical_currency_events(
-    events: List[FinancialEvent],
+def _apply_historical_currency_event(
+    event: FinancialEvent,
     ledger: 'FifoLedger',
     currency_code: str,
     currency_converter: CurrencyConverter,
     ctx: Context,
 ) -> int:
-    """
-    Replay historical events to build currency FIFO lots with correct acquisition dates.
+    """Apply ONE historical event's currency impact to a currency ledger —
+    the per-event unit the unified replayer streams (AR5). Mutates lot state
+    only (no current-year RGLs). Returns 1 if the event affected the ledger.
 
-    Processes ALL event types that affect currency balances:
+    Handles every event type that moves currency:
     - CurrencyConversionEvent: explicit FX trades (only the side matching our currency)
     - TradeEvent: security buys consume currency, sells produce currency, commissions consume
+    - CorpActionMergerCash: cash proceeds create a currency lot
     - Income cashflows: dividends, interest, distributions create currency lots
     - Expense cashflows: WHT, fees, Stueckzinsen consume currency lots
-
-    Returns the number of events successfully replayed.
     """
     replayed = 0
-
-    for event in events:
+    # Single-iteration loop: the body is kept VERBATIM from the previous batch
+    # loop (its `continue` statements mean "this event does not affect this
+    # currency" and skip to the return).
+    for _ in (0,):
         try:
             if isinstance(event, CurrencyConversionEvent):
                 # Handle only the side affecting our currency
@@ -1293,6 +1533,21 @@ def _replay_historical_currency_events(
             logger.debug(f"Historical currency replay: skipped event {event.event_id}: {e}")
 
     return replayed
+
+
+def _replay_historical_currency_events(
+    events: List[FinancialEvent],
+    ledger: 'FifoLedger',
+    currency_code: str,
+    currency_converter: CurrencyConverter,
+    ctx: Context,
+) -> int:
+    """Batch wrapper over _apply_historical_currency_event (kept for direct
+    callers/tests; the engine streams per event). Returns events replayed."""
+    return sum(
+        _apply_historical_currency_event(event, ledger, currency_code, currency_converter, ctx)
+        for event in events
+    )
 
 
 def _get_historical_eur_value(

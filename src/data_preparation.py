@@ -64,6 +64,8 @@ def _concatenate_csvs(paths: list[Path], output_path: Path) -> None:
                 if header is None:
                     header = row
                 continue
+            if row == header:  # skip repeated header rows IBKR inserts mid-file
+                continue
             if row:  # skip empty rows
                 rows.append(row)
 
@@ -81,9 +83,24 @@ def _concatenate_csvs(paths: list[Path], output_path: Path) -> None:
 
 
 def _copy_file(src: Path, dest: Path) -> None:
-    """Copy a file to the working directory."""
+    """Copy a CSV file to the working directory, stripping duplicate header rows."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(src.read_bytes())
+    content = src.read_text(encoding="utf-8-sig")
+    reader = csv.reader(io.StringIO(content))
+    header = None
+    rows = []
+    for i, row in enumerate(reader):
+        if i == 0:
+            header = row
+            rows.append(row)
+            continue
+        if row == header:
+            continue
+        if row:
+            rows.append(row)
+    with open(dest, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
+        writer.writerows(rows)
     logger.info("Copied %s -> %s", src, dest)
 
 
@@ -194,6 +211,31 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
     else:
         logger.warning("No Positions-%d-EoY.csv found.", tax_year)
         result["positions_end"] = ""
+
+    # --- Positions for the preceding year: needed for the Vorabpauschale ---
+    # The VP declared in VZ Y is the one computed FOR calendar Y-1 (18 Abs. 3 InvStG; Anleitung
+    # zur Anlage KAP-INV, Zeilen 9-13). Its Basisertrag uses the Ruecknahmepreis at the start of
+    # Y-1 and its cap the last price set in Y-1, so both of the PRIOR year's snapshots are
+    # required. Absence is not an error here -- the engine decides what to do about a missing
+    # snapshot at the point it knows whether any fund is actually held
+    # (src/engine/calculation_engine.py).
+    prior_year = tax_year - 1
+    for file_key, suffix, label in (
+        ("positions_prior_start", "-SoY.csv", "start"),
+        ("positions_prior_end", "-EoY.csv", "end"),
+    ):
+        prior_file = _find_import_file("Positions", prior_year, suffix)
+        if prior_file:
+            prior_output = WORKING_DIR / f"positions_prior_year_{label}.csv"
+            _copy_file(prior_file, prior_output)
+            result[file_key] = str(prior_output)
+        else:
+            logger.info(
+                "No Positions-%d%s found. The Vorabpauschale for calendar %d cannot be "
+                "computed from it; the engine will report this as a data gap if funds are held.",
+                prior_year, suffix, prior_year,
+            )
+            result[file_key] = ""
 
     # --- Cash Balance: copy for the tax year ---
     cash_balance_file = _find_import_file("Cash_Balance", tax_year)

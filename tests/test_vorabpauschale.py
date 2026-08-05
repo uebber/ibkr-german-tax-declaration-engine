@@ -1,5 +1,13 @@
 # tests/test_vorabpauschale.py
-"""Tests for Vorabpauschale calculation (§ 18 InvStG)."""
+"""Tests for the Vorabpauschale (§ 18 InvStG).
+
+legal_basis: GT-INVSTG-010 (Basisertrag and its cap), GT-INVSTG-012 and
+GT-INVSTG-014 (the VZ Y return carries the figure for calendar Y-1),
+GT-INVSTG-015 (declared gross), GT-INVSTG-033 and GT-FORM-033 (the deduction
+on disposal is Zeile 53, and is not computed), GT-INVSTG-050/053 (Basiszins).
+See reference/investment-tax-law/invstg-18-vorabpauschale.md and
+docs/legal-implementation-map.md.
+"""
 import uuid
 import pytest
 from decimal import Decimal, Context
@@ -12,8 +20,14 @@ from src.domain.enums import (
     AssetCategory, InvestmentFundType, FinancialEventType, TaxReportingCategory,
 )
 from src.domain.events import CashFlowEvent
-from src.domain.results import VorabpauschaleData, LossOffsettingResult
-from src.engine.calculation_engine import _calculate_vorabpauschale, _get_vp_reporting_category
+from src.domain.results import VorabpauschaleData, LossOffsettingResult, RealizedGainLoss
+from src.domain.enums import RealizationType
+from src.processing.data_gaps import DataGapCollector, GapSeverity
+from src.engine.calculation_engine import (
+    _calculate_vorabpauschale,
+    _collect_fund_distributions_for_year,
+    _get_vp_reporting_category,
+)
 from src.engine.loss_offsetting import LossOffsettingEngine
 from src.identification.asset_resolver import AssetResolver
 from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
@@ -42,14 +56,15 @@ def _make_fund(
         ibkr_isin="IE00TEST1234",
         ibkr_symbol="TFUND",
     )
-    fund.soy_quantity = soy_qty
-    fund.soy_position_value = soy_position_value
-    fund.soy_mark_price_currency = soy_mark_price_currency
-    fund.soy_market_price = soy_position_value / soy_qty if soy_qty else None
-    fund.eoy_quantity = eoy_qty
-    fund.eoy_position_value = eoy_position_value
-    fund.eoy_mark_price_currency = eoy_mark_price_currency
-    fund.eoy_market_price = eoy_position_value / eoy_qty if eoy_qty else None
+    # The Vorabpauschale reads the PRECEDING calendar year's snapshot: the VP declared in
+    # VZ Y is the one for calendar Y-1 (18 Abs. 3 InvStG). These fixtures therefore populate
+    # `prior_year_*` and deliberately leave `soy_*` / `eoy_*` unset -- if the engine ever
+    # reverts to reading the tax year's own snapshot, every test in this module fails.
+    fund.prior_year_soy_quantity = soy_qty
+    fund.prior_year_soy_position_value = soy_position_value
+    fund.prior_year_soy_mark_price_currency = soy_mark_price_currency
+    fund.prior_year_eoy_position_value = eoy_position_value
+    fund.prior_year_eoy_mark_price_currency = eoy_mark_price_currency
     return fund
 
 
@@ -83,22 +98,72 @@ def _fx_converter(rate: Decimal):
     return converter
 
 
+def _make_vp_item(vorabpauschale_year: int,
+                  fund_type=InvestmentFundType.AKTIENFONDS) -> VorabpauschaleData:
+    """A Vorabpauschale FOR calendar `vorabpauschale_year` (declared the following VZ)."""
+    return VorabpauschaleData(
+        asset_internal_id=uuid.uuid4(),
+        vorabpauschale_year=vorabpauschale_year,
+        fund_value_start_year_eur=Decimal("10000"), fund_value_end_year_eur=Decimal("11000"),
+        distributions_during_year_eur=Decimal("0"), base_return_rate=Decimal("0.0229"),
+        basiszins=Decimal("2.29"), calculated_base_return_eur=Decimal("160.30"),
+        gross_vorabpauschale_eur=Decimal("160.30"),
+        fund_type=fund_type,
+        teilfreistellung_rate_applied=Decimal("0.30"),
+        teilfreistellung_amount_eur=Decimal("48.09"),
+        net_taxable_vorabpauschale_eur=Decimal("112.21"),
+        tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,
+    )
+
+
+def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND) -> RealizedGainLoss:
+    """A minimal realised disposal, used to make Zeile 53 relevant."""
+    rgl = RealizedGainLoss(
+        originating_event_id=uuid.uuid4(),
+        asset_internal_id=uuid.uuid4(),
+        asset_category_at_realization=category,
+        acquisition_date="2022-01-01",
+        realization_date="2024-06-01",
+        realization_type=RealizationType.LONG_POSITION_SALE,
+        quantity_realized=Decimal("1"),
+        unit_cost_basis_eur=Decimal("100"),
+        unit_realization_value_eur=Decimal("150"),
+        total_cost_basis_eur=Decimal("100"),
+        total_realization_value_eur=Decimal("150"),
+        gross_gain_loss_eur=Decimal("50"),
+    )
+    if category == AssetCategory.INVESTMENT_FUND:
+        rgl.fund_type_at_sale = InvestmentFundType.AKTIENFONDS
+        rgl.__post_init__()
+    return rgl
+
+
 def _make_resolver_with_fund(fund: InvestmentFund) -> AssetResolver:
     resolver = MagicMock(spec=AssetResolver)
     resolver.assets_by_internal_id = {fund.internal_asset_id: fund}
     return resolver
 
 
-def _run_vp(fund, events=None, tax_year=2024, converter=None):
+def _run_vp(fund, events=None, vorabpauschale_year=2024, converter=None):
+    """Compute the Vorabpauschale FOR calendar `vorabpauschale_year`.
+
+    Note this is the year the VP is *for*, not the Veranlagungszeitraum it is declared in --
+    those differ by one (18 Abs. 3 InvStG). Distributions are routed through the production
+    collector rather than a hand-built dict, so its calendar-year filter and its
+    positive-amounts-only rule remain covered by these tests.
+    """
     resolver = _make_resolver_with_fund(fund)
     if converter is None:
         converter = _eur_converter()
     ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION, rounding=config.DECIMAL_ROUNDING_MODE)
+    distributions = _collect_fund_distributions_for_year(
+        events or [], vorabpauschale_year, resolver, ctx
+    )
     return _calculate_vorabpauschale(
         asset_resolver=resolver,
-        current_year_events=events or [],
+        distributions_by_asset=distributions,
         currency_converter=converter,
-        tax_year=tax_year,
+        vorabpauschale_year=vorabpauschale_year,
         ctx=ctx,
     )
 
@@ -144,7 +209,7 @@ class TestVorabpauschaleCalculation:
         assert len(results) == 1
         vp = results[0]
         assert vp.gross_vorabpauschale_eur == Decimal("160.30")
-        assert vp.tax_year == 2024
+        assert vp.vorabpauschale_year == 2024
 
     def test_distributions_exceed_basisertrag(self):
         """If distributions >= Basisertrag, VP = 0."""
@@ -189,11 +254,49 @@ class TestVorabpauschaleCalculation:
         results = _run_vp(fund)
         assert len(results) == 0
 
-    def test_no_basiszins_configured(self):
-        """Tax year without basiszins -> no VP."""
+    def test_unconfigured_basiszins_year_skips_with_loud_warning(self, caplog):
+        """A tax year INSIDE the InvStG-2018 regime with no configured Basiszins
+        must skip VP computation with a WARNING (skipping silently could
+        understate income — the VP is deemed income under §18 InvStG).
+        (Previously this used 2020, which HAS a published positive Basiszins of
+        0.07% — see BMF table — and logged only at INFO level.)"""
+        import logging
         fund = _make_fund()
-        results = _run_vp(fund, tax_year=2020)
+        with caplog.at_level(logging.INFO):
+            results = _run_vp(fund, vorabpauschale_year=2030)
         assert len(results) == 0
+        assert any("Basiszins" in r.message and r.levelname == "WARNING" for r in caplog.records), \
+            "missing Basiszins must be surfaced as a WARNING, not silently skipped"
+
+    def test_pre_2018_year_skips_without_a_false_alarm(self, caplog):
+        """1999 predates the InvStG 2018 regime (§56 Abs. 1 S. 1 InvStG): there
+        was no Vorabpauschale, so the skip is correct and must not be reported
+        as a missing rate."""
+        import logging
+        fund = _make_fund()
+        with caplog.at_level(logging.INFO):
+            results = _run_vp(fund, vorabpauschale_year=1999)
+        assert len(results) == 0
+        assert not any(r.levelname == "WARNING" for r in caplog.records)
+
+    def test_2020_positive_basiszins_yields_vp(self):
+        """2020 had a POSITIVE Basiszins (0.07%, BMF) — a fund held through
+        2020 owes VP: 10000 * 0.0007 * 0.7 = 4.90 (cap 1000 not binding)."""
+        fund = _make_fund()
+        results = _run_vp(fund, vorabpauschale_year=2020)
+        assert len(results) == 1
+        assert results[0].gross_vorabpauschale_eur == Decimal("4.90")
+
+    def test_2021_negative_basiszins_yields_zero_vp_not_skip(self, caplog):
+        """2021 Basiszins was NEGATIVE (-0.45%, BMF): the correct result is a
+        COMPUTED zero (negative Basisertrag -> no VP), not a config-gap skip."""
+        import logging
+        fund = _make_fund()
+        with caplog.at_level(logging.INFO):
+            results = _run_vp(fund, vorabpauschale_year=2021)
+        assert len(results) == 0
+        assert not any("No Basiszins configured" in r.message for r in caplog.records), \
+            "2021 must be configured (negative rate), not treated as a config gap"
 
     def test_teilfreistellung_applied_aktienfonds(self):
         """TF rate of 30% applied for Aktienfonds."""
@@ -324,92 +427,222 @@ class TestTeilfreistellungNegativeDistribution:
 # Tests: Z55 in loss offsetting
 # ---------------------------------------------------------------------------
 
-class TestZ55VorabpauschaleAbzug:
-    """Verify Z55 correctly sums all gross VP."""
+class TestZeile53VorabpauschaleDeduction:
+    """Anlage KAP-INV Zeile 53 -- "Waehrend der Besitzzeit angesetzte Vorabpauschalen".
 
-    def test_z55_sums_gross_vp(self):
-        """Z55 = sum of all gross VP for the tax year."""
-        vp1 = VorabpauschaleData(
-            asset_internal_id=uuid.uuid4(), tax_year=2024,
-            fund_value_start_year_eur=Decimal("10000"), fund_value_end_year_eur=Decimal("11000"),
-            distributions_during_year_eur=Decimal("0"), base_return_rate=Decimal("0.0229"),
-            basiszins=Decimal("2.29"), calculated_base_return_eur=Decimal("160.30"),
-            gross_vorabpauschale_eur=Decimal("160.30"),
-            fund_type=InvestmentFundType.AKTIENFONDS,
-            teilfreistellung_rate_applied=Decimal("0.30"),
-            teilfreistellung_amount_eur=Decimal("48.09"),
-            net_taxable_vorabpauschale_eur=Decimal("112.21"),
-            tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,
-        )
-        vp2 = VorabpauschaleData(
-            asset_internal_id=uuid.uuid4(), tax_year=2024,
-            fund_value_start_year_eur=Decimal("5000"), fund_value_end_year_eur=Decimal("5500"),
-            distributions_during_year_eur=Decimal("0"), base_return_rate=Decimal("0.0229"),
-            basiszins=Decimal("2.29"), calculated_base_return_eur=Decimal("80.15"),
-            gross_vorabpauschale_eur=Decimal("80.15"),
-            fund_type=InvestmentFundType.MISCHFONDS,
-            teilfreistellung_rate_applied=Decimal("0.15"),
-            teilfreistellung_amount_eur=Decimal("12.02"),
-            net_taxable_vorabpauschale_eur=Decimal("68.13"),
-            tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_VORABPAUSCHALE_BRUTTO,
-        )
+    Until 2026-08-03 the engine emitted the sum of the CURRENT year's gross Vorabpauschalen
+    on a category named `..._Z55`. Both halves were wrong: Zeile 55 is "Gewinne aus der
+    Veraeusserung von bestandsgeschuetzten Alt-Anteilen" (Anleitung zur Anlage KAP-INV 2024
+    and 2025), and the deduction under 19 Abs. 1 S. 3-4 InvStG is the Vorabpauschale
+    accumulated over the holding period of the units actually disposed of, so far as it was
+    brought to tax -- not a current-year total.
 
+    The engine cannot compute that (no per-lot Vorabpauschale history), so it emits nothing and
+    reports a data gap. These tests hold that line: they fail if a figure reappears, and they
+    fail if the gap stops being reported.
+    """
+
+    def _engine(self, *, rgls=None, vp_items=None, tax_year=2024, collector=None):
         resolver = MagicMock(spec=AssetResolver)
         resolver.get_asset_by_id.return_value = None
-
-        engine = LossOffsettingEngine(
-            realized_gains_losses=[],
-            vorabpauschale_items=[vp1, vp2],
+        return LossOffsettingEngine(
+            realized_gains_losses=rgls or [],
+            vorabpauschale_items=vp_items or [],
             current_year_financial_events=[],
             asset_resolver=resolver,
-            tax_year=2024,
+            tax_year=tax_year,
+            data_gap_collector=collector,
+        )
+
+    def test_no_zeile_53_figure_is_emitted(self):
+        """No amount is placed on Zeile 53, even when the year has Vorabpauschalen."""
+        engine = self._engine(
+            rgls=[_make_fund_disposal()],
+            vp_items=[_make_vp_item(vorabpauschale_year=2023)],
         )
         result = engine.calculate_reporting_figures()
+        assert (
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53
+            not in result.form_line_values
+        )
 
-        z55 = result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal("0"))
-        assert z55 == Decimal("240.45")
+    def test_gap_recorded_when_fund_units_were_disposed(self):
+        """A disposal makes Zeile 53 relevant, so the un-computable deduction is reported."""
+        collector = DataGapCollector()
+        engine = self._engine(rgls=[_make_fund_disposal()], collector=collector)
+        engine.calculate_reporting_figures()
 
-    def test_z55_zero_when_no_vp(self):
-        """Z55 = 0 when no VP items."""
+        codes = [g.code for g in collector.gaps]
+        assert "KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED" in codes
+        gap = next(g for g in collector.gaps
+                   if g.code == "KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED")
+        # WARNING, not FAIL_FAST: omitting the deduction OVERSTATES the gain, so the figures
+        # are conservative rather than income-understating.
+        assert gap.severity is GapSeverity.WARNING
+        assert "Zeile 53" in gap.detail
+
+    def test_no_gap_when_no_fund_units_were_disposed(self):
+        """Zeile 53 is legitimately empty without a fund disposal -- that is not a gap."""
+        collector = DataGapCollector()
+        engine = self._engine(
+            rgls=[_make_fund_disposal(category=AssetCategory.STOCK)],
+            vp_items=[_make_vp_item(vorabpauschale_year=2023)],
+            collector=collector,
+        )
+        engine.calculate_reporting_figures()
+        assert collector.gaps == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: a Vorabpauschale is declared in the year AFTER the one it is computed for
+# ---------------------------------------------------------------------------
+
+class TestVorabpauschaleDeclarationYear:
+    """18 Abs. 3 InvStG: the VP for calendar X flows on the first working day of X+1 and is
+    declared in VZ X+1. The engine used to declare it in VZ X."""
+
+    def _run(self, vp_year, tax_year):
         resolver = MagicMock(spec=AssetResolver)
         resolver.get_asset_by_id.return_value = None
-
         engine = LossOffsettingEngine(
             realized_gains_losses=[],
-            vorabpauschale_items=[],
+            vorabpauschale_items=[_make_vp_item(vorabpauschale_year=vp_year)],
             current_year_financial_events=[],
             asset_resolver=resolver,
-            tax_year=2024,
+            tax_year=tax_year,
         )
-        result = engine.calculate_reporting_figures()
+        return engine.calculate_reporting_figures()
 
-        z55 = result.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal("0"))
-        assert z55 == Decimal("0.00")
-
-    def test_fund_income_includes_net_vp(self):
-        """conceptual_fund_income_net_taxable includes net VP."""
-        vp = VorabpauschaleData(
-            asset_internal_id=uuid.uuid4(), tax_year=2024,
-            fund_value_start_year_eur=Decimal("10000"), fund_value_end_year_eur=Decimal("11000"),
-            distributions_during_year_eur=Decimal("0"), base_return_rate=Decimal("0.0229"),
-            basiszins=Decimal("2.29"), calculated_base_return_eur=Decimal("160.30"),
-            gross_vorabpauschale_eur=Decimal("160.30"),
-            fund_type=InvestmentFundType.AKTIENFONDS,
-            teilfreistellung_rate_applied=Decimal("0.30"),
-            teilfreistellung_amount_eur=Decimal("48.09"),
-            net_taxable_vorabpauschale_eur=Decimal("112.21"),
-            tax_reporting_category_gross=TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_VORABPAUSCHALE_BRUTTO,
-        )
-
-        resolver = MagicMock(spec=AssetResolver)
-        resolver.get_asset_by_id.return_value = None
-
-        engine = LossOffsettingEngine(
-            realized_gains_losses=[],
-            vorabpauschale_items=[vp],
-            current_year_financial_events=[],
-            asset_resolver=resolver,
-            tax_year=2024,
-        )
-        result = engine.calculate_reporting_figures()
+    def test_prior_year_vp_is_declared_in_this_year(self):
+        """The VP for calendar 2023 belongs on the VZ 2024 return."""
+        result = self._run(vp_year=2023, tax_year=2024)
         assert result.conceptual_fund_income_net_taxable == Decimal("112.21")
+
+    def test_this_years_vp_is_not_declared_yet(self):
+        """The VP for calendar 2024 flows 02.01.2025 -- it must NOT appear in VZ 2024.
+
+        This is the guard for the defect fixed on 2026-08-03: the engine declared the tax
+        year's own Vorabpauschale, one year early.
+        """
+        result = self._run(vp_year=2024, tax_year=2024)
+        assert result.conceptual_fund_income_net_taxable == Decimal("0.00")
+
+    def test_declaration_year_is_one_past_the_vorabpauschale_year(self):
+        assert _make_vp_item(vorabpauschale_year=2023).declaration_year == 2024
+
+
+# ---------------------------------------------------------------------------
+# Tests: the shipped Basiszins table covers exactly the years the law defines
+# ---------------------------------------------------------------------------
+
+class TestBasiszinsTableCoverage:
+    """Every BMF-published rate must be configured so that no tax year inside
+    the regime silently produces zero Vorabpauschale — and no year OUTSIDE the
+    regime may carry a rate, which would invent deemed income.
+
+    The values themselves are pinned against the knowledge store by
+    `tests/test_tax_law_registry.py::TestBasiszinsReferenceConsistency`, which
+    parses `reference/bmf-guidance/basiszins-vorabpauschale.md`. This class
+    checks the SHAPE of the table, which that parse cannot: where it starts,
+    that it has no holes, and that the year an engine run needs is present."""
+
+    def test_regime_floor_is_2018(self):
+        """§56 Abs. 1 S. 1 InvStG: the InvStG 2018 applies from 01.01.2018, so
+        the first Vorabpauschale is the one for calendar 2018 and the first
+        published Basiszins is the 2018 one. Nothing earlier belongs here — the
+        1.10%/0.59% once listed for 2016/2017 are the §203 Abs. 2 BewG rate."""
+        from src.tax_law import registry
+        assert min(registry.BASISZINS_PCT) == 2018
+        assert 2016 not in registry.BASISZINS_PCT
+        assert 2017 not in registry.BASISZINS_PCT
+
+    def test_every_year_from_2018_to_the_latest_is_present(self):
+        from src.tax_law import registry
+        years = sorted(registry.BASISZINS_PCT)
+        assert years == list(range(2018, years[-1] + 1)), (
+            "gap in the Basiszins table — that year's Vorabpauschale would be "
+            "skipped; fill it from reference/bmf-guidance/basiszins-vorabpauschale.md")
+
+
+# ---------------------------------------------------------------------------
+# Tests: guards that mutation-probing found blind
+# ---------------------------------------------------------------------------
+
+class TestDistributionsComeFromTheVorabpauschaleYear:
+    """`_collect_fund_distributions_for_year` filters by calendar year.
+
+    Found blind by mutation on 2026-08-03: replacing the year filter with `if False`
+    left the whole suite green, because every fixture distribution happened to be dated
+    inside the year under test. The filter decides whether a distribution reduces the
+    Basisertrag (18 Abs. 1 S. 1 InvStG), and for a VZ Y run the relevant distributions are
+    Y-1's, not Y's -- so a filter that does nothing silently understates the deemed income.
+    """
+
+    def test_distribution_in_the_vorabpauschale_year_reduces_the_basisertrag(self):
+        fund = _make_fund()
+        dist = _make_distribution(fund.internal_asset_id, Decimal("50"), event_date="2024-06-15")
+        results = _run_vp(fund, events=[dist], vorabpauschale_year=2024)
+        # Basisertrag 160.30 - 50 = 110.30
+        assert results[0].gross_vorabpauschale_eur == Decimal("110.30")
+
+    def test_distribution_from_a_later_year_does_not_reduce_it(self):
+        """A distribution paid in the VZ itself belongs to the NEXT Vorabpauschale."""
+        fund = _make_fund()
+        dist = _make_distribution(fund.internal_asset_id, Decimal("50"), event_date="2025-06-15")
+        results = _run_vp(fund, events=[dist], vorabpauschale_year=2024)
+        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+        assert results[0].distributions_during_year_eur == Decimal("0.00")
+
+    def test_distribution_from_an_earlier_year_does_not_reduce_it(self):
+        fund = _make_fund()
+        dist = _make_distribution(fund.internal_asset_id, Decimal("50"), event_date="2023-06-15")
+        results = _run_vp(fund, events=[dist], vorabpauschale_year=2024)
+        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+
+
+class TestMissingPriorYearSnapshotIsFatal:
+    """A held fund plus no prior-year snapshot must stop the run.
+
+    Found blind by mutation on 2026-08-03: replacing the condition with `if False` left all
+    492 tests green. The Vorabpauschale declared in VZ Y is the one for calendar Y-1
+    (18 Abs. 3 InvStG), so without Y-1's position snapshots it cannot be computed. Silently
+    emitting no Vorabpauschale would understate deemed income, which is the FAIL_FAST
+    contract in src/processing/data_gaps.py.
+    """
+
+    def _run(self, *, prior_available, with_fund=True):
+        from src.engine.calculation_engine import run_main_calculations
+        resolver = MagicMock(spec=AssetResolver)
+        resolver.assets_by_internal_id = (
+            {(f := _make_fund()).internal_asset_id: f} if with_fund else {}
+        )
+        resolver.get_asset_by_id.return_value = None
+        collector = DataGapCollector()
+        run_main_calculations(
+            financial_events=[],
+            asset_resolver=resolver,
+            currency_converter=_eur_converter(),
+            exchange_rate_provider=MagicMock(),
+            tax_year=2025,
+            internal_calculation_precision=config.INTERNAL_CALCULATION_PRECISION,
+            decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
+            data_gap_collector=collector,
+            prior_year_positions_available=prior_available,
+        )
+        return collector
+
+    def test_raises_when_a_fund_is_held_and_the_snapshot_is_absent(self):
+        from src.processing.data_gaps import DataGapError
+        with pytest.raises(DataGapError, match="VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING"):
+            self._run(prior_available=False)
+
+    def test_does_not_raise_when_the_snapshot_is_present(self):
+        collector = self._run(prior_available=True)
+        assert not [g for g in collector.gaps
+                    if g.code == "VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING"]
+
+    def test_does_not_raise_when_no_fund_is_held(self):
+        """No fund, no deemed income -- an absent snapshot is then not a gap."""
+        collector = self._run(prior_available=False, with_fund=False)
+        assert not [g for g in collector.gaps
+                    if g.code == "VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING"]

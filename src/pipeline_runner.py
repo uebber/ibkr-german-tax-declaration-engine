@@ -17,6 +17,7 @@ from src.classification.asset_classifier import AssetClassifier
 from src.processing.enrichment import enrich_financial_events
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider, ExchangeRateProvider # Added base for custom provider
+from src.processing.data_gaps import DataGap, DataGapCollector
 from src.engine.calculation_engine import run_main_calculations
 from src.identification.asset_resolver import AssetResolver
 
@@ -32,13 +33,17 @@ class ProcessingOutput:
                  processed_income_events: List[FinancialEvent], # Assuming this is the third item from run_main_calculations
                  all_financial_events_enriched: List[FinancialEvent],
                  asset_resolver: AssetResolver,
-                 eoy_mismatch_error_count: int):
+                 eoy_mismatch_error_count: int,
+                 data_gaps: Optional[List["DataGap"]] = None):
         self.realized_gains_losses = realized_gains_losses
         self.vorabpauschale_items = vorabpauschale_items
         self.processed_income_events = processed_income_events
         self.all_financial_events_enriched = all_financial_events_enriched
         self.asset_resolver = asset_resolver
         self.eoy_mismatch_error_count = eoy_mismatch_error_count
+        # Data-gap channel: every "input could not fully support the
+        # computation" condition, for the report's gap section.
+        self.data_gaps: List["DataGap"] = data_gaps or []
         # For EOY state checks in tests, final assets can be fetched from asset_resolver
         self.final_assets_by_id: Dict[Any, Asset] = asset_resolver.assets_by_internal_id
 
@@ -50,10 +55,19 @@ def run_core_processing_pipeline(
     positions_end_file_path: str,
     corporate_actions_file_path: str,
     interactive_classification_mode: bool,
-    tax_year_to_process: int = config.TAX_YEAR, # Allow override for testing
+    # REQUIRED — no global default: a run's tax year must be explicit at the
+    # boundary (src/main.py via CLI/config). A silent module-global default made
+    # behavior depend on ambient, monkeypatchable state. See src/run_context.py.
+    tax_year_to_process: int,
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
-    options_eae_file_path: Optional[str] = None  # For cash-settled option processing
+    options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
+    # Preceding calendar year's position snapshots. Required for the Vorabpauschale, which for
+    # a VZ Y declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). Optional at
+    # this boundary: the engine decides what a missing snapshot means once it knows whether any
+    # fund is held. See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    positions_prior_start_file_path: Optional[str] = None,
+    positions_prior_end_file_path: Optional[str] = None
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -77,6 +91,8 @@ def run_core_processing_pipeline(
             cash_transactions_file=cash_transactions_file_path,
             positions_start_file=positions_start_file_path,
             positions_end_file=positions_end_file_path,
+            positions_prior_start_file=positions_prior_start_file_path,
+            positions_prior_end_file=positions_prior_end_file_path,
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
@@ -125,6 +141,7 @@ def run_core_processing_pipeline(
     eoy_mismatch_error_count_calc = 0
     try:
         # Ensure run_main_calculations uses the passed tax_year_to_process
+        data_gap_collector = DataGapCollector()
         realized_gains_losses, vorabpauschale_items, processed_income_events, eoy_mismatch_error_count_calc = run_main_calculations(
             financial_events=financial_events_enriched,
             asset_resolver=orchestrator.asset_resolver, # Use the resolver from the orchestrator
@@ -132,7 +149,11 @@ def run_core_processing_pipeline(
             exchange_rate_provider=rate_provider,
             tax_year=tax_year_to_process,
             internal_calculation_precision=config.INTERNAL_CALCULATION_PRECISION, # Renamed parameter
-            decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE
+            decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
+            data_gap_collector=data_gap_collector,
+            prior_year_positions_available=bool(
+                positions_prior_start_file_path and positions_prior_end_file_path
+            ),
         )
     except Exception as e:
         logger.critical(f"Calculation engine failed with unexpected error: {e}", exc_info=True)
@@ -149,5 +170,6 @@ def run_core_processing_pipeline(
         processed_income_events=processed_income_events,
         all_financial_events_enriched=financial_events_enriched,
         asset_resolver=orchestrator.asset_resolver,
-        eoy_mismatch_error_count=eoy_mismatch_error_count_calc
+        eoy_mismatch_error_count=eoy_mismatch_error_count_calc,
+        data_gaps=data_gap_collector.gaps
     )

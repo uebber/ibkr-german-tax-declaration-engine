@@ -297,14 +297,18 @@ tests:
   # §23 EStG Holding Period Boundary Tests (CTX_P23_*)
   # ===========================================================================
   # PRD Coverage: §23 EStG private sale taxation
-  # These tests verify the 365-day holding period boundary:
-  # - Holding period <= 365 days: Taxable under §23 EStG
-  # - Holding period > 365 days: Exempt from §23 EStG
+  # These tests verify the Jahresfrist boundary (§23 Abs. 1 Nr. 2 EStG, computed
+  # per §108 AO i.V.m. §§187 Abs. 1, 188 Abs. 2 BGB): the period ends with the
+  # expiry of the ANNIVERSARY DAY of the acquisition in the following year.
+  # - Sale on or before the anniversary day: taxable under §23 EStG
+  # - Sale after the anniversary day: exempt
+  # NOTE: this is NOT a 365-day count — across a leap day the anniversary is 366
+  # days after acquisition and still taxable (see tests/test_section23_holding_period.py).
   # Note: These use PRIVATE_SALE_ASSET category to trigger §23 logic
 
   - id: CTX_P23_001
-    description: "§23 Boundary - Sold exactly on day 365 (taxable)"
-    notes: "Buy 2022-03-15, sell 2023-03-15 = exactly 365 days. Should be taxable."
+    description: "§23 Boundary - Sold on the anniversary day (taxable)"
+    notes: "Buy 2022-03-15, sell 2023-03-15 (anniversary day, last day of the Jahresfrist). Taxable."
     inputs:
       asset:
         symbol: GOLD.P23.EUR
@@ -343,8 +347,8 @@ tests:
       errors: 0
 
   - id: CTX_P23_002
-    description: "§23 Boundary - Sold on day 366 (exempt)"
-    notes: "Buy 2022-03-15, sell 2023-03-16 = 366 days. Should be exempt."
+    description: "§23 Boundary - Sold the day after the anniversary (exempt)"
+    notes: "Buy 2022-03-15, sell 2023-03-16 (first day after the Jahresfrist). Exempt."
     inputs:
       asset:
         symbol: GOLD.P23.EUR
@@ -383,8 +387,8 @@ tests:
       errors: 0
 
   - id: CTX_P23_003
-    description: "§23 Leap Year - Feb 28 to Feb 28 next year (365 days, taxable)"
-    notes: "Buy 2022-02-28, sell 2023-02-28 = 365 days (2022 not leap). Taxable."
+    description: "§23 - Feb 28 to Feb 28 next year (anniversary day, taxable)"
+    notes: "Buy 2022-02-28, sell 2023-02-28 (anniversary day). Taxable."
     inputs:
       asset:
         symbol: SILVER.P23.EUR
@@ -424,7 +428,7 @@ tests:
 
   - id: CTX_P23_004
     description: "§23 Year-End Boundary - Dec 31 to Jan 1 crossing"
-    notes: "Buy 2022-01-02, sell 2023-01-01 = 364 days. Taxable (under 365 days)."
+    notes: "Buy 2022-01-02, sell 2023-01-01 (one day before the anniversary). Taxable."
     inputs:
       asset:
         symbol: WINE.P23.EUR
@@ -463,7 +467,7 @@ tests:
       errors: 0
 
   - id: CTX_P23_005
-    description: "§23 Loss on taxable sale (holding period < 365 days)"
+    description: "§23 Loss on taxable sale (within the Jahresfrist)"
     notes: "Quick flip with loss - should be reported as taxable loss."
     inputs:
       asset:

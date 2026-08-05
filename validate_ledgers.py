@@ -86,6 +86,12 @@ def run_validation_for_year(year: int) -> YearResult:
             tax_year_to_process=year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
             options_eae_file_path=data_paths.get("options_eae", "") or None,
+            # The preceding calendar year's snapshots. Omitting them does not degrade the
+            # Vorabpauschale, it aborts the run: the engine fail-fasts when funds are held and
+            # these are absent, so every year with a fund failed here regardless of what was
+            # on disk, and the error blamed data_import/ rather than the caller.
+            positions_prior_start_file_path=data_paths.get("positions_prior_start") or None,
+            positions_prior_end_file_path=data_paths.get("positions_prior_end") or None,
         )
     except Exception as e:
         result.success = False

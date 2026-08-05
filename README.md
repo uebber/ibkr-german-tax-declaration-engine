@@ -373,6 +373,25 @@ uv run python validate_ledgers.py --year 2024
 uv run python validate_ledgers.py --verbose --quiet
 ```
 
+**A securities EoY mismatch aborts the run.** The start-of-year quantity is taken from the
+`Positions-{YYYY}-SoY.csv` snapshot, not reconstructed from earlier years, so the end-of-year
+quantity is determined by that snapshot plus the tax year's own events and has exactly one
+correct answer. If the engine's answer differs from the broker's, an event is missing or was
+processed incorrectly — an absent trade or corporate action, an option exercise that was not
+linked to its stock leg, or one instrument resolved under two identifiers. At least one
+disposal is then matched against the wrong lots, which makes the reported gain wrong and not
+just the quantity, so the engine refuses to emit figures. The error names every affected
+position.
+
+Note what this does **not** mean: a trade history that does not reach far enough back cannot
+cause it. Missing earlier years affect the cost basis and acquisition dates the engine derives
+for carried-in positions, never the running quantity. If you hit this, look for a missing or
+mis-processed event in the tax year itself.
+
+Cash-balance (currency) divergences are **not** fatal — their usual causes are the date range
+of the cash-balance export or transaction types missing from the Cash Transactions query (see
+the note above). They are reported as `CURRENCY_EOY_MISMATCH` in the console and PDF.
+
 ## Output
 
 1.  **Console:** Processing logs and, with `--report-tax-declaration`, a summary of figures for direct tax form entry.
@@ -381,9 +400,17 @@ uv run python validate_ledgers.py --verbose --quiet
 
 ## German Tax Form Mapping
 
-*   **Anlage KAP:** Stock/derivative gains/losses (Zeilen 19-24), foreign WHT (Zeile 41).
-*   **Anlage KAP-INV:** Investment fund distributions and gains (GROSS figures, Zeilen 4-8, 14, 17, 20, 23, 26).
-*   **Anlage SO:** Private sales under section 23 EStG (holding period < 1 year), including FX gains/losses.
+*   **Anlage KAP:** capital income, gains and losses from stocks and derivatives, and creditable
+    foreign withholding tax.
+*   **Anlage KAP-INV:** investment fund distributions, Vorabpauschale and disposal gains, entered
+    gross (before Teilfreistellung).
+*   **Anlage SO:** private sales under § 23 EStG disposed of within the one-year period.
+
+**Line numbers are deliberately not listed here.** They are legal facts, they are year-specific,
+and CLAUDE.md permits them in exactly one place: `reference/`. See
+[`reference/tax-forms/`](reference/tax-forms/) for the per-year line mappings with their sources,
+and [`docs/legal-implementation-map.md`](docs/legal-implementation-map.md) for which of them this
+engine actually produces — several it does not.
 
 ## Architecture
 

@@ -113,7 +113,9 @@ venv.bak/
 tax_report_202?.pdf
 cache/
 data/
+data_import
 data_import/
+private/
 ibkr_token
 all_cash_trans.csv
 
@@ -122,3 +124,4 @@ PLAN.md
 PLAN_*.md
 docs/PLAN_*.md
 docs/GROUP7_FIX_PLAN.md
+parity/

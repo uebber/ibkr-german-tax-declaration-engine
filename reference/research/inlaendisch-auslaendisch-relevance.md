@@ -10,7 +10,10 @@ For the standard IBKR use case (Abgeltungsteuer), the Inländisch/Ausländisch d
 
 ### 1. Form Placement (Z18 vs Z19) — Resolved, No Split Needed
 
-The Z18/Z19 distinction is by **intermediary** (broker location), not by issuer domicile. Since IBKR is an Irish broker, **all** income goes to Z19 regardless of whether the underlying security is German (BMW) or foreign (Apple). Z18 is only for niche cases like private loans between German parties. The engine already handles this correctly.
+The Z18/Z19 distinction is by **intermediary** (broker location), not by issuer domicile. Income
+received through a foreign broker goes to Z19 whether the underlying security is German or
+foreign. Z18 is for the niche case of domestic-source income that bore no Steuerabzug — a private
+loan between German parties, for instance. See [GT-FORM-001].
 
 ### 2. Gain/Loss Lines (Z20–Z24) — No Domestic/Foreign Split
 
@@ -25,9 +28,19 @@ The Aktienverlusttopf (stock loss ring-fence) and Sonstiger Verlusttopf pool all
 This is where the §34d question is most interesting. Under the Abgeltungsteuer regime:
 
 - [§32d Abs. 5 EStG](https://www.gesetze-im-internet.de/estg/__32d.html) provides a **direct credit** mechanism (lex specialis to §34c)
-- [§34c Abs. 1 Satz 4 EStG](https://www.gesetze-im-internet.de/estg/__34c.html) **explicitly excludes** Abgeltungsteuer-subject capital income from the general Anrechnungshöchstbetrag
+- [§34c Abs. 1 **Satz 1 zweiter Halbsatz** EStG](https://www.gesetze-im-internet.de/estg/__34c.html)
+  **explicitly excludes** Abgeltungsteuer-subject capital income from the general
+  Anrechnungshöchstbetrag, and Satz 3 keeps it out of the Höchstbetrag arithmetic as well
 - The per-country limitation of §34c **does not apply** — instead, §32d Abs. 5 caps credit at 25% per individual capital income item
 - Z41 takes a **single aggregate** amount on the form
+
+> **Correction, 2026-08-03.** This file cited **§34c Abs. 1 Satz 4** for the carve-out. Satz 4 is
+> about Betriebsausgaben on foreign income belonging to a domestic business; the carve-out is in
+> Satz 1 zweiter Halbsatz, completed by Satz 3. The conclusion was right and the pinpoint was
+> wrong — the failure Validation Protocol item 2 exists to catch, and the more awkward because
+> `../tax-law/estg-32d-abgeltungsteuer.md` cites *this* file as the authority that corrected its
+> own Abs. 4 / Abs. 6 mix-up. Verbatim text and provenance:
+> [GT-CREDIT-012] in `../tax-law/estg-34d-auslaendische-einkuenfte.md`.
 
 ### 5. Anlage AUS — Not Required
 
@@ -45,10 +58,18 @@ No domestic/foreign distinction for Aktienfonds, Mischfonds, or Sonstige Fonds. 
 
 ## When Would the Distinction Matter?
 
-Only in cases **outside the engine's scope**:
+Only where the Abgeltungsteuer regime is displaced:
 
-- **Teileinkünfteverfahren** (§32d Abs. 2 Nr. 3): ≥25% participation in a corporation — triggers tarifliche ESt, Anlage AUS, and §34c per-country limitation. Not a retail IBKR scenario.
-- **DBA compliance audits**: The Finanzamt may request per-country supporting documentation for Z41 to verify DBA treaty rates. The engine's PDF report already provides per-country WHT breakdowns as supporting documentation — this is sufficient.
+- **Teileinkünfteverfahren** (§32d Abs. 2 Nr. 3): on application, where the taxpayer holds
+  **at least 25 %** of the corporation (Buchst. a) **or** at least 1 % *and* can exert
+  maßgeblichen unternehmerischen Einfluss on it through a berufliche Tätigkeit (Buchst. b).
+  Triggers tarifliche ESt, Anlage AUS, and the §34c per-country limitation. Note this is Abs. 2,
+  which the §34c carve-out does **not** name: the carve-out reaches Abs. 1 and Abs. 3 bis 6 only.
+  (Buchst. b added 2026-08-03 — Validation Protocol item 2. The 25 % branch is not the only one,
+  and the 1 % branch is the one a shareholding employee or director falls into.)
+- **DBA compliance audits**: The Finanzamt may request per-country supporting documentation for
+  Z41 to verify DBA treaty rates. A per-country breakdown of withholding tax is what satisfies
+  that request; it is evidential, not a figure on the form.
 
 ---
 
@@ -56,7 +77,16 @@ Only in cases **outside the engine's scope**:
 
 The [§34d EStG](https://www.gesetze-im-internet.de/estg/__34d.html) classification (Schuldner domicile) is a **substantive tax law concept** that has **no expression on the declaration forms** for Abgeltungsteuer-subject income. Even Günstigerprüfung does not trigger §34c's per-country mechanism because §32d Abs. 6 Satz 2 keeps the credit under §32d Abs. 5.
 
-**The engine does not need to track or report the Inländisch/Ausländisch distinction at any point in the declaration pipeline.** The per-country WHT breakdown in the PDF (already implemented) serves purely as supporting documentation for the Finanzamt.
+**Nothing on the declaration turns on the Inländisch/Ausländisch distinction** for a portfolio
+held at a foreign broker under the Abgeltungsteuer regime. A per-country withholding-tax
+breakdown has evidential value if the Finanzamt asks about treaty rates, but it is not a
+declared figure.
+
+One case does turn on issuer domicile, and it is not this one: German Kapitalertragsteuer
+withheld upstream on a German issuer's dividend is not auslaendische Steuer and takes a
+different credit route entirely — see
+[`../tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md`](../tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md),
+[GT-CREDIT-025].
 
 ---
 

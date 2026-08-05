@@ -74,10 +74,12 @@ class RealizedGainLoss:
         if not isinstance(self.quantity_realized, Decimal) or self.quantity_realized < Decimal(0):
             raise ValueError(f"RealizedGainLoss.quantity_realized must be a non-negative Decimal, got {self.quantity_realized}")
 
-        # Handle §23 specifics
-        if self.asset_category_at_realization == AssetCategory.PRIVATE_SALE_ASSET: 
-            self.is_within_speculation_period = True 
-            # is_taxable_under_section_23 is assumed to be correctly set by the constructor based on input.
+        # §23 specifics: is_within_speculation_period and is_taxable_under_section_23 are both
+        # set by the caller from the Jahresfrist domain rule
+        # (src/tax_law/holding_period.py). __post_init__ used to overwrite the former with an
+        # unconditional True for every PRIVATE_SALE_ASSET, which made it read "within the
+        # speculation period" on disposals the engine had just classified as
+        # SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET.
 
         # Handle Investment Fund specifics (Teilfreistellung)
         if self.asset_category_at_realization == AssetCategory.INVESTMENT_FUND:
@@ -115,10 +117,18 @@ class RealizedGainLoss:
 
 
 @dataclass
-class VorabpauschaleData: 
+class VorabpauschaleData:
     asset_internal_id: uuid.UUID
-    tax_year: int
-    
+
+    # The CALENDAR YEAR the Vorabpauschale is computed FOR -- not the year it is declared in.
+    # The two differ by one: the VP for calendar X is deemed to flow on the first working day
+    # of X+1 (18 Abs. 3 InvStG) and is therefore declared in VZ X+1, on Zeilen 9-13 of that
+    # year's Anlage KAP-INV. The field was previously named `tax_year`, which invited exactly
+    # the confusion that made the engine declare the wrong year's figure.
+    # See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    vorabpauschale_year: int
+
+
     fund_value_start_year_eur: Decimal
     fund_value_end_year_eur: Decimal
     distributions_during_year_eur: Decimal
@@ -136,3 +146,8 @@ class VorabpauschaleData:
     net_taxable_vorabpauschale_eur: Decimal 
 
     tax_reporting_category_gross: Optional[TaxReportingCategory] = None
+
+    @property
+    def declaration_year(self) -> int:
+        """The Veranlagungszeitraum this Vorabpauschale belongs on (18 Abs. 3 InvStG)."""
+        return self.vorabpauschale_year + 1

@@ -81,6 +81,11 @@ def mock_config_paths(temp_data_dir, monkeypatch):
         "cash": data_path("cash_transactions.csv"),
         "pos_start": data_path("positions_start_of_year.csv"),
         "pos_end": data_path("positions_end_of_year.csv"),
+        # Preceding calendar year's snapshots. The Vorabpauschale declared in VZ Y is the
+        # one computed for calendar Y-1 (18 Abs. 3 InvStG), so it reads these rather than
+        # the tax year's own. See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+        "pos_prior_start": data_path("positions_prior_year_start.csv"),
+        "pos_prior_end": data_path("positions_prior_year_end.csv"),
         "corp_actions": data_path("corporate_actions.csv"),
         "cash_balance": data_path("cash_balance.csv"),
         "classification_cache": cache_path("user_classifications.json"),
@@ -98,14 +103,27 @@ def mock_config_paths(temp_data_dir, monkeypatch):
         import sys
         if target_config_module in sys.modules:
             config_module_obj = sys.modules[target_config_module]
-            monkeypatch.setattr(config_module_obj, "TRADES_FILE_PATH", paths_dict["trades"])
-            monkeypatch.setattr(config_module_obj, "CASH_TRANSACTIONS_FILE_PATH", paths_dict["cash"])
-            monkeypatch.setattr(config_module_obj, "POSITIONS_START_FILE_PATH", paths_dict["pos_start"])
-            monkeypatch.setattr(config_module_obj, "POSITIONS_END_FILE_PATH", paths_dict["pos_end"])
-            monkeypatch.setattr(config_module_obj, "CORPORATE_ACTIONS_FILE_PATH", paths_dict["corp_actions"])
-            monkeypatch.setattr(config_module_obj, "CLASSIFICATION_CACHE_FILE_PATH", paths_dict["classification_cache"]) # Updated name
-            monkeypatch.setattr(config_module_obj, "ECB_RATES_CACHE_FILE_PATH", paths_dict["ecb_cache"]) # Updated name
-            monkeypatch.setattr(config_module_obj, "IS_INTERACTIVE_CLASSIFICATION", False) # Updated name, ensure non-interactive
+            # HERMETICITY: every cache the pipeline reads or WRITES must point into the
+            # test's temp dir — otherwise tests silently depend on (or mutate) the
+            # developer's real cache/ files and pass/fail differently in a clean clone.
+            # raising=False: attribute sets must not abort the remaining patches (the
+            # legacy *_FILE_PATH attributes no longer exist in config).
+            monkeypatch.setattr(config_module_obj, "TRADES_FILE_PATH", paths_dict["trades"], raising=False)
+            monkeypatch.setattr(config_module_obj, "CASH_TRANSACTIONS_FILE_PATH", paths_dict["cash"], raising=False)
+            monkeypatch.setattr(config_module_obj, "POSITIONS_START_FILE_PATH", paths_dict["pos_start"], raising=False)
+            monkeypatch.setattr(config_module_obj, "POSITIONS_END_FILE_PATH", paths_dict["pos_end"], raising=False)
+            monkeypatch.setattr(config_module_obj, "CORPORATE_ACTIONS_FILE_PATH", paths_dict["corp_actions"], raising=False)
+            monkeypatch.setattr(config_module_obj, "CLASSIFICATION_CACHE_FILE_PATH", paths_dict["classification_cache"])
+            monkeypatch.setattr(config_module_obj, "ECB_RATES_CACHE_FILE_PATH", paths_dict["ecb_cache"])
+            # raising=False: these two are introduced later in the train (VP work);
+            # they must not abort the remaining patches when absent.
+            monkeypatch.setattr(config_module_obj, "FUND_SOY_NAV_CACHE_FILE_PATH",
+                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "fund_soy_nav.json"),
+                                raising=False)
+            monkeypatch.setattr(config_module_obj, "DECLARED_VP_CACHE_FILE_PATH",
+                                os.path.join(os.path.dirname(paths_dict["classification_cache"]), "declared_vp.json"),
+                                raising=False)
+            monkeypatch.setattr(config_module_obj, "IS_INTERACTIVE_CLASSIFICATION", False)
         else:
             # This might occur if tests are structured such that src.config isn't loaded when conftest runs,
             # or if the way config is imported varies. Passing paths explicitly to pipeline_runner is robust.
@@ -122,3 +140,40 @@ def mock_config_paths(temp_data_dir, monkeypatch):
 def default_tax_year():
     """Returns the default tax year for tests."""
     return 2023
+
+
+@pytest.fixture(autouse=True)
+def _global_config_leak_tripwire():
+    """No test may leak a mutated global config value past its own teardown.
+
+    The incident this guards: a leaked src.config.TAX_YEAR made group-6 results
+    depend on which modules ran before it. Patches via pytest's monkeypatch are
+    auto-reverted; anything else trips this wire.
+
+    Deliberately PER-TEST and over EVERY uppercase config attribute, because a
+    session-scoped probe on TAX_YEAR alone has three blind spots, all verified
+    against deliberately broken trees:
+      * leak-then-restore — one test corrupts TAX_YEAR, a later one happens to
+        set it back, session-level before/after match and the run is green even
+        though every test in between ran corrupted. That is exactly the shape of
+        the original incident.
+      * every other config global is unwatched, including the legally-relevant
+        APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING.
+      * the failure is attributed to whichever test happened to run last, not to
+        the one that leaked.
+    """
+    from src import config as app_config
+    watched = [name for name in dir(app_config) if name.isupper()]
+    sentinel = object()
+    before = {name: getattr(app_config, name) for name in watched}
+    yield
+    changed = {
+        name: (before[name], getattr(app_config, name, sentinel))
+        for name in watched
+        if getattr(app_config, name, sentinel) != before[name]
+    }
+    assert not changed, (
+        f"GLOBAL CONFIG LEAK: this test mutated src.config without restoring it: "
+        f"{ {k: f'{v[0]!r} -> {v[1]!r}' for k, v in changed.items()} }. "
+        f"Use the monkeypatch fixture so the change is auto-reverted."
+    )

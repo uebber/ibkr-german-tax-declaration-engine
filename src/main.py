@@ -17,6 +17,9 @@ from src.pipeline_runner import run_core_processing_pipeline, ProcessingOutput
 # Loss Offsetting Engine
 from src.engine.loss_offsetting import LossOffsettingEngine
 
+# Data gaps
+from src.processing.data_gaps import DataGapCollector
+
 # Reporting
 from src.reporting.console_reporter import generate_console_tax_report, generate_stock_trade_report_for_symbol
 from src.reporting.diagnostic_reports import (
@@ -55,7 +58,19 @@ def main_application():
     Parses arguments, runs processing, and generates reports.
     """
     args = parse_arguments()
-    tax_year = args.tax_year
+    # Boundary: construct the immutable per-run context HERE. src/cli.py leaves
+    # unspecified run-defining options as None, so this is the only place the
+    # user config is read for them; below this point everything receives
+    # explicit parameters, never ambient globals.
+    from src.run_context import RunContext
+    run_ctx = RunContext.from_config(tax_year=args.tax_year, interactive=args.interactive)
+    tax_year = run_ctx.tax_year
+
+    # Derived here rather than in the parser: the default PDF name embeds the
+    # tax year, which is not known until the boundary has resolved it.
+    if args.report_tax_declaration and args.pdf_output_file is None:
+        args.pdf_output_file = f"tax_report_{tax_year}.pdf"
+
     setup_decimal_context()
 
     logger.info("Starting IBKR German Tax Declaration Engine for tax year %d...", tax_year)
@@ -87,8 +102,10 @@ def main_application():
             cash_transactions_file_path=data_paths["cash_transactions"],
             positions_start_file_path=data_paths["positions_start"],
             positions_end_file_path=data_paths["positions_end"],
+            positions_prior_start_file_path=data_paths.get("positions_prior_start") or None,
+            positions_prior_end_file_path=data_paths.get("positions_prior_end") or None,
             corporate_actions_file_path=data_paths["corporate_actions"],
-            interactive_classification_mode=args.interactive,
+            interactive_classification_mode=run_ctx.interactive,
             tax_year_to_process=tax_year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
             options_eae_file_path=data_paths.get("options_eae", "") or None
@@ -100,6 +117,9 @@ def main_application():
     loss_offsetting_summary = None
     if args.report_tax_declaration or args.pdf_output_file: # Calculate if any report needing it is active
         logger.info("Calculating final tax figures with loss offsetting...")
+        # Loss offsetting runs after the pipeline, so it needs its own collector; its gaps are
+        # merged into the pipeline's list below so the reporters render one combined set.
+        loss_offsetting_gaps = DataGapCollector()
         try:
             loss_engine = LossOffsettingEngine(
                 realized_gains_losses=processing_results.realized_gains_losses,
@@ -108,12 +128,17 @@ def main_application():
                 current_year_financial_events=processing_results.processed_income_events,
                 asset_resolver=processing_results.asset_resolver,
                 tax_year=tax_year,
-                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING
+                apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING,
+                # Zeile 53 (Vorabpauschale deduction on disposal) cannot be computed; the gap
+                # must reach the report, not just the log.
+                data_gap_collector=loss_offsetting_gaps,
             )
             loss_offsetting_summary = loss_engine.calculate_reporting_figures()
             logger.info("Loss offsetting calculation completed.")
         except Exception as e:
             logger.error(f"Loss offsetting calculation failed: {e}. Tax reports might be incomplete or inaccurate.", exc_info=True)
+        finally:
+            processing_results.data_gaps.extend(loss_offsetting_gaps.gaps)
 
     asset_resolver = processing_results.asset_resolver
 
@@ -149,7 +174,8 @@ def main_application():
                 asset_resolver=asset_resolver,
                 tax_year=tax_year,
                 eoy_mismatch_count=processing_results.eoy_mismatch_error_count,
-                loss_offsetting_summary=loss_offsetting_summary
+                loss_offsetting_summary=loss_offsetting_summary,
+                data_gaps=processing_results.data_gaps
             )
         else:
             logger.error("Console tax declaration report cannot be generated because loss offsetting calculation failed or was skipped.")
@@ -157,10 +183,11 @@ def main_application():
     if args.pdf_output_file:
         if loss_offsetting_summary:
             logger.info(f"Generating PDF report to {args.pdf_output_file}...")
+            # The structured per-asset table is still unfed (the engine returns a
+            # count, not rows), but the count and the recorded data gaps are
+            # enough for the report to stop certifying a reconciliation it never
+            # performed. See PdfReportGenerator._add_eoy_reconciliation.
             eoy_mismatch_details_for_pdf = []
-            if processing_results.eoy_mismatch_error_count > 0 and not eoy_mismatch_details_for_pdf:
-                 logger.warning(f"EOY mismatch count is {processing_results.eoy_mismatch_error_count}, but detailed mismatch data is not available for the PDF report. The PDF section will be limited.")
-
             pdf_generator = PdfReportGenerator(
                 loss_offsetting_result=loss_offsetting_summary,
                 # The PDF report should also use correctly filtered events for income sections
@@ -170,7 +197,9 @@ def main_application():
                 assets_by_id=asset_resolver.assets_by_internal_id,
                 tax_year=tax_year,
                 eoy_mismatch_details=eoy_mismatch_details_for_pdf,
-                report_version="v3.2.3" # Updated to match PRD version reflecting this fix
+                report_version="v3.2.3", # Updated to match PRD version reflecting this fix
+                eoy_mismatch_count=processing_results.eoy_mismatch_error_count,
+                data_gaps=processing_results.data_gaps
             )
             pdf_generator.generate_report(args.pdf_output_file)
         else:

@@ -12,6 +12,7 @@ from src.domain.assets import (
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
 from src.domain.events import FinancialEvent, OptionLifecycleEvent, TradeEvent
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
+from src.domain.exceptions import DataIntegrityError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
 from src.utils.sorting_utils import get_event_sort_key
@@ -46,6 +47,13 @@ class ParsingOrchestrator:
         self.raw_cash_transactions: List[RawCashTransactionRecord] = []
         self.raw_positions_start: List[RawPositionRecord] = []
         self.raw_positions_end: List[RawPositionRecord] = []
+        # Preceding calendar year's snapshots -- Vorabpauschale only. See Asset.prior_year_*.
+        self.raw_positions_prior_start: List[RawPositionRecord] = []
+        self.raw_positions_prior_end: List[RawPositionRecord] = []
+        # Which prior-year snapshot fields were read onto which asset, so the pipeline can
+        # verify they are still there once classification has run. See
+        # _verify_prior_year_snapshot_survived_classification.
+        self._prior_year_snapshot_fields: Dict[uuid.UUID, Dict[str, Any]] = {}
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
         self.raw_options_eae: List[RawOptionsEAERecord] = []
@@ -63,6 +71,8 @@ class ParsingOrchestrator:
                            cash_transactions_file: Optional[str] = None,
                            positions_start_file: Optional[str] = None,
                            positions_end_file: Optional[str] = None,
+                           positions_prior_start_file: Optional[str] = None,
+                           positions_prior_end_file: Optional[str] = None,
                            corporate_actions_file: Optional[str] = None,
                            cash_balance_file: Optional[str] = None,
                            options_eae_file: Optional[str] = None):
@@ -79,6 +89,12 @@ class ParsingOrchestrator:
         if positions_end_file:
             self.raw_positions_end = parse_positions_csv(positions_end_file)
             logger.info(f"Loaded {len(self.raw_positions_end)} raw end-of-year position records.")
+        if positions_prior_start_file:
+            self.raw_positions_prior_start = parse_positions_csv(positions_prior_start_file)
+            logger.info(f"Loaded {len(self.raw_positions_prior_start)} raw prior-year start-of-year position records (Vorabpauschale).")
+        if positions_prior_end_file:
+            self.raw_positions_prior_end = parse_positions_csv(positions_prior_end_file)
+            logger.info(f"Loaded {len(self.raw_positions_prior_end)} raw prior-year end-of-year position records (Vorabpauschale).")
         if corporate_actions_file:
             self.raw_corporate_actions = parse_corporate_actions_csv(corporate_actions_file)
             logger.info(f"Loaded {len(self.raw_corporate_actions)} raw corporate action records.")
@@ -125,9 +141,116 @@ class ParsingOrchestrator:
             )
             asset.eoy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
             asset.eoy_market_price = safe_decimal(raw_pos.mark_price) # Changed from eoy_mark_price
-            asset.eoy_position_value = safe_decimal(raw_pos.position_value) 
+            asset.eoy_position_value = safe_decimal(raw_pos.position_value)
             asset.eoy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
+
+        # Preceding calendar year's snapshots. Used ONLY by the Vorabpauschale, which for a VZ Y
+        # declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). These must not
+        # feed cost basis, reconciliation or any other consumer.
+        logger.info("Processing prior-year positions (Vorabpauschale reference prices)...")
+        for raw_pos in self.raw_positions_prior_start:
+            asset = self._resolve_asset_from_position(raw_pos)
+            asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
+            asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
+            self._record_prior_year_snapshot_fields(asset, (
+                "prior_year_soy_quantity", "prior_year_soy_position_value",
+                "prior_year_soy_mark_price_currency",
+            ))
+
+        for raw_pos in self.raw_positions_prior_end:
+            asset = self._resolve_asset_from_position(raw_pos)
+            asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
+            self._record_prior_year_snapshot_fields(asset, (
+                "prior_year_eoy_position_value", "prior_year_eoy_mark_price_currency",
+            ))
+
+    def _record_prior_year_snapshot_fields(self, asset: Asset, field_names: Tuple[str, ...]) -> None:
+        """Note which prior-year snapshot values this asset now carries.
+
+        An alias is kept alongside the field names because the asset object recorded here need
+        not be the one the engine sees. Two later rows whose identifiers overlap are merged, and
+        the merge deletes the losing asset and repoints its aliases at the winner. Looking the
+        alias up again resolves to whichever asset ends up owning the instrument.
+        """
+        present = {name for name in field_names if getattr(asset, name, None) is not None}
+        if not present:
+            return
+        record = self._prior_year_snapshot_fields.setdefault(
+            asset.internal_asset_id, {"fields": set(), "alias": None})
+        record["fields"].update(present)
+        if record["alias"] is None and asset.aliases:
+            record["alias"] = next(iter(asset.aliases))
+
+    def _verify_prior_year_snapshot_survived_classification(self) -> None:
+        """Every prior-year snapshot value read above must still be on its asset.
+
+        Classification replaces an asset's Python type by building a new object and copying
+        the old one's fields across (`AssetResolver.replace_asset_type`). A field the copy
+        does not list is dropped, and the drop is invisible: the Vorabpauschale then finds no
+        year-start Ruecknahmepreis and skips the fund, so its deemed income leaves the
+        declaration with nothing recorded anywhere. This checks the values that were read are
+        the values the engine will see, and reports every affected asset at once.
+
+        Two conditions bound what it reports, and both are deliberate:
+
+        - **Only investment funds.** 18 InvStG reaches nothing else, so nothing else can lose a
+          declared figure this way. The prior-year snapshot is read for every instrument in the
+          file, and aborting a run because a share or a bond lost a value it has no use for
+          would stop a declaration that is not at risk.
+        - **Only where a value was actually read.** A fund bought during the Vorabpauschale year
+          has no prior-year snapshot row and is never registered, so a legitimate absence cannot
+          trip this.
+
+        The asset is looked up by alias rather than by id, so an instrument that was merged into
+        another after its snapshot was read is followed to the asset that now owns it.
+        """
+        losses: List[str] = []
+        checked = 0
+        for asset_id, record in self._prior_year_snapshot_fields.items():
+            asset = self.asset_resolver.assets_by_internal_id.get(asset_id)
+            if asset is None and record["alias"] is not None:
+                # Merged into another asset; the surviving one is what the engine will read.
+                asset = self.asset_resolver.alias_map.get(record["alias"])
+            if not isinstance(asset, InvestmentFund):
+                continue
+            checked += 1
+            lost = sorted(name for name in record["fields"] if getattr(asset, name, None) is None)
+            if lost:
+                losses.append(f"{asset.get_classification_key()} ({asset.description}): {', '.join(lost)}")
+
+        if losses:
+            raise DataIntegrityError(
+                "The preceding year's position snapshot was read for "
+                f"{checked} investment fund(s) but no longer reaches the calculation for "
+                f"{len(losses)} of them. The Vorabpauschale for that year (18 Abs. 1 InvStG) is "
+                "computed from these values, so the affected funds would drop out of Anlage "
+                "KAP-INV Zeilen 9-13 without a figure and without a warning. This is an engine "
+                "defect, not an input problem: the values were read and then lost -- either by a "
+                "field missing from AssetResolver._extract_common_asset_fields, or by a merge of "
+                "two identifiers that carried the aliases across but not the values. Affected: "
+                + "; ".join(losses)
+            )
+
+    def _resolve_asset_from_position(self, raw_pos):
+        """Resolve (or create) the Asset a raw position record refers to.
+
+        Extracted verbatim from the SoY/EoY loops so the prior-year loops resolve identically --
+        a fund that resolved to one Asset from the tax year's snapshot must resolve to the same
+        Asset from the prior year's, or its Vorabpauschale would attach to a second instrument.
+        """
+        return self.asset_resolver.get_or_create_asset(
+            raw_isin=raw_pos.isin, raw_conid=raw_pos.conid, raw_symbol=raw_pos.symbol,
+            raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
+            raw_description=raw_pos.description,
+            description_source_type="position",
+            raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
+            raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+            raw_underlying_conid=raw_pos.underlying_conid,
+            raw_underlying_symbol=raw_pos.underlying_symbol
+        )
 
     def discover_assets_from_transactions(self):
         # ... (implementation is the same)
@@ -410,9 +533,9 @@ class ParsingOrchestrator:
                 pass  # malformed date, skip validation
 
         for raw_balance in self.raw_cash_balances:
-            # Skip EUR (base currency) - no currency gain/loss on base currency
-            if raw_balance.currency_primary and raw_balance.currency_primary.upper() == "EUR":
-                logger.debug(f"Skipping EUR cash balance (base currency)")
+            # Skip EUR (base currency) and BASE_SUMMARY (IBKR aggregate row)
+            if raw_balance.currency_primary and raw_balance.currency_primary.upper() in ("EUR", "BASE_SUMMARY"):
+                logger.debug(f"Skipping cash balance row: {raw_balance.currency_primary}")
                 balances_skipped += 1
                 continue
 
@@ -574,6 +697,8 @@ class ParsingOrchestrator:
                              cash_transactions_file: Optional[str] = None,
                              positions_start_file: Optional[str] = None,
                              positions_end_file: Optional[str] = None,
+                             positions_prior_start_file: Optional[str] = None,
+                             positions_prior_end_file: Optional[str] = None,
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
@@ -586,6 +711,8 @@ class ParsingOrchestrator:
                 cash_transactions_file=cash_transactions_file,
                 positions_start_file=positions_start_file,
                 positions_end_file=positions_end_file,
+                positions_prior_start_file=positions_prior_start_file,
+                positions_prior_end_file=positions_prior_end_file,
                 corporate_actions_file=corporate_actions_file,
                 cash_balance_file=cash_balance_file,
                 options_eae_file=options_eae_file
@@ -595,6 +722,7 @@ class ParsingOrchestrator:
             self.discover_assets_from_transactions()
             self.asset_resolver.link_derivatives()
             self.finalize_asset_classifications()
+            self._verify_prior_year_snapshot_survived_classification()
             self._ensure_soy_quantities_are_set()
 
             event_factory = DomainEventFactory(asset_resolver=self.asset_resolver)

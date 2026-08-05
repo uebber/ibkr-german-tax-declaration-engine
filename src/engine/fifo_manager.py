@@ -13,7 +13,8 @@ from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
-from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type 
+from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
+from src.tax_law.holding_period import is_within_section23_speculation_period 
 import src.config as global_config
 
 logger = logging.getLogger(__name__)
@@ -220,13 +221,11 @@ class FifoLedger:
         self.simulate_historical_events(asset, all_historical_events_for_asset, tax_year)
         self.reconcile_with_soy_position(asset, tax_year)
 
-    def simulate_historical_events(self,
-                                    asset: Asset,
-                                    all_historical_events_for_asset: List[FinancialEvent],
-                                    tax_year: int):
-        """Pass 1: Replay trades, splits, stock dividends to build lot state.
-        Does NOT reconcile against SoY position yet."""
-
+    def begin_historical_simulation(self, asset: Asset):
+        """Prepare the ledger for historical replay (unified replayer, AR5):
+        resolve the fund type from the asset, clear lot state, reset the
+        inconsistency flag. Apply events afterwards via
+        apply_historical_event(); reconcile via reconcile_with_soy_position()."""
         if self.asset_category == AssetCategory.INVESTMENT_FUND:
             asset_fund_type = getattr(asset, 'fund_type', None)
             if isinstance(asset_fund_type, InvestmentFundType) and asset_fund_type != InvestmentFundType.NONE:
@@ -241,42 +240,60 @@ class FifoLedger:
         self.short_lots.clear()
         self._historical_simulation_inconsistent = False
 
+    def announce_historical_simulation(self, asset: Asset, event_count: int):
+        """Log the per-asset simulation header (kept here so the log line is
+        byte-identical to the pre-AR5 batch implementation)."""
         logger.info(f"Asset {asset.get_classification_key()} (ID: {asset.internal_asset_id}): Simulating "
-                    f"{len(all_historical_events_for_asset)} historical events.")
+                    f"{event_count} historical events.")
 
+    def apply_historical_event(self, asset: Asset, hist_event: FinancialEvent, tax_year: int):
+        """Apply ONE historical (pre-tax-year) event to the ledger — the
+        per-event unit the unified replayer streams. Mutates lot state only;
+        emits no current-year RGLs. Inconsistencies (e.g. selling more than
+        reconstructed) set the flag consumed by reconcile_with_soy_position."""
+        event_date_obj = parse_ibkr_date(hist_event.event_date)
+        if not event_date_obj or event_date_obj >= date_obj(tax_year, 1, 1):
+            logger.warning(f"Historical event {hist_event.event_id} for asset {asset.internal_asset_id} "
+                           f"has date {hist_event.event_date} which is not before tax year {tax_year}. Skipping for SOY init.")
+            return
+
+        try:
+            if isinstance(hist_event, TradeEvent):
+                # Split position flip events (C;O / O;C) using current ledger state
+                if hist_event.is_position_flip:
+                    avail_long = sum(lot.quantity for lot in self.lots) if self.lots else Decimal(0)
+                    avail_short = sum(lot.quantity_shorted for lot in self.short_lots) if self.short_lots else Decimal(0)
+                    sub_events = split_position_flip_event(hist_event, avail_long, avail_short)
+                else:
+                    sub_events = [hist_event]
+
+                for sub in sub_events:
+                    if sub.event_type == FinancialEventType.TRADE_BUY_LONG:
+                        self.add_long_lot(sub)
+                    elif sub.event_type == FinancialEventType.TRADE_SELL_LONG:
+                        self.consume_long_lots_for_sale(sub, is_historical_simulation=True)
+                    elif sub.event_type == FinancialEventType.TRADE_SELL_SHORT_OPEN:
+                        self.add_short_lot(sub)
+                    elif sub.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
+                        self.consume_short_lots_for_cover(sub, is_historical_simulation=True)
+            elif isinstance(hist_event, CorpActionSplitForward):
+                self.adjust_lots_for_split(hist_event)
+            elif isinstance(hist_event, CorpActionStockDividend):
+                 self.add_lot_for_stock_dividend(hist_event)
+        except UserWarning as uw:
+            logger.warning(f"Historical simulation warning for asset {asset.internal_asset_id} processing event {hist_event.event_id}: {uw}")
+            self._historical_simulation_inconsistent = True
+
+    def simulate_historical_events(self,
+                                    asset: Asset,
+                                    all_historical_events_for_asset: List[FinancialEvent],
+                                    tax_year: int):
+        """Batch wrapper over begin_historical_simulation + apply_historical_event
+        (kept for direct callers/tests; the engine streams per event)."""
+        self.begin_historical_simulation(asset)
+        self.announce_historical_simulation(asset, len(all_historical_events_for_asset))
         for hist_event in all_historical_events_for_asset:
-            event_date_obj = parse_ibkr_date(hist_event.event_date)
-            if not event_date_obj or event_date_obj >= date_obj(tax_year, 1, 1):
-                logger.warning(f"Historical event {hist_event.event_id} for asset {asset.internal_asset_id} "
-                               f"has date {hist_event.event_date} which is not before tax year {tax_year}. Skipping for SOY init.")
-                continue
-
-            try:
-                if isinstance(hist_event, TradeEvent):
-                    # Split position flip events (C;O / O;C) using current ledger state
-                    if hist_event.is_position_flip:
-                        avail_long = sum(lot.quantity for lot in self.lots) if self.lots else Decimal(0)
-                        avail_short = sum(lot.quantity_shorted for lot in self.short_lots) if self.short_lots else Decimal(0)
-                        sub_events = split_position_flip_event(hist_event, avail_long, avail_short)
-                    else:
-                        sub_events = [hist_event]
-
-                    for sub in sub_events:
-                        if sub.event_type == FinancialEventType.TRADE_BUY_LONG:
-                            self.add_long_lot(sub)
-                        elif sub.event_type == FinancialEventType.TRADE_SELL_LONG:
-                            self.consume_long_lots_for_sale(sub, is_historical_simulation=True)
-                        elif sub.event_type == FinancialEventType.TRADE_SELL_SHORT_OPEN:
-                            self.add_short_lot(sub)
-                        elif sub.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
-                            self.consume_short_lots_for_cover(sub, is_historical_simulation=True)
-                elif isinstance(hist_event, CorpActionSplitForward):
-                    self.adjust_lots_for_split(hist_event)
-                elif isinstance(hist_event, CorpActionStockDividend):
-                     self.add_lot_for_stock_dividend(hist_event)
-            except UserWarning as uw:
-                logger.warning(f"Historical simulation warning for asset {asset.internal_asset_id} processing event {hist_event.event_id}: {uw}")
-                self._historical_simulation_inconsistent = True
+            self.apply_historical_event(asset, hist_event, tax_year)
 
     def reconcile_with_soy_position(self, asset: Asset, tax_year: int):
         """Pass 3: Compare reconstructed lots against SoY position and apply fallback if needed."""
@@ -598,8 +615,10 @@ class FifoLedger:
                 acq_date_obj = parse_ibkr_date(current_lot.acquisition_date)
                 real_date_obj = parse_ibkr_date(sale_event.event_date)
                 holding_period_days: Optional[int] = None
+                within_speculation_period: Optional[bool] = None
                 if acq_date_obj and real_date_obj and real_date_obj >= acq_date_obj :
                     holding_period_days = (real_date_obj - acq_date_obj).days
+                    within_speculation_period = is_within_section23_speculation_period(acq_date_obj, real_date_obj)
 
                 tax_cat: Optional[TaxReportingCategory] = None
                 is_stillhalter_income_flag = False # Renamed from is_premium_gain
@@ -636,7 +655,18 @@ class FifoLedger:
                         raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {sale_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                    if holding_period_days is not None and holding_period_days <= 365:
+                    # §23 Jahresfrist: anniversary rule (§108 Abs. 1 AO i.V.m. §§187 Abs. 1,
+                    # 188 Abs. 2-3 BGB), NOT a 365-day count. See
+                    # reference/tax-law/estg-23-private-veraeusserung.md.
+                    if within_speculation_period is None:
+                        raise ProcessingError(
+                            f"Cannot decide §23 taxability for asset {self.asset_internal_id}, "
+                            f"Event {sale_event.event_id}: acquisition date "
+                            f"'{current_lot.acquisition_date}' / realization date '{sale_event.event_date}' "
+                            f"do not yield a usable date pair. An undecidable §23 case is "
+                            f"unreported income, not an exempt one."
+                        )
+                    if within_speculation_period:
                         is_taxable_under_section_23_flag = True # Renamed
                         tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                     else: 
@@ -654,6 +684,7 @@ class FifoLedger:
                     total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
                     total_realization_value_eur=realization_value_for_portion,
                     gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
+                    is_within_speculation_period=bool(within_speculation_period),
                     is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
                     tax_reporting_category=tax_cat, 
                     is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg
@@ -721,8 +752,10 @@ class FifoLedger:
                 open_date_obj = parse_ibkr_date(current_short_lot.opening_date)
                 cover_date_obj = parse_ibkr_date(cover_event.event_date)
                 holding_period_days: Optional[int] = None
+                within_speculation_period: Optional[bool] = None
                 if open_date_obj and cover_date_obj and cover_date_obj >= open_date_obj:
                     holding_period_days = (cover_date_obj - open_date_obj).days
+                    within_speculation_period = is_within_section23_speculation_period(open_date_obj, cover_date_obj)
 
                 tax_cat: Optional[TaxReportingCategory] = None
                 is_stillhalter_income_flag = False # Renamed
@@ -761,7 +794,18 @@ class FifoLedger:
                         raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {cover_event.event_id}. Tax category mapping must be updated.")
 
                 elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                    if holding_period_days is not None and holding_period_days <= 365:
+                    # §23 Jahresfrist: anniversary rule (§108 Abs. 1 AO i.V.m. §§187 Abs. 1,
+                    # 188 Abs. 2-3 BGB), NOT a 365-day count. See
+                    # reference/tax-law/estg-23-private-veraeusserung.md.
+                    if within_speculation_period is None:
+                        raise ProcessingError(
+                            f"Cannot decide §23 taxability for asset {self.asset_internal_id}, "
+                            f"Event {cover_event.event_id}: acquisition date "
+                            f"'{current_short_lot.opening_date}' / realization date '{cover_event.event_date}' "
+                            f"do not yield a usable date pair. An undecidable §23 case is "
+                            f"unreported income, not an exempt one."
+                        )
+                    if within_speculation_period:
                         is_taxable_under_section_23_flag = True # Renamed
                         tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                     else: 
@@ -780,6 +824,7 @@ class FifoLedger:
                     total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
                     total_realization_value_eur=realization_value_for_portion,
                     gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
+                    is_within_speculation_period=bool(within_speculation_period),
                     is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
                     tax_reporting_category=tax_cat, 
                     is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg
@@ -867,8 +912,10 @@ class FifoLedger:
             acq_date_obj = parse_ibkr_date(current_lot.acquisition_date)
             real_date_obj = parse_ibkr_date(event.event_date)
             holding_period_days: Optional[int] = None
+            within_speculation_period: Optional[bool] = None
             if acq_date_obj and real_date_obj and real_date_obj >= acq_date_obj :
                 holding_period_days = (real_date_obj - acq_date_obj).days
+                within_speculation_period = is_within_section23_speculation_period(acq_date_obj, real_date_obj)
 
             tax_cat: Optional[TaxReportingCategory] = None
             is_stillhalter_income_flag = False # Renamed
@@ -906,7 +953,18 @@ class FifoLedger:
                     raise ProcessingError(f"Unhandled InvestmentFundType '{rgl_fund_type}' for asset {self.asset_internal_id}, Event {event.event_id}. Tax category mapping must be updated.")
 
             elif self.asset_category == AssetCategory.PRIVATE_SALE_ASSET: # Renamed
-                if holding_period_days is not None and holding_period_days <= 365:
+                # §23 Jahresfrist: anniversary rule (§108 Abs. 1 AO i.V.m. §§187 Abs. 1,
+                # 188 Abs. 2-3 BGB), NOT a 365-day count. See
+                # reference/tax-law/estg-23-private-veraeusserung.md.
+                if within_speculation_period is None:
+                    raise ProcessingError(
+                        f"Cannot decide §23 taxability for asset {self.asset_internal_id}, "
+                        f"Event {event.event_id}: acquisition date "
+                        f"'{current_lot.acquisition_date}' / realization date '{event.event_date}' "
+                        f"do not yield a usable date pair. An undecidable §23 case is "
+                        f"unreported income, not an exempt one."
+                    )
+                if within_speculation_period:
                     is_taxable_under_section_23_flag = True # Renamed
                     tax_cat = TaxReportingCategory.SECTION_23_ESTG_TAXABLE_GAIN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.SECTION_23_ESTG_TAXABLE_LOSS
                 else: 
@@ -924,6 +982,7 @@ class FifoLedger:
                 total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
                 total_realization_value_eur=realization_value_for_portion,
                 gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
+                is_within_speculation_period=bool(within_speculation_period),
                 is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
                 tax_reporting_category=tax_cat, 
                 is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg

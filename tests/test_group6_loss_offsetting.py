@@ -32,6 +32,7 @@ import src.config as global_config
 # Fixtures imports
 from tests.fixtures.loss_offsetting_data import (
     LOSS_OFFSETTING_TESTS,
+    LOSS_OFFSETTING_TESTS_2025,
     LossOffsettingTestCase,
 )
 
@@ -283,7 +284,7 @@ class TestLossOffsettingFromSpec:
             vorabpauschale_items=[],
             current_year_financial_events=mock_current_year_events,
             asset_resolver=asset_resolver,
-            tax_year=global_config.TAX_YEAR,
+            tax_year=2024,  # pinned: the fixtures encode VZ <= 2024 form law (see fixture header)
             apply_conceptual_derivative_loss_capping=global_config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING,
         )
         result: LossOffsettingResult = engine.calculate_reporting_figures()
@@ -332,59 +333,95 @@ class TestLossOffsettingFromSpec:
 
 
 # =============================================================================
+# VZ >= 2025 form law (post-JStG 2024)
+# =============================================================================
+
+class TestLossOffsetting2025FromSpec:
+    """Verify the VZ >= 2025 Anlage KAP structure (JStG 2024): Zeilen 21/24
+    removed, derivative gains AND losses net in Zeile 19, Zeile 22 includes
+    derivative losses, and no €20k cap (capped == uncapped).
+    legal_basis: GT-ESTG20-033, GT-ESTG20-037;
+    reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
+
+    @pytest.mark.parametrize(
+        "test_case",
+        LOSS_OFFSETTING_TESTS_2025,
+        ids=[tc.id for tc in LOSS_OFFSETTING_TESTS_2025],
+    )
+    def test_loss_offsetting_scenario_2025(self, test_case: LossOffsettingTestCase):
+        asset_resolver = MockAssetResolver()
+        mock_rgls = build_rgls_from_test_case(test_case, asset_resolver)
+
+        engine = LossOffsettingEngine(
+            realized_gains_losses=mock_rgls,
+            vorabpauschale_items=[],
+            current_year_financial_events=[],
+            asset_resolver=asset_resolver,
+            tax_year=2025,  # pinned: these fixtures encode the post-JStG-2024 form law
+            apply_conceptual_derivative_loss_capping=True,  # must be inert for 2025
+        )
+        result: LossOffsettingResult = engine.calculate_reporting_figures()
+
+        expected = test_case.expected
+        for form_key, engine_key in FORM_LINE_TO_ENGINE_KEY.items():
+            expected_value = getattr(expected, form_key)
+            actual_value = result.form_line_values.get(engine_key, Decimal("0.00"))
+            assert actual_value.compare(expected_value) == Decimal("0"), (
+                f"{test_case.id}: Form line {form_key} mismatch. "
+                f"Expected {expected_value}, got {actual_value}. "
+                f"Inputs: {test_case.inputs}"
+            )
+
+        for concept_key, engine_field in CONCEPTUAL_TO_ENGINE_FIELD.items():
+            expected_value = getattr(expected, concept_key)
+            actual_value = getattr(result, engine_field, Decimal("0.00"))
+            assert actual_value.compare(expected_value) == Decimal("0"), (
+                f"{test_case.id}: Conceptual {concept_key} mismatch. "
+                f"Expected {expected_value}, got {actual_value}. "
+                f"Inputs: {test_case.inputs}"
+            )
+
+
+# =============================================================================
 # Additional Test Categories
 # =============================================================================
 
-class TestLossOffsettingDerivativeCap:
-    """
-    Focused tests on the €20k derivative loss cap behavior.
+class TestLossOffsettingDerivativeCapRepealed:
+    """The former €20k derivative-loss cap (§20 Abs. 6 S. 5 a.F.) was abolished
+    RETROACTIVELY for all open cases by JStG 2024 (§52 Abs. 28 EStG n.F.) — a
+    VZ-2024 return prepared today is NOT subject to it. The conceptual summary
+    must therefore never cap, even when explicitly requested.
+    legal_basis: GT-ESTG20-033, GT-ESTG20-037;
+    reference/tax-law/estg-20-abs6-verlustverrechnung.md."""
 
-    These tests verify the specific boundary conditions around the cap.
-    """
-
-    def test_derivative_cap_exactly_at_boundary(self):
-        """Test that exactly €20k net loss is not further capped."""
-        test_case = next(tc for tc in LOSS_OFFSETTING_TESTS if tc.id == "LO_TERM_003")
-
+    def _run(self, test_case_id: str) -> LossOffsettingResult:
+        test_case = next(tc for tc in LOSS_OFFSETTING_TESTS if tc.id == test_case_id)
         asset_resolver = MockAssetResolver()
         mock_rgls = build_rgls_from_test_case(test_case, asset_resolver)
-
         engine = LossOffsettingEngine(
             realized_gains_losses=mock_rgls,
             vorabpauschale_items=[],
             current_year_financial_events=[],
             asset_resolver=asset_resolver,
-            tax_year=global_config.TAX_YEAR,
+            tax_year=2024,  # pinned: the fixtures encode VZ <= 2024 form law (see fixture header)
+            # Even with capping explicitly requested, the repealed law must not apply:
             apply_conceptual_derivative_loss_capping=True,
         )
-        result = engine.calculate_reporting_figures()
+        return engine.calculate_reporting_figures()
 
-        # Both capped and uncapped should be -20000 at the boundary
+    def test_net_loss_at_former_boundary_unchanged(self):
+        """Exactly €20k net loss: identical before and after the repeal."""
+        result = self._run("LO_TERM_003")
         assert result.conceptual_net_derivatives_uncapped == Decimal("-20000.00")
         assert result.conceptual_net_derivatives_capped == Decimal("-20000.00")
 
-    def test_derivative_cap_exceeded(self):
-        """Test that losses exceeding €20k are capped in conceptual summary."""
-        test_case = next(tc for tc in LOSS_OFFSETTING_TESTS if tc.id == "LO_TERM_004")
-
-        asset_resolver = MockAssetResolver()
-        mock_rgls = build_rgls_from_test_case(test_case, asset_resolver)
-
-        engine = LossOffsettingEngine(
-            realized_gains_losses=mock_rgls,
-            vorabpauschale_items=[],
-            current_year_financial_events=[],
-            asset_resolver=asset_resolver,
-            tax_year=global_config.TAX_YEAR,
-            apply_conceptual_derivative_loss_capping=True,
-        )
-        result = engine.calculate_reporting_figures()
-
-        # Uncapped should show full loss
+    def test_net_loss_above_former_threshold_not_capped(self):
+        """€30k net loss: the repealed cap must NOT limit it to -20000."""
+        result = self._run("LO_TERM_004")
         assert result.conceptual_net_derivatives_uncapped == Decimal("-30000.00")
-        # Capped should be limited to -20000
-        assert result.conceptual_net_derivatives_capped == Decimal("-20000.00")
-        # Form value should still show full loss (uncapped for forms)
+        assert result.conceptual_net_derivatives_capped == Decimal("-30000.00"), \
+            "cap was abolished retroactively (JStG 2024) — no year may apply it"
+        # Form value unchanged: gross loss on Z24 (2024 form structure)
         assert result.form_line_values[TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST] == Decimal("30000.00")
 
 
@@ -405,7 +442,7 @@ class TestLossOffsettingFundIsolation:
             vorabpauschale_items=[],
             current_year_financial_events=[],
             asset_resolver=asset_resolver,
-            tax_year=global_config.TAX_YEAR,
+            tax_year=2024,  # pinned: the fixtures encode VZ <= 2024 form law (see fixture header)
             apply_conceptual_derivative_loss_capping=True,
         )
         result = engine.calculate_reporting_figures()
@@ -432,7 +469,7 @@ class TestLossOffsettingFundIsolation:
             vorabpauschale_items=[],
             current_year_financial_events=[],
             asset_resolver=asset_resolver,
-            tax_year=global_config.TAX_YEAR,
+            tax_year=2024,  # pinned: the fixtures encode VZ <= 2024 form law (see fixture header)
             apply_conceptual_derivative_loss_capping=True,
         )
         result = engine.calculate_reporting_figures()

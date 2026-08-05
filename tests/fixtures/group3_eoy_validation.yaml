@@ -118,9 +118,16 @@ tests:
   # Mismatch EOY Tests (EOY_M_*)
   # ===========================================================================
 
+# EOY_M_* / EOY_SM_* specify RECONCILIATION FAILURES. With a full year of input the
+# calculated EoY quantity must equal the broker-reported one (PRD 2.4), so a non-zero
+# "errors" count means the run ABORTS with EOY_RECONCILIATION_FAILED. The
+# calculated_eoy_quantity and eoy_state fields below document what the engine had
+# computed at the point it refused to continue; they are not asserted.
   - id: EOY_M_001
     description: "Mismatch: Calculated EOY (20) > EOY Report Qty (10)"
-    notes: "Buy 20, no sales, but EOY report shows 10. Mismatch error."
+    notes: "Buy 20, no sales, but EOY report shows 10. The reconciliation fails,
+      so the run ABORTS (PRD 2.4): with a full year of input the calculated EoY must
+      equal the reported one. No post-mismatch EOY state is produced."
     inputs:
       asset:
         symbol: ASSET.F.EUR
@@ -138,7 +145,7 @@ tests:
       rgls: []
       calculated_eoy_quantity: 20  # Engine calculates 20 (bought 20, sold 0)
       eoy_state:
-        quantity: 10  # But broker reports 10, so asset ends up with 10
+        quantity: 10  # Unreachable: errors > 0 means the run aborts before any EOY state
       errors: 1
 
   - id: EOY_M_002
@@ -161,7 +168,7 @@ tests:
       rgls: []
       calculated_eoy_quantity: 5  # Engine calculates 5 (bought 5, sold 0)
       eoy_state:
-        quantity: 10  # But broker reports 10, so asset ends up with 10
+        quantity: 10  # Unreachable: errors > 0 means the run aborts before any EOY state
       errors: 1
 
   - id: EOY_M_003
@@ -183,7 +190,7 @@ tests:
       rgls: []
       calculated_eoy_quantity: 10  # Engine calculates 10 (bought 10, sold 0)
       eoy_state:
-        quantity: 0  # But broker report is missing this asset (treated as 0)
+        quantity: 0  # Unreachable: errors > 0 means the run aborts before any EOY state
       errors: 1
 
   - id: EOY_M_004
@@ -217,7 +224,7 @@ tests:
           gain_loss_eur: 19.00
       calculated_eoy_quantity: 0  # Engine calculates 0 (SOY 10 - sold 10)
       eoy_state:
-        quantity: 5  # But broker reports 5, so asset ends up with 5
+        quantity: 5  # Unreachable: errors > 0 means the run aborts before any EOY state
       errors: 1
 
   # ===========================================================================
@@ -275,5 +282,5 @@ tests:
       rgls: []
       calculated_eoy_quantity: -10  # Engine calculates -10 (short sold 10, covered 0)
       eoy_state:
-        quantity: -5  # But broker reports -5, so asset ends up with -5
+        quantity: -5  # Unreachable: errors > 0 means the run aborts before any EOY state
       errors: 1

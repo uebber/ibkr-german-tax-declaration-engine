@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import List, Dict, Tuple, Optional 
 import uuid 
 
+from src.processing.data_gaps import DataGap
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.domain.events import FinancialEvent, WithholdingTaxEvent, CashFlowEvent, TradeEvent
 from src.domain.enums import AssetCategory, InvestmentFundType, FinancialEventType, TaxReportingCategory, RealizationType
@@ -74,7 +75,8 @@ def generate_console_tax_report(
     asset_resolver: AssetResolver,
     tax_year: int,
     eoy_mismatch_count: int,
-    loss_offsetting_summary: LossOffsettingResult 
+    loss_offsetting_summary: LossOffsettingResult,
+    data_gaps: Optional[List["DataGap"]] = None
 ):
     logger.info(f"Generating console tax declaration summary for tax year {tax_year}...")
     print(f"\n--- Tax Declaration Summary for Year {tax_year} (All amounts in EUR) ---")
@@ -178,7 +180,7 @@ def generate_console_tax_report(
     print("  Vorabpauschale (Brutto, vor Teilfreistellung):")
     vp_gross_by_fund_type: Dict[InvestmentFundType, Decimal] = defaultdict(Decimal)
     for vp_item in vorabpauschale_items: # Already filtered by engine for tax year in generation
-        if vp_item.tax_year == tax_year: # Double check, though vp_items should be for tax_year
+        if vp_item.declaration_year == tax_year:  # VP for calendar X is declared in VZ X+1
              vp_gross_by_fund_type[vp_item.fund_type] += vp_item.gross_vorabpauschale_eur
 
     print(f"    Zeile 9 (Aktienfonds Vorabpauschale): {_q(vp_gross_by_fund_type.get(InvestmentFundType.AKTIENFONDS, Decimal(0)))}")
@@ -195,9 +197,9 @@ def generate_console_tax_report(
     print(f"    Zeile 23 (Auslands-Immobilienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AUSLANDS_IMMOBILIENFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 26 (Sonstige Investmentfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS, Decimal(0)))}")
 
-    # Z55: Vorabpauschale deduction on disposal
-    z55_value = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z55, Decimal(0))
-    print(f"  Zeile 55 (Anzurechnende Vorabpauschalen): {_q(z55_value)}")
+    # Z53: Vorabpauschale assessed during the holding period, deducted on disposal
+    z53_value = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53, Decimal(0))
+    print(f"  Zeile 53 (Während der Besitzzeit angesetzte Vorabpauschalen, vor Teilfreistellung): {_q(z53_value)}")
 
     # --- Anlage SO (from LossOffsettingResult) ---
     print("\nAnlage SO (Sonstige Einkünfte - §23 EStG Private Sales)")
@@ -210,14 +212,19 @@ def generate_console_tax_report(
     print("\n--- Zusammenfassung: Saldo der konzeptionellen Steuertöpfe (vor Anwendung Sparer-Pauschbetrag etc.) ---")
     print(f"  Saldo Aktien: {_q(loss_offsetting_summary.conceptual_net_stocks)}")
     
+    # Two independent switches, deliberately not nested: whether the €20k cap is
+    # applied (never — §52 Abs. 28 S. 25 EStG: "auf alle offenen Fälle nicht mehr
+    # anzuwenden"), and whether the form of this year has a separate Zeile 24.
     if form_rules.derivative_loss_cap_applies:
         print(f"  Saldo Termingeschäfte (konzeptionell, nach Verrechnung und ggf. Verlustbegrenzung): {_q(loss_offsetting_summary.conceptual_net_derivatives_capped)}")
         if loss_offsetting_summary.conceptual_net_derivatives_uncapped != loss_offsetting_summary.conceptual_net_derivatives_capped:
             print(f"     (Saldo Termingeschäfte vor konzeptioneller Verlustbegrenzung: {_q(loss_offsetting_summary.conceptual_net_derivatives_uncapped)})")
-        print(f"     (Für Anlage KAP Zeile 24 deklarierte Verluste (Brutto, unbegrenzt): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))})")
     else:
         print(f"  Saldo Termingeschäfte (konzeptionell, nach Verrechnung, ohne Verlustbegrenzung): {_q(loss_offsetting_summary.conceptual_net_derivatives_uncapped)}")
-        print(f"     (Verlustverrechnungsbeschränkung für Termingeschäfte ab {tax_year} aufgehoben)")
+        print("     (Verlustverrechnungsbeschränkung für Termingeschäfte durch das JStG 2024 aufgehoben;")
+        print("      § 52 Abs. 28 Satz 25 EStG: auf alle offenen Fälle nicht mehr anzuwenden)")
+    if form_rules.separate_derivative_lines:
+        print(f"     (Für Anlage KAP Zeile 24 deklarierte Verluste (Brutto, unbegrenzt): {_q(loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST, Decimal(0)))})")
     
     print(f"  Saldo Sonstige Kapitalerträge (nicht Fonds): {_q(loss_offsetting_summary.conceptual_net_other_income)}")
     print(f"  Saldo Investmentfonds (Netto, nach TF, inkl. Vorabpauschale): {_q(loss_offsetting_summary.conceptual_fund_income_net_taxable)}")
@@ -266,7 +273,11 @@ def generate_console_tax_report(
 
     print("\n--- Hinweise und Warnungen ---")
     if eoy_mismatch_count > 0:
-        print(f"  ACHTUNG: {eoy_mismatch_count} kritische Differenzen bei der End-of-Year Mengenvalidierung festgestellt. Siehe Log für Details.")
+        # The per-asset detail used to live only in the log; the data-gap
+        # channel now carries it into the report, so point there when it does.
+        _detail_pointer = ("Details siehe Abschnitt 'DATENLÜCKEN / HINWEISE' unten."
+                           if data_gaps else "Siehe Log für Details.")
+        print(f"  ACHTUNG: {eoy_mismatch_count} kritische Differenzen bei der End-of-Year Mengenvalidierung festgestellt. {_detail_pointer}")
     else:
         print("  Keine kritischen Differenzen bei der End-of-Year Mengenvalidierung festgestellt (basierend auf Log-Analyse).")
 
@@ -274,6 +285,16 @@ def generate_console_tax_report(
     print("  Verlustvorträge über Steuerjahre hinweg sind nicht implementiert.")
     print("  Die endgültige Steuerlast (Sparer-Pauschbetrag, Steuersätze, Soli, KiSt) wird nicht berechnet.")
     print("  Alle Angaben ohne Gewähr. Bitte überprüfen Sie alle Zahlen sorgfältig und konsultieren Sie ggf. einen Steuerberater.")
+    # Data-gap channel: surface every recorded gap as an explicit report
+    # section — the user reviews them here, not in a log file. Printed only
+    # when gaps exist (clean runs are unchanged).
+    if data_gaps:
+        print("\n--- DATENLÜCKEN / HINWEISE ---")
+        print("  Die folgenden Punkte konnten aus den Eingabedaten nicht vollständig")
+        print("  abgeleitet werden und sollten geprüft werden:")
+        for gap in data_gaps:
+            print(f"  [{gap.code}] {gap.subject}: {gap.detail}")
+
     print("--- Ende des Steuererklärungs-Summaries ---")
 
 def generate_stock_trade_report_for_symbol(
