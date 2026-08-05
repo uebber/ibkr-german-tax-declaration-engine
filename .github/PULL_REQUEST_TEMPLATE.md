@@ -31,6 +31,8 @@ failure it prevents; read that line before deciding a gate is overhead.
 - [ ] Clean-clone: `rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q`
 - [ ] No silent default — anything unresolvable raises, after collecting every case
 - [ ] No account data; no reference to a document this repo does not contain
+- [ ] No half-converted tree — sites enumerated **including docs, comments and docstrings**; `grep` count before/after: 
+- [ ] Looked at what any destructive step would remove before running it
 - [ ] Standing constraints honoured (no pre-existing test or application code changed without an explicit ask)
 - [ ] Every factual claim below names how it was measured
 
@@ -41,14 +43,13 @@ failure it prevents; read that line before deciding a gate is overhead.
 - [ ] `docs/legal-implementation-map.md` row present and honest; `INDEX.md` and `coverage-matrix.md` in step
 - [ ] `feat-func` / `fix-func` only — red-first verified, count: 
 - [ ] `feat-func` / `fix-func` only — parity measured, assessment year: 
-- [ ] `feat-func` only — no half-converted tree left behind
 - [ ] `ks-maint` only — **every claim the audit touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will close it
 
 ## Band B gates
 
 - [ ] Figures provably unmoved — parity, assessment year:  <!-- or: diff does not touch src/ -->
 - [ ] Zero map rows changed, zero claim IDs changed
-- [ ] `refactor` only — probed site by site, not merely run; no half-converted tree left behind
+- [ ] `refactor` only — probed site by site, not merely run
 - [ ] `fix-nonfunc` only — **calibrated against a deliberately broken tree**; what was broken and what tripped: 
 
 ## How each claim above was measured

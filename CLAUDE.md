@@ -77,6 +77,17 @@ overhead.
   A substituted value understates income invisibly; a crash does not.
 - **No account data, and no reference to a document this repo does not contain.**
   This repository is public, and a pointer to something absent is a false statement.
+- **No half-converted tree left behind.** Enumerate the sites, and show the enumeration is
+  exhausted — **including the docs, comments and docstrings that assert something about what you
+  changed.** Grep for the old form and give the count.
+  A conversion can be fully understood and still incomplete: the worst instance here converted
+  three selectors and left a fourth in the same file, one screen from a comment explaining the
+  rule it broke. The prose half is missed more often than the code half — a protocol survived the
+  change that made it unnecessary, and a docstring went on describing a defect that had been
+  fixed.
+- **Look at what you are about to destroy or overwrite, even when a documented step tells you
+  to.** A command in this file is a claim that running it is safe and still necessary, and claims
+  decay like any other. One `ls` is cheaper than the recovery.
 - **The standing constraints below honoured**, any departure explicitly asked for and answered.
 - **Every factual claim in the description says how it was measured.**
   An unmeasured claim reads exactly like a measured one.
@@ -89,10 +100,10 @@ overhead.
 - The `docs/legal-implementation-map.md` row present and honest; `reference/INDEX.md` and
   `coverage-matrix.md` in step where the store changed.
 - `feat-func` / `fix-func`: red-first verified with the actual count; parity measured with the
-  assessment year named; no half-converted tree left behind.
+  assessment year named.
   A test that was never red proves nothing about the fix. Parity without a year is
   unfalsifiable — a change keyed to a form-year rule is identical for one assessment year and
-  different for another. And a conversion can be fully understood and still incomplete.
+  different for another.
 - `ks-maint`: no red-first and no parity — it changes nothing. Instead, **every claim the audit
   touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will
   close it. A row left at `implements` because no code was touched, when the audit just moved the
@@ -103,7 +114,7 @@ overhead.
 - Figures provably unmoved: parity measured with the assessment year named, or — where the diff
   does not touch `src/` — the statement that it does not.
 - Zero map rows changed, zero claim IDs changed.
-- `refactor`: probed site by site, not merely run; no half-converted tree left behind.
+- `refactor`: probed site by site, not merely run.
   A green suite proves the covered sites were converted and says nothing about the rest.
   Probing one ledger-lookup site at a time once found five of fourteen the suite cannot observe
   at all.
