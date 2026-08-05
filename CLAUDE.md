@@ -40,7 +40,7 @@ The axis is ground truth, not figure movement — `ks-maint` touches no figure a
 moves the standard every figure is measured against, which is the one consequence a parity run
 cannot see.
 
-Two boundaries that decide categories people get wrong:
+Three boundaries that decide categories people get wrong:
 
 - **Documentation is not a category.** A knowledge-store update rides with the `feat-func` or
   `fix-func` that needs it, store commit first. A genuine documentation improvement is `feat-ux`
@@ -48,6 +48,18 @@ Two boundaries that decide categories people get wrong:
   fewer files to open.
 - **If a change alters which figure appears against which form line, it is `fix-func`, not
   `fix-ux`.** Presentation-only means the figures are identical and were compared.
+- **A leftover is not its own change.** An unused import, a stale comment, a dead reference: it
+  goes with whatever change next touches that file, under that change's category. Do not stop and
+  ask over a one-line deletion. If a leftover must stand alone, sort it by what it *does*:
+  - a comment or docstring asserting something false — a guard that exists, a contract the code
+    does not honour — is `fix-nonfunc`, because the next reader trusts it and does not add the
+    check. It takes the calibration gate: state what a reader would have concluded.
+  - a dead reference to something this repo does not contain is `fix-ux`. It misleads a reader,
+    hides no failure, moves no figure.
+  - an inert leftover is `refactor`, and on its own it will not clear the bar below. **That is
+    the answer, not a gap.** A category that waved these through is exactly what was removed, and
+    two of the commits it had waved through turned out to name a defect class —
+    `docs/contribution-standards.md` §7.
 
 `refactor` is **restricted**: permitted only when it is highly beneficial for a specific, imminent
 `feat-*` or `fix-*`, and demonstrably reduces complexity. Speculative restructuring is not a
