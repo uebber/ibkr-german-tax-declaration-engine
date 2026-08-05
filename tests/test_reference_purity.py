@@ -4,8 +4,8 @@ These guards keep the two apart and keep them in step.
 
 legal_basis: infrastructure. No declared figure depends on these assertions.
 What depends on them is whether `reference/` can still be trusted as ground
-truth — CLAUDE.md's Purity Rule and research-strategy Validation Protocol
-item 9. The rule exists because an "Engine Mapping" table in the store named
+truth — the Purity Rule and Validation Protocol item 9, both in
+docs/knowledge-store.md. The rule exists because an "Engine Mapping" table named
 `RealizedGainLoss.accumulated_vorabpauschale`, a field that does not exist and
 never did, and the store went on asserting it as ground truth. A legal fact
 cannot go stale from a refactor; an identifier can.
@@ -20,9 +20,11 @@ REFERENCE_DIR = REPO_ROOT / "reference"
 MAP_DOC = REPO_ROOT / "docs" / "legal-implementation-map.md"
 
 # Verbatim transcripts of official documents; their wording is not ours to edit.
-# research-strategy.md is the procedure for growing the library, not a statement
-# of law, and it necessarily talks about how the engine and the store relate.
-EXEMPT = {"research/research-strategy.md"}
+# Nothing else is exempt. The one file that used to be — the procedure for
+# growing the library, which necessarily talks about how the engine and the
+# store relate — now lives in docs/knowledge-store.md, outside the store. An
+# exemption was the wrong answer to a file being in the wrong directory.
+EXEMPT: set[str] = set()
 
 
 def _is_exempt(path: Path) -> bool:
@@ -94,7 +96,7 @@ class TestStoreStatesLawOnly:
         assert not found, (
             f"{path.relative_to(REPO_ROOT)} names implementation state. "
             f"reference/ states law only; move this to docs/legal-implementation-map.md "
-            f"(CLAUDE.md Purity Rule, research-strategy Validation Protocol item 9).\n"
+            f"(docs/knowledge-store.md: the Purity Rule, Validation Protocol item 9).\n"
             + "\n".join(f"  line {n}: [{kind}] {text}" for n, kind, text in found[:20])
         )
 

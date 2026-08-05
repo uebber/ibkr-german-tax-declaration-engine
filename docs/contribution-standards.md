@@ -1,29 +1,24 @@
-# Contribution standards
+# Contribution standards — the evidence behind the gates
 
-What a change to this engine has to satisfy before it lands. Written for the PR train in
-issue #15, but it applies to any contribution.
+**CLAUDE.md carries the operative criteria: the change categories, their gates, and the standing
+constraints. This file carries why each of them exists.** There is one checklist and it is not
+here. Read this when a gate looks like overhead, or when you are tempted to make an exception.
 
-This is not a style guide. Every item below exists because a change that looked correct,
-tested green, and read plausibly turned out not to be — usually in a way that would have
-moved a declared tax figure, or hidden that one was wrong. `docs/pr-train-review.md` is the
-evidence; this file is the distillation.
-
-Read it as a checklist you apply to your own diff before asking anyone else to.
+Every item below exists because a change that looked correct, tested green, and read plausibly
+turned out not to be — usually in a way that would have moved a declared tax figure, or hidden
+that one was wrong. Written up from the PR train in issue #15;
+`docs/pr-train-review.md` is the raw record and this file is the distillation.
 
 ---
 
 ## 1. Root every legally relevant behaviour in `reference/`
 
-The rule is in CLAUDE.md and it is the one that gets PRs sent back. "Legally relevant" means
-anything that can change a declared figure or where it lands: form-line mappings,
-Teilfreistellung rates, loss-offsetting and ring-fencing, holding periods, thresholds, caps,
-Basiszins values, withholding-tax treatment, event classification with tax consequences, and
-the expected values in any test asserting those.
-
-**Order of operations:** look it up in `reference/` → if covered, the file wins over your own
-knowledge *and* over what the code currently does → if not covered, stop and extend the store
-first, to Tier 1/2, following `reference/research/research-strategy.md`. Research done in a
-conversation and not written into `reference/` does not count.
+The Ground Truth Rule is in CLAUDE.md and the procedure for extending the store is in
+`docs/knowledge-store.md`. This is the rule that gets PRs sent back, so it is worth spelling out
+what it reaches: **"legally relevant"** covers form-line mappings, Teilfreistellung rates,
+loss-offsetting and ring-fencing, holding periods, thresholds, caps, Basiszins values,
+withholding-tax treatment, event classification with tax consequences, and the expected values in
+any test asserting those.
 
 Four failure modes seen repeatedly, in increasing subtlety:
 
@@ -139,9 +134,9 @@ Across nine reviewed PRs the code and tests were consistently sound and the pros
 Twelve citation or claim errors; two descriptions had nothing wrong in them. Specific things
 that turned out false:
 
-- **"Real-data parent-parity: IDENTICAL"** — parity results are year-specific. A change keyed
-  to a form-year rule is identical for one assessment year and different for another. Say
-  which year you measured.
+- **"Real-data parent-parity: IDENTICAL"** — stated without a year. A change keyed to a
+  form-year rule is identical for one assessment year and different for another, so the claim
+  was unfalsifiable as written. This is why the gate asks for the year.
 - **Red-first counts.** If you say seven tests fail without the fix, ten failing is a signal
   you have not run it.
 - **"Contains: code, tests"** when the diff has no tests.
@@ -160,26 +155,11 @@ Practical form: for each factual claim in your description, name how it was meas
 - **No references to documents this repo does not contain.** Working-plan identifiers
   (`rework2-plan AR6`, `legal-review finding F4`) appear in production source, test docstrings
   and commit messages. Those files are not here. Five separate cleanup commits so far.
-- **Do not fit tests to the application.** Fit them to the requirement, and if the requirement
-  is ambiguous, ask. One spec group had been written around the engine's behaviour and
-  contradicted the PRD it cited for coverage.
-- **Account data never reaches a commit.** This repository is public. Public documents state
-  the mechanism; instance data stays in the maintainer's gitignored notes. Instruments in this
-  documentation appear as `XYZ1`, `XYZ2`, …
-
----
-
-## 7. Before you open the PR
-
-- [ ] Every legally relevant change traces to a `reference/` file that actually says it, cited
-      to the sentence, with the coverage matrix updated.
-- [ ] `reference/` still states law only — no identifier, path or code block added — and every
-      claim ID touched has its row in `docs/legal-implementation-map.md`.
-- [ ] Every new guard calibrated against a deliberately broken tree — and the calibration
-      stated in the description.
-- [ ] Mechanical refactors probed site-by-site, not just run.
-- [ ] No new silent default; anything unresolvable raises, after collecting all cases.
-- [ ] Red-first verified, with the actual count.
-- [ ] Real-data parity measured, with the assessment year named.
-- [ ] Clean-clone check: `rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q`.
-- [ ] No account data, and no references to documents outside this repo.
+- **Why the standing constraint against fitting tests to the application.** One spec group had
+  been written around the engine's behaviour and contradicted the PRD it cited for coverage. A
+  test written from the code cannot detect that the code is wrong; it only records what the code
+  did on the day it was written.
+- **Why the no-account-data rule needs a category of its own to fix violations.** This repository
+  is public, nothing checks it, and three separate commits have been cleanups after account data
+  had already been published. Public documents state the mechanism; instance data stays in the
+  maintainer's gitignored notes. Instruments in this documentation appear as `XYZ1`, `XYZ2`, …

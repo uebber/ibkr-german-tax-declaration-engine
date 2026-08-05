@@ -11,7 +11,7 @@
 >    in its present form. Where the two disagree, `reference/` wins — that is the Ground Truth
 >    Rule in CLAUDE.md, and it admits no exception for an older document in this repository.
 > 2. **Its sourcing does not meet the current standard.** It rests partly on Tier 5 web sources
->    that `reference/research/research-strategy.md` now refuses as sole authority, and it carries
+>    that `docs/knowledge-store.md` now refuses as sole authority, and it carries
 >    no retrieval dates or verbatim quotations for most of its claims.
 >
 > For what the law requires: `reference/`, indexed by `reference/INDEX.md`. For what this engine

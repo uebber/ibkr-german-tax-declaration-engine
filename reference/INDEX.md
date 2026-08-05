@@ -1,13 +1,14 @@
 # Reference Library -- German Tax Law Sources
 
 Curated collection of German tax and legal sources. All sources are ranked by authority tier
-(see research/research-strategy.md).
+(see docs/knowledge-store.md, which governs this library: how it is managed, how it may be
+extended, and how the code links to it).
 
 **This library states law and nothing else.** It names no module, class, field, test or data
 file. Implementation positions -- what is implemented, what deviates, what is out of scope, and
 which tests guard each -- are recorded in
 [`docs/legal-implementation-map.md`](../docs/legal-implementation-map.md), keyed by the claim IDs
-tagged on the headings here. See the Purity Rule in CLAUDE.md.
+tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 ## Tax Law (EStG)
 
@@ -47,7 +48,7 @@ tagged on the headings here. See the Purity Rule in CLAUDE.md.
 
 ## Research Meta-Documentation
 
-- [Research Strategy](research/research-strategy.md) -- Source ranking (5 tiers), validation protocol, claim IDs, how the library may be extended
+- [Knowledge Store](../docs/knowledge-store.md) -- Source ranking (5 tiers), validation protocol, claim IDs, how this library may be extended. Outside the library, because it must describe how the store and the code relate.
 - [Coverage Matrix](research/coverage-matrix.md) -- Event/asset vs. source mapping, completeness check
 - [Open Legal Questions](research/open-legal-questions.md) -- points no Tier 1/2 source settles: both readings and both authorities, for each
 - [Inlaendisch vs. Auslaendisch: relevance](research/inlaendisch-auslaendisch-relevance.md) -- why the 34d distinction has no expression on the declaration under Abgeltungsteuer

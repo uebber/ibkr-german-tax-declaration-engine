@@ -2,11 +2,11 @@
 
 Guidance for Claude Code (claude.ai/code) working in this repository.
 
-This file states **how the project is built, run, verified and validated**, and the discipline
-that governs anything with a legal consequence. It deliberately contains **no tax content** —
-no form line numbers, rates, thresholds or year rules. Those live in `reference/`, which is the
-only place they may live. If you find a legal fact stated here, it is a defect: remove it and
-cite the reference instead.
+This file states **how the project is built, run, verified and validated**, the categories a
+change may be, and the discipline that governs anything with a legal consequence. It deliberately
+contains **no tax content** — no form line numbers, rates, thresholds or year rules. Those live in
+`reference/`, which is the only place they may live. If you find a legal fact stated here, it is a
+defect: remove it and cite the reference instead.
 
 ## Project Overview
 
@@ -16,6 +16,79 @@ corporate actions, options and futures, and investment-fund taxation.
 
 The output is a number a person puts on a tax return. That single fact sets the standard for
 everything below: **a wrong number that looks plausible is worse than a crash.**
+
+## Before you start
+
+**Name the category. Exactly one. State it before the first edit.**
+
+If the work needs two, it is two changes — do them in order, store before code, and say so. If you
+cannot name one, stop and ask; do not pick the nearest fit. Commit subjects carry it:
+`fix-func(engine): …`, `ks-maint(reference): …`, `feat-ux(docs): …`.
+
+| Band | Category | Scope |
+|---|---|---|
+| **A** | `feat-func` | Expands the tax events or asset types the engine can process. |
+| **A** | `fix-func` | Moves a declared figure, or where it lands, from wrong to compliant. |
+| **A** | `ks-maint` | Brings `reference/` up to current law after an audit trigger. Changes no behaviour. |
+| **B** | `feat-ux` | Reduces the effort of getting from broker export to a checked declaration. |
+| **B** | `fix-ux` | Corrects presentation that misleads, without moving a figure. |
+| **B** | `fix-nonfunc` | Removes a way the engine can fail, a way a failure can go unnoticed, or a way this repository can disclose what it must not. |
+| **B** | `refactor` | Restructures code for a specific imminent change. Output-identical. |
+
+**Band A changes what a correct figure is, or produces one. Band B must provably not move one.**
+The axis is ground truth, not figure movement — `ks-maint` touches no figure and no code, but it
+moves the standard every figure is measured against, which is the one consequence a parity run
+cannot see.
+
+Two boundaries that decide categories people get wrong:
+
+- **Documentation is not a category.** A knowledge-store update rides with the `feat-func` or
+  `fix-func` that needs it, store commit first. A genuine documentation improvement is `feat-ux`
+  or `fix-ux` — for this file the user is the next agent, and the target is fewer wrong turns and
+  fewer files to open.
+- **If a change alters which figure appears against which form line, it is `fix-func`, not
+  `fix-ux`.** Presentation-only means the figures are identical and were compared.
+
+`refactor` is **restricted**: permitted only when it is highly beneficial for a specific, imminent
+`feat-*` or `fix-*`, and demonstrably reduces complexity. Speculative restructuring is not a
+change this repository accepts.
+
+### Gates
+
+**Every change:**
+
+- Clean-clone suite green (see Verification).
+- No silent default. Anything unresolvable raises, after collecting every case.
+- No account data, and no reference to a document this repo does not contain.
+- The standing constraints below honoured; any departure explicitly asked for and answered.
+- Every factual claim in the description says how it was measured.
+
+**Band A adds:**
+
+- The requirement was written in `reference/` *before* the code, cited to the sentence, and
+  verified against all nine items of the Validation Protocol in `docs/knowledge-store.md`.
+- A `GT-<AREA>-<NNN>` claim ID cited in code, test or commit.
+- The `docs/legal-implementation-map.md` row present and honest; `reference/INDEX.md` and
+  `coverage-matrix.md` in step where the store changed.
+- `feat-func` / `fix-func`: red-first verified with the actual count; parity measured with the
+  assessment year named; no half-converted tree left behind.
+- `ks-maint`: no red-first and no parity — it changes nothing. Instead, **every claim the audit
+  touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will
+  close it. A row left at `implements` because no code was touched, when the audit just moved the
+  law underneath it, is the failure this category exists to catch.
+
+**Band B adds:**
+
+- Figures provably unmoved: parity measured with the assessment year named, or — where the diff
+  does not touch `src/` — the statement that it does not.
+- Zero map rows changed, zero claim IDs changed.
+- `refactor`: probed site by site, not merely run; no half-converted tree left behind.
+- `fix-nonfunc`: **calibrated against a deliberately broken tree, stated in the description** —
+  the red-first count for a code fix, the mutation the new test now catches for a blind-spot
+  closure, what was grepped across the whole tree for a disclosure fix.
+
+`docs/contribution-standards.md` records why each gate exists, with the incident behind it. Read
+it when a gate looks like overhead.
 
 ## Setup
 
@@ -28,7 +101,7 @@ cp src/config_example.py src/config.py     # config.py is gitignored; it holds p
 
 `src/config.py` carries the default tax year, taxpayer identity for reports, the interactive
 classification switch, and Flex Query IDs. `config_example.py` is the tracked template and must
-define every attribute `src/` reads — a test enforces this.
+define every attribute `src/` reads — `tests/test_config_example_completeness.py` enforces this.
 
 ## Running
 
@@ -49,21 +122,15 @@ uv run pytest tests/test_<area>.py -v      # one area
 ```
 
 **Clean-clone protocol — the only run that proves anything.** The suite must pass on a checkout
-with no developer state. Tests once read the developer's real `cache/` and passed on
-classifications absent from the repo:
+with no developer state:
 
 ```bash
 rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q
 ```
 
-**A green suite is weaker evidence than it looks.** Coverage is uneven and the gaps are not
-where the diff is. Before trusting a passing run on a change:
-
-- **Probe by mutation.** Break the behaviour deliberately, in each way it can break, and confirm
-  a test fails. Sites the suite reaches fail loudly; sites it does not are silent.
-- **Calibrate every new guard.** A check that cannot observe what it claims to check is worth
-  nothing, and it will be green. Write the tree that should trip it and confirm it does.
-- **Verify red-first.** Revert the change, confirm the new tests fail, and report the count.
+**A green suite is weaker evidence than it looks.** Coverage is uneven and the gaps are not where
+the diff is; `docs/contribution-standards.md` §3 lists the known blind spots. This is why the
+gates above ask for mutation probes and calibration rather than a passing run.
 
 Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support/`;
 `tests/docs/` holds the behavioural specs they encode.
@@ -72,13 +139,13 @@ Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support
 
 - `validate_ledgers.py` — reconciles start-of-year and end-of-year positions per tax year.
 - `scripts/parity_check.sh` — captures a full run (console, log, PDF) and compares two captures,
-  for proving a refactor is output-neutral. It is cache-hermetic and order-sensitive; read its
-  header before relying on it. Parity results are **year-specific** — always name the assessment
-  year you measured, and take a same-tree control capture first so ambient nondeterminism is not
-  read as a change.
+  for proving a change is output-neutral. It is cache-hermetic and order-sensitive; read its
+  header before relying on it, and take a same-tree control capture first so ambient
+  nondeterminism is not read as a change. What a parity result must state to count is a gate,
+  above.
 
-See also the reconciliation invariant under Engineering rules — the engine enforces it on every
-run, not only when validating against real data.
+See also the reconciliation invariant below — the engine enforces it on every run, not only when
+validating against real data.
 
 ## Architecture
 
@@ -105,27 +172,10 @@ Seams worth knowing before changing the engine:
 
 ## Ground truth: the `reference/` library
 
-`reference/` is the **single source of truth for every legal requirement this engine
-implements**. `reference/INDEX.md` is its directory; `reference/research/coverage-matrix.md`
-maps every supported event and asset to its legal source, and
-`reference/research/open-legal-questions.md` records the points no Tier 1/2 source settles.
-
-### The Purity Rule (non-negotiable, and reciprocal)
-
-This file states how the project is built and contains no tax content; a legal fact here is a
-defect. **The mirror holds: `reference/` states law and contains no implementation state.** It
-names no module, class, field, function, test, CSV column or data file, carries no code block,
-and does not describe what the engine does. That belongs in `docs/legal-implementation-map.md`,
-which ties each legal requirement to the engine's position on it and the tests that guard it.
-
-The reason is not tidiness. A code pointer inside the store rots silently and becomes a false
-statement in the one document you are supposed to be able to trust: this library asserted for
-months that the Vorabpauschale deduction lived in
-`RealizedGainLoss.accumulated_vorabpauschale`, a field that does not exist and never did. A
-legal fact cannot go stale from a refactor. An identifier can.
-
-Direction matters and only one direction is allowed: **code cites the reference; the reference
-never cites code.** `tests/test_reference_purity.py` enforces this.
+`reference/` is the single source of truth for every legal requirement this engine implements.
+**`docs/knowledge-store.md` governs it** — what counts as a source, the Validation Protocol, claim
+IDs, the binding to `docs/legal-implementation-map.md`, and the only sanctioned procedure for
+extending the library. Read it before any Band A change.
 
 ### The Ground Truth Rule (non-negotiable)
 
@@ -136,54 +186,43 @@ tax law, not from what the existing code appears to assume.
 **Legally relevant** means anything that can change a declared figure or where it lands —
 including the expected values of any test asserting one.
 
-The order of operations is always:
-
-1. **Look it up in `reference/`.** Read the file; do not assume it says what you expect.
-2. **If covered:** the reference is authoritative — over general knowledge, and over the code.
-3. **If not covered, or stale, ambiguous or contradicted: stop.** Do not proceed on recall or an
-   ad-hoc lookup. **Extend the store first, and only as `reference/research/research-strategy.md`
-   prescribes** — that document defines the source tiers, the validation protocol, and the
-   required procedure for adding a file. It is the only sanctioned way the library may grow.
-4. **Then implement**, citing the reference in the code comment, test docstring or commit message,
-   so the figure stays traceable to its source.
-
-Research done in conversation and not written into `reference/` is not ground truth. If a question
-cannot be resolved to the standard `research-strategy.md` sets, record the gap and raise it —
-do not close it with a guess.
+Look it up in `reference/` first, and read the file rather than assuming what it says. If it is
+covered, the reference wins — over general knowledge, and over the code. If it is not covered, or
+is stale, ambiguous or contradicted, **stop**: extend the store first, by the procedure in
+`docs/knowledge-store.md`, then implement citing it. Research done in conversation and not written
+into `reference/` is not ground truth.
 
 If code and a reference file conflict, **surface it**; do not silently follow the code.
+
+Nothing enforces this rule — a test can check that a cited claim ID resolves, never that a change
+needing a citation carried one. Its mirror image *is* enforced: `reference/` states law and
+contains no implementation state, which is the Purity Rule in `docs/knowledge-store.md`, checked
+by `tests/test_reference_purity.py`.
 
 ## Engineering rules
 
 ### SoY → EoY must reconcile (non-negotiable)
 
-**After the ledger has run, the calculated end-of-year position must equal the position the
-broker reports. There is no tolerance for disagreement and no override.**
-
-The start-of-year quantity is *taken from* the positions snapshot, not reconstructed — the
-historical replay supplies cost basis and acquisition dates, never the running quantity. So the
-end-of-year quantity follows from that snapshot plus the tax year's own events, and it has
-exactly one correct answer. When the engine's answer differs from the broker's, an event is
-missing or was processed incorrectly: an absent trade or corporate action, an unlinked option
-exercise, one instrument resolved under two identifiers. At least one disposal is then matched
-against the wrong lots, which makes the reported gain wrong and not merely the quantity.
-
-The engine checks every asset, then aborts naming all of them. It does not emit figures, form
-lines or a PDF from a ledger that does not reconcile.
-
-Two things to hold on to, because both have already misled people here:
-
-- **An incomplete prior-year trade history cannot cause this.** Missing earlier years change the
-  cost basis and acquisition dates of carried-in positions; they cannot move the quantity, which
-  the snapshot pins. A mismatch always points at the tax year's own input, or at the engine's
-  handling of it. Do not go looking for old data, and do not relax the check on that theory.
-- **It does not prove the lots are right.** The comparison is of net quantity. A defect that
-  misassigns lots without changing the net — the wrong lot consumed, a wrong acquisition date,
-  a wrong basis — reconciles clean. A green reconciliation is a floor, not a guarantee.
+**After the ledger has run, the calculated end-of-year position must equal the position the broker
+reports.** No tolerance, no override. The engine checks every asset, then aborts naming all of
+them; it emits no figures, form lines or PDF from a ledger that does not reconcile.
 
 Cash-balance (currency) reconciliation is deliberately *not* fatal: its causes are input
 completeness rather than a ledger disagreeing about a holding. It is recorded as a data gap so it
 reaches the report instead of only the log.
+
+The rule enforces itself at runtime. These two corrections do not, and both have already misled
+people here:
+
+- **An incomplete prior-year trade history cannot cause a mismatch.** The start-of-year quantity
+  is *taken from* the positions snapshot, not reconstructed — the historical replay supplies cost
+  basis and acquisition dates, never the running quantity. Missing earlier years cannot move it.
+  A mismatch always points at the tax year's own input, or at the engine's handling of it: an
+  absent trade or corporate action, an unlinked option exercise, one instrument resolved under two
+  identifiers. Do not go looking for old data, and do not relax the check on that theory.
+- **A green reconciliation does not prove the lots are right.** The comparison is of net quantity.
+  A defect that misassigns lots without changing the net — the wrong lot consumed, a wrong
+  acquisition date, a wrong basis — reconciles clean. It is a floor, not a guarantee.
 
 ### Everything else
 
@@ -196,44 +235,41 @@ do raise, check every case first and report them together, so one run identifies
 
 **Verify your rationale, not just your citations.** A reason given in a comment, a commit message or
 a document is a claim, and a plausible one is the hardest kind to catch. Check it, or mark it
-unverified. The most damaging error in this repository's history was an engineering rationale that
-was not merely unproven but incapable of being true, and it propagated into four documents and a
-user-facing message before anyone tested it.
+unverified.
 
 **Use `Decimal`, constructed from strings.** All money and quantity arithmetic runs at
-`INTERNAL_CALCULATION_PRECISION`. `Decimal("123.45")`, never `Decimal(123.45)`.
+`INTERNAL_CALCULATION_PRECISION`. `Decimal("123.45")`, never `Decimal(123.45)`. Nothing catches a
+float construction — `tests/test_precision.py` tests the arithmetic, not how the value was built.
 
 **`data_import/` is read-only.** It is the source of truth for input; the application must never
 write to it. Working copies go in `data/`. See `input_data_spec.md` for the naming scheme and
-column specifications.
+column specifications. Nothing enforces this either.
 
 **This repository is public.** Account data must never reach a commit — no holdings, identifiers or
-amounts. Public documents state the mechanism; instance data stays in gitignored notes.
+amounts. Public documents state the mechanism; instance data stays in gitignored notes. There is no
+tripwire, and this is the rule with the worst violation record here: three separate commits have
+been cleanups after account data had already been published.
 
-## Ground rules
+## Standing constraints
 
-After modifying or extending application code: never change pre-existing tests without asking the
-user and explaining why it is, without doubt, necessary.
+Nothing enforces these. They hold for every category.
 
-After modifying or extending test code: never change pre-existing application code without asking
-the user and explaining why it is, without doubt, necessary.
-
-Never fit tests to the application. Fit them to the requirement, and ask when the requirement is
-ambiguous — do not make tests pass for their own sake.
-
-Never change legally relevant behaviour in application code or tests on the strength of a legal
-requirement not already written into `reference/`. Extend the store first, via
-`reference/research/research-strategy.md`.
+- After modifying or extending application code: **never change a pre-existing test** without
+  asking the user and explaining why it is, without doubt, necessary.
+- After modifying or extending test code: **never change pre-existing application code** without
+  the same ask.
+- **Never fit tests to the application.** Fit them to the requirement, and ask when the requirement
+  is ambiguous — do not make tests pass for their own sake.
 
 ## Repository documentation
 
 - `PRD.md` — product requirements; the functional spec the engine is built against
 - `README.md` — user-facing setup, Flex Query configuration, manual data export
 - `input_data_spec.md` — IBKR CSV column specifications and the `data_import/` naming scheme
+- `docs/knowledge-store.md` — how `reference/` is managed, extended, and linked to the code
 - `reference/INDEX.md` — the tax law library directory
-- `reference/research/research-strategy.md` — how that library may be extended
 - `reference/research/open-legal-questions.md` — points no Tier 1/2 source settles, both readings
 - `docs/legal-implementation-map.md` — each legal requirement → the engine's position → the tests
-- `docs/contribution-standards.md` — what a change must satisfy before it lands
+- `docs/contribution-standards.md` — why each gate above exists, with the incident behind it
 - `tests/docs/` — behavioural specs and coverage analysis
 - `VALIDATION_REPORT.md` — real-data validation results

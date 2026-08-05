@@ -108,7 +108,7 @@ Set by the repo owner, stricter than the PR descriptions assume:
 > accompanied by knowledge-store updates validated at the highest verification levels.
 
 "Highest verification levels" = the Validation Protocol in
-`reference/research/research-strategy.md`: every claim traces to Tier 1 (statute) or
+`docs/knowledge-store.md`: every claim traces to Tier 1 (statute) or
 Tier 2 (BMF); year-specific rules cite the exact amendment law; rates/thresholds cite
 paragraph *and* sentence; **form line mappings verified against the official form for the
 specific tax year**; Tier 4/5 cross-checked against Tier 1.
