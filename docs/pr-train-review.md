@@ -2,10 +2,10 @@
 
 **Branch:** `review/pr-train-integration` (published; base `main` @ `ebad4e7`)
 **Base:** `main` @ `ebad4e7`
-**Status as of 2026-08-02:** 11 of 25 PRs reviewed and accepted; 14 not yet reviewed.
-**Next up:** #26 (train 11). Rebase remaining branches from `345bd49`; see section 5.
-**Not done deliberately:** nothing pushed, no tags, no PRs closed, no comment posted on
-issue #15, no CI added. All of that is still open for decision.
+**Status: closed 2026-08-05.** The train is finished as a delivery format. 13 PRs accepted,
+12 closed unmerged, 1 invited back re-scoped. See *Outcome* at the end of this file before
+reading anything below it — the sections that follow describe the review while it was running,
+and their "next up" and "not yet reviewed" statements are historical.
 
 ---
 
@@ -1566,3 +1566,50 @@ it was measured on.
 5. For any behavioural change, check the cited provision **actually exists** in `reference/`
    and says what the PR claims.
 6. For any new guard, break the thing it watches and confirm it fails.
+
+---
+
+## Outcome (2026-08-05)
+
+The train ended not because the work was wrong but because the format could not be measured.
+A cumulative stack, where PR N's branch contains PRs 1..N, has no single target to hold a PR
+against — and holding each change against one stated target is what this repository now does.
+The categories and their gates are in CLAUDE.md; this file is the evidence they came from.
+
+**Accepted — 13 PRs.** #16–#25 and #33 during the review, cherry-picked onto this branch with
+Fsaupe's authorship preserved. Then two taken afterwards as deliberate exceptions to the
+cut-off:
+
+- **#43** (`fix-func`) — repaired two defects that `9f5a92e`, our own commit, had left in the
+  tree: `prior_year_*` snapshot fields not carried across a re-resolve, so a fund reclassified
+  from Stock to InvestmentFund lost its § 18 figure out of Zeilen 9–13 silently; and
+  `pdf_generator.py:944` still selecting on `vop.tax_year` when the identical selector at line
+  1226 had been converted to `declaration_year` in the same commit, with a comment. A
+  half-converted tree inside one file. Its PR body already satisfied the Band A gates that were
+  written the same week and independently of it.
+- **#27** (`fix-nonfunc`, plus two `ks-maint` commits the author had already separated) — four
+  tests that asserted nothing. Verified rather than accepted on description: the removed
+  `test_trade_event_rejects_negative_gross_amount` built a `TradeEvent` by hand with a positive
+  gross, never called the factory it named, and asserted the value it had just passed in.
+
+**Closed unmerged — 12 PRs:** #26, #29–#32, #34–#40. Not a judgement on their content. Each sat
+73 commits behind this branch carrying 2.6k–9.3k insertions of already-merged work, so none was
+in a state anyone could take. Their review findings were filed as issues first, so closing the
+threads loses nothing.
+
+**Invited back — #28** (`fix-func`, multi-account aggregation). Real return: the pre-fix
+behaviour understated income. Held back for three reasons that the new gates make explicit
+rather than for doubt about the diagnosis — the securities half is latent on all available real
+data, so that path is unexercised; the code documents an assumption (per-unit mark price equal
+across accounts) that it states is not enforced; and it conflicts with #43 in
+`parsing_orchestrator.py`. It returns as a single `fix-func` rebased on #43, measured then.
+
+**What the train actually produced.** Not the per-Depot FIFO rebuild it set out to deliver —
+that is still open. What it produced is the working model: seven categories, two bands, gates
+derived from the band, and the observation underneath all of them, that a green result from an
+uncalibrated instrument is worth nothing. Four of the first five checking mechanisms the train
+shipped could not see what they claimed to check. Every gate in CLAUDE.md traces to a specific
+failure recorded above.
+
+The last two reviews in this train found defects in the maintainer's code, not the
+contributor's. That is the note to end on.
