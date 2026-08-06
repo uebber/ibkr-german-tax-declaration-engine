@@ -62,6 +62,14 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
 # Cache directory for downloaded Flex Query CSVs
 FLEX_CACHE_DIR = "data/flex_cache"
 
+# Naming prefix for the Flex Queries belonging to this engine, used by the
+# Client Portal downloader (src/web_portal/) to find them by name instead of by
+# the numeric IDs above. Set this if you gave your queries a common prefix —
+# e.g. "MyTax", matching "MyTax Trades", "MyTax_Cash_Transactions" and so on;
+# separators and case do not matter. Resolving by name survives recreating a
+# query, which changes its ID. Leave as None to use FLEX_QUERY_IDS.
+FLEX_QUERY_NAME_PREFIX: str | None = None
+
 # Basiszins (§18 InvStG): lives in the law-as-data registry —
 # src/tax_law/registry.py (source: reference/bmf-guidance/
 # basiszins-vorabpauschale.md). Not user configuration.

@@ -298,11 +298,75 @@ The download uses a two-step API workflow:
 
 Date ranges are overridden per query to cover the exact calendar year.
 
-**Important limitation:** The IBKR Flex Web Service API only retains approximately the last 2 calendar years of data. Requests for older years return error 1003 ("Statement is not available"). This means the automatic download can only fetch recent data -- it cannot retrieve the full trading history needed for accurate FIFO cost basis calculations. For older years, you must download data manually (see below).
+**Important limitation:** The IBKR Flex Web Service API only retains approximately the last 2 calendar years of data. Requests for older years return error 1003 ("Statement is not available"). This means the automatic download can only fetch recent data -- it cannot retrieve the full trading history needed for accurate FIFO cost basis calculations. For older years, use the [Client Portal download](#client-portal-download-for-older-years) below, which has no such limit.
 
-### Manual Download (Required for Older Years)
+### Client Portal Download (For Older Years)
 
-Since the Flex Web Service API only serves ~2 years of history, you need to manually export older years from the IBKR Client Portal using Activity Statements, which have a longer retention window.
+The Client Portal runs the same Flex Queries over any date range, with no
+two-year limit. `src/web_portal/` drives it in a real browser, so older years
+can be fetched without clicking through the portal by hand.
+
+```bash
+uv sync --extra web                                              # one-off: installs Playwright
+uv run python -m src.web_portal.download --years 2021-2023
+```
+
+A browser window opens. **You log in yourself, including two-factor.** The tool
+never asks for, stores, or records your password; the browser profile it uses
+has Chrome's password manager disabled so the browser cannot save it either.
+Your username can be remembered with `--username`, which writes it to the
+gitignored `private/portal_username`.
+
+Once the portal answers as a logged-in user, each query runs for each requested
+year. The portal answers small reports immediately and queues larger ones for
+batch processing; the downloader waits for those instead of needing a manual
+page refresh. Results are written to `data_import/` under the naming scheme
+below. **Existing files are never replaced** unless you pass `--overwrite`.
+
+Useful options:
+
+| Option | Effect |
+|--------|--------|
+| `--years 2021 2023` or `--years 2021-2023` | Which years to fetch |
+| `--queries trades positions` | Only some reports (default: all configured) |
+| `--query-name-prefix MyTax` | Resolve query IDs from the portal by name instead of `FLEX_QUERY_IDS` |
+| `--overwrite` | Replace files already in `data_import/` |
+| `--timeout-seconds` | How long to wait for one report (default 900). A report that outlives it keeps generating; re-run to collect it |
+| `--reset-profile` | Delete the saved browser profile and log in fresh. Use if the portal keeps saying "Your Session Has Expired" |
+
+**Positions snapshot dates.** `Positions-{YYYY}-SoY.csv` is fetched as of the
+**first trading day** of the year and `Positions-{YYYY}-EoY.csv` as of the last
+(31 December, or the Friday before if it falls on a weekend).
+
+The start-of-year file supplies the price that drives the Vorabpauschale, and
+which day that price comes from is a legal question, not a convenience: it is
+recorded as open question Q12 in
+[`reference/research/open-legal-questions.md`](reference/research/open-legal-questions.md)
+and decided against `GT-INVSTG-010` in
+[`docs/legal-implementation-map.md`](docs/legal-implementation-map.md). Asking
+the portal for 1 January returns the *preceding* 31 December close instead,
+which is the reading that was not chosen — so if you have start-of-year files
+exported by hand for 1 January, they carry different prices from the ones this
+tool fetches, and re-fetching them with `--overwrite` is what makes the corpus
+consistent. Quantities are unaffected either way, so the end-of-year
+reconciliation will not flag the difference.
+
+**Resolving queries by name.** If you gave your six Flex Queries a common
+naming prefix — `MyTax Trades`, `MyTax_Cash_Transactions`, and so on — set
+`FLEX_QUERY_NAME_PREFIX` in `src/config.py` and the downloader looks the IDs up
+in the portal. Case and separators do not matter. This survives recreating a
+query, which changes its numeric ID but not its name; a stale ID in
+`FLEX_QUERY_IDS` would otherwise download the wrong report shape without
+complaining.
+
+**If the portal changes.** `python -m src.web_portal.discover` opens a recorded
+session: you drive the portal by hand while it logs what it does, redacted, to
+the gitignored `private/portal_discovery/`. That recording is how the protocol
+above was established, and re-running it is how to re-establish it.
+
+### Manual Download (Fallback)
+
+The same thing by hand, if you prefer it or the automated path breaks.
 
 **Step-by-step:**
 
@@ -326,7 +390,7 @@ Since the Flex Web Service API only serves ~2 years of history, you need to manu
 7. For **Positions**, run the same query twice per year: once with the date set to **January 1** (SoY) and once with **December 31** (EoY).
 8. Repeat for each historical year back to your first year of trading at IBKR.
 
-**Example:** If your tax year is 2025 and you started trading in 2021, you need files for 2021-2025. The automatic download may cover 2024-2025, so you must manually export 2021-2023.
+**Example:** If your tax year is 2025 and you started trading in 2021, you need files for 2021-2025. The Flex Web Service download may cover 2024-2025; 2021-2023 come from the Client Portal.
 
 ## Configuration
 
@@ -455,7 +519,7 @@ uv run pytest tests/test_group7_currency_fifo.py -v   # Currency FIFO
 
 ## Known Limitations
 
-*   **IBKR API history:** The Flex Web Service API only retains ~2 calendar years of data. Older years must be exported manually from the IBKR Client Portal (see [Manual Download](#manual-download-required-for-older-years)).
+*   **IBKR API history:** The Flex Web Service API only retains ~2 calendar years of data. Older years come from the Client Portal instead, either with the browser downloader or by hand (see [Client Portal Download](#client-portal-download-for-older-years)).
 *   **No "Alt-Anteile":** Assumes all investment fund shares were acquired on or after January 1, 2018.
 *   **Foreign WHT:** Aggregates WHT paid (Anlage KAP Zeile 41) but does not calculate creditable WHT.
 *   **No loss carry-forward/backward:** Calculations are limited to the specified tax year.
