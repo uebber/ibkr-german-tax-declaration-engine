@@ -22,6 +22,13 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q8 | [GT-FX-006] | How is a short (negative) currency position taxed in Privatvermoegen? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q9 | [GT-FX-007] | Is the currency leg embedded in a foreign securities transaction a separate disposal? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q10 | [GT-FX-001] | Is a foreign-currency balance debited to settle a cash-flow item disposed of, measured separately in EUR? | this file |
+| Q13 | [GT-INVSTG-011] | How does the § 18 Abs. 2 reduction apply to a holding acquired in several tranches, only some of them in the calendar year? | `../investment-tax-law/invstg-18-vorabpauschale.md` |
+
+**Q12 is retired, not free.** It was opened for the day whose Ruecknahmepreis begins the
+Vorabpauschale year and closed on 2026-08-06 -- Rz. 18.3 answers it, and what remained was not a
+legal question. The number is not reused, because prose elsewhere still refers to "Q12" meaning
+that question and a reused number would make those references quietly wrong rather than plainly
+stale.
 
 **Closed 2026-08-03, and recorded here so it is not reopened by habit:** lot identification for
 foreign-currency amounts. It is FIFO under both classifications -- § 23 Abs. 1 Satz 1 Nr. 2 Satz 3
@@ -250,3 +257,43 @@ different Nummer with different loss-offsetting. The three do not converge.
 **Status.** No Tier 1/2 source has been located that addresses unallocated spot metal at a broker
 specifically. Tier 4 constrains the question from both sides without closing it. **Do not resolve
 this from the shape of the product or from what a broker's asset class happens to be called.**
+
+---
+
+## Q13 -- the § 18 Abs. 2 reduction applied to a holding acquired in several tranches
+
+**The provision.** § 18 Abs. 2 InvStG: *"Im Jahr des Erwerbs der Investmentanteile vermindert sich
+die Vorabpauschale um ein Zwoelftel fuer jeden vollen Monat, der dem Monat des Erwerbs
+vorangeht."* Rz. 18.11 of the BMF-Schreiben of 21.05.2019 restates it and adds nothing.
+
+**The question.** Units of one fund are held at the close of 31 December of the calendar year --
+the count Rz. 18.4 multiplies by -- but they were not all acquired at the same time: some in an
+earlier year, some in this one, possibly in different months of it. Abs. 2 names *"das Jahr des
+Erwerbs"* in the singular. Which reduction, if any, applies?
+
+The point decides a declared figure: it scales Anlage KAP-INV Zeilen 9 to 13.
+
+**Reading A -- per acquisition.** The reduction attaches to the units acquired, so each tranche
+carries its own factor: twelve twelfths for units already held when the year opened, and
+(12 - n)/12 for a tranche acquired in the year, n being the number of full months before its
+month of acquisition. *For it:* Abs. 1 is written per Investmentanteil throughout
+([GT-INVSTG-010]), and the unit count enters only at the end through Rz. 18.4, so a per-unit
+reduction is the structure the rest of § 18 already uses. Abs. 2 speaks of *"der Erwerb der
+Investmentanteile"*, an event that happens to units, not to a position. *Against it:* Abs. 2 says
+*"die Vorabpauschale"*, definite and singular, and no located source performs the apportionment.
+
+**Reading B -- the whole holding, or nothing.** *"Im Jahr des Erwerbs der Investmentanteile"*
+characterises the position: the reduction applies where the holding was acquired in the calendar
+year, and a holding carried in from an earlier year is not in its year of acquisition at all, so
+no reduction applies to any of it. *For it:* it takes *"die Vorabpauschale"* at its word as a
+single amount and needs no apportionment rule that the statute does not give. *Against it:* it
+makes the reduction turn on whether any older tranche exists, so buying one additional unit in
+December of a year in which the holding was opened would remove eleven twelfths of a reduction
+from the units bought in January; and for a holding acquired in two different months of the same
+year it still does not say which month governs.
+
+**No Tier 1 or Tier 2 statement on a mixed holding has been located.** Rz. 18.11 restates the
+Absatz without worked examples, and Rz. 18.3's worked example is a single acquisition. Reading B
+is internally consistent only for a holding acquired in one transaction; for the general case it
+leaves *"der Monat des Erwerbs"* undefined, which is an argument against it rather than a located
+authority for A.

@@ -88,6 +88,11 @@ So units bought during the year carry a **reduced** Vorabpauschale, not none: on
 dropped for each full month before the month of acquisition. Units bought in December still
 attract one twelfth.
 
+Abs. 2 names *"das Jahr des Erwerbs"* in the singular, and neither it nor Rz. 18.11 says how it
+applies where the holding counted at the close of 31 December was acquired in several tranches,
+only some of them in the calendar year. Both readings and what supports each are in
+`../research/open-legal-questions.md`, **Q13**.
+
 ### [GT-INVSTG-012] Abs. 3 -- Zuflussfiktion (decides the declaration year)
 
 *"Die Vorabpauschale gilt am ersten Werktag des folgenden Kalenderjahres als zugeflossen."*
