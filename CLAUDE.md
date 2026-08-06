@@ -104,6 +104,11 @@ overhead.
   A test that was never red proves nothing about the fix. Parity without a year is
   unfalsifiable — a change keyed to a form-year rule is identical for one assessment year and
   different for another.
+- **Every input the figure depends on named, and for each, whether the engine could have
+  synthesised it.** Ask it once, in writing, per figure. A field that arrives well-formed from a
+  fallback path reads exactly like a measured one, and the moment it acquires legal meaning it
+  needs a decision — refuse, or cite why the synthesis is harmless. This is the question that
+  catches "we computed it from a date we made up" before the number reaches a form.
 - `ks-maint`: no red-first and no parity — it changes nothing. Instead, **every claim the audit
   touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will
   close it. A row left at `implements` because no code was touched, when the audit just moved the
@@ -280,6 +285,23 @@ in parsing and event creation, `ProcessingError` in the engine. Route "the input
 this computation" conditions through `src/processing/data_gaps.py`, and choose the severity
 honestly — recording a condition as a warning asserts the declared figures are still safe. When you
 do raise, check every case first and report them together, so one run identifies the whole problem.
+
+**A value that is present is not thereby true.** The rule above governs the code that *creates* a
+substitute. This one governs the code that *reads* one, which is where it actually gets believed.
+The engine synthesises values to keep a ledger consistent — a fallback lot's acquisition date, a
+reconstructed cost basis — and downstream they are indistinguishable from measured ones: a
+well-formed date, a plausible amount, nothing missing to trip a check. **Before deriving a declared
+figure from a field, know what produced it.** Where the producer synthesised it, the consumer that
+gives it legal meaning refuses to compute and says which input was invented; it does not assume.
+The synthesis is part of the value and must be carried with it, not left to be inferred from a
+sentinel date or a magic transaction ID.
+
+**There is no safe direction to be wrong.** Understatement versus overstatement ranks a gap that
+has *already been recorded* — it is how loudly the report complains, and nothing more. It is never
+a reason to prefer one wrong figure over another, and never a licence to compute through a gap
+instead of recording it. Any argument of the form "this can only overstate, which is the safer
+side" is an argument for putting a number nobody can check on a tax return. Both directions are
+wrong; the choice is between a figure and no figure, not between two figures.
 
 **Verify your rationale, not just your citations.** A reason given in a comment, a commit message or
 a document is a claim, and a plausible one is the hardest kind to catch. Check it, or mark it

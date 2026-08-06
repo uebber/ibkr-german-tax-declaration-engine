@@ -18,6 +18,16 @@ reads the log. The collector makes the choice explicit and reviewable:
   leaves a divergence the taxpayer has to resolve before filing. Recorded,
   logged, and surfaced as an explicit report section rather than a log line.
 
+**These two words rank a gap. They do not license computing through one.** The
+severities say how loudly the report complains about a condition already
+recorded here; they are not a scale on which one wrong figure beats another.
+An argument of the form "assuming X can only overstate, which is the safer
+side" has already left this channel — it computes a number nobody can check
+instead of recording that the input could not support one. The choice this
+module offers is between a figure and no figure, never between two figures.
+CLAUDE.md, "There is no safe direction to be wrong", states the same rule for
+the engine at large.
+
 Scope, stated precisely because the severity words above are easy to over-read:
 today exactly one condition is routed through this channel — the End-of-Year
 quantity mismatch against the broker's positions report, at WARNING. That
