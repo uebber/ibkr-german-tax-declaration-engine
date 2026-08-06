@@ -104,11 +104,10 @@ overhead.
   A test that was never red proves nothing about the fix. Parity without a year is
   unfalsifiable — a change keyed to a form-year rule is identical for one assessment year and
   different for another.
-- **Every input the figure depends on named, and for each, whether the engine could have
-  synthesised it.** Ask it once, in writing, per figure. A field that arrives well-formed from a
-  fallback path reads exactly like a measured one, and the moment it acquires legal meaning it
-  needs a decision — refuse, or cite why the synthesis is harmless. This is the question that
-  catches "we computed it from a date we made up" before the number reaches a form.
+- **Every input the figure depends on named, and for each, what the code does when it is absent.**
+  Once, in writing, per figure. An input that is always present needs no entry; the entries that
+  matter are those where something is substituted and the run continues, and each of those is
+  either removed or argued in the description.
 - `ks-maint`: no red-first and no parity — it changes nothing. Instead, **every claim the audit
   touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will
   close it. A row left at `implements` because no code was touched, when the audit just moved the
@@ -286,15 +285,22 @@ this computation" conditions through `src/processing/data_gaps.py`, and choose t
 honestly — recording a condition as a warning asserts the declared figures are still safe. When you
 do raise, check every case first and report them together, so one run identifies the whole problem.
 
-**A value that is present is not thereby true.** The rule above governs the code that *creates* a
-substitute. This one governs the code that *reads* one, which is where it actually gets believed.
-The engine synthesises values to keep a ledger consistent — a fallback lot's acquisition date, a
-reconstructed cost basis — and downstream they are indistinguishable from measured ones: a
-well-formed date, a plausible amount, nothing missing to trip a check. **Before deriving a declared
-figure from a field, know what produced it.** Where the producer synthesised it, the consumer that
-gives it legal meaning refuses to compute and says which input was invented; it does not assume.
-The synthesis is part of the value and must be carried with it, not left to be inferred from a
-sentinel date or a magic transaction ID.
+**Derive freely; never invent a stand-in for a missing import.** Computing a value from inputs that
+are all present is fine, and often better than importing it — a per-unit price from a value and a
+count, a position value from a price and a quantity. The arithmetic adds no information and cannot
+be wrong in a way its inputs were not already wrong.
+
+What is forbidden is a value that stands in for an input this run does not have. A fallback lot's
+`acquisition_date` set to `f"{tax_year-1}-12-31"` because the trade history does not reach back far
+enough is not a derivation: it is the missing import wearing its clothes, and downstream it is a
+well-formed date no consumer can tell from a measured one.
+
+- **Never decide it in code.** Standing in for a missing input is a decision about someone's tax
+  return, not an implementation detail. Route it through `src/processing/data_gaps.py` and let the
+  run stop, or ask. Never both invent it and continue.
+- **Never add such a fallback without asking first.** A value missing often enough that you are
+  reaching for a default is a finding to report, not a hole to fill. The fallback hides the missing
+  import that prompted it.
 
 **There is no safe direction to be wrong.** Understatement versus overstatement ranks a gap that
 has *already been recorded* — it is how loudly the report complains, and nothing more. It is never
