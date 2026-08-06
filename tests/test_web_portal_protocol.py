@@ -30,6 +30,7 @@ from src.web_portal.flex_portal import (
     PageRequestTransport,
     PortalError,
     PortalFlexClient,
+    ReportRequest,
     batch_entry_matches,
     build_run_options,
     config_id_matches,
@@ -572,6 +573,269 @@ class TestRunAndCollect:
                                progress=said.append, sleep=lambda _: None)
 
         assert any("already had" in line for line in said), said
+
+
+class ScriptedPortal(PortalFlexClient):
+    """
+    A portal that queues everything and finishes each report after a set
+    number of polls, so concurrency is observable without a clock.
+
+    Records the order of calls, which is the whole point: the defect being
+    fixed is not that anything was computed wrongly, it is that the calls
+    were made in the wrong order.
+    """
+
+    def __init__(self, ready_after: dict, immediate=(), refuse=(),
+                 die_after_polls=None, die_after_requests=None, report=CSV):
+        super().__init__(transport=None)
+        self.ready_after = dict(ready_after)     # query_id -> polls to finish
+        self.immediate = set(immediate)          # answered without queueing
+        self.refuse = dict(refuse)               # query_id -> exception
+        self.die_after_polls = die_after_polls
+        self.die_after_requests = die_after_requests
+        self.report = report
+        self.calls: list[str] = []               # "run:<id>" / "list" / "fetch:<id>"
+        self.polls = 0
+        self.requests_made = 0
+        self._queued: dict[str, int] = {}        # config_id -> poll it was queued
+
+    @staticmethod
+    def _cfg(query_id, from_date, to_date):
+        return (f"U1_U1_{from_date:%Y%m%d}_{to_date:%Y%m%d}"
+                f"_AF_{query_id}_hash.csv")
+
+    def request_report(self, query_id, from_date, to_date, query_type="AF"):
+        self.calls.append(f"run:{query_id}")
+        self.requests_made += 1
+        if (self.die_after_requests is not None
+                and self.requests_made > self.die_after_requests):
+            raise NotAuthenticatedError("Portal session rejected (HTTP 603).")
+        if query_id in self.refuse:
+            raise self.refuse[query_id]
+        if query_id in self.immediate:
+            return self.report
+        self._queued[self._cfg(query_id, from_date, to_date)] = self.polls
+        return None
+
+    def list_batch_requests(self):
+        self.calls.append("list")
+        self.polls += 1
+        if self.die_after_polls is not None and self.polls > self.die_after_polls:
+            raise NotAuthenticatedError("Portal session rejected (HTTP 603).")
+        entries = []
+        for config_id, queued_at in self._queued.items():
+            query_id = int(config_id.split("_AF_")[1].split("_")[0])
+            done = self.polls - queued_at >= self.ready_after.get(query_id, 1)
+            entries.append(BatchRequest(config_id, "S" if done else "I",
+                                        f"Report {query_id}", "", "csv"))
+        return entries
+
+    def fetch_report(self, config_id):
+        self.calls.append(f"fetch:{config_id}")
+        return self.report
+
+
+def _req(key, query_id, year=2022):
+    return ReportRequest(key, query_id, date(year, 1, 1), date(year, 12, 31),
+                         label=key)
+
+
+class TestRunAndCollectMany:
+    """
+    The portal queues batch jobs in parallel and the batch list reports on all
+    of them at once, so waiting for one report before asking for the next is
+    pure waste — and worse than waste, because the session expires after about
+    fifteen minutes whatever the downloader is doing.
+
+    Measured on the run of 2026-08-06 09:54: five reports sat in the batch
+    list together and three finished while others were still queued, yet one
+    report that could not be matched held the queue for 843 seconds and the
+    session then died owing twenty-four reports that had never been asked for.
+    """
+
+    def test_every_report_is_requested_before_any_is_waited_for(self):
+        """The property the whole restructure exists for."""
+        portal = ScriptedPortal(ready_after={1: 1, 2: 1, 3: 1})
+        requests = [_req("a", 1), _req("b", 2), _req("c", 3)]
+
+        list(portal.run_and_collect_many(requests, sleep=lambda _: None))
+
+        runs = [i for i, c in enumerate(portal.calls) if c.startswith("run:")]
+        # Nothing may be polled between the first request and the last one.
+        # Asserting only that *a* poll follows the last request is vacuous —
+        # it holds for the serial version too, which is how this test first
+        # went green against the very code it was meant to reject.
+        assert "list" not in portal.calls[runs[0]:runs[-1]], portal.calls
+
+    def test_one_poll_of_the_batch_list_serves_every_pending_report(self):
+        """
+        Three reports that each need three polls must not cost nine polls.
+        Serially they would.
+        """
+        portal = ScriptedPortal(ready_after={1: 3, 2: 3, 3: 3})
+        requests = [_req("a", 1), _req("b", 2), _req("c", 3)]
+
+        outcomes = list(portal.run_and_collect_many(requests,
+                                                    sleep=lambda _: None))
+
+        assert all(o.ok for o in outcomes)
+        assert portal.polls <= 4, f"{portal.polls} polls for three reports"
+
+    def test_a_slow_report_does_not_hold_up_a_fast_one(self):
+        """
+        The 843-second failure in miniature: one report that never ripens must
+        not delay the ones that already have.
+        """
+        portal = ScriptedPortal(ready_after={1: 1, 2: 50})
+        requests = [_req("slow", 2), _req("fast", 1)]
+
+        first = next(iter(portal.run_and_collect_many(
+            requests, timeout_seconds=600, sleep=lambda _: None)))
+
+        assert first.request.key == "fast"
+
+    def test_a_report_answered_immediately_is_never_queued(self):
+        portal = ScriptedPortal(ready_after={}, immediate={7})
+
+        outcomes = list(portal.run_and_collect_many([_req("now", 7)],
+                                                    sleep=lambda _: None))
+
+        assert [o.csv for o in outcomes] == [CSV]
+        assert not any(c.startswith("fetch:") for c in portal.calls)
+
+    def test_one_refusal_does_not_stop_the_rest(self):
+        portal = ScriptedPortal(ready_after={1: 1, 3: 1},
+                                refuse={2: PortalError("too much data")})
+        requests = [_req("a", 1), _req("bad", 2), _req("c", 3)]
+
+        outcomes = {o.request.key: o
+                    for o in portal.run_and_collect_many(requests,
+                                                         sleep=lambda _: None)}
+
+        assert outcomes["a"].ok and outcomes["c"].ok
+        assert not outcomes["bad"].ok
+        assert "too much data" in str(outcomes["bad"].error)
+
+    def test_no_data_is_reported_as_itself_not_as_a_failure(self):
+        portal = ScriptedPortal(
+            ready_after={1: 1},
+            refuse={2: NoStatementAvailableError("nothing held that day")})
+
+        outcomes = {o.request.key: o
+                    for o in portal.run_and_collect_many(
+                        [_req("a", 1), _req("empty", 2)], sleep=lambda _: None)}
+
+        assert isinstance(outcomes["empty"].error, NoStatementAvailableError)
+
+    def test_a_lost_session_ends_the_run_and_accounts_for_what_was_pending(self):
+        """
+        Every request must come back with an outcome. Twenty-four reports
+        vanished into "not attempted" once; nothing may simply not be
+        mentioned.
+        """
+        portal = ScriptedPortal(ready_after={1: 99, 2: 99, 3: 99},
+                                die_after_polls=1)
+        requests = [_req("a", 1), _req("b", 2), _req("c", 3)]
+
+        outcomes = list(portal.run_and_collect_many(requests,
+                                                    timeout_seconds=600,
+                                                    sleep=lambda _: None))
+
+        assert {o.request.key for o in outcomes} == {"a", "b", "c"}
+        assert all(isinstance(o.error, NotAuthenticatedError) for o in outcomes)
+
+    def test_no_more_than_the_window_is_queued_at_the_portal(self):
+        """
+        Parallel, but not a flood. Thirty simultaneous batch jobs is a burst
+        the portal has never been asked for and may refuse outright.
+        """
+        portal = ScriptedPortal(ready_after={i: 3 for i in range(1, 31)})
+        requests = [_req(f"r{i}", i) for i in range(1, 31)]
+
+        in_flight_at_first_poll = None
+        for _ in portal.run_and_collect_many(requests, max_in_flight=10,
+                                             sleep=lambda _: None):
+            if in_flight_at_first_poll is None:
+                first = portal.calls.index("list", 1)
+                in_flight_at_first_poll = sum(
+                    1 for c in portal.calls[:first] if c.startswith("run:"))
+        assert in_flight_at_first_poll == 10, portal.calls[:15]
+
+    def test_the_window_is_topped_up_as_reports_land(self):
+        """A slot freed by a finished report is refilled, not left idle."""
+        portal = ScriptedPortal(ready_after={i: 1 for i in range(1, 26)})
+        requests = [_req(f"r{i}", i) for i in range(1, 26)]
+
+        outcomes = list(portal.run_and_collect_many(requests, max_in_flight=5,
+                                                    sleep=lambda _: None))
+
+        assert len(outcomes) == 25 and all(o.ok for o in outcomes)
+        # Five at a time finishing in one poll each: nothing like 25 polls.
+        assert portal.polls <= 8, f"{portal.polls} polls for 25 reports"
+
+    def test_a_report_answered_on_the_spot_does_not_occupy_a_slot(self):
+        """
+        The small snapshot and cash-balance reports come straight back with no
+        batch job behind them. Counting those against the window would throttle
+        the run against work that is already finished.
+        """
+        immediate = set(range(1, 21))
+        portal = ScriptedPortal(ready_after={99: 1}, immediate=immediate)
+        requests = [_req(f"r{i}", i) for i in immediate] + [_req("batch", 99)]
+
+        outcomes = list(portal.run_and_collect_many(requests, max_in_flight=2,
+                                                    sleep=lambda _: None))
+
+        assert len(outcomes) == 21 and all(o.ok for o in outcomes)
+        # All twenty went out before the batch report was ever polled for.
+        first_poll = portal.calls.index("list", 1)
+        assert sum(1 for c in portal.calls[:first_poll]
+                   if c.startswith("run:")) == 21
+
+    def test_a_lost_session_accounts_for_the_backlog_too(self):
+        """
+        With a window, some requests have not been made when the session dies
+        — three in flight, one refused mid-request, sixteen never asked for.
+        All twenty must be reported. Losing twenty-four reports to a silent
+        "not attempted" is the failure this whole change is about, and the
+        backlog is where they would now go missing.
+        """
+        portal = ScriptedPortal(ready_after={i: 1 for i in range(1, 21)},
+                                die_after_requests=4)
+        requests = [_req(f"r{i}", i) for i in range(1, 21)]
+
+        outcomes = list(portal.run_and_collect_many(requests, max_in_flight=3,
+                                                    timeout_seconds=600,
+                                                    sleep=lambda _: None))
+
+        # Three got through; the fifth request is the one that hits the dead
+        # session, so the fourth was in flight and is lost with it. Every one
+        # of the other seventeen is still accounted for.
+        assert {o.request.key for o in outcomes} == {f"r{i}" for i in range(1, 21)}
+        assert sum(1 for o in outcomes if o.ok) == 3
+        assert sum(1 for o in outcomes
+                   if isinstance(o.error, NotAuthenticatedError)) == 17
+
+        # And the ones never asked for say exactly that, rather than reading
+        # as reports the portal failed to produce.
+        never_asked = [o for o in outcomes if "not requested" in str(o.error)]
+        assert len(never_asked) == 15, [str(o.error) for o in outcomes]
+
+    def test_each_report_is_timed_out_on_its_own(self):
+        """
+        One report outliving the timeout must not condemn the others, and its
+        own message still has to say re-running is cheap.
+        """
+        portal = ScriptedPortal(ready_after={1: 1, 2: 10_000})
+        requests = [_req("ok", 1), _req("late", 2)]
+
+        outcomes = {o.request.key: o
+                    for o in portal.run_and_collect_many(
+                        requests, timeout_seconds=0, sleep=lambda _: None)}
+
+        assert outcomes["ok"].ok
+        assert not outcomes["late"].ok
+        assert "re-running" in str(outcomes["late"].error)
 
 
 class FakeFrame_:

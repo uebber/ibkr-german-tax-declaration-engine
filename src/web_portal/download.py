@@ -9,9 +9,14 @@ README documents as a manual procedure. This runs that procedure.
 
 A browser opens; log in yourself, including two-factor. Your password is never
 asked for, stored or recorded. Once the portal answers as a logged-in user, the
-downloader runs each configured query for each requested year, waits for the
-portal's batch processing, and writes the results into data_import/ under the
-naming scheme the engine expects.
+downloader asks for every configured query over every requested year, then
+collects the reports as the portal finishes them, writing each into
+data_import/ under the naming scheme the engine expects as soon as it arrives.
+
+Reports are requested in parallel — several at a time, topped up as each one
+lands — rather than one at a time, because the portal queues batch jobs
+concurrently and ends a session after about fifteen minutes regardless of what
+the downloader is doing.
 
 Existing files are never overwritten unless --overwrite is given: data_import/
 is the engine's source of truth for input, and silently replacing a year of
@@ -46,7 +51,9 @@ from src.web_portal.flex_portal import (
     FlexQuery,
     PageRequestTransport,
     PortalError,
+    MAX_REPORTS_IN_FLIGHT,
     PortalFlexClient,
+    ReportRequest,
     normalise_query_name,
     strip_name_prefix,
 )
@@ -389,12 +396,24 @@ def download_targets(client: PortalFlexClient, targets: list[DownloadTarget],
                      import_dir: Path = IMPORT_DIR, overwrite: bool = False,
                      poll_seconds: float = 10.0,
                      timeout_seconds: float = 900.0,
+                     max_in_flight: int = MAX_REPORTS_IN_FLIGHT,
                      sleep=time.sleep) -> tuple[list[Path], list[str], list[str]]:
     """
-    Run every target, collecting failures rather than stopping at the first.
+    Ask the portal for every target, then write each report as it arrives.
 
-    One run should tell you everything that is wrong with the request, not the
-    first thing.
+    Several targets are in flight at once, topped up as reports land, rather
+    than one at a time. The portal queues batch jobs in parallel and reports
+    on all of them in one list, so waiting for each in turn only spends the
+    session — and the session is the scarce thing, since the portal ends it
+    after about fifteen minutes regardless. See
+    PortalFlexClient.run_and_collect_many.
+
+    Each report is written the moment it is collected rather than at the end,
+    so a session lost half way through still leaves everything that had
+    already been fetched on disk.
+
+    Failures are collected rather than stopping the run: one run should tell
+    you everything that is wrong with the request, not the first thing.
 
     Returns:
         (paths written, failure descriptions, reports the portal had no data
@@ -404,49 +423,50 @@ def download_targets(client: PortalFlexClient, targets: list[DownloadTarget],
     failures: list[str] = []
     empty: list[str] = []
 
-    for index, target in enumerate(targets, start=1):
-        out = import_dir / target.filename
-        if out.exists() and not overwrite:
-            print(f"[{index}/{len(targets)}] {target.label}: "
-                  f"{target.filename} already present, skipping")
-            continue
+    wanted: list[DownloadTarget] = []
+    for target in targets:
+        if (import_dir / target.filename).exists() and not overwrite:
+            print(f"{target.label}: {target.filename} already present, skipping")
+        else:
+            wanted.append(target)
 
-        print(f"[{index}/{len(targets)}] {target.label} -> {target.filename}")
-        try:
-            csv_text = client.run_and_collect(
-                target.query_id, target.from_date, target.to_date,
-                poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
-                query_name=target.query_name, progress=print, sleep=sleep)
-        except NoStatementAvailableError as e:
+    if not wanted:
+        return written, failures, empty
+
+    by_key = {target.filename: target for target in wanted}
+    requests = [
+        ReportRequest(key=target.filename, query_id=target.query_id,
+                      from_date=target.from_date, to_date=target.to_date,
+                      query_name=target.query_name, label=target.label)
+        for target in wanted]
+
+    print(f"Requesting {len(requests)} report(s) from the portal, "
+          f"up to {max_in_flight} at a time...")
+    done = 0
+    for outcome in client.run_and_collect_many(
+            requests, poll_seconds=poll_seconds,
+            timeout_seconds=timeout_seconds, max_in_flight=max_in_flight,
+            progress=print, sleep=sleep):
+        target = by_key[outcome.request.key]
+        done += 1
+        prefix = f"[{done}/{len(requests)}] {target.label}"
+
+        if outcome.ok:
+            print(f"{prefix} -> {target.filename}")
+            path = write_report(outcome.csv, target.filename, import_dir,
+                                overwrite)
+            if path is not None:
+                written.append(path)
+        elif isinstance(outcome.error, NoStatementAvailableError):
             # An answer, not a fault: there is nothing to report for that date.
             # Written down rather than passed over, because "no data" for a
             # year you traded in would matter.
-            print(f"  no data: {e}")
+            print(f"{prefix}: no data: {outcome.error}")
             empty.append(f"{target.label} ({target.filename})")
-            continue
-        except NotAuthenticatedError as e:
-            # Every remaining target would fail the same way against a dead
-            # session, and each attempt is another minute of waiting for an
-            # answer that cannot come.
-            print(f"  FAILED: {e}")
-            failures.append(f"{target.label} ({target.filename}): {e}")
-            not_attempted = targets[index:]
-            if not_attempted:
-                print(f"  Stopping: {len(not_attempted)} further report(s) "
-                      "not attempted because the session is gone.")
-                failures.extend(
-                    f"{other.label} ({other.filename}): not attempted — "
-                    "session lost earlier in the run"
-                    for other in not_attempted)
-            break
-        except PortalError as e:
-            print(f"  FAILED: {e}")
-            failures.append(f"{target.label} ({target.filename}): {e}")
-            continue
-
-        path = write_report(csv_text, target.filename, import_dir, overwrite)
-        if path is not None:
-            written.append(path)
+        else:
+            print(f"{prefix}: FAILED: {outcome.error}")
+            failures.append(f"{target.label} ({target.filename}): "
+                            f"{outcome.error}")
 
     return written, failures, empty
 
@@ -454,7 +474,8 @@ def download_targets(client: PortalFlexClient, targets: list[DownloadTarget],
 def run(years: list[int], selected: Optional[list[str]], portal_url: str,
         profile_dir: Path, channel: Optional[str], import_dir: Path,
         overwrite: bool, poll_seconds: float, timeout_seconds: float,
-        name_prefix: Optional[str] = None, record: bool = False) -> int:
+        name_prefix: Optional[str] = None, record: bool = False,
+        max_in_flight: int = MAX_REPORTS_IN_FLIGHT) -> int:
     """Open a session, download everything requested, and report. Returns exit code."""
     require_playwright()
 
@@ -591,7 +612,7 @@ def run(years: list[int], selected: Optional[list[str]], portal_url: str,
         try:
             written, failures, empty = download_targets(
                 client, targets, import_dir, overwrite, poll_seconds,
-                timeout_seconds, sleep=pump)
+                timeout_seconds, max_in_flight, sleep=pump)
         finally:
             if recorder is not None:
                 recorder.marker("run-end")
@@ -662,7 +683,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--poll-seconds", type=float, default=10.0,
                         help="How often to check the portal's batch list")
     parser.add_argument("--timeout-seconds", type=float, default=900.0,
-                        help="How long to wait for one report before moving on. A report that outlives this keeps generating in the portal; re-running collects it from the batch list without regenerating it.")
+                        help="How long to wait for any one report, measured from when it was queued. Reports are waited for concurrently, so this is not a budget for the whole run. A report that outlives it keeps generating in the portal; re-running collects it from the batch list without regenerating it.")
+    parser.add_argument("--max-in-flight", type=int,
+                        default=MAX_REPORTS_IN_FLIGHT,
+                        help="How many reports to keep queued at the portal at "
+                             f"once (default {MAX_REPORTS_IN_FLIGHT}). Reports "
+                             "the portal answers immediately do not count "
+                             "against it.")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -692,10 +719,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     name_prefix = args.query_name_prefix or config.FLEX_QUERY_NAME_PREFIX
 
     try:
+        if args.max_in_flight < 1:
+            parser.error("--max-in-flight must be at least 1")
+
         return run(years, args.queries, args.portal_url, args.profile_dir,
                    channel, args.import_dir, args.overwrite,
                    args.poll_seconds, args.timeout_seconds, name_prefix,
-                   args.record)
+                   args.record, args.max_in_flight)
     except KeyboardInterrupt:
         print("\nInterrupted. Files already written are kept; reports still "
               "generating in the portal are collected on the next run.",

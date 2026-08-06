@@ -317,11 +317,14 @@ has Chrome's password manager disabled so the browser cannot save it either.
 Your username can be remembered with `--username`, which writes it to the
 gitignored `private/portal_username`.
 
-Once the portal answers as a logged-in user, each query runs for each requested
-year. The portal answers small reports immediately and queues larger ones for
-batch processing; the downloader waits for those instead of needing a manual
-page refresh. Results are written to `data_import/` under the naming scheme
-below. **Existing files are never replaced** unless you pass `--overwrite`.
+Once the portal answers as a logged-in user, every query is asked for over
+every requested year, and the reports are then collected as the portal
+finishes them. Small ones come back immediately; larger ones are queued for
+batch processing, and the portal runs those in parallel — so nothing waits its
+turn, and a slow report does not hold up the ones behind it. Each result is
+written to `data_import/` the moment it arrives, under the naming scheme below.
+**Existing files are never replaced** unless you pass `--overwrite`; a file
+already present is not requested from the portal at all.
 
 **Leave the browser window open and do not log out in it.** The portal ends a
 session after about fifteen minutes without user activity, and neither its own

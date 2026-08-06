@@ -35,7 +35,9 @@ from src.web_portal.flex_portal import (
     FLEX_QUERIES_URL,
     FlexQuery,
     NoStatementAvailableError,
+    NotAuthenticatedError,
     PortalError,
+    ReportOutcome,
 )
 
 ALL_IDS = {
@@ -316,12 +318,16 @@ class StubClient:
         self.calls = []
         self.kwargs = []
 
-    def run_and_collect(self, query_id, from_date, to_date, **kwargs):
-        self.calls.append((query_id, from_date, to_date))
-        self.kwargs.append(kwargs)
-        if query_id in self.failures:
-            raise PortalError(f"query {query_id} failed")
-        return self.report
+    def run_and_collect_many(self, requests, **kwargs):
+        for request in requests:
+            self.calls.append((request.query_id, request.from_date,
+                               request.to_date))
+            self.kwargs.append(request)
+            if request.query_id in self.failures:
+                yield ReportOutcome(request, error=PortalError(
+                    f"query {request.query_id} failed"))
+            else:
+                yield ReportOutcome(request, csv=self.report)
 
 
 class TestTheQueryNameReachesTheMatcher:
@@ -357,7 +363,7 @@ class TestTheQueryNameReachesTheMatcher:
 
         download_targets(client, targets, tmp_path)
 
-        assert client.kwargs[0]["query_name"] == "MyTax Trades"
+        assert client.kwargs[0].query_name == "MyTax Trades"
 
 
 class TestDownloadTargets:
@@ -378,6 +384,46 @@ class TestDownloadTargets:
                                              "Corporate_Actions-2021.csv"}
         assert len(failures) == 1
         assert "Cash_Transactions-2021.csv" in failures[0]
+
+    def test_a_report_is_written_before_the_next_one_is_collected(self, tmp_path):
+        """
+        The other half of queue-then-collect: results arrive over minutes, and
+        the session can die at any point in that window. Anything already
+        fetched has to be on disk before the next one is waited for, or a
+        session lost at report twelve throws away eleven.
+        """
+        seen_on_disk = []
+
+        class WatchingClient:
+            def run_and_collect_many(self, requests, **kwargs):
+                for request in requests:
+                    seen_on_disk.append(sorted(p.name for p in tmp_path.iterdir()))
+                    yield ReportOutcome(request, csv=CSV)
+
+        targets = build_targets([2021], ALL_IDS, ["trades", "cash_transactions",
+                                                  "corporate_actions"])
+        download_targets(WatchingClient(), targets, tmp_path)
+
+        # By the time the third report is produced, the first two are written.
+        assert seen_on_disk[0] == []
+        assert len(seen_on_disk[2]) == 2, seen_on_disk
+
+    def test_a_session_lost_part_way_keeps_what_was_already_fetched(self, tmp_path):
+        class DyingClient:
+            def run_and_collect_many(self, requests, **kwargs):
+                requests = list(requests)
+                yield ReportOutcome(requests[0], csv=CSV)
+                for request in requests[1:]:
+                    yield ReportOutcome(request, error=NotAuthenticatedError(
+                        "Portal session rejected (HTTP 603)."))
+
+        targets = build_targets([2021], ALL_IDS, ["trades", "cash_transactions",
+                                                  "corporate_actions"])
+        written, failures, empty = download_targets(DyingClient(), targets, tmp_path)
+
+        assert [p.name for p in written] == ["Trades-2021.csv"]
+        assert (tmp_path / "Trades-2021.csv").exists()
+        assert len(failures) == 2
 
     def test_existing_files_are_not_re_downloaded(self, tmp_path):
         (tmp_path / "Trades-2021.csv").write_text("already here", encoding="utf-8-sig")
@@ -448,9 +494,10 @@ class TestNoDataIsNotAFailure:
         write a file, and must not be passed over in silence either.
         """
         class NoDataClient:
-            def run_and_collect(self, query_id, from_date, to_date, **kwargs):
-                raise NoStatementAvailableError(
-                    "No statement for query 1 over 2021-01-01..2021-01-01")
+            def run_and_collect_many(self, requests, **kwargs):
+                for request in requests:
+                    yield ReportOutcome(request, error=NoStatementAvailableError(
+                        "No statement for query 1 over 2021-01-01..2021-01-01"))
 
         targets = build_targets([2021], ALL_IDS, ["positions"])
         written, failures, empty = download_targets(

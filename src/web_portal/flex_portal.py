@@ -19,6 +19,11 @@ one:
    on page load, which is why running a query by hand needs a manual refresh
    before the download link appears. Polled directly, no refresh is involved.
 
+   Reports queue in parallel and this lists all of them together, so step 1 is
+   done for a whole batch of reports before step 2 is done for any of them —
+   see run_and_collect_many. Waiting for one report before asking for the next
+   costs session time, and the session is what runs out.
+
 3. GET /AccountManagement/BatchStatements?action=FETCH_REPORT&configId=<id>
    Returns the report. The browser turns it into a blob download.
 
@@ -37,7 +42,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Iterable, Optional
 from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
@@ -91,8 +96,23 @@ _PENDING_STATUSES = frozenset({STATUS_IN_PROGRESS, STATUS_QUEUED})
 # range is given to be superseded before it is reported as this run's. The
 # configId carries no run instance, so between the portal accepting a request
 # and listing it there is a window in which last run's failure is the only
-# entry that matches — see run_and_collect.
+# entry that matches — see _resolve_pending.
 STALE_FAILURE_GRACE_SECONDS = 60.0
+
+# How many batch reports to keep queued at the portal at once.
+#
+# The portal takes them in parallel — five were seen in the batch list
+# together, three finishing while the others were still queued — and the win
+# is entirely in not making report N+1 wait for report N. That win is had at
+# ten as fully as at thirty-five, and thirty-five simultaneous batch jobs is a
+# burst this project has never asked for and the portal has every right to
+# refuse. Reports the portal answers immediately do not occupy a slot: they
+# are finished, not in flight.
+MAX_REPORTS_IN_FLIGHT = 10
+
+# How many outstanding reports to name in a progress line before eliding the
+# rest, with the elision stated rather than silent.
+_PROGRESS_MAX_NAMED = 4
 
 _TERMINAL_FAILURES = {
     STATUS_FAILED: "the report failed to generate",
@@ -453,6 +473,60 @@ def _as_query_id(value) -> Optional[int]:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+@dataclass(frozen=True)
+class ReportRequest:
+    """
+    One query over one date range, as asked of the portal.
+
+    `key` is the caller's own handle — a filename, say — echoed back on the
+    outcome. Nothing here reads it; it exists so the caller does not have to
+    match results back by comparing dates.
+    """
+    key: str
+    query_id: int
+    from_date: date
+    to_date: date
+    query_name: Optional[str] = None
+    query_type: str = QUERY_TYPE_ACTIVITY_FLEX
+    label: str = ""
+
+    def describe(self) -> str:
+        return (self.label
+                or f"query {self.query_id} for {self.from_date}..{self.to_date}")
+
+
+@dataclass(frozen=True)
+class ReportOutcome:
+    """What became of one ReportRequest. Exactly one of csv/error is set."""
+    request: ReportRequest
+    csv: Optional[str] = None
+    error: Optional[PortalError] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.csv is not None
+
+
+@dataclass
+class _PendingReport:
+    """A queued report the collection loop is still waiting on."""
+    request: ReportRequest
+    pre_existing: set
+    queued_at: float
+
+    def age(self) -> float:
+        return time.monotonic() - self.queued_at
+
+    def expired(self, timeout_seconds: float) -> bool:
+        return self.age() >= timeout_seconds
+
+    def describe(self, listed, is_ours) -> str:
+        statuses = sorted(entry.status_code for entry in listed
+                          if is_ours(entry, self.request))
+        return (f"{self.request.describe()} "
+                f"({', '.join(statuses) or 'not listed yet'})")
 
 
 @dataclass(frozen=True)
@@ -919,149 +993,335 @@ class PortalFlexClient:
         """
         Run one query over one date range and return the report as CSV.
 
-        Reports already queued under the same parameters before this call are
-        recorded first, so a stale entry — in particular a stale *failed* one —
-        is not mistaken for the run this method started.
+        One report's worth of run_and_collect_many. Nothing in this package
+        calls it — the downloader queues everything at once — but a single
+        report is a real thing to want, and this raises rather than handing
+        back an outcome to inspect.
 
-        That distinction is harder than it looks, because the configId carries
-        no run instance: it is
-        <acct>_<acct>_<from>_<to>_<queryType>_<queryId>_<hash>, and a repeat of
-        the same query over the same range lands on the same string. So "an
-        entry this call created" may never appear, and a pre-existing entry is
-        the only thing there is to read. Two consequences, both handled below:
-        a pre-existing *failure* is given `stale_failure_grace_seconds` to be
-        superseded before it is believed, and a pre-existing *ready* report is
-        used but announced, because it was not generated by this call.
+        It delegates rather than repeating the rules. The stale-entry handling
+        is subtle enough that two copies would drift, and the tests that drive
+        this method are the ones covering that handling: they exercise the
+        shared engine through the narrow door.
 
         Raises:
             PortalError: On a failed, held or undeliverable report, or when the
                 report does not become ready within timeout_seconds.
         """
-        def is_ours(entry) -> bool:
-            return batch_entry_matches(entry, query_id, from_date, to_date,
-                                       query_type, query_name)
+        request = ReportRequest("", query_id, from_date, to_date, query_name,
+                                query_type)
+        outcome = next(iter(self.run_and_collect_many(
+            [request], poll_seconds=poll_seconds,
+            timeout_seconds=timeout_seconds,
+            stale_failure_grace_seconds=stale_failure_grace_seconds,
+            sleep=sleep, progress=progress)))
+        if outcome.error is not None:
+            raise outcome.error
+        return outcome.csv
 
-        pre_existing = {entry.config_id
-                        for entry in self.list_batch_requests() if is_ours(entry)}
+    def run_and_collect_many(self, requests: "Iterable[ReportRequest]",
+                             poll_seconds: float = 10.0,
+                             timeout_seconds: float = 900.0,
+                             stale_failure_grace_seconds: float = STALE_FAILURE_GRACE_SECONDS,
+                             max_in_flight: int = MAX_REPORTS_IN_FLIGHT,
+                             sleep=time.sleep, progress=None):
+        """
+        Run every request, then collect the reports as they ripen.
 
-        immediate = self.request_report(query_id, from_date, to_date, query_type)
-        if immediate is not None:
-            return immediate
+        Yields:
+            ReportOutcome per request, in completion order, as each finishes.
+            Every request yields exactly once.
 
-        deadline = time.monotonic() + timeout_seconds
-        started = time.monotonic()
-        last_status = None
+        The portal queues batch jobs in parallel and its batch list reports on
+        all of them at once, so asking for one report, waiting for it, and only
+        then asking for the next is pure waste. Worse than waste: the portal
+        ends a session after about fifteen minutes whatever the downloader is
+        doing, which makes serial waiting a way to run out of session with most
+        of the work never requested. That is not hypothetical — on 2026-08-06 a
+        single report that could not be matched held the queue for 843 seconds
+        and the session died owing twenty-four reports that had never been
+        asked for.
+
+        So: up to `max_in_flight` reports are queued at the portal at once, one
+        poll of the batch list serves all of them, and a slot is refilled from
+        the backlog as soon as the report holding it lands. Wall-clock becomes
+        roughly the slowest report rather than the sum, and outcomes are
+        yielded the moment they are settled so the caller can write each report
+        to disk before anything else can go wrong.
+
+        Not unbounded, because "as many as possible" was never the point.
+        Thirty-five simultaneous batch jobs is a burst the portal has never
+        been asked for and may refuse; what matters is only that report N+1
+        does not wait behind report N. Reports the portal answers on the spot —
+        the small snapshots and cash balances — never occupy a slot at all,
+        since they are finished rather than in flight.
+
+        Two subtleties, both about telling our run's entry from an older one.
+        The configId carries no run instance — it is
+        <acct>_<acct>_<from>_<to>_<queryType>_<queryId>_<hash> — so a repeat of
+        the same query over the same range lands on the same string, and "an
+        entry this call created" may never appear at all. Therefore a
+        pre-existing *failure* is given `stale_failure_grace_seconds` to be
+        superseded before it is believed, and a pre-existing *ready* report is
+        used but announced, because it was not generated by this call.
+
+        `timeout_seconds` is per report, measured from when that report was
+        queued, so one slow report cannot condemn the others.
+        """
+        requests = list(requests)
+        if not requests:
+            return
+
+        def is_ours(entry, request) -> bool:
+            return batch_entry_matches(entry, request.query_id,
+                                       request.from_date, request.to_date,
+                                       request.query_type, request.query_name)
+
+        # One snapshot before anything is queued, so every request can tell
+        # what was already there from what it puts there.
+        try:
+            already_listed = self.list_batch_requests()
+        except PortalError as e:
+            if isinstance(e, NotAuthenticatedError):
+                for request in requests:
+                    yield ReportOutcome(request, error=e)
+                return
+            # Not fatal: without the snapshot every entry looks fresh, which
+            # is the pre-2026-08 behaviour and only costs the stale-entry
+            # protection.
+            logger.warning("Could not read the batch list before queueing "
+                           "(%s); pre-existing reports cannot be told apart "
+                           "from this run's.", e)
+            already_listed = []
+
+        # -- ask for as many as may be in flight, then collect --------------
+        #
+        # Not all of them at once. The portal takes batch jobs in parallel,
+        # but a hundred queued reports is a burst it has never been asked for
+        # and has every right to refuse; MAX_REPORTS_IN_FLIGHT keeps a working
+        # set going and tops it up as reports land. The point was never "all
+        # at once" — it is that nothing waits its turn behind a report that
+        # has nothing to do with it.
+        backlog = list(requests)
+        pending: list[_PendingReport] = []
+        first_request = True
+
+        def queue_more():
+            """
+            Fill the in-flight window from the backlog.
+
+            Yields outcomes for anything settled on the spot: a refusal, or a
+            report the portal simply hands back. Those do not occupy a slot —
+            a small snapshot or cash-balance report comes straight down the
+            first call with no batch job behind it, so counting it as in
+            flight would throttle the run against work that is already done.
+            """
+            nonlocal first_request
+            while backlog and len(pending) < max_in_flight:
+                request = backlog.pop(0)
+
+                # Between requests, not before the first and not after the
+                # last: queueing takes minutes at this scale, and nothing else
+                # here gives Playwright a chance to deliver events or the
+                # session a chance to be kept awake.
+                if not first_request:
+                    sleep(0)
+                first_request = False
+
+                try:
+                    immediate = self.request_report(
+                        request.query_id, request.from_date, request.to_date,
+                        request.query_type)
+                except NotAuthenticatedError as e:
+                    # Every remaining request would fail the same way, and
+                    # each attempt is another wait for an answer that cannot
+                    # come. Account for all of them, including whatever is
+                    # still in flight, and stop.
+                    yield ReportOutcome(request, error=e)
+                    for item in pending:
+                        yield ReportOutcome(item.request, error=e)
+                    for other in backlog:
+                        yield ReportOutcome(other, error=NotAuthenticatedError(
+                            "not requested — the portal session was lost "
+                            "earlier in the run"))
+                    pending.clear()
+                    backlog.clear()
+                    return
+                except PortalError as e:
+                    # Includes NoStatementAvailableError, which is an answer
+                    # rather than a fault; the caller tells them apart by type.
+                    yield ReportOutcome(request, error=e)
+                    continue
+
+                if immediate is not None:
+                    yield ReportOutcome(request, csv=immediate)
+                    continue
+
+                pending.append(_PendingReport(
+                    request=request,
+                    pre_existing={entry.config_id for entry in already_listed
+                                  if is_ours(entry, request)},
+                    queued_at=time.monotonic()))
+
+                if progress is not None:
+                    progress(f"    queued {request.describe()}")
+
+        # -- one poll serves all of them -------------------------------------
         listed: list[BatchRequest] = []
         polls = 0
+        collecting_since = time.monotonic()
 
         while True:
+            # Top up first, so a slot freed by a finished report is refilled
+            # before the next poll rather than after it. Each call drains at
+            # least one item from the backlog whenever the window has room,
+            # which is what makes the `continue` below terminate.
+            yield from queue_more()
+            if not pending:
+                if backlog:
+                    continue
+                return
+
             try:
                 listed = self.list_batch_requests()
-            except NotAuthenticatedError:
-                raise
+            except NotAuthenticatedError as e:
+                for item in pending:
+                    yield ReportOutcome(item.request, error=e)
+                return
             except PortalError as e:
                 # The batch list answers HTTP 604 intermittently — seen twice,
                 # each time succeeding on the next call. One bad answer is not
-                # a reason to abandon a report that is being generated.
+                # a reason to abandon reports that are being generated.
                 logger.warning("Batch list unavailable (%s); retrying.", e)
-                if time.monotonic() >= deadline:
-                    raise
+                if all(item.expired(timeout_seconds) for item in pending):
+                    for item in pending:
+                        yield ReportOutcome(item.request, error=e)
+                    return
                 sleep(poll_seconds)
                 continue
-            matches = [entry for entry in listed if is_ours(entry)]
-            fresh = [entry for entry in matches
-                     if entry.config_id not in pre_existing]
-            # Prefer an entry this call created; fall back to a pre-existing
-            # one only when the portal reused it rather than queueing again.
-            considered = fresh or matches
-            reused = not fresh and bool(matches)
-
-            for entry in considered:
-                if entry.is_ready:
-                    logger.info("Report ready: %s", entry.summary)
-                    if reused and progress is not None:
-                        progress("    using the copy the portal already had; "
-                                 "it was not generated by this request")
-                    return self.fetch_report(entry.config_id)
-
-            failures = [entry.failure_description() for entry in considered
-                        if entry.failure_description()]
-            if failures and not any(entry.is_pending for entry in considered):
-                # A failure under an entry this call created is decisive. One
-                # under an entry that was already there is last run's, and the
-                # portal has just accepted a new request against the same
-                # configId — believing it straight away reports an old failure
-                # as this one's, seconds after the run was queued. Give the
-                # list time to catch up first.
-                if not reused:
-                    raise PortalError(
-                        f"Query {query_id} for {from_date}..{to_date}: "
-                        + "; ".join(failures))
-
-                if time.monotonic() - started >= stale_failure_grace_seconds:
-                    raise PortalError(
-                        f"Query {query_id} for {from_date}..{to_date}: "
-                        + "; ".join(failures)
-                        + " — recorded against an earlier run, and unchanged "
-                        f"{stale_failure_grace_seconds:.0f}s after this one "
-                        "was queued, so the portal is not regenerating it. "
-                        "Delete the entry in Performance & Reports > Batch "
-                        "Statements and run again.")
 
             polls += 1
-            elapsed = int(time.monotonic() - started)
-            status_now = sorted(entry.status_code for entry in considered)
+            still_pending: list[_PendingReport] = []
 
-            if status_now != last_status:
-                logger.info("Query %d (%s..%s): status %s",
-                            query_id, from_date, to_date,
-                            ", ".join(status_now) or "not listed yet")
-                last_status = status_now
-
-            # Emitted every poll, not only on a change: a report that takes
-            # twenty minutes is indistinguishable from a hung process if
-            # nothing says otherwise, and this one looked hung.
-            if progress is not None:
-                if considered:
-                    progress(f"    waiting {elapsed}s — status "
-                             f"{', '.join(status_now)}")
+            for item in pending:
+                outcome = self._resolve_pending(
+                    item, listed, is_ours, timeout_seconds,
+                    stale_failure_grace_seconds, progress)
+                if outcome is None:
+                    still_pending.append(item)
                 else:
-                    progress(f"    waiting {elapsed}s — not in the batch list "
-                             f"yet ({len(listed)} other report(s) queued)")
+                    yield outcome
 
-            # If ours never appears, the reason is probably that the portal
-            # named it differently — so show what it did queue.
-            if not considered and polls % 6 == 0 and listed:
+            pending[:] = still_pending
+            if not pending and not backlog:
+                return
+
+            if pending and progress is not None:
+                # Truncated, and honest about it. Thirty-five pending reports
+                # would print a paragraph every ten seconds, and a wall of
+                # text is read as noise — but silently showing only some of
+                # them would misreport how much is outstanding, so the count
+                # leads and the elision is stated.
+                elapsed = int(time.monotonic() - collecting_since)
+                shown = [item.describe(listed, is_ours)
+                         for item in pending[:_PROGRESS_MAX_NAMED]]
+                if len(pending) > _PROGRESS_MAX_NAMED:
+                    shown.append(f"and {len(pending) - _PROGRESS_MAX_NAMED} more")
+                waiting_to_queue = (f", {len(backlog)} not yet requested"
+                                    if backlog else "")
+                progress(f"    waiting {elapsed}s — {len(pending)} report(s) "
+                         f"generating{waiting_to_queue}: " + ", ".join(shown))
+
+            # If nothing of ours is listed at all, show what the portal did
+            # queue: the likeliest reason is that it named them differently.
+            if polls % 6 == 0 and listed and not any(
+                    any(is_ours(entry, item.request) for entry in listed)
+                    for item in pending):
                 logger.info("Batch list currently holds: %s",
                             "; ".join(entry.summary or entry.config_id
                                       for entry in listed))
 
-            if time.monotonic() >= deadline:
-                # An entry over our exact range that the portal did not
-                # attribute to a query is the likeliest reason ours "never
-                # appeared", and without a name there is nothing to match it
-                # on. Say so rather than leaving the reader to compare
-                # configIds by eye.
-                unattributed = [
-                    entry for entry in listed
-                    if config_id_matches(entry.config_id, UNATTRIBUTED_QUERY_ID,
-                                         from_date, to_date, query_type)]
-                raise PortalError(
-                    f"Query {query_id} for {from_date}..{to_date} did not "
-                    f"become ready within {timeout_seconds:.0f}s "
-                    f"(last status: {', '.join(status_now) or 'never listed'}). "
-                    + (f"The batch list holds: "
-                       f"{'; '.join(entry.summary or entry.config_id for entry in listed)}. "
-                       if listed and not considered else "")
-                    + (f"{len(unattributed)} report(s) over this exact range "
-                       f"carry no query ID ({UNATTRIBUTED_QUERY_ID}) and could "
-                       "not be attributed; set FLEX_QUERY_NAME_PREFIX or pass "
-                       "--query-name-prefix so they can be matched by name. "
-                       if unattributed and not considered and not query_name else "")
-                    + "The portal keeps generating it; re-running will pick it "
-                    "up from the batch list.")
-
             sleep(poll_seconds)
+
+    def _resolve_pending(self, item, listed, is_ours, timeout_seconds,
+                         stale_failure_grace_seconds, progress):
+        """
+        Decide what one pending report's entry in the batch list means.
+
+        Returns:
+            A ReportOutcome when the report is settled, or None to keep
+            waiting for it.
+        """
+        request = item.request
+        matches = [entry for entry in listed if is_ours(entry, request)]
+        fresh = [entry for entry in matches
+                 if entry.config_id not in item.pre_existing]
+        # Prefer an entry this call created; fall back to a pre-existing one
+        # only when the portal reused it rather than queueing again.
+        considered = fresh or matches
+        reused = not fresh and bool(matches)
+
+        for entry in considered:
+            if entry.is_ready:
+                logger.info("Report ready: %s", entry.summary)
+                if reused and progress is not None:
+                    progress("    using the copy the portal already had; "
+                             "it was not generated by this request")
+                try:
+                    return ReportOutcome(request, csv=self.fetch_report(
+                        entry.config_id))
+                except PortalError as e:
+                    return ReportOutcome(request, error=e)
+
+        failures = [entry.failure_description() for entry in considered
+                    if entry.failure_description()]
+        if failures and not any(entry.is_pending for entry in considered):
+            # A failure under an entry this call created is decisive. One
+            # under an entry that was already there is last run's, and the
+            # portal has just accepted a new request against the same
+            # configId — believing it straight away reports an old failure as
+            # this one's, seconds after the run was queued. Give the list time
+            # to catch up first.
+            if not reused:
+                return ReportOutcome(request, error=PortalError(
+                    f"{request.describe()}: " + "; ".join(failures)))
+
+            if item.age() >= stale_failure_grace_seconds:
+                return ReportOutcome(request, error=PortalError(
+                    f"{request.describe()}: " + "; ".join(failures)
+                    + " — recorded against an earlier run, and unchanged "
+                    f"{stale_failure_grace_seconds:.0f}s after this one was "
+                    "queued, so the portal is not regenerating it. Delete the "
+                    "entry in Performance & Reports > Batch Statements and run "
+                    "again."))
+
+        if item.expired(timeout_seconds):
+            status_now = sorted(entry.status_code for entry in considered)
+            # An entry over this exact range that the portal did not attribute
+            # to a query is the likeliest reason ours "never appeared", and
+            # without a name there is nothing to match it on. Say so rather
+            # than leaving the reader to compare configIds by eye.
+            unattributed = [
+                entry for entry in listed
+                if config_id_matches(entry.config_id, UNATTRIBUTED_QUERY_ID,
+                                     request.from_date, request.to_date,
+                                     request.query_type)]
+            return ReportOutcome(request, error=PortalError(
+                f"{request.describe()} did not become ready within "
+                f"{timeout_seconds:.0f}s "
+                f"(last status: {', '.join(status_now) or 'never listed'}). "
+                + (f"The batch list holds: "
+                   f"{'; '.join(entry.summary or entry.config_id for entry in listed)}. "
+                   if listed and not considered else "")
+                + (f"{len(unattributed)} report(s) over this exact range carry "
+                   f"no query ID ({UNATTRIBUTED_QUERY_ID}) and could not be "
+                   "attributed; set FLEX_QUERY_NAME_PREFIX or pass "
+                   "--query-name-prefix so they can be matched by name. "
+                   if unattributed and not considered and not request.query_name
+                   else "")
+                + "The portal keeps generating it; re-running will pick it up "
+                "from the batch list."))
+
+        return None
 
     # -- errors ------------------------------------------------------------
 
