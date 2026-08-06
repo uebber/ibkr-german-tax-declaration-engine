@@ -50,11 +50,10 @@ Basisertrag lives in Abs. 1; Abs. 2 is the pro-rata rule; Abs. 3 is the Zuflussf
 - **Satz 4:** *"Wird kein Ruecknahmepreis festgesetzt, so tritt der Boersen- oder Marktpreis an
   die Stelle des Ruecknahmepreises."*
 
-**Abs. 1 is written per Investmentanteil, not per holding.** Every quantity in Sätze 1 to 3 is a
+**Abs. 1 is written per Investmentanteil, not per holding.** Every quantity in Saetze 1 to 3 is a
 Ruecknahmepreis or a distribution *of one unit*; the number of units enters only through Rz. 18.4
 of the BMF-Schreiben, which multiplies at the end and fixes the count as the one held at the close
-of 31 December. Writing the three Saetze as though they operated on the value of a holding loses
-that distinction, and with it the difference between a price and a position:
+of 31 December:
 
 ```
 per Anteil:
@@ -67,11 +66,10 @@ per Bestand:
   Vorabpauschale = max(0, Basisertrag - Ausschuettungen)                           (Satz 1)
 ```
 
-Two consequences that a value-based reading hides. The **price** and the **unit count** are taken
-at different moments: the price is the first Ruecknahmepreis set in the calendar year, the count is
-the holding at the close of 31 December. A single figure carrying both cannot be right for both.
-And the Satz 3 cap is bounded by the *first and last price set in the calendar year*, whose lower bound is
-the same first price Satz 2 uses, not the preceding year's close.
+The price and the unit count are therefore taken at different moments: the price is the first
+Ruecknahmepreis set in the calendar year, the count is the holding at the close of 31 December.
+The Satz 3 cap is bounded by the first and last price set in the calendar year, so its lower bound
+is the same first price Satz 2 uses.
 
 Note Satz 3 is expressed in **Ruecknahmepreise festgesetzt im Kalenderjahr**, not in calendar
 boundaries: the first and last price *set during the year*.
@@ -125,7 +123,7 @@ Published values, with per-year provenance: `bmf-guidance/basiszins-vorabpauscha
 
 **What else section 18 contains**, beyond the claims recorded below (Validation Protocol item 2):
 Rz. 18.1 is introductory; Rz. 18.2 restates Abs. 1 Saetze 1 to 3 without adding to them; Rz. 18.3
-is the worked example quoted under Q12; Rz. 18.5 governs balance-sheet treatment for
+is a worked example; Rz. 18.5 governs balance-sheet treatment for
 bilanzierende Anleger, which is outside this library's Privatvermoegen scope; Rz. 18.9 and 18.10
 concern the Steuerabzug at a depotfuehrende Stelle on custody transfers and foreign-custodian
 holdings; Rz. 18.11 restates Abs. 2.
@@ -204,19 +202,16 @@ For the Vorabpauschale declared in VZ `Y` -- that is, the one computed for calen
 | Input | Which year it is taken from |
 |-------|------------------------------|
 | Basiszins | `Y-1` (the rate published for 02.01. of `Y-1`) |
-| Ruecknahmepreis at the start of the year (Abs. 1 Satz 2) | `Y-1` -- but see Q12 on *which day's* price that is |
+| Ruecknahmepreis at the start of the year (Abs. 1 Satz 2) | first set in `Y-1` |
 | Ruecknahmepreis at the end of the year (the Abs. 1 Satz 3 cap) | last set in `Y-1` |
 | Ausschuettungen deducted (Abs. 1 Satz 1) | those made during `Y-1` |
 
-Every input is a `Y-1` figure. The one that is easy to get wrong is the first: the start-of-`Y-1`
-price is *not* the start-of-`Y` position snapshot, and using the latter computes a different
-year's Vorabpauschale with a different Basiszins.
+Every input is a `Y-1` figure: a price taken from `Y` computes a different year's Vorabpauschale,
+against a different Basiszins.
 
-**This table states the year; the day is the first Ruecknahmepreis set in that year.** Rz. 18.3
-of the BMF-Schreiben settles it by worked example -- see [Q12], closed, in
-`../research/open-legal-questions.md`. An earlier revision of this file recorded the point as an
-unresolved question, which overstated the doubt: the same Randziffer that was cited as evidence
-for the reading is an administrative demonstration of it.
+**The day is the first Ruecknahmepreis set in the calendar year.** Rz. 18.3 of the BMF-Schreiben
+demonstrates it: the same figure serves as the Satz 2 base and as the Satz 3 cap's lower bound,
+which Satz 3 defines as *"dem ersten ... im Kalenderjahr festgesetzten Ruecknahmepreis"*.
 
 ---
 

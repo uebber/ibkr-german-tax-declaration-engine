@@ -202,30 +202,6 @@ Reading B does not.
 
 ---
 
-## Q12 -- CLOSED 2026-08-06, and recorded so it is not reopened by habit
-
-*Which day's Ruecknahmepreis is the one "zu Beginn des Kalenderjahres" of § 18 Abs. 1 Satz 2
-InvStG: the last set in the preceding calendar year, or the first set in the year itself.*
-
-**Settled: the first price set in the calendar year.** Rz. 18.3 of the BMF-Schreiben of 21.05.2019
-(BStBl I S. 527) works the calculation through with a single figure -- *"Ruecknahmepreis des
-Investmentanteils am Jahresanfang 01: 100 EUR"* -- used both as the Satz 2 base and as the lower
-bound of the Satz 3 cap, which Satz 3 itself defines as *"dem ersten ... im Kalenderjahr
-festgesetzten Ruecknahmepreis"*. The two are the same number only under this reading. Tier 2,
-and it answers the point.
-
-The contrary argument was the wording contrast between Satz 2 ("zu Beginn des Kalenderjahres"),
-Satz 3 ("erster im Kalenderjahr festgesetzter Ruecknahmepreis") and Abs. 4 ("erster Boersentag des
-Jahres"). Three formulations in one provision is a reason to look, not a reason to doubt what an
-administrative worked example then demonstrates.
-
-**Why it was recorded as open at all**, since that is the more useful lesson: the question that
-actually needed answering was which stored report supplies the price and which supplies the unit
-count. That is a question about input files, not about law, and it does not belong in this
-library. Framed as a legal ambiguity it acquired two readings and an authority list it never
-needed.
-
-
 ## Pending legal developments
 
 Not open questions -- these have a settled answer today that a decision may change.
