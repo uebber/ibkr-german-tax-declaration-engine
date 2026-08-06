@@ -59,6 +59,11 @@ class Asset:
     prior_year_eoy_position_value: Optional[Decimal] = None
     prior_year_eoy_mark_price: Optional[Decimal] = None
     prior_year_eoy_mark_price_currency: Optional[str] = None
+    # Close of the year BEFORE the Vorabpauschale year: the units the year opened with,
+    # and the last price set before it began.
+    prior_year_opening_quantity: Optional[Decimal] = None
+    prior_year_opening_mark_price: Optional[Decimal] = None
+    prior_year_opening_mark_price_currency: Optional[str] = None
 
 
     def __post_init__(self):

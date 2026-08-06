@@ -67,7 +67,8 @@ def run_core_processing_pipeline(
     # this boundary: the engine decides what a missing snapshot means once it knows whether any
     # fund is held. See reference/investment-tax-law/invstg-18-vorabpauschale.md.
     positions_prior_start_file_path: Optional[str] = None,
-    positions_prior_end_file_path: Optional[str] = None
+    positions_prior_end_file_path: Optional[str] = None,
+    positions_prior_opening_file_path: Optional[str] = None
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -93,6 +94,7 @@ def run_core_processing_pipeline(
             positions_end_file=positions_end_file_path,
             positions_prior_start_file=positions_prior_start_file_path,
             positions_prior_end_file=positions_prior_end_file_path,
+            positions_prior_opening_file=positions_prior_opening_file_path,
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,

@@ -75,6 +75,9 @@ class AssetResolver:
             "prior_year_eoy_position_value": asset.prior_year_eoy_position_value,
             "prior_year_eoy_mark_price": asset.prior_year_eoy_mark_price,
             "prior_year_eoy_mark_price_currency": asset.prior_year_eoy_mark_price_currency,
+            "prior_year_opening_quantity": asset.prior_year_opening_quantity,
+            "prior_year_opening_mark_price": asset.prior_year_opening_mark_price,
+            "prior_year_opening_mark_price_currency": asset.prior_year_opening_mark_price_currency,
             "eoy_quantity": asset.eoy_quantity,
             "eoy_mark_price_currency": asset.eoy_mark_price_currency,
             "eoy_market_price": asset.eoy_market_price, # Renamed from eoy_mark_price

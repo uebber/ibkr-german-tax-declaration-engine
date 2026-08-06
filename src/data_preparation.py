@@ -233,12 +233,20 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
     # required. Absence is not an error here -- the engine decides what to do about a missing
     # snapshot at the point it knows whether any fund is actually held
     # (src/engine/calculation_engine.py).
+    # Three snapshots, because the Basisertrag's price and its unit count are taken at
+    # different moments. For the Vorabpauschale of calendar X (= tax_year - 1):
+    #   positions_prior_start  X's first trading day    -> the Satz 2 price
+    #   positions_prior_opening  close of X-1           -> the unit count, and the price
+    #                                                      fallback when a fund was sold on
+    #                                                      X's first trading day
+    #   positions_prior_end    close of X               -> the Satz 3 cap's upper bound
     prior_year = tax_year - 1
-    for file_key, suffix, label in (
-        ("positions_prior_start", "-SoY.csv", "start"),
-        ("positions_prior_end", "-EoY.csv", "end"),
+    for file_key, suffix, label, year in (
+        ("positions_prior_start", "-SoY.csv", "start", prior_year),
+        ("positions_prior_end", "-EoY.csv", "end", prior_year),
+        ("positions_prior_opening", "-EoY.csv", "opening", prior_year - 1),
     ):
-        prior_file = _find_import_file("Positions", prior_year, suffix)
+        prior_file = _find_import_file("Positions", year, suffix)
         if prior_file:
             prior_output = WORKING_DIR / f"positions_prior_year_{label}.csv"
             _copy_file(prior_file, prior_output)
@@ -247,7 +255,7 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
             logger.info(
                 "No Positions-%d%s found. The Vorabpauschale for calendar %d cannot be "
                 "computed from it; the engine will report this as a data gap if funds are held.",
-                prior_year, suffix, prior_year,
+                year, suffix, prior_year,
             )
             result[file_key] = ""
 
