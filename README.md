@@ -345,21 +345,14 @@ Useful options:
 | `--timeout-seconds` | How long to wait for one report (default 900). A report that outlives it keeps generating; re-run to collect it |
 | `--reset-profile` | Delete the saved browser profile and log in fresh. Use if the portal keeps saying "Your Session Has Expired" |
 
-**Positions snapshot dates, and what each file is for.**
-`Positions-{YYYY}-EoY.csv` is fetched as of the last trading day of the year and
-does double duty: it is the year's closing position *and* the opening position
-of the following year, which is what the ledger starts from.
-`Positions-{YYYY}-SoY.csv` is fetched as of the **first trading day** and is
-used for one thing only — the Rücknahmepreis at the start of the calendar year,
-which drives the Vorabpauschale (open question Q12, decided against
-`GT-INVSTG-010`). Its unit count is not read; the Vorabpauschale takes that from
-the 31 December snapshot.
+**Positions snapshot dates.** Two snapshots are fetched per year:
+`Positions-{YYYY}-SoY.csv` as of that year's **first trading day**, and
+`Positions-{YYYY}-EoY.csv` as of its **last**. Choosing those two dates is the
+whole of the downloader's involvement — how the engine reads the files is
+decided in `src/data_preparation.py`, and is deliberately not restated here.
 
-That split matters. While one file supplied both, it could not be dated
-correctly for either: dated to the first trading day it omits anything sold that
-morning and the run fails with "Insufficient long lots", and dated to 1 January
-the Vorabpauschale price is a day early. A run for tax year `Y` therefore needs
-`Positions-{Y-1}-EoY.csv` — it is required, not optional.
+A run for tax year `Y` needs `Positions-{Y-1}-EoY.csv`: it is required, not
+optional, and the run stops with an explanation if it is missing.
 
 **Resolving queries by name.** If you gave your six Flex Queries a common
 naming prefix — `MyTax Trades`, `MyTax_Cash_Transactions`, and so on — set
@@ -394,10 +387,10 @@ The same thing by hand, if you prefer it or the automated path breaks.
    | Corporate Actions | `Corporate_Actions-{YYYY}.csv` |
    | Cash Balance | `Cash_Balance-{YYYY}.csv` |
    | Options EAE | `Options_EAE-{YYYY}.csv` |
-   | Positions (Jan 1) | `Positions-{YYYY}-SoY.csv` |
-   | Positions (Dec 31) | `Positions-{YYYY}-EoY.csv` |
+   | Positions (first trading day) | `Positions-{YYYY}-SoY.csv` |
+   | Positions (last trading day) | `Positions-{YYYY}-EoY.csv` |
 
-7. For **Positions**, run the same query twice per year: once with the date set to **January 1** (SoY) and once with **December 31** (EoY).
+7. For **Positions**, run the same query twice per year: once dated to the year's **first trading day** (SoY) and once to its **last** (EoY) — the same two dates `src/web_portal/download.py` uses. Not 1 January: a snapshot is taken at the close of the day it names, and no exchange is open on 1 January, so a file dated there holds the *previous* year's closing prices. Doing it by hand is how three such files reached `data_import/` and had to be re-fetched.
 8. Repeat for each historical year back to your first year of trading at IBKR.
 
 **Example:** If your tax year is 2025 and you started trading in 2021, you need files for 2021-2025. The Flex Web Service download may cover 2024-2025; 2021-2023 come from the Client Portal.
@@ -447,8 +440,8 @@ uv run python validate_ledgers.py --year 2024
 uv run python validate_ledgers.py --verbose --quiet
 ```
 
-**A securities EoY mismatch aborts the run.** The start-of-year quantity is taken from the
-`Positions-{YYYY}-SoY.csv` snapshot, not reconstructed from earlier years, so the end-of-year
+**A securities EoY mismatch aborts the run.** The quantity the tax year starts from is taken
+from the `Positions-{Y-1}-EoY.csv` snapshot, not reconstructed from earlier years, so the end-of-year
 quantity is determined by that snapshot plus the tax year's own events and has exactly one
 correct answer. If the engine's answer differs from the broker's, an event is missing or was
 processed incorrectly — an absent trade or corporate action, an option exercise that was not

@@ -136,19 +136,13 @@ def last_business_day_of_year(year: int) -> date:
 
 def first_business_day_of_year(year: int) -> date:
     """
-    The first trading day of a calendar year.
+    The first trading day of a calendar year: the start-of-year snapshot date.
 
-    This is the day the start-of-year snapshot is requested for. That file is
-    now only a price source — the Ruecknahmepreis *zu Beginn des Kalenderjahres*
-    of § 18 Abs. 1 Satz 2 InvStG, resolved by open question Q12 to the first
-    price set *in* the year. Its unit count is not used: the Vorabpauschale
-    takes that from the 31 December snapshot (Rz. 18.4), and the ledger takes
-    its opening position from the preceding year end.
-
-    That separation is what makes this date safe. While the same file also
-    seeded the opening ledger, dating it here broke a run outright — a snapshot
-    is taken at the close of the day it names, so a holding sold that morning
-    was missing from it while the Trades file still carried the sale.
+    What that file is later used for is not this module's business. This
+    downloader fetches CSVs over date ranges and nothing else — which report
+    feeds which computation is decided in `src/data_preparation.py` and the
+    parsing layer, and stating it here as well only creates a second place to
+    be wrong. It has already been wrong here once.
 
     1 January is closed on every exchange IBKR serves whatever weekday it falls
     on — 1 January 2021 was a Friday — and when it falls on a Sunday the
