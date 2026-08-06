@@ -320,13 +320,20 @@ def wait_for_login(client: PortalFlexClient, timeout_seconds: int = LOGIN_TIMEOU
         print(f"    waiting {elapsed}s — {reason}")
 
         if time.monotonic() >= deadline:
+            # has_am_headers now means "a *complete* set", so a false answer
+            # no longer implies the portal stayed silent: it may have issued
+            # several requests and carried the account scope on none of them.
+            # The probe reason distinguishes the two; the sentence here has to
+            # be true of both.
             raise PortalError(
                 f"Not logged in after {timeout_seconds}s. Nothing was "
                 "downloaded."
+                + (f" Last reason: {reason}." if reason else "")
                 + ("" if client.has_am_headers else
-                   " The portal never issued an AccountManagement request, so "
-                   "its session headers could not be read — check that the "
-                   "Flex Queries page actually loaded in the browser window."))
+                   " The portal never issued an AccountManagement request "
+                   "carrying a complete set of session headers, so they could "
+                   "not be read — check that the Flex Queries page actually "
+                   "loaded in the browser window."))
 
         if nudge is not None and attempts % nudge_every == 0:
             logger.info("Reloading the portal page to prompt a session request.")
@@ -359,7 +366,7 @@ def download_targets(client: PortalFlexClient, targets: list[DownloadTarget],
                      import_dir: Path = IMPORT_DIR, overwrite: bool = False,
                      poll_seconds: float = 10.0,
                      timeout_seconds: float = 900.0,
-                     sleep=time.sleep) -> tuple[list[Path], list[str]]:
+                     sleep=time.sleep) -> tuple[list[Path], list[str], list[str]]:
     """
     Run every target, collecting failures rather than stopping at the first.
 
@@ -367,7 +374,8 @@ def download_targets(client: PortalFlexClient, targets: list[DownloadTarget],
     first thing.
 
     Returns:
-        (paths written, failure descriptions)
+        (paths written, failure descriptions, reports the portal had no data
+        for)
     """
     written: list[Path] = []
     failures: list[str] = []

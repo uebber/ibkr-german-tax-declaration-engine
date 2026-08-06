@@ -86,6 +86,14 @@ STATUS_DELIVERED_FTP = "D"
 STATUS_DELIVERY_ERROR = "L"
 
 _PENDING_STATUSES = frozenset({STATUS_IN_PROGRESS, STATUS_QUEUED})
+
+# How long a failure recorded against an *earlier* run of the same query and
+# range is given to be superseded before it is reported as this run's. The
+# configId carries no run instance, so between the portal accepting a request
+# and listing it there is a window in which last run's failure is the only
+# entry that matches — see run_and_collect.
+STALE_FAILURE_GRACE_SECONDS = 60.0
+
 _TERMINAL_FAILURES = {
     STATUS_FAILED: "the report failed to generate",
     STATUS_ON_HOLD: "the report is on hold",
@@ -125,11 +133,16 @@ class AmHeaderHarvester:
         #
         # `_coherent` is the most recent single request that carried every
         # AccountManagement header — one session, one page load, internally
-        # consistent. `_merged` is the union across requests, which is complete
-        # but can pair a sessionid from one page load with an am_uuid from
-        # another. The coherent set is preferred: sending a mismatched
-        # combination is a plausible way to have a session invalidated, and
-        # completeness is worth nothing if the server rejects the mixture.
+        # consistent. `_merged` is the union across requests, which can pair a
+        # sessionid from one page load with an am_uuid from another. The
+        # coherent set is preferred: sending a mismatched combination is a
+        # plausible way to have a session invalidated, and completeness is
+        # worth nothing if the server rejects the mixture.
+        #
+        # Neither is complete by construction — the union is only as complete
+        # as the requests seen so far, and early in a page load that can be
+        # `sessionid` and nothing else. `get` is what refuses to hand out a
+        # partial set; both of these may hold one.
         self._coherent: dict[str, str] = {}
         self._merged: dict[str, str] = {}
         # Headers captured before the page last navigated describe a session
@@ -219,21 +232,49 @@ class AmHeaderHarvester:
 
     def get(self) -> dict[str, str]:
         """
-        The header set to send. Empty before the first portal XHR.
+        The header set to send. Empty until a complete one is available.
 
         A complete set from one request when one has been seen; otherwise the
-        union across requests, which is better than sending no account scope
-        at all. Empty while the capture is stale — after a navigation, until
-        the portal makes its next request.
+        union across requests, and only if that union is itself complete.
+        Empty while the capture is stale — after a navigation, until the
+        portal makes its next request.
+
+        **Never a partial set.** Not every AccountManagement request carries
+        all four: some early XHRs go out with `sessionid` alone, and sending
+        that combination is answered HTTP 604 by a session that then stops
+        existing. In the recorded run of 2026-08-06 10:07 the first probe
+        carried `sessionid` alone, was answered 604, and every one of the 368
+        requests after it was answered 603 `no_session` — the login was gone
+        before a single report had been asked for. The runs that worked are
+        the ones where a complete set happened to be captured before the first
+        probe fired; nothing but timing separated them.
+
+        The union is kept for completeness rather than dropped in favour of
+        the coherent set alone, because the account scope has been seen
+        arriving spread across two requests — but it is held back until it is
+        whole, which is the part that was missing.
         """
         if self._stale:
             return {}
-        return dict(self._coherent) if self._coherent else dict(self._merged)
+        candidate = self._coherent or self._merged
+        if not all(name in candidate for name in AM_HEADER_NAMES):
+            return {}
+        return dict(candidate)
 
 
 # Runs in the page. Returns the status and body rather than throwing, so a
 # non-2xx answer — 601 queued, 603 no_session, 604 internal — comes back to
 # Python as data instead of an exception.
+#
+# cache: 'no-store' because polling only works if the answer can change. The
+# batch list is fetched repeatedly at a byte-identical URL, which the portal's
+# own app never does — it reads that list once per page load, and cache-busts
+# its other endpoints with a per-load `cacheControl` UUID. Under the default
+# cache mode a stored response would leave the poll watching a frozen list
+# while the report it is waiting for is generated and finishes: queued, then
+# never appears. Whether that is what happens here is *not* established — the
+# recordings do not keep response headers, so no Cache-Control from the portal
+# is on file — but the default mode permits it and no-store costs nothing.
 _FETCH_IN_PAGE = """
 async ({url, headers, timeoutMs}) => {
   const controller = new AbortController();
@@ -243,6 +284,7 @@ async ({url, headers, timeoutMs}) => {
       method: 'GET',
       headers: headers,
       credentials: 'include',
+      cache: 'no-store',
       signal: controller.signal,
     });
     return {status: response.status, body: await response.text()};
@@ -637,8 +679,18 @@ class PortalFlexClient:
 
     @property
     def has_am_headers(self) -> bool:
-        """Whether the AccountManagement headers have been observed yet."""
-        return bool(self._headers().get("sessionid"))
+        """
+        Whether a *complete* AccountManagement header set is available.
+
+        Gating on `sessionid` alone is what let a partial set onto the wire
+        even when the harvester was holding one back — see
+        AmHeaderHarvester.get. One malformed request ends the session.
+        """
+        return not self._missing_am_headers()
+
+    def _missing_am_headers(self) -> list[str]:
+        headers = self._headers()
+        return [name for name in AM_HEADER_NAMES if not headers.get(name)]
 
     # -- individual calls --------------------------------------------------
 
@@ -650,13 +702,25 @@ class PortalFlexClient:
         URL looks like: the question that matters is not which page is showing
         but whether the API this downloader needs will answer.
         """
-        if not self.has_am_headers:
+        missing = self._missing_am_headers()
+        if missing:
             # Cookies alone never satisfy this API, so asking without the
-            # headers would report "not logged in" for a session that is.
-            self.last_probe_reason = (
-                "the Account Management app has not been opened yet — "
-                "go to Performance & Reports > Flex Queries in the browser")
-            logger.debug("No AccountManagement headers observed yet.")
+            # headers would report "not logged in" for a session that is —
+            # and asking with only some of them ends the session outright.
+            if len(missing) == len(AM_HEADER_NAMES):
+                self.last_probe_reason = (
+                    "the Account Management app has not been opened yet — "
+                    "go to Performance & Reports > Flex Queries in the browser")
+            else:
+                # Naming them matters: the app *is* open, and telling the
+                # reader to go and open it sends them to click something
+                # already on screen.
+                self.last_probe_reason = (
+                    "the portal has not yet sent a request carrying its full "
+                    "session header set; still waiting for "
+                    + ", ".join(missing))
+            logger.debug("Incomplete AccountManagement header set: missing %s.",
+                         ", ".join(missing))
             return False
 
         try:
@@ -792,6 +856,7 @@ class PortalFlexClient:
                         query_type: str = QUERY_TYPE_ACTIVITY_FLEX,
                         poll_seconds: float = 10.0,
                         timeout_seconds: float = 900.0,
+                        stale_failure_grace_seconds: float = STALE_FAILURE_GRACE_SECONDS,
                         sleep=time.sleep, progress=None) -> str:
         """
         Run one query over one date range and return the report as CSV.
@@ -799,6 +864,16 @@ class PortalFlexClient:
         Reports already queued under the same parameters before this call are
         recorded first, so a stale entry — in particular a stale *failed* one —
         is not mistaken for the run this method started.
+
+        That distinction is harder than it looks, because the configId carries
+        no run instance: it is
+        <acct>_<acct>_<from>_<to>_<queryType>_<queryId>_<hash>, and a repeat of
+        the same query over the same range lands on the same string. So "an
+        entry this call created" may never appear, and a pre-existing entry is
+        the only thing there is to read. Two consequences, both handled below:
+        a pre-existing *failure* is given `stale_failure_grace_seconds` to be
+        superseded before it is believed, and a pre-existing *ready* report is
+        used but announced, because it was not generated by this call.
 
         Raises:
             PortalError: On a failed, held or undeliverable report, or when the
@@ -844,18 +919,39 @@ class PortalFlexClient:
             # Prefer an entry this call created; fall back to a pre-existing
             # one only when the portal reused it rather than queueing again.
             considered = fresh or matches
+            reused = not fresh and bool(matches)
 
             for entry in considered:
                 if entry.is_ready:
                     logger.info("Report ready: %s", entry.summary)
+                    if reused and progress is not None:
+                        progress("    using the copy the portal already had; "
+                                 "it was not generated by this request")
                     return self.fetch_report(entry.config_id)
 
             failures = [entry.failure_description() for entry in considered
                         if entry.failure_description()]
             if failures and not any(entry.is_pending for entry in considered):
-                raise PortalError(
-                    f"Query {query_id} for {from_date}..{to_date}: "
-                    + "; ".join(failures))
+                # A failure under an entry this call created is decisive. One
+                # under an entry that was already there is last run's, and the
+                # portal has just accepted a new request against the same
+                # configId — believing it straight away reports an old failure
+                # as this one's, seconds after the run was queued. Give the
+                # list time to catch up first.
+                if not reused:
+                    raise PortalError(
+                        f"Query {query_id} for {from_date}..{to_date}: "
+                        + "; ".join(failures))
+
+                if time.monotonic() - started >= stale_failure_grace_seconds:
+                    raise PortalError(
+                        f"Query {query_id} for {from_date}..{to_date}: "
+                        + "; ".join(failures)
+                        + " — recorded against an earlier run, and unchanged "
+                        f"{stale_failure_grace_seconds:.0f}s after this one "
+                        "was queued, so the portal is not regenerating it. "
+                        "Delete the entry in Performance & Reports > Batch "
+                        "Statements and run again.")
 
             polls += 1
             elapsed = int(time.monotonic() - started)

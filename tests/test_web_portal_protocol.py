@@ -22,6 +22,7 @@ import pytest
 from src.web_portal.flex_portal import (
     AM_HEADER_NAMES,
     HTTP_QUEUED_FOR_BATCH,
+    _FETCH_IN_PAGE,
     AmHeaderHarvester,
     BatchRequest,
     NoStatementAvailableError,
@@ -394,6 +395,71 @@ class TestRunAndCollect:
         # The report keeps generating; the user should know re-running is cheap.
         assert "re-running" in str(excinfo.value)
 
+    def test_a_pre_existing_failure_does_not_abort_the_run_we_just_queued(self):
+        """
+        The docstring on run_and_collect promises this and the code did not
+        honour it. Between the portal answering "queued" and the portal
+        listing the new run there is a window in which the only matching entry
+        is the previous attempt — and the previous attempt failed. Aborting
+        there reports last run's failure as this one's, seconds after the
+        portal accepted the request.
+
+        The window is wider than it looks, because the configId is
+        deterministic: <acct>_<acct>_<from>_<to>_AF_<queryId>_<hash>, with no
+        run instance in it. A re-run can therefore reuse the entry outright,
+        and "an entry this call created" never appears at all.
+        """
+        stale = _entry("F", reason="a failure from an earlier run")
+        client = FakePortalClient([[stale], [stale], [stale], [_entry("S")]])
+
+        result = client.run_and_collect(1212943, *self.YEAR, poll_seconds=1,
+                                        timeout_seconds=600,
+                                        sleep=lambda _: None)
+
+        assert result == CSV
+
+    def test_a_failure_the_portal_never_re_queues_is_named_as_the_old_one(self):
+        """
+        The other side: if nothing fresh ever appears, the run must still end,
+        and must not claim the failure is its own.
+        """
+        stale = _entry("F", reason="an old failure")
+        client = FakePortalClient([[stale], [stale]])
+
+        with pytest.raises(PortalError) as excinfo:
+            client.run_and_collect(1212943, *self.YEAR, timeout_seconds=600,
+                                   stale_failure_grace_seconds=0,
+                                   sleep=lambda _: None)
+
+        message = str(excinfo.value)
+        assert "an old failure" in message
+        assert "earlier run" in message
+
+    def test_a_fresh_failure_still_ends_the_run_at_once(self):
+        """The grace period is for stale entries only; ours is decisive."""
+        client = FakePortalClient([[], [_entry("F", reason="too much data")]])
+
+        with pytest.raises(PortalError, match="too much data"):
+            client.run_and_collect(1212943, *self.YEAR, timeout_seconds=600,
+                                   sleep=lambda _: None)
+
+    def test_reusing_the_portal_s_existing_copy_is_said_out_loud(self):
+        """
+        A ready entry that was already there when this call started is the
+        previous run's output. Returning it is right — the portal reuses the
+        configId and may not regenerate — but --overwrite then replaces a file
+        with a copy that was not freshly generated, and silence about that
+        reads as "re-fetched".
+        """
+        existing = _entry("S")
+        client = FakePortalClient([[existing], [existing]])
+        said = []
+
+        client.run_and_collect(1212943, *self.YEAR, timeout_seconds=5,
+                               progress=said.append, sleep=lambda _: None)
+
+        assert any("already had" in line for line in said), said
+
 
 class FakeFrame_:
     def __init__(self, url, parent=None):
@@ -601,6 +667,53 @@ class TestAmHeaderHarvester:
 
         assert harvester.get()["sessionid"] == PORTAL_HEADERS["sessionid"]
 
+    def test_a_partial_capture_is_never_sent(self):
+        """
+        The session killer, in one assertion.
+
+        Not every AccountManagement request carries the full set — a login
+        redirect and some early XHRs go out with sessionid alone. Sending that
+        combination is answered HTTP 604, and the session does not survive it:
+        in the recorded run of 2026-08-06 10:07 the first probe carried
+        sessionid only, was answered 604, and all 368 requests after it were
+        answered 603 no_session. Runs whose first probe happened to carry the
+        complete set were answered 200 and went on to download.
+
+        Waiting for the app to make one more request costs seconds. Sending an
+        incomplete set costs the login.
+        """
+        harvester = AmHeaderHarvester()
+
+        harvester._on_request(FakeRequest(
+            "https://x.example/AccountManagement/User", {
+                "sessionid": PORTAL_HEADERS["sessionid"],
+                "accept": "application/json, text/plain, */*",
+                "referer": PORTAL_HEADERS["referer"],
+                "user-agent": "Mozilla/5.0",
+            }))
+
+        assert harvester.get() == {}
+        assert not harvester.ready
+
+    def test_the_set_becomes_usable_as_soon_as_it_is_complete(self):
+        """The wait is for completeness, not for a particular request."""
+        harvester = AmHeaderHarvester()
+        url = "https://x.example/AccountManagement/User"
+
+        harvester._on_request(FakeRequest(url, {
+            "sessionid": PORTAL_HEADERS["sessionid"],
+            "accounthash": PORTAL_HEADERS["accounthash"],
+        }))
+        assert harvester.get() == {}
+
+        harvester._on_request(FakeRequest(url, {
+            "sessionid": PORTAL_HEADERS["sessionid"],
+            "am_uuid": PORTAL_HEADERS["am_uuid"],
+            "active_context": "AM_DEPENDENCY",
+        }))
+
+        assert set(AM_HEADER_NAMES) <= set(harvester.get())
+
     def test_the_captured_set_is_a_copy(self):
         harvester = AmHeaderHarvester()
         harvester._on_request(FakeRequest(
@@ -715,6 +828,26 @@ class TestPageRequestTransport:
         PageRequestTransport(page).get("https://x.example/a", timeout=45_000)
 
         assert page.calls[0]["timeoutMs"] == 45_000
+
+    def test_the_response_is_never_served_from_the_browser_cache(self):
+        """
+        Polling only works if the answer can change.
+
+        The batch list is fetched over and over at a byte-identical URL, and
+        the portal's own app never does that — it reads the list once per page
+        load, and cache-busts its other endpoints with a per-load
+        `cacheControl` UUID. A cached answer would leave the poll watching a
+        frozen list while the report it is waiting for is generated and
+        finishes, which is the shape of "queued, then never appears".
+
+        Not proven to be the cause: the recordings do not keep response
+        headers, so no Cache-Control from the portal is on file. What is
+        certain is that the default `fetch` cache mode allows it, and asking
+        for no-store costs nothing.
+        """
+        assert "'no-store'" in _FETCH_IN_PAGE
+        # In the options object, not in a comment about it.
+        assert "cache:" in _FETCH_IN_PAGE.replace(" ", "")
 
     def test_the_client_works_over_this_transport(self):
         """End to end through the real client, with the page as the wire."""
@@ -836,6 +969,36 @@ class TestHeadersAreSentWithEveryCall:
 
         assert client.has_am_headers
         assert client.is_authenticated()
+
+    def test_a_partial_set_is_not_probed_with_either(self):
+        """
+        The harvester holds a partial capture back, and the client must not
+        undo that by deciding a sessionid on its own is enough to ask with.
+        That decision is what put the malformed request on the wire.
+        """
+        request_context = RecordingRequestContext()
+        client = PortalFlexClient(
+            request_context,
+            headers_provider=lambda: {"sessionid": PORTAL_HEADERS["sessionid"]})
+
+        assert not client.has_am_headers
+        assert not client.is_authenticated()
+        assert request_context.calls == []   # not even attempted
+
+    def test_the_probe_names_the_headers_it_is_still_waiting_for(self):
+        """
+        "The Account Management app has not been opened yet" is wrong once it
+        has been opened and is simply mid-handshake, and it sends the reader
+        to click something that is already on screen.
+        """
+        client = PortalFlexClient(
+            RecordingRequestContext(),
+            headers_provider=lambda: {"sessionid": PORTAL_HEADERS["sessionid"],
+                                      "am_uuid": PORTAL_HEADERS["am_uuid"]})
+
+        assert not client.is_authenticated()
+        assert "accounthash" in client.last_probe_reason
+        assert "active_context" in client.last_probe_reason
 
     def test_headers_are_re_read_for_each_call_not_frozen_at_construction(self):
         current = {}
