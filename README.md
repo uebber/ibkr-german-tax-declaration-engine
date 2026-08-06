@@ -440,6 +440,11 @@ uv run python validate_ledgers.py --year 2024
 uv run python validate_ledgers.py --verbose --quiet
 ```
 
+**Validate assessment year 2023 and later only.** Earlier years are imported to build the
+historical FIFO ledger, but their own figures rest on lots acquired before the data window and
+are not a result to measure anything against. The bare sweep does not know this — it selects on
+`Positions-{Y}-SoY.csv`, which is not the file the pipeline opens from — so pass `--year`.
+
 **A securities EoY mismatch aborts the run.** The quantity the tax year starts from is taken
 from the `Positions-{Y-1}-EoY.csv` snapshot, not reconstructed from earlier years, so the end-of-year
 quantity is determined by that snapshot plus the tax year's own events and has exactly one

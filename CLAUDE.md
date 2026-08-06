@@ -189,7 +189,41 @@ Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support
 
 ## Validation against real data
 
-- `validate_ledgers.py` — reconciles start-of-year and end-of-year positions per tax year.
+**Assessment years before 2023 are never processed. Every end-to-end run, regression baseline
+and parity capture against real data starts at VZ 2023.**
+
+Earlier data is still *imported*, and that is what it is for: the transaction files from 2021
+onward are concatenated to build the historical FIFO ledger, so a lot acquired in 2021 keeps its
+real acquisition date and cost basis. What is forbidden is treating a figure from VZ 2021 or
+VZ 2022 as a result, a baseline or a parity capture.
+
+The input does not reach back far enough to compute those years, and neither year says so on its
+own:
+
+- **VZ 2021 cannot be run at all.** Its opening position is `Positions-2020-EoY.csv`, which does
+  not exist (`src/data_preparation.py:211`).
+- **VZ 2022 depends on holdings acquired before the data window.** Lots carried in from before
+  2021 have no observed acquisition date or cost basis, so reconciliation discards the
+  reconstruction and synthesises a single lot dated `f"{tax_year-1}-12-31"`
+  (`src/engine/fifo_manager.py:400`). Measured against the maintainer's export on 2026-08-06 by
+  replaying FIFO over every observed event: five securities carried a pre-2021 tranche, the last
+  of them is consumed on 2022-04-07, and from that disposal on every lot in every securities
+  ledger traces to a recorded trade. So VZ 2022 realises gains against a cost basis nobody
+  observed, and **VZ 2023 is the first year whose opening lots are all traceable.**
+
+The opening *quantities* at 2021-01-01 are derivable — the EoY-2021 snapshot minus the 2021
+events — but the acquisition dates and cost bases behind them are not, and a derivable quantity
+does not make an unobserved date safe to invent. See the fallback rule under Engineering rules.
+
+**The failure this prevents is an invented figure, not a visibly wrong one.** A contaminated year
+still produces plausible output, because a synthesised lot carries a well-formed date and a
+well-formed cost basis that no downstream consumer can distinguish from a measured one. Taken as
+a baseline, its mismatches read as defects, and the cheapest way to make a mismatch go away is
+another fallback. That is the loop this rule exists to break.
+
+- `validate_ledgers.py` — reconciles start-of-year and end-of-year positions per tax year. Its
+  `find_complete_years()` selects on `Positions-{Y}-SoY.csv`, which is not what the pipeline
+  opens from; pass `--year` explicitly rather than trusting the sweep to exclude an early year.
 - `scripts/parity_check.sh` — captures a full run (console, log, PDF) and compares two captures,
   for proving a change is output-neutral. It is cache-hermetic and order-sensitive; read its
   header before relying on it, and take a same-tree control capture first so ambient

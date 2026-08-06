@@ -211,6 +211,40 @@ All 28 loss offsetting test cases (LO_ALL_001 through LO_FUND_MISCH_002) were sp
 Ledger reconciliation and output parity against the maintainer's own IBKR export. Instance data —
 holdings, identifiers, amounts — stays in gitignored working copies; only outcomes are recorded here.
 
+## 2026-08-06
+
+**Supersedes the 2026-08-05 statement that "VZ 2023 cannot be computed and VZ 2022 cannot be run
+at all."** The snapshots called absent that day are present in `data_import/` now, and the
+picture has moved. Measured by running the full pipeline for each year and reading the logs; the
+working tree carried unrelated in-flight Vorabpauschale changes at the time.
+
+| VZ | Result |
+|---|---|
+| 2021 | cannot be run — `Positions-2020-EoY.csv` absent, and it is the opening position |
+| 2022 | aborts on `VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING` (needs `Positions-2021-SoY.csv`) |
+| 2023 | **runs clean** |
+| 2024 | aborts on `VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN` |
+| 2025 | **runs clean** |
+
+**How far back the ledger depends on data we do not have.** The 2021-01-01 opening quantities
+were derived (EoY-2021 snapshot minus every 2021 trade, corporate action and option
+exercise/expiry) and real FIFO replayed over every observed event. Five securities carried a
+pre-2021 tranche; four clear during 2021, the last on **2022-04-07**. Sixteen option contracts
+open at 2021-01-01 all expired by 2021-07-23. From 2022-04-07 every lot in every securities
+ledger traces to a recorded trade, so **VZ 2023 is the first assessment year whose opening lots
+are all observed** — which is the measurement behind the VZ 2023 floor now stated in `CLAUDE.md`.
+
+Currency ledgers are a separate matter: they take a `SOY_RECONCILIATION_*` plug lot dated
+`{tax_year-1}-12-31` whenever cash FIFO disagrees with the reported balance, by design and every
+year. Two currencies still carry a constant residual in VZ 2025.
+
+**The VZ 2024 abort is a defect, not a data gap.** A stock-for-stock merger delivers its lots
+after every trade in the historical window, so shares sold on the merger date oversell against a
+ledger that does not hold them yet; the reconstruction ends up over the reported SoY by exactly
+the transferred quantity, reconciliation discards it, and the synthesised lot has no real
+acquisition date for § 18 Abs. 2 InvStG. Filed as issue #56. This one is independent of the
+pre-2021 gap and would fire on any merger whose shares are disposed of inside the replay window.
+
 ## 2026-08-05
 
 **Ledger reconciliation** (`validate_ledgers.py`), 3 assessment years tested:
