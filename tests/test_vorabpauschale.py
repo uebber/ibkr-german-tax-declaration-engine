@@ -23,7 +23,10 @@ from src.domain.events import CashFlowEvent
 from src.domain.results import VorabpauschaleData, LossOffsettingResult, RealizedGainLoss
 from src.domain.enums import RealizationType
 from src.processing.data_gaps import DataGapCollector, GapSeverity
+from datetime import date as dt_date
+
 from src.engine.calculation_engine import (
+    FundUnitTranche,
     _calculate_vorabpauschale,
     _collect_fund_distributions_for_year,
     _get_vp_reporting_category,
@@ -62,9 +65,14 @@ def _make_fund(
     # reverts to reading the tax year's own snapshot, every test in this module fails.
     fund.prior_year_soy_quantity = soy_qty
     fund.prior_year_soy_position_value = soy_position_value
+    fund.prior_year_soy_mark_price = (soy_position_value / soy_qty
+                                      if soy_position_value is not None and soy_qty else None)
     fund.prior_year_soy_mark_price_currency = soy_mark_price_currency
     fund.prior_year_eoy_position_value = eoy_position_value
+    fund.prior_year_eoy_mark_price = (eoy_position_value / eoy_qty
+                                      if eoy_position_value is not None and eoy_qty else None)
     fund.prior_year_eoy_mark_price_currency = eoy_mark_price_currency
+    fund.prior_year_eoy_quantity = eoy_qty
     return fund
 
 
@@ -159,11 +167,19 @@ def _run_vp(fund, events=None, vorabpauschale_year=2024, converter=None):
     distributions = _collect_fund_distributions_for_year(
         events or [], vorabpauschale_year, resolver, ctx
     )
+    # Units held at the close of the Vorabpauschale year (Rz. 18.4), acquired well
+    # before it so no 18 Abs. 2 reduction applies -- the shape every test here
+    # assumed when the count came from the snapshot.
+    held_at_year_end = fund.prior_year_eoy_quantity
+    lots = {fund.internal_asset_id: [FundUnitTranche(
+        quantity=held_at_year_end,
+        acquisition_date=dt_date(vorabpauschale_year - 3, 5, 20))]} if held_at_year_end else {}
     return _calculate_vorabpauschale(
         asset_resolver=resolver,
         distributions_by_asset=distributions,
         currency_converter=converter,
         vorabpauschale_year=vorabpauschale_year,
+        opening_lots_by_asset=lots,
         ctx=ctx,
     )
 

@@ -170,13 +170,13 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
 | GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
-| GT-INVSTG-011 | **deviates** | — | — | **Abs. 2 pro-rata is not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
+| GT-INVSTG-011 | implements (Q13 Reading A: per acquisition) | `_calculate_vorabpauschale()` and `FundUnitTranche.abs2_retained_twelfths()` in `src/engine/calculation_engine.py` | `test_vorabpauschale_abs2.py` | Abs. 2 reduces each tranche by one twelfth per full month before its month of acquisition; units held before the year keep twelve. Applying it per tranche rather than to the holding as a whole is a choice under uncertainty — see `reference/research/open-legal-questions.md` Q13. Superseded text: **Abs. 2 pro-rata was not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
 | GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | |
 | GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Records which *year* each input is drawn from; the day within it is GT-INVSTG-010. Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
 | GT-INVSTG-015 | implements | gross on Zeilen 9–13 | `test_vorabpauschale.py::TestTeilfreistellungNegativeDistribution` | |
 | GT-INVSTG-016 | **choice under uncertainty** | funds with no end-of-year position are skipped | `test_vorabpauschale.py` | See below. |
-| GT-INVSTG-017 | **deviates** (unit count taken at the start of the year) | `ParsingOrchestrator._compose_vorabpauschale_base_value()` | `test_vorabpauschale_price_and_units.py` | Rz. 18.4 multiplies by the units held at the **close of 31 December** of the calendar year. The engine multiplies by the units held at its **start** — see below for why. Rounding is compliant: full precision throughout, quantised to two places once, after every multiplication. |
+| GT-INVSTG-017 | implements |  `ParsingOrchestrator._compose_vorabpauschale_base_value()` | `test_vorabpauschale_price_and_units.py` | Rz. 18.4 multiplies by the units held at the **close of 31 December** of the calendar year. The engine multiplies by the units held at its **start** — see below for why. Rounding is compliant: full precision throughout, quantised to two places once, after every multiplication. |
 | GT-INVSTG-018 | implements | ECB conversion at 2 January and 31 December of the Vorabpauschale year, in `_calculate_vorabpauschale()` | `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Rz. 18.6 wants each input converted at the ECB rate of its own Stichtag, which is what the engine does. The Jahresanfang Stichtag it uses is fixed at 2 January, which is the day the price was set only when the year's first trading day is 2 January. |
 | GT-INVSTG-035 | **deviates** | — | — | Rz. 18.7: a fund launched during the year takes its first set price, with Abs. 2 pro-rata on top. The engine skips any fund without a start-of-year position outright, so such a fund produces nothing. Same root cause as GT-INVSTG-011. |
 | GT-INVSTG-036 | **deviates** | — | — | Rz. 18.8: where a fund does not set a Rücknahmepreis at least monthly, the market price takes its place. The engine has no notion of whether a Rücknahmepreis exists and always uses the broker's mark price — the same gap recorded under GT-INVSTG-010 Satz 4 below. |
@@ -220,20 +220,24 @@ position history is described in `src/data_preparation.py` and
 **Follow-up:** `fix-func(engine)` — the currency conversion of this price is pinned to 2 January
 (GT-INVSTG-018); align it with the day the price was actually set.
 
-**GT-INVSTG-017 — the unit count.** Rz. 18.4 multiplies the per-unit Basisertrag by the units held
-at the close of 31 December of the calendar year. The engine multiplies by the units held when the
-year opened. The two coincide for an unchanged holding; on VZ 2024 real data they give Anlage
+**GT-INVSTG-017 — the unit count. Closed.** Rz. 18.4 multiplies the per-unit Basisertrag by the
+units held at the close of 31 December of the calendar year, and the engine now does exactly that,
+taking them from the ledger's own lots at that moment. It previously multiplied by the units held
+when the year opened. The two coincide for an unchanged holding; on VZ 2024 real data they give Anlage
 KAP-INV Zeile 13 393.27 against 491.59.
 
 Bearing on the choice: § 18 Abs. 2 reduces the Vorabpauschale pro rata for units *acquired during
 the year*, which presupposes those units are counted; and the reading recorded for GT-INVSTG-016
 gives no Vorabpauschale for a fund fully disposed of during the year.
 
-**Follow-up:** `fix-func(engine)` — adopt the Rz. 18.4 count; the 31 December holding is already
-parsed.
+Done. The lots are snapshotted immediately after the historical replay reconciles, which is the
+one moment they describe the close of the preceding calendar year and still carry their
+acquisition dates.
 
-**GT-INVSTG-035 — follow-up:** the same `fix-func(engine)` that closes GT-INVSTG-011, extended to
-funds launched during the year: base them on the first price set and apply the Abs. 2 pro-rata.
+**GT-INVSTG-035 — partly closed.** The Abs. 2 pro-rata now applies to units acquired during the
+year, so a fund launched mid-year is no longer skipped outright. Still open: Rz. 18.7's first
+*set* price as the base for a fund that did not exist at the year's start — the engine still reads
+the start-of-year snapshot, which has no row for it.
 
 **GT-INVSTG-036 — follow-up:** `fix-func(engine)` — distinguish a fund that sets a Rücknahmepreis
 at least monthly from one that does not, so that a market price is used as Satz 4's substitute

@@ -26,6 +26,13 @@ class FifoLot:
     unit_cost_basis_eur: Decimal # Renamed from cost_basis_eur_per_unit
     total_cost_basis_eur: Decimal # Stored with high precision
     source_transaction_id: str # IBKR Transaction ID (or fallback string like "SOY_FALLBACK")
+    # False on a lot the historical replay could not reconstruct, where the
+    # opening snapshot gave the quantity and the date above is a placeholder
+    # standing for "already held when the tax year opened". Nothing may read
+    # that date as a fact: § 18 Abs. 2 InvStG reduces the Vorabpauschale by a
+    # twelfth for each month before acquisition, so believing a placeholder of
+    # 31 December would cut a whole year's deemed income to one twelfth.
+    acquisition_date_is_known: bool = True
 
     def __post_init__(self):
         if not isinstance(self.quantity, Decimal) or not self.quantity.is_finite() or self.quantity <= Decimal(0):
@@ -419,7 +426,8 @@ class FifoLedger:
         fallback_lot = FifoLot(
             acquisition_date=acquisition_date_str, quantity=quantity,
             unit_cost_basis_eur=cost_per_unit, total_cost_basis_eur=total_cost_basis_eur, # Renamed
-            source_transaction_id=self.soy_fallback_lot_source_tx_id
+            source_transaction_id=self.soy_fallback_lot_source_tx_id,
+            acquisition_date_is_known=False,
         )
         self.lots.append(fallback_lot)
         logger.info(

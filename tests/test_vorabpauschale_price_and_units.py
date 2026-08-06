@@ -7,17 +7,18 @@ price set in the year. Rz. 18.4 of the BMF-Schreiben of 21.05.2019 then
 multiplies by a unit count.
 
 These tests are about **bookkeeping**: reading the stored position reports into
-a correct history. For calendar X the price is the first one set in X, from X's
-own start-of-year report, and the quantity at X 00:00:00 is the close of X-1 —
-which is what the X-1 end-of-year report states, read verbatim.
-
-Which unit count the Vorabpauschale computation should then use is a separate
-question, downstream of this: Rz. 18.4 names the close of X, and the position
-taken is recorded against GT-INVSTG-017 in docs/legal-implementation-map.md.
+a correct history. The parsing layer settles one thing here — the per-unit price
+the Vorabpauschale year opens at. For calendar X that is the first price set in
+X, from X's own start-of-year report.
 
 Where a fund was sold on X's first trading day it has no price in that
 snapshot, and the last price set before the year began stands in — one trading
-day early rather than a year late.
+day early rather than a year late. Every such substitution is recorded, because
+the resulting Basisertrag is from the wrong day.
+
+The unit count is deliberately *not* settled here. Rz. 18.4 takes the holding at
+the close of 31 December, which only the ledger knows, and § 18 Abs. 2 reduces
+it by the month each tranche was acquired — see the engine's own tests.
 """
 from decimal import Decimal
 
@@ -51,30 +52,16 @@ def _fund(orch, *, opening_qty, opening_price, soy_price,
     return fund
 
 
-def test_the_base_is_the_first_trading_day_price_times_the_opening_units(tmp_path):
-    """Price from the year's first trading day, count from the close before it."""
+def test_the_start_price_is_the_one_from_the_years_own_snapshot(tmp_path):
+    """Present already: the resolver leaves it alone and records nothing."""
     orch = _orchestrator(tmp_path / "c.json")
     fund = _fund(orch, opening_qty=Decimal("100"), opening_price=Decimal("9"),
                  soy_price=Decimal("10"))
 
-    orch._compose_vorabpauschale_base_value()
+    orch._resolve_vorabpauschale_start_price()
 
-    assert fund.prior_year_soy_position_value == Decimal("1000")
-
-
-def test_units_bought_during_the_year_do_not_enlarge_the_base(tmp_path):
-    """
-    The count is the opening one. Rz. 18.4 would use the close of the year and
-    give a larger figure for a holding that grew — the recorded departure.
-    """
-    orch = _orchestrator(tmp_path / "c.json")
-    fund = _fund(orch, opening_qty=Decimal("100"), opening_price=Decimal("9"),
-                 soy_price=Decimal("10"))
-    fund.prior_year_eoy_quantity = Decimal("150")
-
-    orch._compose_vorabpauschale_base_value()
-
-    assert fund.prior_year_soy_position_value == Decimal("1000")
+    assert fund.prior_year_soy_mark_price == Decimal("10")
+    assert orch.vorabpauschale_price_substitutions == []
 
 
 class TestMissingFirstTradingDayPrice:
@@ -83,23 +70,24 @@ class TestMissingFirstTradingDayPrice:
         fund = _fund(orch, opening_qty=Decimal("100"), opening_price=Decimal("9"),
                      soy_price=None)
 
-        orch._compose_vorabpauschale_base_value()
+        orch._resolve_vorabpauschale_start_price()
 
-        assert fund.prior_year_soy_position_value == Decimal("900")
+        assert fund.prior_year_soy_mark_price == Decimal("9")
         assert len(orch.vorabpauschale_price_substitutions) == 1
 
     def test_a_fund_not_held_when_the_year_opened_is_left_alone(self, tmp_path):
         """
-        Abs. 2's pro-rata case (GT-INVSTG-011, GT-INVSTG-035), unimplemented.
-        Inventing a full-year Basisertrag would be a plausible wrong number.
+        A price from before the year cannot describe units that did not exist
+        then. Nothing is substituted, and the fund keeps whatever its own
+        snapshot gave it.
         """
         orch = _orchestrator(tmp_path / "c.json")
-        fund = _fund(orch, opening_qty=Decimal("0"), opening_price=None,
-                     soy_price=Decimal("10"))
+        fund = _fund(orch, opening_qty=Decimal("0"), opening_price=Decimal("9"),
+                     soy_price=None)
 
-        orch._compose_vorabpauschale_base_value()
+        orch._resolve_vorabpauschale_start_price()
 
-        assert fund.prior_year_soy_position_value is None
+        assert fund.prior_year_soy_mark_price is None
         assert orch.vorabpauschale_price_substitutions == []
 
     def test_nothing_is_invented_when_no_price_exists_at_all(self, tmp_path):
@@ -107,16 +95,16 @@ class TestMissingFirstTradingDayPrice:
         fund = _fund(orch, opening_qty=Decimal("100"), opening_price=None,
                      soy_price=None)
 
-        orch._compose_vorabpauschale_base_value()
+        orch._resolve_vorabpauschale_start_price()
 
-        assert fund.prior_year_soy_position_value is None
+        assert fund.prior_year_soy_mark_price is None
         assert orch.vorabpauschale_price_substitutions == []
 
 
-def test_the_composition_is_reached_by_the_parsing_pipeline(tmp_path):
+def test_the_resolver_is_reached_by_the_parsing_pipeline(tmp_path):
     """
     Probes the end of the channel, not the middle: every test above calls the
-    composition directly and so survives deleting its call site, which is the
+    resolver directly and so survives deleting its call site, which is the
     blind spot CLAUDE.md describes for a newly added channel.
     """
     from src.parsers.raw_models import RawPositionRecord
@@ -128,17 +116,36 @@ def test_the_composition_is_reached_by_the_parsing_pipeline(tmp_path):
             Quantity=qty, MarkPrice=price, PositionValue=value, CostBasisMoney=value)
 
     orch = _orchestrator(tmp_path / "c.json")
-    # Close of X-1: 100 units at 9. First trading day of X: price 10.
+    # Held at the close of X-1 at 9, and absent from X's own start-of-year
+    # snapshot — sold on the first trading day. The fallback must fire.
     orch.raw_positions_prior_opening = [record("100", "9", "900")]
-    # 120 units in this snapshot, so its own value (1200) differs from the composed
-    # one — otherwise deleting the call site would go unnoticed.
-    orch.raw_positions_prior_start = [record("120", "10", "1200")]
+    orch.raw_positions_prior_start = []
     orch.raw_positions_prior_end = [record("150", "12", "1800")]
 
     orch.process_positions()
 
-    funds = [a for a in orch.asset_resolver.assets_by_internal_id.values()
-             if a.prior_year_soy_position_value is not None]
-    assert len(funds) == 1
-    # 10 x 100 opening units — not 10 x 150, and not the snapshot's own 1000.
-    assert funds[0].prior_year_soy_position_value == Decimal("1000")
+    assert len(orch.vorabpauschale_price_substitutions) == 1
+    resolved = [a for a in orch.asset_resolver.assets_by_internal_id.values()
+                if a.prior_year_soy_mark_price is not None]
+    assert len(resolved) == 1
+    assert resolved[0].prior_year_soy_mark_price == Decimal("9")
+
+
+def test_the_opening_snapshot_file_actually_reaches_the_orchestrator(tmp_path):
+    """
+    One link further out than the test above, which sets
+    `raw_positions_prior_opening` by hand and therefore passes while the file
+    is never read at all. That is exactly what happened: `run_parsing_pipeline`
+    accepted `positions_prior_opening_file` and did not forward it to
+    `load_all_raw_data`, so `prior_year_opening_*` was empty in every real run
+    and the fallback above could never fire outside a test.
+    """
+    import inspect
+
+    from src.parsers.parsing_orchestrator import ParsingOrchestrator
+
+    source = inspect.getsource(ParsingOrchestrator.run_parsing_pipeline)
+    assert "positions_prior_opening_file=positions_prior_opening_file" in source, (
+        "run_parsing_pipeline accepts the opening-positions file but does not "
+        "pass it on; prior_year_opening_* will be empty in every real run"
+    )

@@ -4,6 +4,7 @@ from typing import List, Tuple, Dict, DefaultDict, Optional, Any
 import uuid
 from decimal import Decimal, getcontext, Context
 from collections import defaultdict
+from dataclasses import dataclass, replace
 from datetime import datetime, date
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
@@ -449,6 +450,18 @@ def run_main_calculations(
     # === Run the unified historical replay ===
     stream.run()
 
+    # The lots as they stand right here are the holding at the close of the
+    # preceding calendar year: the historical replay has run and been reconciled
+    # against the opening snapshot, and not one event of the tax year has been
+    # applied yet. That is precisely the count Rz. 18.4 multiplies by for the
+    # Vorabpauschale of calendar `tax_year - 1`, and each lot carries the
+    # acquisition date § 18 Abs. 2 reduces by.
+    #
+    # It has to be taken now. The Vorabpauschale is computed far below, after
+    # the tax year's own trades have consumed and created lots, by which point
+    # the ledgers describe the end of the tax year and the moment is gone.
+    vorabpauschale_opening_lots = _snapshot_fund_lots(fifo_ledgers, asset_resolver)
+
     logger.info(f"Initialized {securities_ledger_count} FIFO ledgers (unified replay).")
     for ccy, (done, total) in currency_replay_counts.items():
         logger.info(f"Currency {ccy}: Replayed {done}/{total} historical events")
@@ -864,7 +877,9 @@ def run_main_calculations(
         distributions_by_asset=prior_year_distributions_by_asset,
         currency_converter=currency_converter,
         vorabpauschale_year=vorabpauschale_year,
+        opening_lots_by_asset=vorabpauschale_opening_lots,
         ctx=ctx,
+        data_gap_collector=data_gap_collector,
     )
     logger.info(
         f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records "
@@ -931,12 +946,89 @@ def _collect_fund_distributions_for_year(
     return dict(totals)
 
 
+@dataclass(frozen=True)
+class FundUnitTranche:
+    """
+    Units of one fund held at a moment, and when they were acquired.
+
+    `acquisition_date_is_known` is False where the historical replay could not
+    reconstruct the lot and the opening snapshot supplied only the quantity.
+    The date is then a placeholder, and § 18 Abs. 2 must not be applied to it.
+    """
+    quantity: Decimal
+    acquisition_date: date
+    acquisition_date_is_known: bool = True
+
+    def abs2_retained_twelfths(self, calendar_year: int) -> int:
+        """
+        Twelfths of the Vorabpauschale these units keep, per § 18 Abs. 2.
+
+        *"Im Jahr des Erwerbs der Investmentanteile vermindert sich die
+        Vorabpauschale um ein Zwoelftel fuer jeden vollen Monat, der dem Monat
+        des Erwerbs vorangeht."* Units acquired before the calendar year are not
+        in their year of acquisition and keep all twelve; units acquired in it
+        keep twelve less one for each full month that preceded the month of
+        acquisition, so a January purchase keeps twelve and a December purchase
+        keeps one.
+
+        Units acquired *after* the year cannot be in a holding counted at its
+        close, so that case is a programming error rather than a tax one.
+        """
+        if not self.acquisition_date_is_known:
+            raise ProcessingError(
+                "Vorabpauschale: § 18 Abs. 2 was asked for the acquisition month "
+                "of units whose acquisition date the engine invented. The caller "
+                "must drop the fund before reaching here.")
+        if self.acquisition_date.year < calendar_year:
+            return 12
+        if self.acquisition_date.year > calendar_year:
+            raise ProcessingError(
+                f"Vorabpauschale {calendar_year}: a lot acquired "
+                f"{self.acquisition_date} cannot be part of the holding at the "
+                "close of that year. The snapshot was taken at the wrong point "
+                "in the pipeline.")
+        return 12 - (self.acquisition_date.month - 1)
+
+
+def _snapshot_fund_lots(fifo_ledgers, asset_resolver) -> Dict[uuid.UUID, List[FundUnitTranche]]:
+    """
+    Take the investment-fund lots as they stand, with their acquisition dates.
+
+    Called once, at the only moment the ledgers describe the close of the
+    preceding calendar year. Short lots are ignored: a short fund position is
+    not a holding of Investmentanteile and Rz. 18.4 counts units *verwahrt oder
+    verwaltet*.
+    """
+    snapshot: Dict[uuid.UUID, List[FundUnitTranche]] = {}
+    for (_account, asset_id), ledger in fifo_ledgers.items():
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
+        if not isinstance(asset_obj, InvestmentFund):
+            continue
+        for lot in ledger.lots:
+            try:
+                acquired = date.fromisoformat(lot.acquisition_date)
+            except (TypeError, ValueError) as e:
+                raise ProcessingError(
+                    f"Vorabpauschale: lot of {asset_obj.get_classification_key()} "
+                    f"carries an unreadable acquisition date {lot.acquisition_date!r}. "
+                    "§ 18 Abs. 2 reduces by the month of acquisition, so it cannot "
+                    "be guessed.") from e
+            snapshot.setdefault(asset_id, []).append(
+                FundUnitTranche(
+                    quantity=lot.quantity, acquisition_date=acquired,
+                    acquisition_date_is_known=getattr(
+                        lot, "acquisition_date_is_known", True)))
+    return snapshot
+
+
 def _calculate_vorabpauschale(
     asset_resolver: AssetResolver,
     distributions_by_asset: Dict[uuid.UUID, Decimal],
     currency_converter: CurrencyConverter,
     vorabpauschale_year: int,
+    opening_lots_by_asset: Dict[uuid.UUID, List[FundUnitTranche]],
     ctx: Context,
+    data_gap_collector: Optional[DataGapCollector] = None,
 ) -> List[VorabpauschaleData]:
     """
     Calculate the Vorabpauschale FOR calendar year `vorabpauschale_year`.
@@ -947,18 +1039,33 @@ def _calculate_vorabpauschale(
     values and distributions read here are therefore those of `vorabpauschale_year`, taken from
     the `Asset.prior_year_*` fields, not the tax year's own SoY/EoY snapshot.
 
-    Formula per 18 InvStG, sentence by sentence:
-      Abs. 1 S. 2  Basisertrag = Ruecknahmepreis_Jahresbeginn * basiszins * 0.7
-      Abs. 1 S. 3  Basisertrag capped at (last price of year - first price) + distributions
-      Abs. 1 S. 1  VP = max(0, Basisertrag - distributions)
+    **Everything up to the last step is per Investmentanteil**, because that is how Abs. 1 is
+    written -- every quantity in Saetze 1 to 3 is a Ruecknahmepreis or a distribution *of one
+    unit*. The unit count enters once, at the end, through Rz. 18.4. Working in position values
+    instead conflated a price change with a quantity change in the Satz 3 cap, whose two sides
+    were measured over different holdings.
+
+      Abs. 1 S. 2  basisertrag_je_anteil = preis_jahresbeginn * basiszins * 0.7
+      Abs. 1 S. 3  basisertrag_je_anteil <= (preis_letzt - preis_erst) + ausschuettung_je_anteil
+      Rz. 18.4     Basisertrag = SUM over tranches of basisertrag_je_anteil * units * Abs. 2
+      Abs. 1 S. 1  VP = max(0, Basisertrag - Ausschuettungen)
       Abs. 4       basiszins from the published BMF table for `vorabpauschale_year`
+
+    The unit count is the holding at the close of 31 December of the Vorabpauschale year
+    (Rz. 18.4), taken from `opening_lots_by_asset` -- the ledger's own lots at that moment,
+    which is also where each tranche's acquisition date comes from. § 18 Abs. 2 then reduces
+    each tranche by one twelfth for every full month before its month of acquisition.
+
+    Applying Abs. 2 per tranche rather than to the holding as a whole is a choice under
+    uncertainty: no Tier 1 or Tier 2 source addresses a holding acquired in several tranches.
+    Both readings are in reference/research/open-legal-questions.md Q13; this one is recorded
+    against GT-INVSTG-011 in docs/legal-implementation-map.md.
+
     Teilfreistellung (20 InvStG) is applied to derive the net figure; the gross figure is what
     goes on the form.
 
-    Not implemented, and deliberately so rather than silently approximated -- see
-    reference/investment-tax-law/invstg-18-vorabpauschale.md, "Known deviations":
-    Abs. 2 (pro-rata reduction in the acquisition year) and Abs. 1 S. 4 (Boersen- oder
-    Marktpreis only where no Ruecknahmepreis was set).
+    Still not implemented, rather than silently approximated: Abs. 1 S. 4 (Boersen- oder
+    Marktpreis only where no Ruecknahmepreis was set) -- GT-INVSTG-036.
     """
     from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
@@ -976,66 +1083,131 @@ def _calculate_vorabpauschale(
     eoy_conversion_date = date(vorabpauschale_year, 12, 31)
 
     results: List[VorabpauschaleData] = []
+    funds_without_acquisition_dates: List[Tuple[str, str]] = []
 
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if not isinstance(asset_obj, InvestmentFund):
             continue
-        # Held at the start of the Vorabpauschale year? Units acquired later get no VP here;
-        # Abs. 2's pro-rata reduction is not implemented (see the docstring).
-        if asset_obj.prior_year_soy_quantity is None or asset_obj.prior_year_soy_quantity <= Decimal('0'):
+        # Rz. 18.4: the units held at the close of 31 December of the Vorabpauschale
+        # year. Nothing held then means no Vorabpauschale -- which is also how a fund
+        # disposed of during the year drops out (GT-INVSTG-016, Q5 Reading A: the
+        # Abs. 3 Zufluss falls after the disposal).
+        tranches = opening_lots_by_asset.get(asset_id, [])
+
+        # § 18 Abs. 2 turns on the month each tranche was acquired. Where the
+        # historical replay could not reconstruct a lot, the opening snapshot
+        # gave the quantity and the engine invented the date. No Vorabpauschale
+        # is computed from an invented date -- not reduced by it, and not
+        # quietly treated as though the units had always been held.
+        undated = [t for t in tranches if not t.acquisition_date_is_known]
+        if undated:
+            # Abs. 2 asks one thing of a tranche: was it acquired *during* this
+            # calendar year? A date is one way to answer that and not the only
+            # one. Units the reconstruction could not place, but which the
+            # broker already reported at the close of the year before, were
+            # demonstrably acquired before this year began -- the snapshot is
+            # the evidence, and no reduction applies to them. That is a
+            # derivation from a report actually held, not a guess at a date.
+            held_before_the_year = asset_obj.prior_year_opening_quantity or Decimal(0)
+            undated_units = sum((t.quantity for t in undated), Decimal(0))
+            if undated_units > held_before_the_year:
+                funds_without_acquisition_dates.append(
+                    (asset_obj.get_classification_key(), asset_obj.description or "",
+                     undated_units, held_before_the_year))
+                logger.warning(
+                    "Fund %s: %s units held at the close of %d cannot be placed in "
+                    "time -- the reconstruction has no date for them and the close "
+                    "of %d accounts for only %s. No Vorabpauschale computed.",
+                    asset_obj.get_classification_key(), undated_units,
+                    vorabpauschale_year, vorabpauschale_year - 1, held_before_the_year)
+                continue
+
+            tranches = [t if t.acquisition_date_is_known
+                        else replace(t, acquisition_date=date(vorabpauschale_year - 1, 12, 31))
+                        for t in tranches]
+            logger.info(
+                "Fund %s: %s undated units were already held at the close of %d, "
+                "so 18 Abs. 2 does not reduce them.",
+                asset_obj.get_classification_key(), undated_units,
+                vorabpauschale_year - 1)
+
+        units_at_year_end = sum((t.quantity for t in tranches), Decimal(0))
+        if units_at_year_end <= Decimal('0'):
+            logger.debug(f"Fund {asset_obj.description}: nothing held at the close of "
+                         f"{vorabpauschale_year}. No VP.")
             continue
 
-        # Ruecknahmepreis at the start of the Vorabpauschale year (Abs. 1 S. 2)
-        soy_value_foreign = asset_obj.prior_year_soy_position_value
+        # Abs. 1 S. 2: the Ruecknahmepreis at the start of the year, PER UNIT.
+        soy_price_foreign = asset_obj.prior_year_soy_mark_price
         soy_currency = asset_obj.prior_year_soy_mark_price_currency or asset_obj.currency
-        if soy_value_foreign is None or soy_currency is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Missing start-of-{vorabpauschale_year} position value or currency. Skipping VP.")
+        if soy_price_foreign is None or soy_currency is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No start-of-{vorabpauschale_year} price. Skipping VP.")
             continue
 
-        fund_value_soy_eur = currency_converter.convert_to_eur(soy_value_foreign, soy_currency, soy_conversion_date)
-        if fund_value_soy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} value to EUR. Skipping VP.")
+        soy_price_eur = currency_converter.convert_to_eur(soy_price_foreign, soy_currency, soy_conversion_date)
+        if soy_price_eur is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} price to EUR. Skipping VP.")
             continue
 
-        # Last Ruecknahmepreis set in the Vorabpauschale year (Abs. 1 S. 3 cap)
-        eoy_value_foreign = asset_obj.prior_year_eoy_position_value
+        # Abs. 1 S. 3: the last Ruecknahmepreis set in the year, PER UNIT.
+        eoy_price_foreign = asset_obj.prior_year_eoy_mark_price
         eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
-        if eoy_value_foreign is None or eoy_currency is None:
-            # Fund fully disposed of during the year. The Abs. 3 Zufluss then falls after the
-            # disposal, so no VP arises. This is inferred from Abs. 3, not stated by a located
-            # Tier 1/2 source: see reference/research/open-legal-questions.md Q5 for both
-            # readings, and docs/legal-implementation-map.md GT-INVSTG-016 for this choice.
-            logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} position value. Skipping VP.")
+        if eoy_price_foreign is None or eoy_currency is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} price though units were held at the close. Skipping VP.")
             continue
 
-        fund_value_eoy_eur = currency_converter.convert_to_eur(eoy_value_foreign, eoy_currency, eoy_conversion_date)
-        if fund_value_eoy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert EoY value to EUR. Skipping VP.")
+        eoy_price_eur = currency_converter.convert_to_eur(eoy_price_foreign, eoy_currency, eoy_conversion_date)
+        if eoy_price_eur is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert end-of-{vorabpauschale_year} price to EUR. Skipping VP.")
             continue
 
-        # 1. Basisertrag = fund_value_soy_eur * basiszins_rate * 0.7
-        basisertrag = ctx.multiply(ctx.multiply(fund_value_soy_eur, base_return_rate), factor_70)
+        distributions_eur = distributions_by_asset.get(asset_id, Decimal('0'))
+        distribution_per_unit = ctx.divide(distributions_eur, units_at_year_end)
 
-        # 2. If Basisertrag <= 0, VP = 0
+        # Abs. 1 S. 2, per unit.
+        basisertrag_per_unit = ctx.multiply(
+            ctx.multiply(soy_price_eur, base_return_rate), factor_70)
+
+        # Abs. 1 S. 3, per unit: capped at the year's price gain plus what was
+        # distributed on one unit. The cap is a ceiling, and a fund that lost value
+        # has a negative one, so the floor at zero is the cap's own doing.
+        cap_per_unit = ctx.add(
+            ctx.subtract(eoy_price_eur, soy_price_eur), distribution_per_unit)
+        basisertrag_per_unit = min(basisertrag_per_unit, cap_per_unit)
+        if basisertrag_per_unit <= Decimal('0'):
+            logger.debug(f"Fund {asset_obj.description}: per-unit Basisertrag "
+                         f"{basisertrag_per_unit} <= 0 after the Satz 3 cap. VP=0.")
+            continue
+
+        # Rz. 18.4 with Abs. 2: multiply by the units, tranche by tranche, each
+        # reduced by a twelfth for every full month before its month of acquisition.
+        basisertrag = Decimal(0)
+        for tranche in tranches:
+            twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
+            tranche_basisertrag = ctx.multiply(basisertrag_per_unit, tranche.quantity)
+            if twelfths != 12:
+                tranche_basisertrag = ctx.divide(
+                    ctx.multiply(tranche_basisertrag, Decimal(twelfths)), Decimal(12))
+                logger.debug(
+                    "Fund %s: tranche of %s acquired %s keeps %d/12 (18 Abs. 2).",
+                    asset_obj.description, tranche.quantity,
+                    tranche.acquisition_date, twelfths)
+            basisertrag = ctx.add(basisertrag, tranche_basisertrag)
+
         if basisertrag <= Decimal('0'):
             logger.debug(f"Fund {asset_obj.description}: Basisertrag={basisertrag} <= 0, VP=0.")
             continue
 
-        # 3. VP = Basisertrag - distributions (but not below 0)
-        distributions_eur = distributions_by_asset.get(asset_id, Decimal('0'))
-        vp_after_dist = ctx.subtract(basisertrag, distributions_eur)
-        if vp_after_dist <= Decimal('0'):
+        # Abs. 1 S. 1: the Vorabpauschale is what the distributions fell short of.
+        gross_vp = ctx.subtract(basisertrag, distributions_eur)
+        if gross_vp <= Decimal('0'):
             logger.debug(f"Fund {asset_obj.description}: Distributions ({distributions_eur}) >= Basisertrag ({basisertrag}), VP=0.")
             continue
 
-        # 4. Cap: VP <= max(0, fund_value_eoy_eur - fund_value_soy_eur)
-        value_gain = ctx.subtract(fund_value_eoy_eur, fund_value_soy_eur)
-        cap = max(Decimal('0'), value_gain)
-        gross_vp = min(vp_after_dist, cap)
-
-        if gross_vp <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Value gain cap applied, VP=0.")
-            continue
+        # Kept for the report: the holding's value at each end of the year, on the
+        # Rz. 18.4 count, so both sides describe the same units.
+        fund_value_soy_eur = ctx.multiply(soy_price_eur, units_at_year_end)
+        fund_value_eoy_eur = ctx.multiply(eoy_price_eur, units_at_year_end)
 
         # 5. Apply Teilfreistellung
         fund_type = asset_obj.fund_type or InvestmentFundType.NONE
@@ -1064,6 +1236,32 @@ def _calculate_vorabpauschale(
         logger.info(
             f"Fund {asset_obj.description}: VP gross={gross_vp.quantize(TWO_PLACES, context=ctx)}, "
             f"TF={tf_amount.quantize(TWO_PLACES, context=ctx)}, net={net_vp.quantize(TWO_PLACES, context=ctx)}"
+        )
+
+    # One report naming every fund. A FAIL_FAST gap raises as it is recorded, so
+    # recording them one by one would stop at the first and hide the rest.
+    if funds_without_acquisition_dates and data_gap_collector is not None:
+        named = "; ".join(
+            f"{key} ({description}): {undated} Anteile ohne Datum, "
+            f"Bestand zum Vorjahresende {held}"
+            for key, description, undated, held in funds_without_acquisition_dates)
+        data_gap_collector.record(
+            code="VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN",
+            subject=f"{len(funds_without_acquisition_dates)} Fonds: {named}",
+            detail=(
+                f"Fuer Anteile, die zum Ende des Kalenderjahres {vorabpauschale_year} "
+                "gehalten wurden, konnte die historische Wiedergabe kein "
+                "Anschaffungsdatum rekonstruieren; die Menge stammt aus dem "
+                "Positions-Snapshot. § 18 Abs. 2 InvStG mindert die Vorabpauschale um "
+                "ein Zwoelftel je vollem Monat vor dem Anschaffungsmonat; ob diese "
+                "Anteile ueberhaupt unterjaehrig erworben wurden, ist nicht "
+                "feststellbar, weil sie auch im Bestand zum Ende des Vorjahres nicht "
+                "enthalten sind. Es wurde daher KEINE Vorabpauschale angesetzt, was "
+                "die Einkuenfte untererfasst. Die historische Rekonstruktion "
+                "widerspricht hier dem Positionsbericht des Brokers -- die Ursache "
+                "liegt in den Transaktionsdateien, nicht in fehlenden Preisen."
+            ),
+            severity=GapSeverity.FAIL_FAST,
         )
 
     return results

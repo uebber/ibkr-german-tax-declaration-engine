@@ -172,8 +172,19 @@ class TestVorabpauschaleFromARealRunReachesThePdf(FifoTestCaseBase):
                 self.ISIN, quantity, position_value, mark_price, "10000",
                 "", self.CONID, "", "1"]
 
+    def _acquisition_row(self, trade_date, quantity, price):
+        """The purchase behind the holding. Without it the reconstruction is
+        empty, the ledger falls back to a lot with an invented acquisition date,
+        and 18 Abs. 2 refuses to compute — so no record would reach the PDF and
+        this test would pass for the wrong reason."""
+        return ["U1234567", "EUR", "STK", "", "XYZ2", "XYZ2 ETF INDEX",
+                self.ISIN, "", "", "", trade_date, quantity, price, "0", "EUR",
+                "BUY", f"TX{trade_date.replace('-', '')}", "", "", self.CONID,
+                "", "1", "O"]
+
     def test_a_fund_created_as_a_fund_renders_instead_of_crashing(self):
         results = self._run_pipeline(
+            trades_data=[self._acquisition_row("2023-03-15", "100", "90")],
             tax_year=TAX_YEAR,
             positions_prior_start_data=[self._position_row("100", "100", "10000")],
             positions_prior_end_data=[self._position_row("100", "110", "11000")],

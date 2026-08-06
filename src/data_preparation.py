@@ -17,6 +17,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 IMPORT_DIR = Path("data_import")
+
 WORKING_DIR = Path("data")
 
 # Naming scheme for data_import/ files

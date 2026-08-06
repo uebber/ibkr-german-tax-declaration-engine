@@ -77,7 +77,7 @@ class ParsingOrchestrator:
                            positions_end_file: Optional[str] = None,
                            positions_prior_start_file: Optional[str] = None,
                            positions_prior_end_file: Optional[str] = None,
-                           positions_prior_opening_file: Optional[str] = None,
+                             positions_prior_opening_file: Optional[str] = None,
                            corporate_actions_file: Optional[str] = None,
                            cash_balance_file: Optional[str] = None,
                            options_eae_file: Optional[str] = None):
@@ -188,60 +188,50 @@ class ParsingOrchestrator:
                 "prior_year_opening_mark_price_currency",
             ))
 
-        self._compose_vorabpauschale_base_value()
+        self._resolve_vorabpauschale_start_price()
 
-    def _compose_vorabpauschale_base_value(self) -> None:
+    def _resolve_vorabpauschale_start_price(self) -> None:
         """
-        Build the Basisertrag's base from a price and a unit count taken at the
-        same moment: the start of the Vorabpauschale year.
+        Settle the per-unit price the Vorabpauschale year opens at.
 
-        For the Vorabpauschale of calendar X, the price is the first one set in
-        X (18 Abs. 1 Satz 2 InvStG, resolved by open question Q12), and the unit
-        count is the holding at the close of X-1 -- the position that price
-        applies to. Where a fund was sold on X's first trading day it is absent
-        from that snapshot, and the last price before the year began stands in:
-        one trading day early rather than a year late.
+        For calendar X the Ruecknahmepreis is the first one set in X, which is
+        what X's own start-of-year report carries (18 Abs. 1 Satz 2 InvStG).
+        Where a fund has no price in that report -- it was sold on X's first
+        trading day, so the snapshot taken at that day's close does not list it
+        -- the last price set before the year began stands in: one trading day
+        early rather than a year late. Every substitution is recorded so the
+        report can say it happened.
 
-        Which unit count the Vorabpauschale should then be multiplied by is a
-        separate question about that computation, not about this bookkeeping:
-        Rz. 18.4 names the holding at the close of X, and the position taken here
-        is recorded against GT-INVSTG-017 in docs/legal-implementation-map.md.
-
-        The composed figure is written into the field the Vorabpauschale already
-        consumes, so the calculation itself is untouched.
+        Only the price is settled here. The unit count is not this layer's
+        business: it comes from the lots held at the close of 31 December
+        (Rz. 18.4), which only the ledger knows.
         """
         for asset in self.asset_resolver.assets_by_internal_id.values():
-            units = getattr(asset, "prior_year_opening_quantity", None)
-            if units is None or units <= Decimal(0):
-                # Nothing held when the year opened: no Basisertrag to scale. Units acquired
-                # during the year are Abs. 2's pro-rata case (GT-INVSTG-011, GT-INVSTG-035),
-                # which is not implemented -- and inventing a full-year Basisertrag for them
-                # would be a plausible wrong number rather than a missing one.
+            if getattr(asset, "prior_year_soy_mark_price", None) is not None:
                 continue
 
-            price = getattr(asset, "prior_year_soy_mark_price", None)
-            if price is None:
-                price = getattr(asset, "prior_year_opening_mark_price", None)
-                if price is None:
-                    continue
-                self.vorabpauschale_price_substitutions.append(
-                    (asset.get_classification_key(), asset.description or ""))
-                logger.warning(
-                    "Vorabpauschale for %s: no price on the first trading day of the year "
-                    "though the fund was held when it opened; using the last price set "
-                    "before the year began.",
-                    asset.get_classification_key(),
-                )
+            fallback = getattr(asset, "prior_year_opening_mark_price", None)
+            if fallback is None:
+                continue
 
-            composed = price * units
-            previous = asset.prior_year_soy_position_value
-            asset.prior_year_soy_position_value = composed
-            if previous is not None and previous != composed:
-                logger.debug(
-                    "Vorabpauschale base for %s: price %s x opening units %s = %s "
-                    "(the snapshot's own value was %s).",
-                    asset.get_classification_key(), price, units, composed, previous,
-                )
+            # Only funds held when the year opened can have lost their price
+            # this way; anything else never had one to begin with, and
+            # inventing one would be a plausible wrong number.
+            units_at_open = getattr(asset, "prior_year_opening_quantity", None)
+            if units_at_open is None or units_at_open <= Decimal(0):
+                continue
+
+            asset.prior_year_soy_mark_price = fallback
+            asset.prior_year_soy_mark_price_currency = getattr(
+                asset, "prior_year_opening_mark_price_currency", None)
+            self.vorabpauschale_price_substitutions.append(
+                (asset.get_classification_key(), asset.description or ""))
+            logger.warning(
+                "Vorabpauschale for %s: no price on the first trading day of the year "
+                "though the fund was held when it opened; using the last price set "
+                "before the year began.",
+                asset.get_classification_key(),
+            )
 
     def _record_prior_year_snapshot_fields(self, asset: Asset, field_names: Tuple[str, ...]) -> None:
         """Note which prior-year snapshot values this asset now carries.
@@ -775,7 +765,7 @@ class ParsingOrchestrator:
                              positions_end_file: Optional[str] = None,
                              positions_prior_start_file: Optional[str] = None,
                              positions_prior_end_file: Optional[str] = None,
-                           positions_prior_opening_file: Optional[str] = None,
+                             positions_prior_opening_file: Optional[str] = None,
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
@@ -790,6 +780,7 @@ class ParsingOrchestrator:
                 positions_end_file=positions_end_file,
                 positions_prior_start_file=positions_prior_start_file,
                 positions_prior_end_file=positions_prior_end_file,
+                positions_prior_opening_file=positions_prior_opening_file,
                 corporate_actions_file=corporate_actions_file,
                 cash_balance_file=cash_balance_file,
                 options_eae_file=options_eae_file
