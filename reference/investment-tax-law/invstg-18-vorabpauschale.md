@@ -6,6 +6,15 @@
 - **With version history:** [buzer.de -- 18 InvStG](https://www.buzer.de/18_InvStG.htm)
 - **Regime start:** 56 Abs. 1 Satz 1 InvStG -- the InvStG 2018 provisions apply from 01.01.2018,
   so the first Vorabpauschale is the one for calendar 2018.
+- **Amendment history (checked 2026-08-06, buzer.de version tracking).** The text below is that of
+  Artikel 18 des Gesetzes zur Umsetzung der Aenderungen der EU-Amtshilferichtlinie und von
+  weiteren Massnahmen gegen Gewinnkuerzungen und -verlagerungen, G. v. 20.12.2016, BGBl. I
+  S. 3000, in force from 24.12.2016. § 18 carries exactly **one** earlier version -- the original
+  Artikel 1 G. v. 19.07.2016, BGBl. I S. 1730 -- which was superseded on 24.12.2016, before the
+  regime began to apply. **§ 18 has therefore been unchanged in every tax year in which it has
+  had effect**, 2018 onward, and no year-by-year differentiation of its wording is needed. The
+  InvStG as a whole has been amended since, most recently by Artikel 28 G. v. 04.02.2026,
+  BGBl. 2026 I Nr. 33, but not in this paragraph.
 - **Basiszins values and their per-year provenance:** `bmf-guidance/basiszins-vorabpauschale.md`
   is the **single authoritative table**. Do not duplicate it here; an earlier revision of this
   file carried a second copy that drifted from it (Validation Protocol item 5).
@@ -81,6 +90,71 @@ Published values, with per-year provenance: `bmf-guidance/basiszins-vorabpauscha
 
 ---
 
+## Administrative guidance (Tier 2)
+
+- **Source:** BMF-Schreiben of 21.05.2019, *Anwendungsfragen zum Investmentsteuergesetz in der ab
+  dem 1. Januar 2018 geltenden Fassung*, BStBl I 2019 S. 527. Section 18 runs Rz. 18.1 to 18.11.
+- **Amendment chain, each letter naming its predecessor in its BEZUG line:** 21.05.2019
+  (BStBl I S. 527) -> ... -> 18.11.2024 (BStBl I S. 1547) -> 17.10.2025
+  (GZ IV C 1 - S 1980/00206/032/029) -> 24.11.2025 (GZ IV C 1 - S 1980/00206/032/046). The
+  24.11.2025 letter is the current one and **changes nothing in section 18**: its amendments run
+  to §§ 2, 17 and others, and section 18 stands as issued in 2019.
+- **Retrieved 2026-08-06.** Current letter:
+  https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Investmentsteuer/2025-11-24-anwendungsfragen-InvStG.pdf
+  BMF serves only the two most recent letters of a recurring series, so the 2019 base text was
+  taken from an Internet Archive snapshot of the original BMF URL
+  (`web.archive.org/web/20220324182212if_/` + the 2019-05-21 BMF PDF path).
+- **Applicable tax years:** 2018 onward; regime floor as above.
+
+**What else section 18 contains**, beyond the claims recorded below (Validation Protocol item 2):
+Rz. 18.1 is introductory; Rz. 18.2 restates Abs. 1 Saetze 1 to 3 without adding to them; Rz. 18.3
+is the worked example quoted under Q12; Rz. 18.5 governs balance-sheet treatment for
+bilanzierende Anleger, which is outside this library's Privatvermoegen scope; Rz. 18.9 and 18.10
+concern the Steuerabzug at a depotfuehrende Stelle on custody transfers and foreign-custodian
+holdings; Rz. 18.11 restates Abs. 2.
+
+### [GT-INVSTG-017] Rz. 18.4 -- computation precision
+
+*"Fuer die Ermittlung der Vorabpauschale ist ein Rechnungszins mit (mindestens) drei
+Nachkommastellen zu verwenden. ... Der Basisertrag ist mit mindestens vier Nachkommastellen
+anzusetzen und erst nach der Multiplikation mit der Anzahl der mit Ablauf des 31. Dezember des
+Kalenderjahres verwahrten oder verwalteten Anteile an dem Investmentfonds ist eine kaufmaennische
+Rundung auf zwei Nachkommastellen vorzunehmen."*
+
+Three requirements: the rate carries at least three decimal places, the Basisertrag at least
+four, and rounding to two happens **once, after** multiplying by the unit count -- and the unit
+count is the one held at the end of 31 December of the calendar year.
+
+### [GT-INVSTG-018] Rz. 18.6 -- currency conversion of a foreign-currency fund
+
+*"Bei in fremden Waehrungen notierenden Investmentanteilen sind fuer die Umrechnung in Euro die
+am jeweiligen Stichtag (Jahresanfang, Ausschuettungstermin, Jahresende) geltenden Referenzkurse
+der Europaeischen Zentralbank (EZB) zu Grunde zu legen."*
+
+Each of the three inputs is converted at the ECB reference rate **of its own Stichtag**, not at a
+single rate for the year. The three Stichtage named are the start of the year, the distribution
+date, and the end of the year.
+
+### [GT-INVSTG-035] Rz. 18.7 -- fund launched during the year
+
+*"Bei unterjaehriger Neuauflage eines Investmentfonds ist der erste festgesetzte Ruecknahmepreis
+oder falls dieser nicht vorhanden ist, der erste fuer diesen Investmentfonds ermittelte Boersen-
+oder Marktpreis bei der Ermittlung der Vorabpauschale zu Grunde zu legen. Darueber hinaus ist die
+Vorabpauschale gemaess § 18 Absatz 2 InvStG zeitanteilig anzusetzen."*
+
+For a fund that did not exist at the start of the year the base is the first price actually set,
+and Abs. 2's pro-rata reduction applies on top.
+
+### [GT-INVSTG-036] Rz. 18.8 -- fund without a monthly price
+
+*"Wenn der Investmentfonds nicht mindestens monatlich fortlaufend einen Ruecknahmepreis festsetzt,
+ist fuer die Zwecke der Vorabpauschale auf den Boersen- oder Marktpreis abzustellen."*
+
+This is the administration's threshold for Abs. 1 Satz 4: a Ruecknahmepreis set less often than
+monthly does not count as one being set, and the market price takes its place.
+
+---
+
 ## Which calendar year's Vorabpauschale goes on which return
 
 **This is the most error-prone point in the whole computation.** The Basiszins year, the price
@@ -113,13 +187,20 @@ For the Vorabpauschale declared in VZ `Y` -- that is, the one computed for calen
 | Input | Which year it is taken from |
 |-------|------------------------------|
 | Basiszins | `Y-1` (the rate published for 02.01. of `Y-1`) |
-| Ruecknahmepreis at the start of the year (Abs. 1 Satz 2) | first of `Y-1` |
+| Ruecknahmepreis at the start of the year (Abs. 1 Satz 2) | `Y-1` -- but see Q12 on *which day's* price that is |
 | Ruecknahmepreis at the end of the year (the Abs. 1 Satz 3 cap) | last set in `Y-1` |
 | Ausschuettungen deducted (Abs. 1 Satz 1) | those made during `Y-1` |
 
 Every input is a `Y-1` figure. The one that is easy to get wrong is the first: the start-of-`Y-1`
 price is *not* the start-of-`Y` position snapshot, and using the latter computes a different
 year's Vorabpauschale with a different Basiszins.
+
+**This table states the year, not the day.** Whether the Abs. 1 Satz 2 price is the last one set
+in `Y-2` or the first one set in `Y-1` is [Q12] in `../research/open-legal-questions.md`, and no
+Tier 1 or Tier 2 source has been found that settles it. An earlier revision of this table read
+"first of `Y-1`", which silently resolved that question inside the store -- the thing Validation
+Protocol item 7 exists to prevent. Choosing between the two readings is an implementation act and
+is recorded against [GT-INVSTG-010] in `docs/legal-implementation-map.md`, not here.
 
 ---
 

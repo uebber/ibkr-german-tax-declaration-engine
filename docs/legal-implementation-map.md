@@ -169,13 +169,17 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-010 | implements | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
+| GT-INVSTG-010 | **choice under uncertainty** | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. **Re-decided by the 2026-08-06 audit: the day of the Satz 2 price is open question Q12, and the engine does not choose it — see below.** |
 | GT-INVSTG-011 | **deviates** | — | — | **Abs. 2 pro-rata is not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
 | GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | |
-| GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
+| GT-INVSTG-014 | implements (year), see Q12 (day) | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Re-decided by the 2026-08-06 audit and unchanged as to the *year* each input is drawn from. Which *day* within the year supplies the Satz 2 price is Q12, recorded against GT-INVSTG-010. Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
 | GT-INVSTG-015 | implements | gross on Zeilen 9–13 | `test_vorabpauschale.py::TestTeilfreistellungNegativeDistribution` | |
 | GT-INVSTG-016 | **choice under uncertainty** | funds with no end-of-year position are skipped | `test_vorabpauschale.py` | See below. |
+| GT-INVSTG-017 | **deviates** | `_calculate_vorabpauschale()` multiplies the *start-of-year position value* by the rate | `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Rz. 18.4 requires the Basisertrag to be multiplied by the units held **at the end of 31 December** of the calendar year; the engine effectively uses the units held at the *start* of it, because it works from the start-of-year position value. Identical whenever the holding did not change during the year, different whenever it did. Rounding itself is compliant: full precision throughout, quantised to two places once, after every multiplication. |
+| GT-INVSTG-018 | implements | ECB conversion at 2 January and 31 December of the Vorabpauschale year, in `_calculate_vorabpauschale()` | `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Rz. 18.6 wants each input converted at the ECB rate of its own Stichtag, which is what the engine does. Note the Jahresanfang Stichtag it uses is 2 January — consistent with Q12 Reading B and not with Reading A. |
+| GT-INVSTG-035 | **deviates** | — | — | Rz. 18.7: a fund launched during the year takes its first set price, with Abs. 2 pro-rata on top. The engine skips any fund without a start-of-year position outright, so such a fund produces nothing. Same root cause as GT-INVSTG-011. |
+| GT-INVSTG-036 | **deviates** | — | — | Rz. 18.8: where a fund does not set a Rücknahmepreis at least monthly, the market price takes its place. The engine has no notion of whether a Rücknahmepreis exists and always uses the broker's mark price — the same gap recorded under GT-INVSTG-010 Satz 4 below. |
 
 **GT-INVSTG-010 and GT-INVSTG-014 — reached only for some funds until 2026-08-04.** A positions
 row is resolved without its `SubCategory`, so the description is the only fund signal that
@@ -201,6 +205,48 @@ produced one.
 substitutes only where none was set. The engine uses the broker's position mark price
 unconditionally, without establishing that no Rücknahmepreis exists for the instrument. Correct
 wherever the fund publishes no Rücknahmepreis; **not verified per instrument.**
+
+**GT-INVSTG-010, open question Q12 — reading chosen: B, the first Rücknahmepreis set in the
+calendar year.** § 18 Abs. 1 Satz 2 takes the Rücknahmepreis *zu Beginn des Kalenderjahres*, and
+neither the statute nor the BMF-Schreiben says which day that is; both readings and their
+authorities are in `reference/research/open-legal-questions.md` Q12.
+
+**Why B.** The worked example at Rz. 18.3 of the BMF-Schreiben uses one figure for both the
+Satz 2 base and the lower bound of the Satz 3 cap, and Satz 3's lower bound is by its own words
+the first price *set in the calendar year*; the two are the same number only under B. Rz. 18.7
+anchors a mid-year fund on the first price actually set. Abs. 4 draws the Basiszins from the
+first Börsentag of the year, so under B both factors of the same product come from the same
+moment. Reading A rests on the wording contrast alone.
+
+**What that means for the input.** The start-of-year snapshot must be the holding *and price* of
+the first trading day of the calendar year, not of 31 December preceding it. A snapshot requested
+for 1 January answers with the previous close, which is Reading A — so the request has to name a
+day on which a price was actually set. This is why the portal downloader asks for the first
+trading day; see `src/web_portal/download.py`.
+
+**Known state of the input corpus at the time of this decision.** Of the start-of-year snapshots
+present, only the 2023 one carried first-trading-day prices; those for 2022, 2024 and 2025 carried
+the preceding 31 December close. Quantities agree in every case, so the end-of-year reconciliation
+cannot see the difference — only the Vorabpauschale moves. Re-fetching those three snapshots is
+part of adopting this reading.
+
+Discovered by the 2026-08-06 audit, prompted by two start-of-year snapshots of the same year that
+carried identical quantities and different mark prices.
+
+**Follow-up:** `fix-func(engine)` — the currency conversion of the Satz 2 price is pinned to
+2 January (GT-INVSTG-018), which is the right Stichtag under B only when the first trading day
+*is* 2 January. Align it with the day the price was set.
+
+**GT-INVSTG-017 — follow-up:** `fix-func(engine)` — multiply the per-unit Basisertrag by the units
+held at the end of 31 December of the calendar year, instead of deriving the Basisertrag from the
+start-of-year position value.
+
+**GT-INVSTG-035 — follow-up:** the same `fix-func(engine)` that closes GT-INVSTG-011, extended to
+funds launched during the year: base them on the first price set and apply the Abs. 2 pro-rata.
+
+**GT-INVSTG-036 — follow-up:** `fix-func(engine)` — distinguish a fund that sets a Rücknahmepreis
+at least monthly from one that does not, so that a market price is used as Satz 4's substitute
+rather than as the default. Closes the Satz 4 gap recorded above at the same time.
 
 **GT-INVSTG-016, open question Q5 — reading chosen: no Vorabpauschale in the year of disposal.**
 Reason: § 18 Abs. 3 deems the inflow to fall on the first working day of the following year, by

@@ -22,7 +22,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 ## Investment Tax Law (InvStG)
 
 - [InvStG 16 -- Investmentertraege](investment-tax-law/invstg-16-investmentertraege.md) -- Definition of taxable fund income
-- [InvStG 18 -- Vorabpauschale](investment-tax-law/invstg-18-vorabpauschale.md) -- Deemed minimum income, Basiszins, calculation formula
+- [InvStG 18 -- Vorabpauschale](investment-tax-law/invstg-18-vorabpauschale.md) -- Deemed minimum income, Basiszins, calculation formula; BMF 21.05.2019 section 18 (precision, currency Stichtage, mid-year launch, funds without a monthly price)
 - [InvStG 19 -- Veraeusserungsgewinne](investment-tax-law/invstg-19-veraeusserungsgewinne.md) -- Fund sale gain calculation, VP deduction
 - [InvStG 20 -- Teilfreistellung](investment-tax-law/invstg-20-teilfreistellung.md) -- Partial exemption rates by fund type (30%/15%/60%/80%); fund type definitions and their thresholds
 - [InvStG 22 -- Aenderung des Teilfreistellungssatzes](investment-tax-law/invstg-22-teilfreistellungssatz-aenderung.md) -- fiktive Veraeusserung when the applicable rate changes or its conditions lapse

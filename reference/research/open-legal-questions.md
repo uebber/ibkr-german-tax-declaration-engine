@@ -22,6 +22,7 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q8 | [GT-FX-006] | How is a short (negative) currency position taxed in Privatvermoegen? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q9 | [GT-FX-007] | Is the currency leg embedded in a foreign securities transaction a separate disposal? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q10 | [GT-FX-001] | Is a foreign-currency balance debited to settle a cash-flow item disposed of, measured separately in EUR? | this file |
+| Q12 | [GT-INVSTG-010] | Is the Abs. 1 Satz 2 *Ruecknahmepreis zu Beginn des Kalenderjahres* the last price set in the preceding year, or the first set in the year itself? | `../investment-tax-law/invstg-18-vorabpauschale.md` |
 
 **Closed 2026-08-03, and recorded here so it is not reopened by habit:** lot identification for
 foreign-currency amounts. It is FIFO under both classifications -- § 23 Abs. 1 Satz 1 Nr. 2 Satz 3
@@ -201,6 +202,55 @@ equal force. The choice is not neutral in amount: Reading A produces a gain or l
 Reading B does not.
 
 ---
+
+## Q12 -- which day's Ruecknahmepreis is the one "zu Beginn des Kalenderjahres"
+
+§ 18 Abs. 1 Satz 2 InvStG multiplies *"den Ruecknahmepreis des Investmentanteils zu Beginn des
+Kalenderjahres"* by 70 % of the Basiszins. For a fund whose price is set daily, two different
+prices answer to that description: the last one set in the preceding calendar year, and the first
+one set in the calendar year itself. They differ whenever the market moved between them, which is
+most years.
+
+The question decides the Basisertrag, and through it the Vorabpauschale and the figure declared
+on Anlage KAP-INV. It cannot be avoided: some price has to be picked.
+
+**Reading A -- the last Ruecknahmepreis set in the preceding calendar year.**
+
+- Satz 2 describes a *moment* ("zu Beginn des Kalenderjahres"), not a price "im Kalenderjahr
+  festgesetzt". The value in existence at the instant the year begins is the preceding year's
+  closing price.
+- One sentence later, Satz 3 caps the Basisertrag by reference to *"dem ersten und dem letzten im
+  Kalenderjahr festgesetzten Ruecknahmepreis"*. The drafter therefore had the "first price set in
+  the year" formulation to hand and did not use it in Satz 2. Abs. 4 Satz 2 uses a third
+  formulation again -- *"auf den ersten Boersentag des Jahres"* -- for the Basiszins. Three
+  distinct formulations in one provision is hard to read as three ways of saying one thing.
+- § 17 Abs. 1 InvStG measures a liquidating fund's taxable increase against the parallel
+  *"Ruecknahmepreis am Anfang des Kalenderjahres"*, likewise a point-in-time value.
+
+**Reading B -- the first Ruecknahmepreis set in the calendar year.**
+
+- The worked example at Rz. 18.3 of the BMF-Schreiben of 21.05.2019 (BStBl I 2019 S. 527) uses a
+  single figure for both roles: *"Ruecknahmepreis des Investmentanteils am Jahresanfang 01:
+  100 EUR; Ruecknahmepreis des Investmentanteils am Jahresende 01: 100,50 EUR"*, and then
+  computes the Satz 3 cap as 100,50 - 100 + 0,10 = 0,60. Satz 3's lower bound is by its own words
+  the *first price set in the calendar year*. The example thus treats the Satz 2 base and the
+  first price set in the year as the same number -- which they are only under Reading B.
+- Rz. 18.7 anchors a fund launched mid-year on *"der erste festgesetzte Ruecknahmepreis"*, the
+  administration reaching for the first price actually set rather than for a notional value at a
+  moment.
+- Abs. 4 Satz 2 computes the Basiszins on the first Boersentag of the year, so under Reading B
+  both factors of the same product are drawn from the same moment.
+
+**Neither reading is stated directly by any Tier 1 or Tier 2 source located.** The statute is
+silent on the day; the BMF-Schreiben's section 18 (Rz. 18.1 to 18.11, retrieved 2026-08-06,
+unchanged by the amendments through 24.11.2025) addresses new funds, funds without a monthly
+price, precision and currency conversion, but never says which of the two prices Satz 2 means.
+Rz. 18.3 is evidence for Reading B rather than a statement of it: a worked example carrying
+round numbers is not an administrative rule about the choice of day.
+
+Practical note, recorded because it bears on how much the answer matters and not as an argument
+for either reading: the two prices coincide whenever no price was set between them, and diverge
+with the size of the market move across the turn of the year.
 
 ## Pending legal developments
 

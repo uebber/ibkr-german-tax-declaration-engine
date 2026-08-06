@@ -46,7 +46,7 @@ have is worse than one with a visible hole.
 | German KESt on German dividend (foreign depot) | EStG | 43 Abs. 1 S. 1 Nr. 1a i.V.m. 44 Abs. 1 S. 4 Nr. 3 | KAP Z7 + Z37/Z38/Z39 | estg-36-45a-kapitalertragsteuer-anrechnung.md |
 | KESt credit / Steuerbescheinigung | EStG | 36 Abs. 2 S. 1 Nr. 2, S. 2; 45a Abs. 2/3 | KAP Z37 | estg-36-45a-kapitalertragsteuer-anrechnung.md |
 | Fund distribution | InvStG | 16 Abs. 1 Nr. 1 | KAP-INV Z4-8 | invstg-16-investmentertraege.md |
-| Vorabpauschale | InvStG | 18 Abs. 1; Zufluss 18 Abs. 3 | KAP-INV Z9-13 (for calendar year VZ-1) | invstg-18-vorabpauschale.md |
+| Vorabpauschale | InvStG | 18 Abs. 1; Zufluss 18 Abs. 3; BMF 21.05.2019 Rz. 18.4, 18.6, 18.7, 18.8 | KAP-INV Z9-13 (for calendar year VZ-1) | invstg-18-vorabpauschale.md (day of the Satz 2 price: open, Q12) |
 | Fund sale gain/loss | InvStG | 19 Abs. 1 S. 1-2 | KAP-INV Z14-26 | invstg-19-veraeusserungsgewinne.md |
 | VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV **Z53** (not Z55) | invstg-19-veraeusserungsgewinne.md |
 | FX gain (explicit conversion) | EStG | 20 Abs. 2 S. 1 Nr. 7 i.V.m. S. 2 (verzinslich) / 23 Abs. 1 S. 1 Nr. 2 (unverzinslich) | KAP Z19/22 or SO | fremdwaehrung-konten.md |
