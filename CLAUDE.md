@@ -293,10 +293,29 @@ float construction — `tests/test_precision.py` tests the arithmetic, not how t
 write to it. Working copies go in `data/`. See `input_data_spec.md` for the naming scheme and
 column specifications. Nothing enforces this either.
 
-**This repository is public.** Account data must never reach a commit — no holdings, identifiers or
-amounts. Public documents state the mechanism; instance data stays in gitignored notes. There is no
-tripwire, and this is the rule with the worst violation record here: three separate commits have
-been cleanups after account data had already been published.
+**This repository is public.** What must never reach a commit is **anything from which the size of
+the account can be inferred**: monetary amounts at portfolio scale, cash balances, position values,
+settlement proceeds, realised gains, and the account number. Not in code, not in tests, not in
+docs, not in a commit message. Illustrative figures are invented, never copied from a real export —
+copying is how every instance below happened, because real data makes an example feel concrete.
+
+**Deliberately not in scope**, so that a cleanup does not turn into an unbounded rewrite: ticker
+symbols, instrument descriptions, ISINs, IBKR contract identifiers (a Conid names a contract, not a
+person), transaction and action IDs, and small non-round figures used to make an example real.
+Those identify *instruments*, not wealth. Scrubbing them costs real effort, churns test fixtures
+that key off symbols and descriptions, and buys nothing the owner cares about — the calibration
+that produced this paragraph came from doing exactly that and being told to stop.
+
+Public documents state the mechanism; instance data stays in gitignored notes. There is no
+tripwire, and this is the rule with the worst violation record here: **four** cleanups after
+publication. The fourth, in August 2026, had stood since the cash-settled-options work — a research
+document presented a real six-figure settlement and a real position as its worked "Example", and a
+cash balance sat in an FX findings note. Both were found only because an unrelated sweep of the
+staged diff caught a real account number about to go into a test.
+
+**How to check, since nothing else will.** Before committing, cross-check the staged diff against
+`data_import/`: extract the monetary columns, and grep the diff for those values. A leak is a
+figure that appears in both.
 
 ## Standing constraints
 
