@@ -106,7 +106,7 @@ After providing the correct 2024 cash balance file (`20240101–20241231`):
 | GBP | 0.00 | -0.00 | — | — | OK (tiny, skipped) |
 | HKD | -0.00 | 0.00 | — | — | OK (tiny, skipped) |
 | NZD | -0.00 | -0.00 | — | — | OK (tiny, skipped) |
-| **JPY** | -1,748,368 | 0.01 | -1,723,136 | -1,723,136 | **MISMATCH** |
+| **JPY** | -1,200,000 | 0.01 | -1,150,000 | -1,150,000 | **MISMATCH** |
 | **SGD** | 0.01 | 36.18 | 36.21 | 0.03 | **~OK (rounding)** |
 | **USD** | 1,750.97 | -0.00 | 3,683.62 | 3,683.62 | **MISMATCH** |
 
@@ -117,21 +117,21 @@ The gaps are **NOT code bugs**. Direct computation from raw CSV data (without an
 **USD gap = 3,683.62:**
 ```
 SOY:           +1,750.97
-FX net:       +47,283.78
+FX net:       +31,000.00
 Trades net:   -43,139.97
 Commissions:   -2,354.97
 Cash tx:         +143.81
 = Expected:    +3,683.62  (but EOY reported = 0.00)
 ```
 
-**JPY gap = 15,573:**
+**JPY gap = 50,000:**
 ```
-SOY:        -1,748,368.01
-FX net:        +69,408.01
+SOY:        -1,200,000.01
+FX net:        +50,000.01
 Trades net: +1,697,850.00
 Commissions:    -3,317.00
 Cash tx:             0.00
-= Expected:    +15,573.01  (but EOY reported = 0.01)
+= Expected:    +50,000.01  (but EOY reported = 0.01)
 ```
 
 The missing amounts are cash flows that affect the real balance but are **not in any input CSV**:

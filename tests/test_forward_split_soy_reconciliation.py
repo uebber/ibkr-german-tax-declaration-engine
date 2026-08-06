@@ -47,7 +47,7 @@ class TestForwardSplitAcrossSoy(FifoTestCaseBase):
     def _run(self, positions_end_qty):
         corp_actions = [[
             ACCOUNT, SYMBOL, f"{SYMBOL}(={ISIN}) SPLIT 20 FOR 1 ({SYMBOL}, {DESC}, {ISIN})",
-            ISIN, "2023-06-06", "", "FS", "106518663", CONID, "", "",
+            ISIN, "2023-06-06", "", "FS", "900034843", CONID, "", "",
             "EUR", "0", "0", "0", "95",
         ]]
         return self._run_pipeline(

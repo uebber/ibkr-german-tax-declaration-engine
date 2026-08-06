@@ -17,7 +17,7 @@ class TestWithholdingTaxLinker:
         self.cash_asset_id = uuid.uuid4()  # For interest events
         self.test_event_date = "2023-01-27"
         
-    def create_dividend_event(self, amount=Decimal("206.00"), currency="CAD", transaction_id="1633925900"):
+    def create_dividend_event(self, amount=Decimal("206.00"), currency="CAD", transaction_id="1633926800"):
         """Create a test dividend event."""
         return CashFlowEvent(
             asset_internal_id=self.test_asset_id,
@@ -26,10 +26,10 @@ class TestWithholdingTaxLinker:
             gross_amount_foreign_currency=amount,
             local_currency=currency,
             ibkr_transaction_id=transaction_id,
-            ibkr_activity_description="BNS(CA0641491075) CASH DIVIDEND"
+            ibkr_activity_description="BNS(CA0000000006) CASH DIVIDEND"
         )
     
-    def create_withholding_tax_event(self, amount=Decimal("30.90"), currency="CAD", transaction_id="1633925901"):
+    def create_withholding_tax_event(self, amount=Decimal("30.90"), currency="CAD", transaction_id="1633926801"):
         """Create a test withholding tax event."""
         return WithholdingTaxEvent(
             asset_internal_id=self.test_asset_id,
@@ -38,7 +38,7 @@ class TestWithholdingTaxLinker:
             gross_amount_foreign_currency=amount,
             local_currency=currency,
             ibkr_transaction_id=transaction_id,
-            ibkr_activity_description="BNS(CA0641491075) CASH DIVIDEND - CA TAX"
+            ibkr_activity_description="BNS(CA0000000006) CASH DIVIDEND - CA TAX"
         )
     
     def create_interest_event(self, amount=Decimal("0.69"), currency="EUR", description="EUR CREDIT INT FOR FEB-2023"):
@@ -51,7 +51,7 @@ class TestWithholdingTaxLinker:
             gross_amount_foreign_currency=amount,
             local_currency=currency,
             ibkr_activity_description=description,
-            ibkr_transaction_id="1709613676"
+            ibkr_transaction_id="9000316760"
         )
     
     def create_interest_withholding_tax_event(self, amount=Decimal("0.14"), currency="EUR", description="WITHHOLDING @ 20% ON CREDIT INT FOR FEB-2023"):
@@ -231,9 +231,9 @@ class TestWithholdingTaxLinker:
         credit is reported against, and the previous version of this test used
         one dividend and blessed BOTH WHT events linking to it — leaving the
         attribution rule untested rather than leaving a figure wrong."""
-        dividend_a = self.create_dividend_event(amount=Decimal("206.00"), transaction_id="1633925900")
+        dividend_a = self.create_dividend_event(amount=Decimal("206.00"), transaction_id="1633926800")
         dividend_b = self.create_dividend_event(amount=Decimal("100.00"), transaction_id="1633926900")
-        wht_a = self.create_withholding_tax_event(amount=Decimal("30.90"), transaction_id="1633925901")
+        wht_a = self.create_withholding_tax_event(amount=Decimal("30.90"), transaction_id="1633926801")
         wht_b = self.create_withholding_tax_event(amount=Decimal("15.00"), transaction_id="1633926901")
 
         events = [dividend_a, dividend_b, wht_a, wht_b]
@@ -265,8 +265,8 @@ class TestWithholdingTaxLinker:
         income event may currently carry more than one link, nothing forbids it,
         and if that ever becomes one-to-one this test is what says so.
         """
-        dividend = self.create_dividend_event(transaction_id="1633925900")
-        wht_1 = self.create_withholding_tax_event(transaction_id="1633925901")
+        dividend = self.create_dividend_event(transaction_id="1633926800")
+        wht_1 = self.create_withholding_tax_event(transaction_id="1633926801")
         wht_2 = self.create_withholding_tax_event(transaction_id="9999999")
 
         links, unlinked = self.linker.link_withholding_tax_events(
@@ -313,12 +313,12 @@ class TestWithholdingTaxLinker:
         resolver = AssetResolver(asset_classifier=AssetClassifier(
             cache_file_path=str(tmp_path / "cls.json")))
         asset = resolver.get_or_create_asset(
-            raw_isin="CA0641491075", raw_conid="CONBNS", raw_symbol="BNS",
+            raw_isin="CA0000000006", raw_conid="CONBNS", raw_symbol="BNS",
             raw_currency="CAD", raw_ibkr_asset_class="STK",
             raw_description="BANK OF NOVA SCOTIA", raw_ibkr_sub_category="COMMON",
         )
 
-        wht_a = self.create_withholding_tax_event(amount=Decimal("30.90"), transaction_id="1633925901")
+        wht_a = self.create_withholding_tax_event(amount=Decimal("30.90"), transaction_id="1633926801")
         wht_a.asset_internal_id = asset.internal_asset_id
         wht_a.gross_amount_eur = Decimal("21.00")
         wht_b = self.create_withholding_tax_event(amount=Decimal("15.00"), transaction_id="1633926901")

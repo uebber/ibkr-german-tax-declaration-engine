@@ -429,11 +429,11 @@ class TestMergerIntegration(FifoTestCaseBase):
         # Trades: BUY 130 GZUR on 2023-03-01, SELL 130 SGBS on 2023-08-22
         trades_data = [
             # BUY 130 GZUR @ 167.56 EUR
-            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE000A1DCTL3",
+            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE0000000015",
              "", "", "", "2023-03-01", "130", "167.56", "-2.00", "EUR",
              "BUY", "TX_BUY_GZUR", "", "", "CON_GZUR", "", "1", "O"],
             # SELL 130 SGBS @ 168.00 EUR (after merger)
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "", "", "", "2023-08-22", "-130", "168.00", "-2.00", "EUR",
              "SELL", "TX_SELL_SGBS", "", "", "CON_SGBS", "", "1", "C"],
         ]
@@ -441,8 +441,8 @@ class TestMergerIntegration(FifoTestCaseBase):
         # Corporate action: GZUR merged into SGBS on 2023-08-22
         # Dispose row (qty=-130)
         corp_actions_data = [
-            [account, "GZUR", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "DE000A1DCTL3", "2023-08-22", "TC", "TC", "110634406",
+            [account, "GZUR", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "DE0000000015", "2023-08-22", "TC", "TC", "900034051",
              "CON_GZUR", "", "", "EUR", "0", "0", "-21782.80", "-130"],
         ]
 
@@ -498,25 +498,25 @@ class TestMergerIntegration(FifoTestCaseBase):
         # Historical trades (BUY in 2022) + current year SELL
         trades_data = [
             # Historical BUY 130 GZUR @ 167.56 EUR in 2022
-            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE000A1DCTL3",
+            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE0000000015",
              "", "", "", "2022-03-01", "130", "167.56", "-2.00", "EUR",
              "BUY", "TX_BUY_GZUR", "", "", "CON_GZUR", "", "1", "O"],
             # Current-year SELL 130 SGBS @ 168.00 EUR
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "", "", "", "2023-08-22", "-130", "168.00", "-2.00", "EUR",
              "SELL", "TX_SELL_SGBS", "", "", "CON_SGBS", "", "1", "C"],
         ]
 
         # Historical corporate action (2022) - dispose row only
         corp_actions_data = [
-            [account, "GZUR", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "DE000A1DCTL3", "2022-08-22", "TC", "TC", "110634406",
+            [account, "GZUR", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "DE0000000015", "2022-08-22", "TC", "TC", "900034051",
              "CON_GZUR", "", "", "EUR", "0", "0", "-21782.80", "-130"],
         ]
 
         # SOY positions: SGBS has 130 shares at start of 2023
         positions_start = [
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "130", "21800.00", "167.69", "21784.80", "", "CON_SGBS", "", "1"],
         ]
 
@@ -646,11 +646,11 @@ class TestMergerIntegration(FifoTestCaseBase):
 
         trades_data = [
             # BUY 130 GZUR
-            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE000A1DCTL3",
+            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE0000000015",
              "", "", "", "2023-03-01", "130", "167.56", "-2.00", "EUR",
              "BUY", "TX_BUY_GZUR", "", "", "CON_GZUR", "", "1", "O"],
             # SELL 130 SGBS
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "", "", "", "2023-08-22", "-130", "168.00", "-2.00", "EUR",
              "SELL", "TX_SELL_SGBS", "", "", "CON_SGBS", "", "1", "C"],
         ]
@@ -658,12 +658,12 @@ class TestMergerIntegration(FifoTestCaseBase):
         # BOTH dispose and receive rows present (like real IBKR data)
         corp_actions_data = [
             # Dispose row (qty=-130)
-            [account, "GZUR", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "DE000A1DCTL3", "2023-08-22", "TC", "TC", "110634406",
+            [account, "GZUR", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "DE0000000015", "2023-08-22", "TC", "TC", "900034051",
              "CON_GZUR", "", "", "EUR", "0", "0", "-21782.80", "-130"],
             # Receive row (qty=+130) - should be skipped
-            [account, "SGBS", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "JE00B588CD74", "2023-08-22", "TC", "TC", "110634406",
+            [account, "SGBS", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "JE0000000014", "2023-08-22", "TC", "TC", "900034051",
              "CON_SGBS", "", "", "EUR", "0", "0", "21837.40", "130"],
         ]
 

@@ -106,9 +106,9 @@ class TestDividendHandling(FifoTestCaseBase):
         - Realized gain: €12750 - €9255 = €3495
         """
         leg_symbol = "LEGd"
-        leg_isin = "DE000LEG1110"
+        leg_isin = "DE0000000009"
         leg_divir_symbol = "LEG.DIVIR"
-        leg_divir_isin = "DE000LEG1268"
+        leg_divir_isin = "DE0000000013"
         currency = "EUR"
 
         # Trades data - LEG stock purchases and sale
@@ -136,12 +136,12 @@ class TestDividendHandling(FifoTestCaseBase):
             # Dividend rights issued (DI) - 100 rights issued 1 for 1
             [ACCOUNT_ID, leg_divir_symbol, 
              f"LEG({leg_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240524", "", "DI", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
+             leg_divir_isin, "20240524", "", "DI", "900030092", "705911909", "", "", currency, "0", "0", "0", "100"],
             
             # Dividend rights expire (ED) - 100 rights expire
             [ACCOUNT_ID, leg_divir_symbol,
              f"{leg_divir_symbol}({leg_divir_isin}) EXPIRE DIVIDEND RIGHT ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240626", "", "ED", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
+             leg_divir_isin, "20240626", "", "ED", "900028508", "705911909", "", "", currency, "0", "0", "0", "-100"]
         ]
 
         # Cash transaction - tax-free dividend payment
@@ -253,9 +253,9 @@ class TestDividendHandling(FifoTestCaseBase):
         - Conceptual other income: €0 (tax-free dividend only reduces cost basis)
         """
         leg_symbol = "LEGd"
-        leg_isin = "DE000LEG1110"
+        leg_isin = "DE0000000009"
         leg_divir_symbol = "LEG.DIVIR"
-        leg_divir_isin = "DE000LEG1268"
+        leg_divir_isin = "DE0000000013"
         currency = "EUR"
 
         # Trades data - LEG stock purchases and sale
@@ -283,12 +283,12 @@ class TestDividendHandling(FifoTestCaseBase):
             # Dividend rights issued (DI) - 100 rights issued 1 for 1
             [ACCOUNT_ID, leg_divir_symbol, 
              f"LEG({leg_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240524", "", "DI", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
+             leg_divir_isin, "20240524", "", "DI", "900030092", "705911909", "", "", currency, "0", "0", "0", "100"],
             
             # Dividend rights expire (ED) - 100 rights expire
             [ACCOUNT_ID, leg_divir_symbol,
              f"{leg_divir_symbol}({leg_divir_isin}) EXPIRE DIVIDEND RIGHT ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240626", "", "ED", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
+             leg_divir_isin, "20240626", "", "ED", "900028508", "705911909", "", "", currency, "0", "0", "0", "-100"]
         ]
 
         # Cash transaction - tax-free dividend payment
@@ -367,7 +367,7 @@ class TestDividendHandling(FifoTestCaseBase):
     def test_d05_stock_dividend_fifo_lot_creation_and_tax_impact(self, mock_config_paths):
         # Input: the D05.REC receivable has AssetClass UNKNOWN and needs the
         # user's classification (here: STOCK) — provided hermetically.
-        self.seed_classification("ISIN:SG1L1701REC0", "STOCK")
+        self.seed_classification("ISIN:SG0000000012", "STOCK")
         """
         Test Case: D05-style stock dividend creates FIFO lot with dividend value and is treated as taxable income.
         
@@ -386,9 +386,9 @@ class TestDividendHandling(FifoTestCaseBase):
         3. 2024-04-30: D05.REC removal (-10 shares, 0 value)
         """
         d05_symbol = "D05"
-        d05_isin = "SG1L01001701"
+        d05_isin = "SG0000000011"
         d05_rec_symbol = "D05.REC"
-        d05_rec_isin = "SG1L1701REC0"
+        d05_rec_isin = "SG0000000012"
         currency = "EUR"  # Using EUR to avoid currency conversion complexity
 
         # No trades data - this test focuses on stock dividend corporate action
@@ -400,15 +400,15 @@ class TestDividendHandling(FifoTestCaseBase):
         corporate_actions_data = [
             # D05.REC receivable entry
             [ACCOUNT_ID, d05_rec_symbol, f"{d05_rec_symbol}({d05_isin}) STOCK DIVIDEND 1 FOR 10 ({d05_rec_symbol}, D05.RECEIVABLE, {d05_rec_isin})",
-             d05_rec_isin, "2024-04-22", "", "SD", "135043471", "698426866", "", "", currency, "0", "0", "340.7", "10"],
+             d05_rec_isin, "2024-04-22", "", "SD", "900029300", "900027716", "", "", currency, "0", "0", "340.7", "10"],
             
             # D05 actual stock dividend (should create income event + FIFO lot)
             [ACCOUNT_ID, d05_symbol, f"{d05_symbol}({d05_isin}) STOCK DIVIDEND 1 FOR 10 ({d05_symbol}, DBS GROUP HOLDINGS LTD, {d05_isin})",
-             d05_isin, "2024-04-30", "", "SD", "135043471", "15785538", "", "", currency, "0", "0", "349", "10"],
+             d05_isin, "2024-04-30", "", "SD", "900029300", "90003088", "", "", currency, "0", "0", "349", "10"],
             
             # D05.REC removal
             [ACCOUNT_ID, d05_rec_symbol, f"{d05_rec_symbol}({d05_isin}) STOCK DIVIDEND 1 FOR 10 ({d05_rec_symbol}, D05.RECEIVABLE, {d05_rec_isin})",
-             d05_rec_isin, "2024-04-30", "", "SD", "135043471", "698426866", "", "", currency, "0", "0", "0", "-10"]
+             d05_rec_isin, "2024-04-30", "", "SD", "900029300", "900027716", "", "", currency, "0", "0", "0", "-10"]
         ]
         
         # Start with some D05 shares (prerequisite for receiving stock dividend)
@@ -417,14 +417,14 @@ class TestDividendHandling(FifoTestCaseBase):
         positions_start_data = [
             [ACCOUNT_ID, currency, "STK", "COMMON", d05_symbol, "DBS GROUP HOLDINGS LTD", d05_isin,
              Decimal("100"), Decimal("3490"), Decimal("34.90"), Decimal("3490"),
-             "", "15785538", "", Decimal("1")]
+             "", "90003088", "", Decimal("1")]
         ]
         
         # End position should include the 10 new shares from stock dividend
         positions_end_data = [
             [ACCOUNT_ID, currency, "STK", "COMMON", d05_symbol, "DBS GROUP HOLDINGS LTD", d05_isin,
              Decimal("110"), Decimal("3839"), Decimal("34.90"), Decimal("3839"),
-             "", "15785538", "", Decimal("1")]
+             "", "90003088", "", Decimal("1")]
         ]
 
         expected_outcome = ScenarioExpectedOutput(
@@ -491,9 +491,9 @@ class TestDividendHandling(FifoTestCaseBase):
         - Conceptual other income: €95 (taxable portion of dividend)
         """
         leg_symbol = "LEGd"
-        leg_isin = "DE000LEG1110"
+        leg_isin = "DE0000000009"
         leg_divir_symbol = "LEG.DIVIR"
-        leg_divir_isin = "DE000LEG1268"
+        leg_divir_isin = "DE0000000013"
         currency = "EUR"
 
         # Trades data - using test framework column order
@@ -513,10 +513,10 @@ class TestDividendHandling(FifoTestCaseBase):
         # Framework headers: "ClientAccountID", "Symbol", "Description", "ISIN", "Report Date", "Code", "Type", "ActionID", "Conid", "UnderlyingConid", "UnderlyingSymbol", "CurrencyPrimary", "Amount", "Proceeds", "Value", "Quantity"
         corporate_actions_data = [
             # Dividend rights issued (DI) - 100 rights issued 1 for 1
-            [ACCOUNT_ID, leg_divir_symbol, f"LEG({leg_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})", leg_divir_isin, "20240524", "", "DI", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
+            [ACCOUNT_ID, leg_divir_symbol, f"LEG({leg_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})", leg_divir_isin, "20240524", "", "DI", "900030092", "705911909", "", "", currency, "0", "0", "0", "100"],
             
             # Dividend rights expire (ED) - 100 rights expire  
-            [ACCOUNT_ID, leg_divir_symbol, f"{leg_divir_symbol}({leg_divir_isin}) EXPIRE DIVIDEND RIGHT ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})", leg_divir_isin, "20240626", "", "ED", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
+            [ACCOUNT_ID, leg_divir_symbol, f"{leg_divir_symbol}({leg_divir_isin}) EXPIRE DIVIDEND RIGHT ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})", leg_divir_isin, "20240626", "", "ED", "900028508", "705911909", "", "", currency, "0", "0", "0", "-100"]
         ]
 
         # Cash transaction - using test framework column order
@@ -623,9 +623,9 @@ class TestDividendHandling(FifoTestCaseBase):
         - Realized gain: €12750 - €9255 = €3495
         """
         leg_symbol = "LEGd"
-        leg_isin = "DE000LEG1110"
+        leg_isin = "DE0000000009"
         leg_divir_symbol = "LEG.DIVIR"
-        leg_divir_isin = "DE000LEG1268"
+        leg_divir_isin = "DE0000000013"
         currency = "EUR"
 
         # Trades data - LEG stock purchases and sale
@@ -653,12 +653,12 @@ class TestDividendHandling(FifoTestCaseBase):
             # Dividend rights issued (DI) - 100 rights issued 1 for 1
             [ACCOUNT_ID, leg_divir_symbol,
              f"LEG({leg_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240524", "", "DI", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
+             leg_divir_isin, "20240524", "", "DI", "900030092", "705911909", "", "", currency, "0", "0", "0", "100"],
 
             # Dividend rights expire (ED) - 100 rights expire
             [ACCOUNT_ID, leg_divir_symbol,
              f"{leg_divir_symbol}({leg_divir_isin}) EXPIRE DIVIDEND RIGHT ({leg_divir_symbol}, LEG IMMOBILIEN SE - DIVIDEND RIGHTS, {leg_divir_isin})",
-             leg_divir_isin, "20240626", "", "ED", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
+             leg_divir_isin, "20240626", "", "ED", "900028508", "705911909", "", "", currency, "0", "0", "0", "-100"]
         ]
 
         # Cash transaction - using "Payment In Lieu Of Dividends" transaction type as found in real data
@@ -668,7 +668,7 @@ class TestDividendHandling(FifoTestCaseBase):
             # Tax-free dividend payment using "Payment In Lieu Of Dividends" type and "PAYMENT IN LIEU OF DIVIDEND" description
             [ACCOUNT_ID, currency, "STK", "RIGHT", leg_divir_symbol,  # Use DIVIR symbol as in real data
              f"LEG.DIVIR({leg_divir_isin}) PAYMENT IN LIEU OF DIVIDEND (Exempt From Withholding)",
-             "20240626", "245", "Payment In Lieu Of Dividends", "705911909", "", leg_divir_isin, "XX", "2841481481"]  # Use real transaction ID from data
+             "20240626", "245", "Payment In Lieu Of Dividends", "705911909", "", leg_divir_isin, "XX", "9000269246"]  # Use real transaction ID from data
         ]
 
         # Start positions - LEG shares after trades but before dividend event
@@ -791,10 +791,10 @@ class TestDividendHandling(FifoTestCaseBase):
         # Framework headers: "ClientAccountID", "Symbol", "Description", "ISIN", "Report Date", "Code", "Type", "ActionID", "Conid", "UnderlyingConid", "UnderlyingSymbol", "CurrencyPrimary", "Amount", "Proceeds", "Value", "Quantity"
         corporate_actions_data = [
             # Dividend rights issued (DI) - 100 rights issued 1 for 1
-            [ACCOUNT_ID, abc_divir_symbol, f"ABC({abc_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({abc_divir_symbol}, ABC CORPORATION - DIVIDEND RIGHTS, {abc_divir_isin})", abc_divir_isin, "20240524", "", "DI", "137293437", "705911909", "", "", currency, "0", "0", "0", "100"],
+            [ACCOUNT_ID, abc_divir_symbol, f"ABC({abc_isin}) DIVIDEND RIGHTS ISSUE  1 FOR 1 ({abc_divir_symbol}, ABC CORPORATION - DIVIDEND RIGHTS, {abc_divir_isin})", abc_divir_isin, "20240524", "", "DI", "900030092", "705911909", "", "", currency, "0", "0", "0", "100"],
             
             # Dividend rights expire (ED) - 100 rights expire  
-            [ACCOUNT_ID, abc_divir_symbol, f"{abc_divir_symbol}({abc_divir_isin}) EXPIRE DIVIDEND RIGHT ({abc_divir_symbol}, ABC CORPORATION - DIVIDEND RIGHTS, {abc_divir_isin})", abc_divir_isin, "20240626", "", "ED", "139982491", "705911909", "", "", currency, "0", "0", "0", "-100"]
+            [ACCOUNT_ID, abc_divir_symbol, f"{abc_divir_symbol}({abc_divir_isin}) EXPIRE DIVIDEND RIGHT ({abc_divir_symbol}, ABC CORPORATION - DIVIDEND RIGHTS, {abc_divir_isin})", abc_divir_isin, "20240626", "", "ED", "900028508", "705911909", "", "", currency, "0", "0", "0", "-100"]
         ]
 
         # Cash transaction - using test framework column order

@@ -484,12 +484,12 @@ class ParsingOrchestrator:
     def _extract_underlying_isin_from_description(self, description: str) -> Optional[str]:
         """Extract the underlying asset ISIN from corporate action description.
         
-        Example: 'LEG(DE000LEG1110) DIVIDEND RIGHTS ISSUE...' -> 'DE000LEG1110'
+        Example: 'ABC(DE0001234567) DIVIDEND RIGHTS ISSUE...' -> 'DE0001234567'
         """
         if not description:
             return None
         
-        # Look for ISIN pattern in parentheses: (DE000LEG1110)
+        # Look for ISIN pattern in parentheses: (DE0001234567)
         import re
         isin_match = re.search(r'\(([A-Z]{2}[A-Z0-9]{10})\)', description)
         return isin_match.group(1) if isin_match else None

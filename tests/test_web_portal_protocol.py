@@ -41,7 +41,7 @@ CSV = ('"ClientAccountID","CurrencyPrimary","AssetClass","Symbol","TradeDate"\n'
 
 # The configId the portal generated for a real run of query 1212943 over 2025.
 REAL_CONFIG_ID = ("U1234567_U1234567_20250101_20251231_AF_1212943_"
-                  "a4363c1b2f817fdca196d54451d12955.csv")
+                  "0123456789abcdef0123456789abcdef.csv")
 
 
 def test_run_options_match_the_request_the_portal_sends():
