@@ -169,7 +169,7 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-010 | **choice under uncertainty** (Q12 Reading B) | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. **Re-decided by the 2026-08-06 audit: the day of the Satz 2 price is open question Q12, and the engine does not choose it — see below.** |
+| GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. **Re-decided by the 2026-08-06 audit: the day of the Satz 2 price is open question Q12, and the engine does not choose it — see below.** |
 | GT-INVSTG-011 | **deviates** | — | — | **Abs. 2 pro-rata is not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
 | GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | |
@@ -208,15 +208,17 @@ wherever the fund publishes no Rücknahmepreis; **not verified per instrument.**
 
 **GT-INVSTG-010, open question Q12 — reading chosen: B, the first Rücknahmepreis set in the
 calendar year.** § 18 Abs. 1 Satz 2 takes the Rücknahmepreis *zu Beginn des Kalenderjahres*, and
-neither the statute nor the BMF-Schreiben says which day that is; both readings and their
-authorities are in `reference/research/open-legal-questions.md` Q12.
+Rz. 18.3 of the BMF-Schreiben settles which day, by worked example; the closure and its authority
+are in `reference/research/open-legal-questions.md` Q12. It was carried here for a day as a choice
+under uncertainty, which overstated the doubt — the real question underneath was which stored
+report supplies the price and which the unit count, and that is not a question of law.
 
-**Why B.** The worked example at Rz. 18.3 of the BMF-Schreiben uses one figure for both the
+**Why.** The worked example at Rz. 18.3 of the BMF-Schreiben uses one figure for both the
 Satz 2 base and the lower bound of the Satz 3 cap, and Satz 3's lower bound is by its own words
 the first price *set in the calendar year*; the two are the same number only under B. Rz. 18.7
 anchors a mid-year fund on the first price actually set. Abs. 4 draws the Basiszins from the
 first Börsentag of the year, so under B both factors of the same product come from the same
-moment. Reading A rests on the wording contrast alone.
+moment. The contrary reading rests on the wording contrast alone.
 
 **How the input supplies it, and the deviation that comes with it.** For the Vorabpauschale of
 calendar year `X`, the engine takes:

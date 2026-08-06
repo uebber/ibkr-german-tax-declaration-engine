@@ -68,9 +68,9 @@ per Bestand:
 ```
 
 Two consequences that a value-based reading hides. The **price** and the **unit count** are taken
-at different moments — the price at the start of the calendar year (which day: see Q12), the count
-at the close of 31 December — so a single figure carrying both cannot be right for both. And the
-Satz 3 cap is bounded by the *first and last price set in the calendar year*, whose lower bound is
+at different moments: the price is the first Ruecknahmepreis set in the calendar year, the count is
+the holding at the close of 31 December. A single figure carrying both cannot be right for both.
+And the Satz 3 cap is bounded by the *first and last price set in the calendar year*, whose lower bound is
 the same first price Satz 2 uses, not the preceding year's close.
 
 Note Satz 3 is expressed in **Ruecknahmepreise festgesetzt im Kalenderjahr**, not in calendar
@@ -212,12 +212,11 @@ Every input is a `Y-1` figure. The one that is easy to get wrong is the first: t
 price is *not* the start-of-`Y` position snapshot, and using the latter computes a different
 year's Vorabpauschale with a different Basiszins.
 
-**This table states the year, not the day.** Whether the Abs. 1 Satz 2 price is the last one set
-in `Y-2` or the first one set in `Y-1` is [Q12] in `../research/open-legal-questions.md`, and no
-Tier 1 or Tier 2 source has been found that settles it. An earlier revision of this table read
-"first of `Y-1`", which silently resolved that question inside the store -- the thing Validation
-Protocol item 7 exists to prevent. Choosing between the two readings is an implementation act and
-is recorded against [GT-INVSTG-010] in `docs/legal-implementation-map.md`, not here.
+**This table states the year; the day is the first Ruecknahmepreis set in that year.** Rz. 18.3
+of the BMF-Schreiben settles it by worked example -- see [Q12], closed, in
+`../research/open-legal-questions.md`. An earlier revision of this file recorded the point as an
+unresolved question, which overstated the doubt: the same Randziffer that was cited as evidence
+for the reading is an administrative demonstration of it.
 
 ---
 
