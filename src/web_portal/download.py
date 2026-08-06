@@ -30,8 +30,10 @@ from typing import Iterable, Optional
 from src import config
 from src.web_portal import require_playwright
 from src.web_portal.browser import (
+    ACTIVITY_INTERVAL_SECONDS,
     DEFAULT_PORTAL_URL,
     DEFAULT_PROFILE_DIR,
+    nudge_activity,
     open_portal,
     portal_session,
     reset_profile,
@@ -93,6 +95,11 @@ class DownloadTarget:
     from_date: date
     to_date: date
     filename: str
+    # The name this query has in the portal, when it is known. Needed to
+    # identify a batch entry the portal lists without a query ID — see
+    # flex_portal.batch_entry_matches. None when query IDs came from config
+    # and the portal was never asked for its names.
+    query_name: Optional[str] = None
 
     @property
     def label(self) -> str:
@@ -195,7 +202,9 @@ def parse_years(specs: Iterable[str]) -> list[int]:
 
 
 def build_targets(years: Iterable[int], query_ids: dict[str, Optional[int]],
-                  selected: Optional[Iterable[str]] = None) -> list[DownloadTarget]:
+                  selected: Optional[Iterable[str]] = None,
+                  query_names: Optional[dict[str, str]] = None
+                  ) -> list[DownloadTarget]:
     """
     Expand years and configured queries into the files to download.
 
@@ -227,26 +236,40 @@ def build_targets(years: Iterable[int], query_ids: dict[str, Optional[int]],
             query_id = query_ids[key]
             prefix = FILENAME_PREFIXES[key]
 
+            name = (query_names or {}).get(key)
+
             if key == "positions":
                 soy_date, eoy_date = positions_snapshot_dates(year)
                 targets.append(DownloadTarget(
                     key, query_id, soy_date, soy_date,
-                    f"{prefix}-{year}-SoY.csv"))
+                    f"{prefix}-{year}-SoY.csv", name))
                 targets.append(DownloadTarget(
                     key, query_id, eoy_date, eoy_date,
-                    f"{prefix}-{year}-EoY.csv"))
+                    f"{prefix}-{year}-EoY.csv", name))
             else:
                 targets.append(DownloadTarget(
                     key, query_id, date(year, 1, 1), date(year, 12, 31),
-                    f"{prefix}-{year}.csv"))
+                    f"{prefix}-{year}.csv", name))
 
     return targets
 
 
 def resolve_query_ids_by_name(queries: Iterable[FlexQuery],
                               name_prefix: str) -> dict[str, int]:
+    """Query key -> portal query ID. See resolve_queries_by_name."""
+    return {key: query.query_id
+            for key, query in resolve_queries_by_name(queries, name_prefix).items()}
+
+
+def resolve_queries_by_name(queries: Iterable[FlexQuery],
+                            name_prefix: str) -> dict[str, FlexQuery]:
     """
     Map the portal's own query names onto this engine's query keys.
+
+    Returns the whole FlexQuery, not just the ID, because the name is needed
+    again later: the portal lists some reports in the batch list with no query
+    ID at all, and the name in the summary is then the only way to tell which
+    report it is (see flex_portal.batch_entry_matches).
 
     Only queries whose name starts with `name_prefix` are considered, so an
     account holding other Flex queries — for a different tool, a different
@@ -257,7 +280,7 @@ def resolve_query_ids_by_name(queries: Iterable[FlexQuery],
             "Trades" query was meant is exactly the kind of silent choice that
             produces a plausible wrong number.
     """
-    resolved: dict[str, int] = {}
+    resolved: dict[str, FlexQuery] = {}
     claims: dict[str, list[str]] = {}
 
     for query in queries:
@@ -270,7 +293,7 @@ def resolve_query_ids_by_name(queries: Iterable[FlexQuery],
                         query.name, remainder)
             continue
         claims.setdefault(key, []).append(query.name)
-        resolved[key] = query.query_id
+        resolved[key] = query
 
     ambiguous = {key: names for key, names in claims.items() if len(names) > 1}
     if ambiguous:
@@ -393,7 +416,7 @@ def download_targets(client: PortalFlexClient, targets: list[DownloadTarget],
             csv_text = client.run_and_collect(
                 target.query_id, target.from_date, target.to_date,
                 poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
-                progress=print, sleep=sleep)
+                query_name=target.query_name, progress=print, sleep=sleep)
         except NoStatementAvailableError as e:
             # An answer, not a fault: there is nothing to report for that date.
             # Written down rather than passed over, because "no data" for a
@@ -484,9 +507,11 @@ def run(years: list[int], selected: Optional[list[str]], portal_url: str,
         print("\nIn the browser: log in, then open "
               "Performance & Reports > Flex Queries.")
 
+        last_nudge = [time.monotonic()]
+
         def pump(seconds: float) -> None:
             """
-            Wait, and let Playwright deliver the events queued in the meantime.
+            Wait; deliver queued browser events; keep the session alive.
 
             Playwright's sync API dispatches browser events only when the
             program calls into it. While no headers have been captured the
@@ -495,11 +520,23 @@ def run(years: list[int], selected: Optional[list[str]], portal_url: str,
             capture them: no events, no headers, no request, no events. The
             run sat forever on a fully loaded Flex Queries page, and the
             recording froze at 43 events because it was starved too.
+
+            Every wait in a run passes through here, which makes it the one
+            place that knows the program is idle — and the portal logs itself
+            out after about fifteen minutes with no *user* activity, however
+            much traffic the downloader generates. So this is also where the
+            pointer gets moved. See browser.nudge_activity for the measurement.
             """
             page = live_page()
             if page is None:
                 time.sleep(seconds)
                 return
+
+            now = time.monotonic()
+            if now - last_nudge[0] >= ACTIVITY_INTERVAL_SECONDS:
+                last_nudge[0] = now
+                nudge_activity(page)
+
             try:
                 page.wait_for_timeout(seconds * 1000)
             except Exception:  # pragma: no cover - page can close mid-wait
@@ -507,10 +544,13 @@ def run(years: list[int], selected: Optional[list[str]], portal_url: str,
 
         wait_for_login(client, sleep=pump)
 
+        query_names: dict[str, str] = {}
         if name_prefix:
             print(f"Resolving queries named {name_prefix!r}* from the portal...")
-            query_ids = resolve_query_ids_by_name(client.list_flex_queries(),
-                                                  name_prefix)
+            resolved = resolve_queries_by_name(client.list_flex_queries(),
+                                               name_prefix)
+            query_ids = {key: query.query_id for key, query in resolved.items()}
+            query_names = {key: query.name for key, query in resolved.items()}
             for key, query_id in sorted(query_ids.items()):
                 print(f"  {key}: query {query_id}")
             if not query_ids:
@@ -518,8 +558,23 @@ def run(years: list[int], selected: Optional[list[str]], portal_url: str,
                     f"No portal query starts with {name_prefix!r}. Nothing to do.")
         else:
             query_ids = config.FLEX_QUERY_IDS
+            # Ask the portal what these queries are called, even though the
+            # IDs came from config. Some reports are listed in the batch list
+            # with no query ID, and then the name is the only handle on them.
+            # Not fatal if it fails: everything identified by ID still works,
+            # and an unattributable entry reports itself at the timeout.
+            try:
+                query_names = {
+                    key: query.name
+                    for query in client.list_flex_queries()
+                    for key, configured in query_ids.items()
+                    if configured == query.query_id}
+            except PortalError as e:
+                logger.warning(
+                    "Could not read the portal's query names (%s). A report "
+                    "the portal lists without a query ID cannot be matched.", e)
 
-        targets = build_targets(years, query_ids, selected)
+        targets = build_targets(years, query_ids, selected, query_names)
         if not targets:
             print("Nothing to download: no query IDs configured. Set "
                   "FLEX_QUERY_IDS in src/config.py, or use --query-name-prefix.")

@@ -505,7 +505,7 @@ def build_run_options(query_id: int, from_date: date, to_date: date,
     }, separators=(",", ":"))
 
 
-def config_id_matches(config_id: str, query_id: int, from_date: date,
+def config_id_matches(config_id: str, query_id, from_date: date,
                       to_date: date,
                       query_type: str = QUERY_TYPE_ACTIVITY_FLEX) -> bool:
     """
@@ -516,10 +516,67 @@ def config_id_matches(config_id: str, query_id: int, from_date: date,
     identifies the run precisely. Matching on this rather than on the
     human-readable summary means a second query with the same name, or a
     different date range of the same query, cannot be mistaken for ours.
+
+    `query_id` is normally the numeric ID; UNATTRIBUTED_QUERY_ID is passed to
+    look for the entries the portal declines to attribute — see
+    batch_entry_matches.
     """
     needle = (f"_{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}"
               f"_{query_type}_{query_id}_")
     return needle in config_id
+
+
+# What the portal puts in the query-ID slot for a report it does not attribute
+# to a query. Observed live on 2026-08-06: the Options EAE run for 2022 was
+# listed as ..._20220101_20221231_AF_NA_<hash>.csv, while every other report in
+# the same list carried its numeric ID.
+UNATTRIBUTED_QUERY_ID = "NA"
+
+
+def summary_names_query(summary: str, query_name: str) -> bool:
+    """
+    Whether a batch entry's summary is for the named query.
+
+    The summary is "<query name>; <account>; <from>-<to>"; only the first
+    field is the name. Compared with the same separator- and case-insensitive
+    rule used to resolve queries by name, because the portal is no more
+    consistent here than it is there.
+    """
+    head = summary.split(";", 1)[0]
+    return bool(query_name) and \
+        normalise_query_name(head) == normalise_query_name(query_name)
+
+
+def batch_entry_matches(entry: "BatchRequest", query_id: int, from_date: date,
+                        to_date: date,
+                        query_type: str = QUERY_TYPE_ACTIVITY_FLEX,
+                        query_name: Optional[str] = None) -> bool:
+    """
+    Whether a batch-list entry is the report this run asked for.
+
+    Normally the configId settles it. The exception is a report the portal
+    lists with UNATTRIBUTED_QUERY_ID in place of the query ID: the account,
+    date range and query type are still there, but not which query. That cost
+    a whole run — an Options EAE report sat ready in the list for 843 seconds
+    while the downloader reported "not in the batch list yet", and the session
+    expired underneath it.
+
+    For those, the query *name* out of the summary is required as
+    corroboration. Matching on the date range alone would claim any other
+    unattributed report over the same range, and writing one query's report
+    into another's file is exactly the silent wrong answer this module exists
+    to avoid. With no name available, the entry is left alone and the run
+    times out saying what it saw.
+    """
+    if config_id_matches(entry.config_id, query_id, from_date, to_date,
+                         query_type):
+        return True
+
+    if query_name and config_id_matches(entry.config_id, UNATTRIBUTED_QUERY_ID,
+                                        from_date, to_date, query_type):
+        return summary_names_query(entry.summary, query_name)
+
+    return False
 
 
 def parse_batch_requests(payload: dict) -> list[BatchRequest]:
@@ -857,6 +914,7 @@ class PortalFlexClient:
                         poll_seconds: float = 10.0,
                         timeout_seconds: float = 900.0,
                         stale_failure_grace_seconds: float = STALE_FAILURE_GRACE_SECONDS,
+                        query_name: Optional[str] = None,
                         sleep=time.sleep, progress=None) -> str:
         """
         Run one query over one date range and return the report as CSV.
@@ -879,11 +937,12 @@ class PortalFlexClient:
             PortalError: On a failed, held or undeliverable report, or when the
                 report does not become ready within timeout_seconds.
         """
-        pre_existing = {
-            entry.config_id for entry in self.list_batch_requests()
-            if config_id_matches(entry.config_id, query_id, from_date, to_date,
-                                 query_type)
-        }
+        def is_ours(entry) -> bool:
+            return batch_entry_matches(entry, query_id, from_date, to_date,
+                                       query_type, query_name)
+
+        pre_existing = {entry.config_id
+                        for entry in self.list_batch_requests() if is_ours(entry)}
 
         immediate = self.request_report(query_id, from_date, to_date, query_type)
         if immediate is not None:
@@ -909,11 +968,7 @@ class PortalFlexClient:
                     raise
                 sleep(poll_seconds)
                 continue
-            matches = [
-                entry for entry in listed
-                if config_id_matches(entry.config_id, query_id, from_date,
-                                     to_date, query_type)
-            ]
+            matches = [entry for entry in listed if is_ours(entry)]
             fresh = [entry for entry in matches
                      if entry.config_id not in pre_existing]
             # Prefer an entry this call created; fall back to a pre-existing
@@ -982,6 +1037,15 @@ class PortalFlexClient:
                                       for entry in listed))
 
             if time.monotonic() >= deadline:
+                # An entry over our exact range that the portal did not
+                # attribute to a query is the likeliest reason ours "never
+                # appeared", and without a name there is nothing to match it
+                # on. Say so rather than leaving the reader to compare
+                # configIds by eye.
+                unattributed = [
+                    entry for entry in listed
+                    if config_id_matches(entry.config_id, UNATTRIBUTED_QUERY_ID,
+                                         from_date, to_date, query_type)]
                 raise PortalError(
                     f"Query {query_id} for {from_date}..{to_date} did not "
                     f"become ready within {timeout_seconds:.0f}s "
@@ -989,6 +1053,11 @@ class PortalFlexClient:
                     + (f"The batch list holds: "
                        f"{'; '.join(entry.summary or entry.config_id for entry in listed)}. "
                        if listed and not considered else "")
+                    + (f"{len(unattributed)} report(s) over this exact range "
+                       f"carry no query ID ({UNATTRIBUTED_QUERY_ID}) and could "
+                       "not be attributed; set FLEX_QUERY_NAME_PREFIX or pass "
+                       "--query-name-prefix so they can be matched by name. "
+                       if unattributed and not considered and not query_name else "")
                     + "The portal keeps generating it; re-running will pick it "
                     "up from the batch list.")
 
@@ -1005,11 +1074,19 @@ class PortalFlexClient:
 
         if response.status in (401, 403, HTTP_SESSION_REJECTED) \
                 or "no_session" in body:
+            # Usually not the request's fault. The portal logs itself out
+            # after roughly fifteen minutes without *user* interaction, and
+            # neither its own keep-alive nor a request every ten seconds
+            # resets that timer — measured in the recorded run of 2026-08-06
+            # 09:54, where the page called logout on itself at 10:11:00 and
+            # navigated to the login screen mid-poll.
             return NotAuthenticatedError(
                 f"Portal session rejected while {context} (HTTP "
-                f"{response.status}). Log in again and re-run; reports already "
-                "generated are collected from the batch list without being "
-                "regenerated.")
+                f"{response.status}). The portal ends a session after about "
+                "fifteen minutes of inactivity — moving the mouse over the "
+                "browser window while a long report generates keeps it alive. "
+                "Log in again and re-run; reports already generated are "
+                "collected from the batch list without being regenerated.")
 
         if response.status == HTTP_INTERNAL_ERROR:
             return PortalError(

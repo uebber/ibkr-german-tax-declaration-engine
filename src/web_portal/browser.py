@@ -16,6 +16,7 @@ import json
 import logging
 import shutil
 from contextlib import contextmanager
+from itertools import cycle
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -193,6 +194,46 @@ def portal_session(
             yield playwright, context
         finally:
             context.close()
+
+
+# How often to generate activity while waiting. The portal was seen logging
+# itself out fifteen and a half minutes after the last interaction, so this has
+# a wide margin; the cost of a nudge is one synthetic mouse move.
+ACTIVITY_INTERVAL_SECONDS = 45.0
+
+# Two positions near the top-left, alternated. Movement is what registers; the
+# pointer must not settle anywhere that matters, and it never clicks.
+_NUDGE_POSITIONS = cycle(((6, 6), (7, 7)))
+
+
+def nudge_activity(page) -> None:
+    """
+    Reset the portal's inactivity timer with a synthetic mouse move.
+
+    The Client Portal ends a session after about fifteen minutes without user
+    input, and *nothing this downloader does over the network counts*. In the
+    recorded run of 2026-08-06 09:54 the portal's own keep-alive
+    (`portal.proxy/v1/portal/tickle`) fired 32 times at 30-second intervals and
+    a batch-list request went out every 10 seconds; at 10:11:00, fifteen and a
+    half minutes after the last interaction, the page called `portal/logout`,
+    `ibcust/logout` and `sso/Logout` on itself, navigated to the login screen,
+    and the next request was answered 603. Twenty-four reports were lost.
+
+    A mouse *move* rather than a click: the pointer is over the portal's own
+    UI, and a click lands on whatever is beneath it — a Run button, a delete
+    icon. Movement is enough to count as activity and can actuate nothing.
+
+    Best effort. A page that has gone away is not worth an exception: the cost
+    of a missed nudge is a session that eventually expires, and the run
+    reports that clearly when it happens. The cost of raising here is losing
+    the reports already collected.
+    """
+    try:
+        if page is None or page.is_closed():
+            return
+        page.mouse.move(*next(_NUDGE_POSITIONS))
+    except Exception as e:      # pragma: no cover - page can die mid-nudge
+        logger.debug("Could not nudge the page to keep the session alive: %s", e)
 
 
 def open_portal(context, portal_url: str = DEFAULT_PORTAL_URL):

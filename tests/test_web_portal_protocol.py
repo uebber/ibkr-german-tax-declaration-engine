@@ -26,9 +26,11 @@ from src.web_portal.flex_portal import (
     AmHeaderHarvester,
     BatchRequest,
     NoStatementAvailableError,
+    NotAuthenticatedError,
     PageRequestTransport,
     PortalError,
     PortalFlexClient,
+    batch_entry_matches,
     build_run_options,
     config_id_matches,
     extract_report_csv,
@@ -95,6 +97,83 @@ class TestConfigIdMatching:
 
         assert config_id_matches(soy, 555, date(2025, 1, 1), date(2025, 1, 1))
         assert not config_id_matches(eoy, 555, date(2025, 1, 1), date(2025, 1, 1))
+
+
+class TestEntriesThePortalListsWithoutAQueryId:
+    """
+    Not every report is listed under its query ID.
+
+    Observed live on 2026-08-06: the Options EAE query, run for 2022, was
+    queued and appeared in the batch list as
+
+        Gemini Options EAE; <acct>; 20220101-20221231
+        <acct>_<acct>_20220101_20221231_AF_NA_<hash>.csv
+
+    — `NA` where every other report carries its numeric query ID. The needle
+    `_AF_1427928_` can never match that, so the report sat "not in the batch
+    list yet" for 843 seconds while it was sitting there ready, and the run
+    died holding it.
+
+    The date range and query type are still in the configId, so what is
+    missing is only *which* query. The summary carries the name, and that is
+    what closes the gap — matching on the range alone would claim any other
+    unattributed report over the same year.
+    """
+
+    NA_CONFIG_ID = ("U1234567_U1234567_20220101_20221231_AF_NA_"
+                    "fedcba9876543210fedcba9876543210.csv")
+    YEAR = (date(2022, 1, 1), date(2022, 12, 31))
+
+    def _entry(self, summary):
+        return BatchRequest(self.NA_CONFIG_ID, "S", summary, "", "csv")
+
+    def test_the_query_id_needle_cannot_match_it(self):
+        """The defect itself, before anything is done about it."""
+        assert not config_id_matches(self.NA_CONFIG_ID, 1427928, *self.YEAR)
+
+    def test_it_is_matched_by_the_query_name_in_the_summary(self):
+        entry = self._entry("Gemini Options EAE; U1234567; 20220101-20221231")
+
+        assert batch_entry_matches(entry, 1427928, *self.YEAR,
+                                   query_name="Gemini Options EAE")
+
+    def test_separators_and_case_in_the_name_do_not_matter(self):
+        entry = self._entry("MyTax_Options_EAE; U1234567; 20220101-20221231")
+
+        assert batch_entry_matches(entry, 1427928, *self.YEAR,
+                                   query_name="MyTax Options EAE")
+
+    def test_another_unattributed_report_over_the_same_year_is_not_claimed(self):
+        """
+        Two `NA` entries for the same range are told apart by name, not taken
+        on faith. Guessing here writes one report into another's file.
+        """
+        entry = self._entry("Gemini Something Else; U1234567; 20220101-20221231")
+
+        assert not batch_entry_matches(entry, 1427928, *self.YEAR,
+                                       query_name="Gemini Options EAE")
+
+    def test_without_a_name_it_is_left_alone(self):
+        """
+        No name, no attribution. The run times out saying what it saw, which
+        is better than claiming an entry it cannot identify.
+        """
+        entry = self._entry("Gemini Options EAE; U1234567; 20220101-20221231")
+
+        assert not batch_entry_matches(entry, 1427928, *self.YEAR)
+
+    def test_a_different_year_is_still_rejected(self):
+        entry = self._entry("Gemini Options EAE; U1234567; 20220101-20221231")
+
+        assert not batch_entry_matches(entry, 1427928, date(2023, 1, 1),
+                                       date(2023, 12, 31),
+                                       query_name="Gemini Options EAE")
+
+    def test_an_ordinary_entry_still_matches_on_its_id_alone(self):
+        entry = BatchRequest(REAL_CONFIG_ID, "S", "MyTax Trades", "", "csv")
+
+        assert batch_entry_matches(entry, 1212943, date(2025, 1, 1),
+                                   date(2025, 12, 31))
 
 
 class TestBatchStatuses:
@@ -442,6 +521,40 @@ class TestRunAndCollect:
         with pytest.raises(PortalError, match="too much data"):
             client.run_and_collect(1212943, *self.YEAR, timeout_seconds=600,
                                    sleep=lambda _: None)
+
+    def test_a_report_listed_without_a_query_id_is_still_collected(self):
+        """
+        End to end over the shape that cost a whole run: queued, then listed
+        as `_AF_NA_` with only the summary to identify it.
+        """
+        na = BatchRequest(
+            "U1_U1_20250101_20251231_AF_NA_fedcba98.csv", "S",
+            "MyTax Trades; U1; 20250101-20251231", "", "csv")
+        client = FakePortalClient([[], [na]])
+
+        result = client.run_and_collect(1212943, *self.YEAR, timeout_seconds=5,
+                                        query_name="MyTax Trades",
+                                        sleep=lambda _: None)
+
+        assert result == CSV
+        assert client.fetched == ["U1_U1_20250101_20251231_AF_NA_fedcba98.csv"]
+
+    def test_an_unidentifiable_entry_is_named_in_the_timeout(self):
+        """
+        When an entry cannot be attributed, the run must say what it saw. The
+        843-second wait reported "not in the batch list yet (5 other report(s)
+        queued)" while the report it wanted was one of those five.
+        """
+        na = BatchRequest(
+            "U1_U1_20250101_20251231_AF_NA_fedcba98.csv", "S",
+            "MyTax Trades; U1; 20250101-20251231", "", "csv")
+        client = FakePortalClient([[], [na]])
+
+        with pytest.raises(PortalError) as excinfo:
+            client.run_and_collect(1212943, *self.YEAR, timeout_seconds=0,
+                                   sleep=lambda _: None)
+
+        assert "MyTax Trades" in str(excinfo.value)
 
     def test_reusing_the_portal_s_existing_copy_is_said_out_loud(self):
         """
@@ -919,6 +1032,37 @@ class TestWhatSixOhOneMeans:
         of "failed", without matching on message text.
         """
         assert issubclass(NoStatementAvailableError, PortalError)
+
+
+class TestARejectedSession:
+    """
+    603 arrives when the portal has stopped recognising the session, and "log
+    in again and re-run" does not say why it happened or how to avoid it.
+
+    The recorded run of 2026-08-06 09:54 shows what it actually is: fifteen
+    and a half minutes after the last user interaction — with the portal's own
+    tickle firing every 30 seconds and a batch-list request every 10 — the
+    page called `portal/logout`, `ibcust/logout` and `sso/Logout` on itself and
+    navigated to the login screen. The downloader was mid-poll and had done
+    nothing wrong. Network traffic does not reset that timer.
+    """
+
+    def _client(self):
+        return PortalFlexClient(
+            RecordingRequestContext({"errors": {"rejected": "no_session"}},
+                                    status=603),
+            headers_provider=lambda: dict(PORTAL_HEADERS))
+
+    def test_the_error_names_the_inactivity_logout(self):
+        with pytest.raises(NotAuthenticatedError) as excinfo:
+            self._client().list_batch_requests()
+
+        assert "inactivity" in str(excinfo.value).lower()
+
+    def test_it_still_says_nothing_has_to_be_regenerated(self):
+        """The reassurance that makes re-running cheap must survive."""
+        with pytest.raises(NotAuthenticatedError, match="without being regenerated"):
+            self._client().list_batch_requests()
 
 
 class TestHeadersAreSentWithEveryCall:

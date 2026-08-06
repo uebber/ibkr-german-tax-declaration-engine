@@ -323,6 +323,14 @@ batch processing; the downloader waits for those instead of needing a manual
 page refresh. Results are written to `data_import/` under the naming scheme
 below. **Existing files are never replaced** unless you pass `--overwrite`.
 
+**Leave the browser window open and do not log out in it.** The portal ends a
+session after about fifteen minutes without user activity, and neither its own
+keep-alive nor the downloader's polling counts — a run was seen losing
+twenty-four reports to it. The downloader now moves the pointer in the window
+periodically to keep the session awake. Whatever it has already written is
+kept, and anything the portal has finished generating is collected from the
+batch list on the next run without being generated again.
+
 Useful options:
 
 | Option | Effect |

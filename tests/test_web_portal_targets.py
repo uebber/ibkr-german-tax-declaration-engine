@@ -25,6 +25,7 @@ from src.web_portal.download import (
     first_business_day_of_year,
     last_business_day_of_year,
     parse_years,
+    resolve_queries_by_name,
     resolve_query_ids_by_name,
     wait_for_login,
     write_report,
@@ -267,6 +268,22 @@ class TestResolveQueryIdsByName:
     def test_every_known_name_maps_to_a_real_query_key(self):
         assert set(QUERY_KEYS_BY_NAME.values()) <= set(FILENAME_PREFIXES)
 
+    def test_the_portal_s_own_name_is_kept_not_just_the_id(self):
+        """
+        First end of the query-name channel.
+
+        The name is needed again in the batch list: the portal lists some
+        reports with no query ID at all, and then the name in the summary is
+        the only handle on them. Resolving to a bare ID threw away the one
+        thing that identifies those.
+        """
+        queries = [FlexQuery(1427928, "MyTax Options EAE")]
+
+        resolved = resolve_queries_by_name(queries, "MyTax")
+
+        assert resolved["options_eae"].name == "MyTax Options EAE"
+        assert resolved["options_eae"].query_id == 1427928
+
 
 class TestWriteReport:
     def test_writes_with_the_byte_order_mark_the_parsers_expect(self, tmp_path):
@@ -297,12 +314,50 @@ class StubClient:
         self.failures = set(failures)
         self.report = report
         self.calls = []
+        self.kwargs = []
 
     def run_and_collect(self, query_id, from_date, to_date, **kwargs):
         self.calls.append((query_id, from_date, to_date))
+        self.kwargs.append(kwargs)
         if query_id in self.failures:
             raise PortalError(f"query {query_id} failed")
         return self.report
+
+
+class TestTheQueryNameReachesTheMatcher:
+    """
+    The far ends of the query-name channel.
+
+    A value threaded from resolution through the target to the portal client
+    is exactly the shape that stays green while a link in the middle is
+    missing — the suite watches the matcher and the resolver and sees nothing
+    when the two are not joined up. These probe the joins.
+    """
+
+    def test_build_targets_puts_the_portal_name_on_every_target(self):
+        targets = build_targets([2021], ALL_IDS, ["trades", "positions"],
+                                {"trades": "MyTax Trades",
+                                 "positions": "MyTax Positions"})
+
+        by_file = {t.filename: t.query_name for t in targets}
+        assert by_file["Trades-2021.csv"] == "MyTax Trades"
+        # Both snapshots too — a single-day report is listed the same way.
+        assert by_file["Positions-2021-SoY.csv"] == "MyTax Positions"
+        assert by_file["Positions-2021-EoY.csv"] == "MyTax Positions"
+
+    def test_an_unnamed_query_is_not_invented(self):
+        targets = build_targets([2021], ALL_IDS, ["trades"])
+
+        assert targets[0].query_name is None
+
+    def test_download_targets_hands_the_name_to_the_client(self, tmp_path):
+        targets = build_targets([2021], ALL_IDS, ["trades"],
+                                {"trades": "MyTax Trades"})
+        client = StubClient()
+
+        download_targets(client, targets, tmp_path)
+
+        assert client.kwargs[0]["query_name"] == "MyTax Trades"
 
 
 class TestDownloadTargets:

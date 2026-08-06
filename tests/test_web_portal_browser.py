@@ -8,14 +8,98 @@ clears a stuck session is a recursive delete — it must refuse any path that is
 not a browser profile, because the flag that triggers it takes a directory
 name.
 
-These tests import only src.web_portal.browser's pure file handling; no browser
-is launched and playwright is not needed.
+These tests import only src.web_portal.browser's pure file handling and its
+keep-awake nudge, driven against a fake page; no browser is launched and
+playwright is not needed.
 """
 import json
 
 import pytest
 
-from src.web_portal.browser import disable_password_storage, reset_profile
+from src.web_portal.browser import (
+    disable_password_storage,
+    nudge_activity,
+    reset_profile,
+)
+
+
+class FakeMouse:
+    def __init__(self):
+        self.moves = []
+        self.clicks = []
+
+    def move(self, x, y, **kwargs):
+        self.moves.append((x, y))
+
+    def click(self, x, y, **kwargs):        # never expected; see the test
+        self.clicks.append((x, y))
+
+
+class FakePage:
+    def __init__(self, closed=False):
+        self.mouse = FakeMouse()
+        self._closed = closed
+
+    def is_closed(self):
+        return self._closed
+
+
+class TestNudgeActivity:
+    """
+    The portal logs itself out after about fifteen minutes without user
+    input, and network traffic does not count.
+
+    Measured in the recorded run of 2026-08-06 09:54: the portal's own
+    keep-alive (`portal.proxy/v1/portal/tickle`) fired faithfully every 30
+    seconds, 32 times, and a batch-list request went out every 10 seconds
+    throughout — yet at 10:11:00, fifteen and a half minutes after the last
+    interaction, the page called `portal/logout`, `ibcust/logout` and
+    `sso/Logout` of its own accord and navigated to the login screen. The next
+    request was answered 603. So the timer that matters is driven by input
+    events, and only a real input event resets it.
+    """
+
+    def test_it_moves_the_mouse(self):
+        page = FakePage()
+
+        nudge_activity(page)
+
+        assert page.mouse.moves, "no input event was generated"
+
+    def test_it_never_clicks(self):
+        """
+        A click lands on whatever is under the pointer — a Run button, a
+        delete icon. Movement is enough to count as activity and cannot
+        actuate anything.
+        """
+        page = FakePage()
+
+        nudge_activity(page)
+
+        assert page.mouse.clicks == []
+
+    def test_a_closed_page_is_not_touched(self):
+        page = FakePage(closed=True)
+
+        nudge_activity(page)
+
+        assert page.mouse.moves == []
+
+    def test_a_page_that_refuses_the_nudge_does_not_end_the_run(self):
+        """
+        Keeping the session warm is best-effort. Losing the nudge costs the
+        session eventually; raising here costs the reports already in hand.
+        """
+        class Hostile(FakePage):
+            @property
+            def mouse(self):
+                raise RuntimeError("target page, context or browser has been closed")
+
+            @mouse.setter
+            def mouse(self, value):
+                pass
+
+        nudge_activity(Hostile())      # must not raise
 
 
 class TestDisablePasswordStorage:
