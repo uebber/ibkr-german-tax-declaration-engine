@@ -122,35 +122,29 @@ def last_business_day_of_year(year: int) -> date:
 
 def first_business_day_of_year(year: int) -> date:
     """
-    The date to ask for a start-of-year snapshot: the first trading day.
+    The date to ask for a start-of-year snapshot: 1 January, rolled back.
 
-    The start-of-year snapshot supplies the Rücknahmepreis *zu Beginn des
-    Kalenderjahres* of § 18 Abs. 1 Satz 2 InvStG, which drives the
-    Vorabpauschale. Which day that is was an open question — see
-    reference/research/open-legal-questions.md Q12 — resolved in favour of the
-    first price *set in* the calendar year, recorded against GT-INVSTG-010 in
-    docs/legal-implementation-map.md.
+    This snapshot supplies two different things, and they want two different
+    days. Its **quantities and cost bases** are the ledger's opening position,
+    on top of which the year's trades are replayed — so they must be the
+    holding *before* the year's first trade. Its **mark price** feeds the
+    Vorabpauschale as the Ruecknahmepreis *zu Beginn des Kalenderjahres* of
+    § 18 Abs. 1 Satz 2 InvStG, which open question Q12 resolved to the first
+    price set *in* the year.
 
-    So the date has to be one on which a price was actually set. Asking for
-    1 January returns the preceding 31 December close instead, which is the
-    reading that was not chosen: verified on a recorded run, where a request
-    for 2025-01-01 returned a report identical in content to the 2024
-    end-of-year snapshot.
+    One report cannot carry both. Asked for the first trading day, the snapshot
+    is taken at that day's close and omits anything sold that morning: a real
+    2024 run then failed with "Insufficient long lots" for a holding sold on
+    2 January, because the opening ledger no longer contained it while the
+    Trades file still carried the sale.
 
-    New Year's Day is closed on every exchange IBKR serves whatever weekday it
-    falls on — 1 January 2021 was a Friday — and when it falls on a Sunday the
-    exchanges observe it on Monday 2 January. Corroborated by real data: the
-    2021 cash report carries FromDate 20210104, and this returns 4 January 2021.
+    The quantities win, because without them nothing computes at all. The
+    price therefore comes from the preceding close, which is the reading that
+    was *not* chosen — recorded as a deviation against GT-INVSTG-010 in
+    docs/legal-implementation-map.md, to be closed by sourcing the Satz 2 price
+    from a separate first-trading-day snapshot.
     """
-    new_year = date(year, 1, 1)
-    closed = {new_year}
-    if new_year.weekday() == 6:          # Sunday -> observed on the Monday
-        closed.add(date(year, 1, 2))
-
-    day = new_year
-    while day.weekday() >= 5 or day in closed:
-        day += timedelta(days=1)
-    return day
+    return weekday_on_or_before(date(year, 1, 1))
 
 
 def positions_snapshot_dates(year: int) -> tuple[date, date]:

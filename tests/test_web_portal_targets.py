@@ -111,39 +111,38 @@ class TestBuildTargets:
             assert eoy.from_date.weekday() < 5, f"{year} EoY: {eoy.from_date}"
 
     @pytest.mark.parametrize("year,expected", [
-        (2020, date(2020, 1, 2)),   # 1 Jan Wed, closed -> Thursday
-        (2021, date(2021, 1, 4)),   # 1 Jan Fri, closed; weekend -> Monday
-        (2022, date(2022, 1, 3)),   # 1 Jan Saturday -> Monday
-        (2023, date(2023, 1, 3)),   # 1 Jan Sunday, observed Mon 2nd -> Tuesday
-        (2024, date(2024, 1, 2)),   # 1 Jan Mon, closed -> Tuesday
-        (2025, date(2025, 1, 2)),   # 1 Jan Wed, closed -> Thursday
+        (2020, date(2020, 1, 1)),   # Wednesday
+        (2021, date(2021, 1, 1)),   # Friday
+        (2022, date(2021, 12, 31)), # 1 Jan Saturday -> Friday before
+        (2023, date(2022, 12, 30)), # 1 Jan Sunday -> Friday before
+        (2024, date(2024, 1, 1)),   # Monday
+        (2025, date(2025, 1, 1)),   # Wednesday
     ])
-    def test_the_start_of_year_is_the_first_trading_day(self, year, expected):
+    def test_the_start_of_year_snapshot_is_the_opening_position(self, year, expected):
         """
-        § 18 Abs. 1 Satz 2 InvStG's *Ruecknahmepreis zu Beginn des
-        Kalenderjahres* is the first price set **in** the year — open question
-        Q12, resolved against GT-INVSTG-010. So the snapshot must be requested
-        for a day on which a price was actually set.
+        The snapshot's quantities are the ledger's opening position, so they
+        must precede the year's first trade. Requested for the first trading
+        day instead, the snapshot is taken at that day's close: a real 2024 run
+        failed with "Insufficient long lots" for a holding sold on 2 January,
+        absent from the snapshot but present in the Trades file.
 
-        1 January will not do, and not only because of weekends: it is closed
-        on every exchange whatever weekday it falls on, and a request for it
-        returns the preceding 31 December close, which is the reading that was
-        not chosen. 2021 is the case that catches a weekday-only rule — 1
-        January 2021 was a Friday.
+        The Vorabpauschale price wants the other day (Q12, Reading B). One
+        report cannot carry both; the deviation is recorded against
+        GT-INVSTG-010.
         """
         assert first_business_day_of_year(year) == expected
         soy, _ = build_targets([year], ALL_IDS, ["positions"])
         assert soy.from_date == expected
 
-    def test_a_start_of_year_snapshot_is_never_requested_for_1_january(self):
+    def test_the_opening_snapshot_never_follows_the_years_first_trade(self):
         """
-        The single assertion that separates the two readings: asking for
-        1 January is asking for the previous year's close.
+        Whatever the year, the requested day is on or before 1 January, so no
+        trade of the year can have been booked into it.
         """
         for year in range(2018, 2031):
             soy, _ = build_targets([year], ALL_IDS, ["positions"])
-            assert soy.from_date != date(year, 1, 1), year
-            assert soy.from_date.year == year, year
+            assert soy.from_date <= date(year, 1, 1), year
+            assert soy.from_date.weekday() < 5, year
 
     @pytest.mark.parametrize("year,expected", [
         (2021, date(2021, 12, 31)),   # Friday

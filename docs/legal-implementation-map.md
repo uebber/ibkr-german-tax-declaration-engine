@@ -169,7 +169,7 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-010 | **choice under uncertainty** | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. **Re-decided by the 2026-08-06 audit: the day of the Satz 2 price is open question Q12, and the engine does not choose it — see below.** |
+| GT-INVSTG-010 | **deviates** (reading chosen, input cannot supply it) | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. **Re-decided by the 2026-08-06 audit: the day of the Satz 2 price is open question Q12, and the engine does not choose it — see below.** |
 | GT-INVSTG-011 | **deviates** | — | — | **Abs. 2 pro-rata is not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
 | GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | |
@@ -218,11 +218,21 @@ anchors a mid-year fund on the first price actually set. Abs. 4 draws the Basisz
 first Börsentag of the year, so under B both factors of the same product come from the same
 moment. Reading A rests on the wording contrast alone.
 
-**What that means for the input.** The start-of-year snapshot must be the holding *and price* of
-the first trading day of the calendar year, not of 31 December preceding it. A snapshot requested
-for 1 January answers with the previous close, which is Reading A — so the request has to name a
-day on which a price was actually set. This is why the portal downloader asks for the first
-trading day; see `src/web_portal/download.py`.
+**What that means for the input, and why the engine does not yet do it.** The Satz 2 price
+should come from the first trading day. The start-of-year positions snapshot that currently
+supplies it cannot be dated that way: the *same* file supplies the ledger's opening quantities and
+cost bases, and those must precede the year's first trade. Dated to the first trading day the
+snapshot is taken at that day's close, and a real 2024 run failed outright — "Insufficient long
+lots" for a holding sold on the morning of 2 January, gone from the snapshot but still present in
+the Trades file. Quantities win, because without them nothing computes; so the price is the
+preceding close, which is Reading A.
+
+The engine therefore **deviates from the reading recorded here**, knowingly, and the Vorabpauschale
+is computed from a price one trading day early. For a fund whose price moved across the turn of the
+year the Basisertrag is wrong by that movement.
+
+**Follow-up:** `fix-func(engine)` — source the Satz 2 price from a separate first-trading-day
+snapshot, leaving the opening ledger snapshot dated as it is. Two reports, two purposes, two days.
 
 **Known state of the input corpus at the time of this decision.** Of the start-of-year snapshots
 present, only the 2023 one carried first-trading-day prices; those for 2022, 2024 and 2025 carried

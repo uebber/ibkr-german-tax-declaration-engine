@@ -334,22 +334,18 @@ Useful options:
 | `--timeout-seconds` | How long to wait for one report (default 900). A report that outlives it keeps generating; re-run to collect it |
 | `--reset-profile` | Delete the saved browser profile and log in fresh. Use if the portal keeps saying "Your Session Has Expired" |
 
-**Positions snapshot dates.** `Positions-{YYYY}-SoY.csv` is fetched as of the
-**first trading day** of the year and `Positions-{YYYY}-EoY.csv` as of the last
-(31 December, or the Friday before if it falls on a weekend).
+**Positions snapshot dates.** `Positions-{YYYY}-SoY.csv` is fetched as of
+1 January and `Positions-{YYYY}-EoY.csv` as of 31 December, each rolled back to
+the Friday before when it falls on a weekend.
 
-The start-of-year file supplies the price that drives the Vorabpauschale, and
-which day that price comes from is a legal question, not a convenience: it is
-recorded as open question Q12 in
-[`reference/research/open-legal-questions.md`](reference/research/open-legal-questions.md)
-and decided against `GT-INVSTG-010` in
-[`docs/legal-implementation-map.md`](docs/legal-implementation-map.md). Asking
-the portal for 1 January returns the *preceding* 31 December close instead,
-which is the reading that was not chosen — so if you have start-of-year files
-exported by hand for 1 January, they carry different prices from the ones this
-tool fetches, and re-fetching them with `--overwrite` is what makes the corpus
-consistent. Quantities are unaffected either way, so the end-of-year
-reconciliation will not flag the difference.
+The start-of-year file is the ledger's opening position, so it must precede the
+year's first trade — a snapshot dated to the first trading day is taken at that
+day's close and omits anything sold that morning, which makes the run fail with
+"Insufficient long lots". The same file's mark price feeds the Vorabpauschale,
+where the law wants the *first* price of the year instead (open question Q12,
+decided against `GT-INVSTG-010`). One report cannot be both; the quantities win
+and the resulting deviation is recorded in
+[`docs/legal-implementation-map.md`](docs/legal-implementation-map.md).
 
 **Resolving queries by name.** If you gave your six Flex Queries a common
 naming prefix — `MyTax Trades`, `MyTax_Cash_Transactions`, and so on — set
