@@ -111,12 +111,12 @@ class TestBuildTargets:
             assert eoy.from_date.weekday() < 5, f"{year} EoY: {eoy.from_date}"
 
     @pytest.mark.parametrize("year,expected", [
-        (2020, date(2020, 1, 1)),   # Wednesday
-        (2021, date(2021, 1, 1)),   # Friday
-        (2022, date(2021, 12, 31)), # 1 Jan Saturday -> Friday before
-        (2023, date(2022, 12, 30)), # 1 Jan Sunday -> Friday before
-        (2024, date(2024, 1, 1)),   # Monday
-        (2025, date(2025, 1, 1)),   # Wednesday
+        (2020, date(2020, 1, 2)),   # 1 Jan Wed, closed -> Thursday
+        (2021, date(2021, 1, 4)),   # 1 Jan Fri, closed; weekend -> Monday
+        (2022, date(2022, 1, 3)),   # 1 Jan Saturday -> Monday
+        (2023, date(2023, 1, 3)),   # 1 Jan Sunday, observed Mon 2nd -> Tuesday
+        (2024, date(2024, 1, 2)),   # 1 Jan Mon, closed -> Tuesday
+        (2025, date(2025, 1, 2)),   # 1 Jan Wed, closed -> Thursday
     ])
     def test_the_start_of_year_snapshot_is_the_opening_position(self, year, expected):
         """
@@ -141,7 +141,7 @@ class TestBuildTargets:
         """
         for year in range(2018, 2031):
             soy, _ = build_targets([year], ALL_IDS, ["positions"])
-            assert soy.from_date <= date(year, 1, 1), year
+            assert soy.from_date >= date(year, 1, 1), year
             assert soy.from_date.weekday() < 5, year
 
     @pytest.mark.parametrize("year,expected", [

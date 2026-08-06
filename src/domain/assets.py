@@ -28,8 +28,7 @@ class Asset:
     soy_cost_basis_amount: Optional[Decimal] = None # Renamed from initial_cost_basis_money_soy
     soy_cost_basis_currency: Optional[str] = None # Renamed from initial_cost_basis_currency_soy
 
-    # Start of Year (SOY) market price data (from IBKR positions_start_file, for Vorabpauschale)
-    soy_market_price: Optional[Decimal] = None
+    # Start of Year (SOY) market value (from the opening positions snapshot)
     soy_position_value: Optional[Decimal] = None
     soy_mark_price_currency: Optional[str] = None
 
@@ -48,10 +47,17 @@ class Asset:
     # reference/tax-forms/anlage-kap-inv-zeilen.md. The Basisertrag therefore needs the
     # Ruecknahmepreis at the START of Y-1 and the cap needs the last price set IN Y-1 --
     # neither of which is the tax year's own SoY/EoY snapshot.
+    # Abs. 1 is written per Investmentanteil: the prices below are PER UNIT and the
+    # unit count enters separately, at the close of 31 December (Rz. 18.4). A single
+    # position value carrying both cannot be right for both -- see
+    # reference/investment-tax-law/invstg-18-vorabpauschale.md.
     prior_year_soy_quantity: Optional[Decimal] = None
     prior_year_soy_position_value: Optional[Decimal] = None
+    prior_year_soy_mark_price: Optional[Decimal] = None
     prior_year_soy_mark_price_currency: Optional[str] = None
+    prior_year_eoy_quantity: Optional[Decimal] = None
     prior_year_eoy_position_value: Optional[Decimal] = None
+    prior_year_eoy_mark_price: Optional[Decimal] = None
     prior_year_eoy_mark_price_currency: Optional[str] = None
 
 

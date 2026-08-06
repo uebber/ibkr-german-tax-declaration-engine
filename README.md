@@ -334,18 +334,21 @@ Useful options:
 | `--timeout-seconds` | How long to wait for one report (default 900). A report that outlives it keeps generating; re-run to collect it |
 | `--reset-profile` | Delete the saved browser profile and log in fresh. Use if the portal keeps saying "Your Session Has Expired" |
 
-**Positions snapshot dates.** `Positions-{YYYY}-SoY.csv` is fetched as of
-1 January and `Positions-{YYYY}-EoY.csv` as of 31 December, each rolled back to
-the Friday before when it falls on a weekend.
+**Positions snapshot dates, and what each file is for.**
+`Positions-{YYYY}-EoY.csv` is fetched as of the last trading day of the year and
+does double duty: it is the year's closing position *and* the opening position
+of the following year, which is what the ledger starts from.
+`Positions-{YYYY}-SoY.csv` is fetched as of the **first trading day** and is
+used for one thing only — the Rücknahmepreis at the start of the calendar year,
+which drives the Vorabpauschale (open question Q12, decided against
+`GT-INVSTG-010`). Its unit count is not read; the Vorabpauschale takes that from
+the 31 December snapshot.
 
-The start-of-year file is the ledger's opening position, so it must precede the
-year's first trade — a snapshot dated to the first trading day is taken at that
-day's close and omits anything sold that morning, which makes the run fail with
-"Insufficient long lots". The same file's mark price feeds the Vorabpauschale,
-where the law wants the *first* price of the year instead (open question Q12,
-decided against `GT-INVSTG-010`). One report cannot be both; the quantities win
-and the resulting deviation is recorded in
-[`docs/legal-implementation-map.md`](docs/legal-implementation-map.md).
+That split matters. While one file supplied both, it could not be dated
+correctly for either: dated to the first trading day it omits anything sold that
+morning and the run fails with "Insufficient long lots", and dated to 1 January
+the Vorabpauschale price is a day early. A run for tax year `Y` therefore needs
+`Positions-{Y-1}-EoY.csv` — it is required, not optional.
 
 **Resolving queries by name.** If you gave your six Flex Queries a common
 naming prefix — `MyTax Trades`, `MyTax_Cash_Transactions`, and so on — set

@@ -54,6 +54,9 @@ class ParsingOrchestrator:
         # verify they are still there once classification has run. See
         # _verify_prior_year_snapshot_survived_classification.
         self._prior_year_snapshot_fields: Dict[uuid.UUID, Dict[str, Any]] = {}
+        # Funds whose Satz 2 price had to be taken from the wrong day. Drained into the
+        # data-gap channel by the pipeline, so it reaches the report rather than the log.
+        self.vorabpauschale_price_substitutions: List[Tuple[str, str]] = []
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
         self.raw_options_eae: List[RawOptionsEAERecord] = []
@@ -122,7 +125,6 @@ class ParsingOrchestrator:
             asset.soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0)) # Changed from initial_quantity_soy
             asset.soy_cost_basis_amount = safe_decimal(raw_pos.cost_basis_money) # Changed from initial_cost_basis_money_soy
             asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
-            asset.soy_market_price = safe_decimal(raw_pos.mark_price)
             asset.soy_position_value = safe_decimal(raw_pos.position_value)
             asset.soy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
@@ -153,19 +155,88 @@ class ParsingOrchestrator:
             asset = self._resolve_asset_from_position(raw_pos)
             asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
             asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_soy_mark_price = safe_decimal(raw_pos.mark_price)
             asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
             self._record_prior_year_snapshot_fields(asset, (
                 "prior_year_soy_quantity", "prior_year_soy_position_value",
-                "prior_year_soy_mark_price_currency",
+                "prior_year_soy_mark_price", "prior_year_soy_mark_price_currency",
             ))
 
         for raw_pos in self.raw_positions_prior_end:
             asset = self._resolve_asset_from_position(raw_pos)
+            asset.prior_year_eoy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
             asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_eoy_mark_price = safe_decimal(raw_pos.mark_price)
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
             self._record_prior_year_snapshot_fields(asset, (
-                "prior_year_eoy_position_value", "prior_year_eoy_mark_price_currency",
+                "prior_year_eoy_quantity", "prior_year_eoy_position_value",
+                "prior_year_eoy_mark_price", "prior_year_eoy_mark_price_currency",
             ))
+
+        self._compose_vorabpauschale_base_value()
+
+    def _compose_vorabpauschale_base_value(self) -> None:
+        """
+        Rebuild the Basisertrag's base as a price from one day and a unit count
+        from another.
+
+        18 Abs. 1 InvStG is written per Investmentanteil: Satz 2 takes the
+        Ruecknahmepreis *at the start of the calendar year*, and Rz. 18.4 of the
+        BMF-Schreiben multiplies by the units held *at the close of 31 December*
+        of that year. Those are two different moments, so the start-of-year
+        snapshot's own position value -- price and units both from the start --
+        is the right answer only when the holding never changed.
+
+        The composed value is written into the same field the Vorabpauschale
+        already consumes, so the calculation itself is untouched. See
+        reference/investment-tax-law/invstg-18-vorabpauschale.md and
+        GT-INVSTG-017 in docs/legal-implementation-map.md.
+
+        Left alone where either input is absent: a caller that supplies a
+        position value directly, and no per-unit price, keeps the value it set.
+        """
+        for asset in self.asset_resolver.assets_by_internal_id.values():
+            price = getattr(asset, "prior_year_soy_mark_price", None)
+            units = getattr(asset, "prior_year_eoy_quantity", None)
+            if units is None or units <= Decimal(0):
+                continue
+
+            if price is None:
+                held_at_year_start = (asset.prior_year_soy_quantity is not None
+                                      and asset.prior_year_soy_quantity > Decimal(0))
+                if not held_at_year_start:
+                    # Not a gap: the units were acquired during the year, and the law answers
+                    # that with Abs. 2's pro-rata and Rz. 18.7's first price actually set --
+                    # neither implemented (GT-INVSTG-011, GT-INVSTG-035). Substituting the
+                    # year-end price here would invent a full-year Basisertrag on the highest
+                    # price available, which is worse than producing nothing.
+                    continue
+
+                # Held at the start of the year, yet carrying no start-of-year price: the
+                # snapshot does not cover it. Fall back to the year-end price so a figure is
+                # produced, and say so -- it is the wrong day, and for a fund that rose during
+                # the year it overstates the Basisertrag.
+                price = getattr(asset, "prior_year_eoy_mark_price", None)
+                if price is None:
+                    continue
+                self.vorabpauschale_price_substitutions.append(
+                    (asset.get_classification_key(), asset.description or ""))
+                logger.warning(
+                    "Vorabpauschale for %s: no start-of-year unit price in the preceding "
+                    "year's snapshot though the fund was held; using the 31 December price "
+                    "instead. The Basisertrag is computed from the wrong day.",
+                    asset.get_classification_key(),
+                )
+
+            composed = price * units
+            previous = asset.prior_year_soy_position_value
+            asset.prior_year_soy_position_value = composed
+            if previous is not None and previous != composed:
+                logger.debug(
+                    "Vorabpauschale base for %s: start-of-year price %s x "
+                    "31 December units %s = %s (the snapshot's own value was %s).",
+                    asset.get_classification_key(), price, units, composed, previous,
+                )
 
     def _record_prior_year_snapshot_fields(self, asset: Asset, field_names: Tuple[str, ...]) -> None:
         """Note which prior-year snapshot values this asset now carries.

@@ -142,6 +142,18 @@ def run_core_processing_pipeline(
     try:
         # Ensure run_main_calculations uses the passed tax_year_to_process
         data_gap_collector = DataGapCollector()
+        for key, description in orchestrator.vorabpauschale_price_substitutions:
+            data_gap_collector.record(
+                code="VORABPAUSCHALE_PRICE_WRONG_DAY",
+                subject=f"{key} ({description})" if description else key,
+                detail=(
+                    "Der Ruecknahmepreis zu Beginn des Kalenderjahres fehlt im Positions-"
+                    "Snapshot, obwohl der Fonds zu Jahresbeginn gehalten wurde. Fuer die "
+                    "Vorabpauschale wurde ersatzweise der Preis vom 31.12. verwendet; der "
+                    "Basisertrag stammt damit vom falschen Tag und ist bei gestiegenem Kurs "
+                    "zu hoch."
+                ),
+            )
         realized_gains_losses, vorabpauschale_items, processed_income_events, eoy_mismatch_error_count_calc = run_main_calculations(
             financial_events=financial_events_enriched,
             asset_resolver=orchestrator.asset_resolver, # Use the resolver from the orchestrator

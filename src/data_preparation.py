@@ -192,16 +192,30 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         logger.info("%s: %d year(s) included (%s)", file_key, len(years_to_include),
                     ", ".join(str(y) for y in years_to_include))
 
-    # --- Positions: copy SoY and EoY for the tax year ---
-    soy_file = _find_import_file("Positions", tax_year, "-SoY.csv")
-    if soy_file:
+    # --- Opening position: the PRECEDING year's end-of-year snapshot ---
+    # The ledger's opening lots and the end-of-year reconciliation baseline must be the holding
+    # as it stood before the tax year's first trade. That is the close of the preceding year,
+    # not this year's own start-of-year file: a start-of-year snapshot is taken at the close of
+    # the day it names, so if it names a trading day it already contains that day's trades and
+    # the same trades arrive again from the Trades file. A VZ 2024 run failed exactly so.
+    #
+    # This year's Positions-{tax_year}-SoY.csv is deliberately not read here. It carries the
+    # Ruecknahmepreis at the start of this calendar year, which belongs to the Vorabpauschale
+    # declared one year later, and it is picked up then as the prior year's start snapshot.
+    opening_file = _find_import_file("Positions", tax_year - 1, "-EoY.csv")
+    if opening_file:
         soy_output = WORKING_DIR / "positions_start_of_year.csv"
-        _copy_file(soy_file, soy_output)
+        _copy_file(opening_file, soy_output)
         result["positions_start"] = str(soy_output)
     else:
-        # SoY may not exist for the first year of trading
-        logger.warning("No Positions-%d-SoY.csv found. This is expected for the first year of trading.", tax_year)
-        result["positions_start"] = ""
+        raise FileNotFoundError(
+            f"Positions-{tax_year - 1}-EoY.csv not found in {IMPORT_DIR}/. It is the opening "
+            f"position for tax year {tax_year}: the lots the year starts with, and the baseline "
+            f"the end-of-year reconciliation is measured against. Without it the run would "
+            f"begin from an empty portfolio and every carried-in holding would reconcile "
+            f"wrongly. If {tax_year} is genuinely the first year with holdings, an empty file "
+            f"with only a header row states that explicitly."
+        )
 
     eoy_file = _find_import_file("Positions", tax_year, "-EoY.csv")
     if eoy_file:
