@@ -202,10 +202,10 @@ class ParsingOrchestrator:
         from that snapshot, and the last price before the year began stands in:
         one trading day early rather than a year late.
 
-        This departs from Rz. 18.4 of the BMF-Schreiben, which counts the units
-        held at the *close* of X. The departure is deliberate and recorded
-        against GT-INVSTG-017 in docs/legal-implementation-map.md; the two
-        coincide for a holding that did not change during the year.
+        Which unit count the Vorabpauschale should then be multiplied by is a
+        separate question about that computation, not about this bookkeeping:
+        Rz. 18.4 names the holding at the close of X, and the position taken here
+        is recorded against GT-INVSTG-017 in docs/legal-implementation-map.md.
 
         The composed figure is written into the field the Vorabpauschale already
         consumes, so the calculation itself is untouched.

@@ -6,12 +6,14 @@ Kalenderjahres* — which day that is, is open question Q12, resolved to the fir
 price set in the year. Rz. 18.4 of the BMF-Schreiben of 21.05.2019 then
 multiplies by a unit count.
 
-For the Vorabpauschale of calendar X this engine takes the price from X's first
-trading day and the unit count from the close of X-1, so that both describe the
-position as it stood when the year opened. That unit count is a **deliberate
-departure** from Rz. 18.4, which counts the units held at the close of X; it is
-recorded against GT-INVSTG-017 in docs/legal-implementation-map.md. The two
-coincide for a holding that did not change during the year.
+These tests are about **bookkeeping**: reading the stored position reports into
+a correct history. For calendar X the price is the first one set in X, from X's
+own start-of-year report, and the quantity at X 00:00:00 is the close of X-1 —
+which is what the X-1 end-of-year report states, read verbatim.
+
+Which unit count the Vorabpauschale computation should then use is a separate
+question, downstream of this: Rz. 18.4 names the close of X, and the position
+taken is recorded against GT-INVSTG-017 in docs/legal-implementation-map.md.
 
 Where a fund was sold on X's first trading day it has no price in that
 snapshot, and the last price set before the year began stands in — one trading

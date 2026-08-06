@@ -220,34 +220,10 @@ anchors a mid-year fund on the first price actually set. Abs. 4 draws the Basisz
 first Börsentag of the year, so under B both factors of the same product come from the same
 moment. The contrary reading rests on the wording contrast alone.
 
-**How the input supplies it, and the deviation that comes with it.** For the Vorabpauschale of
-calendar year `X`, the engine takes:
-
-| Figure | Taken from | Why |
-|---|---|---|
-| Satz 2 price | the first trading day of `X` | Q12 Reading B, as chosen above |
-| unit count | the close of `X-1` | see below — Rz. 18.4 says the close of `X` |
-| price, when the fund is absent from `X`'s first-trading-day snapshot | the close of `X-1` | it was sold that morning; the last price before the year began is one day early, not a year late |
-
-**Both figures therefore describe the position as it stood at the start of the year**, priced at
-the start of the year. That is internally consistent, and it is a deliberate departure from
-Rz. 18.4, which counts the units held at the *end* of the calendar year. The two coincide for a
-holding that did not change. Where the holding grew during the year, Rz. 18.4 would give a larger
-Basisertrag than the engine does; where it shrank, a smaller one.
-
-The reason for the departure is that the administration's end-of-year count exists for the
-depotfuehrende Stelle, which levies the tax on what it still holds on 31 December, whereas this
-engine computes the figure for a taxpayer from a position that existed at the start of the year and
-is priced as at that moment. Mixing a start-of-year price with an end-of-year size prices one
-holding and counts another.
-
-**This is a choice, not an oversight, and it moves a declared figure.** Measured on real VZ 2024
-data, taking the unit count at the year's end instead moved Anlage KAP-INV Zeile 13 from 393.27 to
-491.59 — a fund whose unit count grew during the year.
-
-**Follow-up:** `fix-func(engine)` — if the Rz. 18.4 count is later adopted, the unit source moves
-from the close of `X-1` to the close of `X`, and the fallback price above should be reconsidered
-with it.
+**Where the price comes from** is a bookkeeping matter, not part of this claim: the position
+history records the first price set in the calendar year, and how the stored reports are read to
+get there is described in `src/data_preparation.py` and `src/parsers/parsing_orchestrator.py`.
+This row records only that the Satz 2 price is that first price.
 
 **Known state of the input corpus at the time of this decision.** Of the start-of-year snapshots
 present, only the 2023 one carried first-trading-day prices; those for 2022, 2024 and 2025 carried
@@ -262,9 +238,22 @@ carried identical quantities and different mark prices.
 2 January (GT-INVSTG-018), which is the right Stichtag under B only when the first trading day
 *is* 2 January. Align it with the day the price was set.
 
-**GT-INVSTG-017 — follow-up:** `fix-func(engine)` — multiply the per-unit Basisertrag by the units
-held at the end of 31 December of the calendar year, instead of deriving the Basisertrag from the
-start-of-year position value.
+**GT-INVSTG-017 — the unit count the Basisertrag is multiplied by.** Rz. 18.4 names the units
+held at the close of 31 December of the calendar year. The engine multiplies by the units held
+when the year opened. The two coincide for an unchanged holding; where the holding grew, Rz. 18.4
+gives more, and where it shrank, less. On VZ 2024 real data the difference is Anlage KAP-INV
+Zeile 13 393.27 against 491.59.
+
+This is a question about how the Vorabpauschale consumes a position history, not about how that
+history is recorded — the history itself is not in doubt. Two things bear on it and are recorded
+here rather than argued in the store: Abs. 2 reduces the Vorabpauschale pro rata for units
+*acquired during the year*, which presupposes such units are in the count at all; and the reading
+chosen for Q5 (GT-INVSTG-016) gives no Vorabpauschale for a fund fully disposed of during the
+year, which sits awkwardly beside charging one on units partially disposed of.
+
+**Follow-up:** `fix-func(engine)` — adopt the Rz. 18.4 count, which is one line: the unit source
+moves to the 31 December holding, already parsed and available. Deferred as a decision about the
+Vorabpauschale computation, separate from the position bookkeeping that feeds it.
 
 **GT-INVSTG-035 — follow-up:** the same `fix-func(engine)` that closes GT-INVSTG-011, extended to
 funds launched during the year: base them on the first price set and apply the Abs. 2 pro-rata.
