@@ -50,11 +50,28 @@ Basisertrag lives in Abs. 1; Abs. 2 is the pro-rata rule; Abs. 3 is the Zuflussf
 - **Satz 4:** *"Wird kein Ruecknahmepreis festgesetzt, so tritt der Boersen- oder Marktpreis an
   die Stelle des Ruecknahmepreises."*
 
+**Abs. 1 is written per Investmentanteil, not per holding.** Every quantity in Sätze 1 to 3 is a
+Ruecknahmepreis or a distribution *of one unit*; the number of units enters only through Rz. 18.4
+of the BMF-Schreiben, which multiplies at the end and fixes the count as the one held at the close
+of 31 December. Writing the three Saetze as though they operated on the value of a holding loses
+that distinction, and with it the difference between a price and a position:
+
 ```
-Basisertrag = Ruecknahmepreis_Jahresbeginn x Basiszins x 0.70        (Satz 2)
-Basisertrag <= (Ruecknahmepreis_letzt - Ruecknahmepreis_erst) + Ausschuettungen   (Satz 3)
-Vorabpauschale = max(0, Basisertrag - Ausschuettungen)               (Satz 1)
+per Anteil:
+  Basisertrag_je_Anteil = Ruecknahmepreis_Jahresbeginn x Basiszins x 0.70          (Satz 2)
+  Basisertrag_je_Anteil <= (Ruecknahmepreis_letzt - Ruecknahmepreis_erst)
+                             + Ausschuettungen_je_Anteil                           (Satz 3)
+
+per Bestand:
+  Basisertrag = Basisertrag_je_Anteil x Anzahl Anteile am 31.12.                   (Rz. 18.4)
+  Vorabpauschale = max(0, Basisertrag - Ausschuettungen)                           (Satz 1)
 ```
+
+Two consequences that a value-based reading hides. The **price** and the **unit count** are taken
+at different moments — the price at the start of the calendar year (which day: see Q12), the count
+at the close of 31 December — so a single figure carrying both cannot be right for both. And the
+Satz 3 cap is bounded by the *first and last price set in the calendar year*, whose lower bound is
+the same first price Satz 2 uses, not the preceding year's close.
 
 Note Satz 3 is expressed in **Ruecknahmepreise festgesetzt im Kalenderjahr**, not in calendar
 boundaries: the first and last price *set during the year*.
