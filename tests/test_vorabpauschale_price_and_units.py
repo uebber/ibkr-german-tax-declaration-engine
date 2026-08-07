@@ -2,9 +2,11 @@
 The Basisertrag's price and its unit count, and where each comes from.
 
 legal_basis: § 18 Abs. 1 Satz 2 InvStG takes the Ruecknahmepreis *zu Beginn des
-Kalenderjahres* — which day that is, is open question Q12, resolved to the first
-price set in the year. Rz. 18.4 of the BMF-Schreiben of 21.05.2019 then
-multiplies by a unit count.
+Kalenderjahres*, which is the first price set in the calendar year — settled by
+Rz. 18.3 of the BMF-Schreiben of 21.05.2019, whose worked example uses one
+figure as both the Satz 2 base and the Satz 3 cap's lower bound, and Satz 3
+defines that bound as *"dem ersten ... im Kalenderjahr festgesetzten
+Ruecknahmepreis"*. [GT-INVSTG-010]. Rz. 18.4 then multiplies by a unit count.
 
 These tests are about **bookkeeping**: reading the stored position reports into
 a correct history. The parsing layer settles one thing here — the per-unit price

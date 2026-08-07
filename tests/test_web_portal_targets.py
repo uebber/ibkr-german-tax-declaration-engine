@@ -129,9 +129,9 @@ class TestBuildTargets:
         failed with "Insufficient long lots" for a holding sold on 2 January,
         absent from the snapshot but present in the Trades file.
 
-        The Vorabpauschale price wants the other day (Q12, Reading B). One
-        report cannot carry both; the deviation is recorded against
-        GT-INVSTG-010.
+        The Vorabpauschale price wants the other day: the first Ruecknahmepreis
+        set in the year, per Rz. 18.3 ([GT-INVSTG-010]). One report cannot carry
+        both; the deviation is recorded against GT-INVSTG-010.
         """
         assert first_business_day_of_year(year) == expected
         soy, _ = build_targets([year], ALL_IDS, ["positions"])
