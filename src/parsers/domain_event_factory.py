@@ -35,6 +35,47 @@ class DomainEventFactory:
         )
 
     @staticmethod
+    def _trade_contract_date(
+        trade_or_event_datetime_str: Optional[str] = None,
+        trade_date_str: Optional[str] = None,
+    ) -> Optional[str]:
+        """The day a trade is booked on: the obligatorisches Rechtsgeschaeft.
+
+        BMF 14.05.2025 Rn. 317 [GT-ESTG20-040] puts *Erwerb* at the *"rechtswirksam
+        abgeschlossenen obligatorischen Vertrag"*, and Rn. 85 [GT-ESTG20-039] puts the
+        disposal side on the same day -- it is *"der massgebliche Zeitpunkt fuer die
+        Waehrungsumrechnung und die Berechnung des ... Veraeusserungs- bzw.
+        Einloesungsgewinns"*. That is the trade date, not the settlement date.
+
+        Kept apart from `_get_prioritized_date` on purpose. That helper orders by
+        settlement first, which is right for the things it is used for -- a dividend or
+        an interest credit is taxed on its Zufluss -- and wrong here. Routing trades
+        through it made the correct date a *fallback*, reached only because IBKR's Trades
+        export carries no settlement column; two edits, adding that column to the Flex
+        Query and to `TRADES_COLUMNS`, would have moved every lot's date silently.
+
+        Neither a settlement date nor a report date is accepted as a substitute. If the
+        trade date is absent the caller records a data error and the run stops, because a
+        date that decides the assessment year, the FX rate and the Section 23 Jahresfrist
+        is not something to approximate from a neighbouring field.
+        """
+        for candidate, parser in (
+            (trade_or_event_datetime_str, parse_ibkr_datetime),
+            (trade_date_str, parse_ibkr_date),
+        ):
+            if not candidate:
+                continue
+            parsed = parser(candidate)
+            if parsed:
+                return (parsed.date() if hasattr(parsed, "date") else parsed).isoformat()
+            # A datetime that will not parse may still be a bare date.
+            if parser is parse_ibkr_datetime:
+                fallback = parse_ibkr_date(candidate)
+                if fallback:
+                    return fallback.isoformat()
+        return None
+
+    @staticmethod
     def _get_prioritized_date(
         settle_date_str: Optional[str] = None,
         pay_date_str: Optional[str] = None,
@@ -237,11 +278,11 @@ class DomainEventFactory:
             )
 
             trade_datetime_str = f"{rt.trade_date} {rt.trade_time or '00:00:00'}" if rt.trade_date else None
-            event_date_str_or_none = self._get_prioritized_date(
-                settle_date_str=rt.settle_date_target,
+            # The contract date, never the settlement or report date -- see
+            # _trade_contract_date and [GT-ESTG20-039] / [GT-ESTG20-040].
+            event_date_str_or_none = self._trade_contract_date(
                 trade_or_event_datetime_str=trade_datetime_str,
                 trade_date_str=rt.trade_date,
-                report_date_str=rt.report_date
             )
             if not event_date_str_or_none:
                  data_errors.append(f"Trade {tx_id_primary}, Symbol: {rt.symbol}: could not determine a valid event date.")
