@@ -150,9 +150,11 @@ The current Flex Query exports are missing cash-balance-affecting events. Two ac
 
 #### Action 1: Add `TradeMoney` column to Trades Flex Query
 
-The Trades CSV currently lacks the `TradeMoney`/`Proceeds` column. ALL FX conversion second-leg amounts are being **calculated** as `Quantity × Rate` instead of using the actual settlement amount. The model (`RawTradeRecord`) already supports both fields — they're just not in the export.
+The Trades CSV currently lacks the `TradeMoney`/`Proceeds` column. ALL FX conversion second-leg amounts are being **calculated** as `Quantity × Rate` instead of using the actual settlement amount.
 
 **Impact**: Minor precision improvement for FX conversions. The `Quantity × Rate` calculation is mathematically correct but uses the rounded CSV rate (5 decimal places), which can accumulate small errors over many trades.
+
+**Corrected 2026-08-08 (issue #64).** This section used to say "the model (`RawTradeRecord`) already supports both fields — they're just not in the export", and treated the work as a portal-side re-export with no code change. That is no longer true, and the reason it stopped being true is worth reading before acting on this: `trade_money` and `proceeds` were declared on the model, read at two call sites, and populated by nothing, so the branch preferring them was unreachable and the derivation was already the only path. Both fields were removed. Doing Action 1 now means three edits together — the Flex Query, `TRADES_COLUMNS`, and the model — plus restoring the branch that prefers the imported value. Note also the caution already recorded at that call site: the FX rate reconciliation cannot validate a *derived* second leg, so importing the real amount is what would make that check meaningful.
 
 #### Action 2: Expand Cash Transactions Flex Query
 
@@ -198,6 +200,10 @@ The parser already handles all these types correctly (after Fix 14/15):
    - **TradeMoney** (add this — it's the total settlement amount: `Quantity × Price × Multiplier`)
    - **Proceeds** (also add if available — alternative to TradeMoney for sells)
 4. Save and re-run for the full date range (include historical + current year)
+5. **In the same change**, add `"TradeMoney"` and `"Proceeds"` to `TRADES_COLUMNS` and re-declare
+   the two fields on `RawTradeRecord`. The trades parser validates with `allow_extra=False`, so
+   step 4 on its own makes every trades file fail to parse; and a column added without the field
+   is silently discarded. See `tests/test_raw_model_fields.py`.
 
 ### Cash Transactions Flex Query — Add All Types
 

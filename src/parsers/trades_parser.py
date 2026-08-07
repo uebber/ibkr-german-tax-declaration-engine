@@ -5,7 +5,6 @@ from pydantic import ValidationError
 
 from .raw_models import RawTradeRecord
 from .column_validator import validate_csv_columns, TRADES_COLUMNS
-from src.utils.type_utils import parse_ibkr_datetime # For trade_time if needed to combine with date
 
 def parse_trades_csv(file_path: str, encoding='utf-8-sig') -> List[RawTradeRecord]:
     raw_trades: List[RawTradeRecord] = []

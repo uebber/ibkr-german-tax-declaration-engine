@@ -17,7 +17,7 @@ from src.domain.exceptions import DataIntegrityError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
 from src.utils.sorting_utils import get_event_sort_key
-from src.utils.type_utils import parse_ibkr_date, parse_ibkr_datetime, safe_decimal
+from src.utils.type_utils import parse_ibkr_date, safe_decimal
 import src.config as global_config 
 
 from .raw_models import (
@@ -211,8 +211,7 @@ class ParsingOrchestrator:
                 raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
                 raw_description=raw_pos.description,
                 description_source_type="position",
-                raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-                raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+                raw_multiplier=raw_pos.multiplier,
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
@@ -230,8 +229,7 @@ class ParsingOrchestrator:
                 raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
                 raw_description=raw_pos.description,
                 description_source_type="position",
-                raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-                raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+                raw_multiplier=raw_pos.multiplier,
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
@@ -424,8 +422,7 @@ class ParsingOrchestrator:
             raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
             raw_description=raw_pos.description,
             description_source_type="position",
-            raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-            raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+            raw_multiplier=raw_pos.multiplier,
             raw_underlying_conid=raw_pos.underlying_conid,
             raw_underlying_symbol=raw_pos.underlying_symbol
         )
@@ -435,7 +432,7 @@ class ParsingOrchestrator:
         logger.info("Discovering assets from trades, cash transactions, and corporate actions...")
         for rt in self.raw_trades:
             self.asset_resolver.get_or_create_asset(
-                raw_isin=rt.isin or rt.security_id if rt.security_id_type == "ISIN" else rt.isin,
+                raw_isin=rt.isin,
                 raw_conid=rt.conid, raw_symbol=rt.symbol, raw_currency=rt.currency_primary,
                 raw_ibkr_asset_class=rt.asset_class, raw_description=rt.description,
                 description_source_type="trade",
@@ -453,7 +450,7 @@ class ParsingOrchestrator:
 
             if is_instrument_specific:
                 self.asset_resolver.get_or_create_asset(
-                    raw_isin=rct.isin or rct.security_id if rct.security_id_type == "ISIN" else rct.isin,
+                    raw_isin=rct.isin,
                     raw_conid=rct.conid, raw_symbol=rct.symbol, raw_currency=rct.currency_primary,
                     raw_ibkr_asset_class=rct.asset_class, raw_description=rct.description,
                     description_source_type="cash_tx",
@@ -470,9 +467,10 @@ class ParsingOrchestrator:
 
         for rca in self.raw_corporate_actions:
             self.asset_resolver.get_or_create_asset(
-                raw_isin=rca.isin or rca.security_id if rca.security_id_type == "ISIN" else rca.isin,
+                raw_isin=rca.isin,
                 raw_conid=rca.conid, raw_symbol=rca.symbol, raw_currency=rca.currency_primary,
-                raw_ibkr_asset_class=rca.asset_class, raw_description=rca.description,
+                raw_ibkr_asset_class=None,  # AssetClass is not exported for CAs
+                raw_description=rca.description,
                 description_source_type="corp_act_asset"
             )
         logger.info(f"Asset discovery complete. Total unique assets identified: {len(self.asset_resolver.assets_by_internal_id)}")

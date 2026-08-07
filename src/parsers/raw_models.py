@@ -1,9 +1,37 @@
 # src/parsers/raw_models.py
+"""Raw records: one field per column the Flex Query actually requests, and no others.
+
+**A field here is a claim that the column arrives.** Each model declares exactly the
+aliases in its `*_COLUMNS` tuple in `column_validator.py` -- no more -- and
+`tests/test_raw_model_fields.py` fails if that stops being true.
+
+The rule is not tidiness. A declared-but-never-populated field is indistinguishable from
+a supported input at every call site, so the next person wires a fallback to it and the
+fallback is dead in a way nothing fails on. That is not hypothetical: `SettleDateTarget`
+was declared here, populated by nothing, and listed *first* in the date priority chain,
+so the legally decisive date of every trade was the settlement date by rule and the trade
+date only by the accident of the column being absent. Adding the column to the query would
+have moved every lot's date silently. Removed August 2026; see
+`DomainEventFactory._trade_contract_date` and [GT-ESTG20-039/040].
+
+The same sweep removed 72 further such fields across four models (issue #64), among them
+two thirds of the corporate-action date chain, `TradeTime`, `TradeMoney`/`Proceeds` on
+trades, `Code` on cash transactions, and the `SecurityID`/`SecurityIDType` pair whose
+absence made `raw_isin=... if security_id_type == "ISIN" else ...` reduce to `isin` at
+six call sites.
+
+Adding a field therefore means adding the column to the Flex Query *and* to the
+`*_COLUMNS` tuple. Leaving it declared-but-unrequested is the one state to avoid.
+
+Note the mirror case, which is *not* corrected here because changing it could move a
+figure: `Positions` exports `ClientAccountID` and `SubCategory`, and `Corporate_Actions`
+exports `Amount`, none of which have a field below, so `extra = 'ignore'` discards them.
+"""
 from typing import Optional, Any
 from decimal import Decimal
 from pydantic import BaseModel, Field, validator
 
-from src.utils.type_utils import safe_decimal, parse_ibkr_date, parse_ibkr_datetime
+from src.utils.type_utils import safe_decimal
 
 class RawBaseRecord(BaseModel):
     # Common validator for all decimal fields that might appear in subclasses
@@ -19,71 +47,46 @@ class RawBaseRecord(BaseModel):
 
 
 class RawTradeRecord(RawBaseRecord):
-    # Fields are named to match typical IBKR Flex Query CSV headers for trades
-    # Using Field(alias=...) if CSV headers have spaces or special characters
+    """One row of the Trades export. Mirrors `TRADES_COLUMNS` exactly."""
     client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
-    account_alias: Optional[str] = Field(None, alias="AccountAlias")
-    model: Optional[str] = Field(None, alias="Model")
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed from Currency to CurrencyPrimary per PRD
     asset_class: str = Field(alias="AssetClass")
     sub_category: Optional[str] = Field(None, alias="SubCategory")
     symbol: str = Field(alias="Symbol")
     description: str = Field(alias="Description")
     conid: Optional[str] = Field(None, alias="Conid")
-    security_id: Optional[str] = Field(None, alias="SecurityID") # Often ISIN
-    security_id_type: Optional[str] = Field(None, alias="SecurityIDType") # e.g. "ISIN"
-    cusip: Optional[str] = Field(None, alias="Cusip")
-    isin: Optional[str] = Field(None, alias="ISIN") # Explicit ISIN field
-    listing_exchange: Optional[str] = Field(None, alias="ListingExchange")
+    isin: Optional[str] = Field(None, alias="ISIN")
     underlying_conid: Optional[str] = Field(None, alias="UnderlyingConid")
     underlying_symbol: Optional[str] = Field(None, alias="UnderlyingSymbol")
-    underlying_security_id: Optional[str] = Field(None, alias="UnderlyingSecurityID")
-    underlying_listing_exchange: Optional[str] = Field(None, alias="UnderlyingListingExchange")
-    issuer: Optional[str] = Field(None, alias="Issuer")
     multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
     strike: Optional[Decimal] = Field(None, alias="Strike")
     expiry: Optional[str] = Field(None, alias="Expiry") # Kept as str, parsed by AssetResolver/Orchestrator
     put_call: Optional[str] = Field(None, alias="Put/Call") # 'P' or 'C'
-    trade_id: Optional[str] = Field(None, alias="TradeID")
-    report_date: Optional[str] = Field(None, alias="ReportDate") # Kept as str - Ensure this is optional if not always present
     # The contract date, and the only date of a trade this engine recognises. There is
-    # deliberately no settlement field: IBKR's `SettleDateTarget` is not requested in the Flex
-    # Query, is not in TRADES_COLUMNS, and was removed from this model in August 2026 because a
-    # declared-but-unread date field is how the settlement date became the engine's default in
-    # the first place. See DomainEventFactory._trade_contract_date, [GT-ESTG20-039/040].
+    # deliberately no settlement, report or time field: none is requested in the Flex Query,
+    # none is in TRADES_COLUMNS, and all were removed in August 2026 because a
+    # declared-but-unpopulated date field is how the settlement date became the engine's
+    # default in the first place. See DomainEventFactory._trade_contract_date and the module
+    # docstring above, [GT-ESTG20-039/040].
     trade_date: str = Field(alias="TradeDate") # Kept as str
-    trade_time: Optional[str] = Field(None, alias="TradeTime") # Kept as str
-    transaction_type: Optional[str] = Field(None, alias="TransactionType")
-    exchange: Optional[str] = Field(None, alias="Exchange")
     quantity: Decimal = Field(alias="Quantity") # Can be positive (buy) or negative (sell)
     trade_price: Decimal = Field(alias="TradePrice")
-    trade_money: Optional[Decimal] = Field(None, alias="TradeMoney") # quantity * trade_price * multiplier
-    proceeds: Optional[Decimal] = Field(None, alias="Proceeds")
-    taxes: Optional[Decimal] = Field(None, alias="Taxes")
     ib_commission: Optional[Decimal] = Field(None, alias="IBCommission")
     ib_commission_currency: Optional[str] = Field(None, alias="IBCommissionCurrency")
-    net_cash: Optional[Decimal] = Field(None, alias="NetCash")
-    close_price: Optional[Decimal] = Field(None, alias="ClosePrice")
     open_close_indicator: Optional[str] = Field(None, alias="Open/CloseIndicator") # O, C, A, Ex, Ep etc.
     notes_codes: Optional[str] = Field(None, alias="Notes/Codes") # Contains O, C, A, Ex, Ep, P, D etc.
-    cost_basis: Optional[Decimal] = Field(None, alias="CostBasis")
-    fifo_pnl_realized: Optional[Decimal] = Field(None, alias="FifoPnlRealized")
-    mtm_pnl: Optional[Decimal] = Field(None, alias="MtmPnl")
-    orig_trade_price: Optional[Decimal] = Field(None, alias="OrigTradePrice")
-    orig_trade_date: Optional[str] = Field(None, alias="OrigTradeDate") # Kept as str
-    orig_trade_id: Optional[str] = Field(None, alias="OrigTradeID")
-    order_type: Optional[str] = Field(None, alias="OrderType")
-    transaction_id: Optional[str] = Field(None, alias="TransactionID") # Often used for linking
+    transaction_id: Optional[str] = Field(None, alias="TransactionID") # Used for linking
     buy_sell: Optional[str] = Field(None, alias="Buy/Sell") # BUY, SELL - important for TradeEvent type
 
+    # No TradeMoney/Proceeds either: neither is exported, so the gross amount is always
+    # derived from Quantity x TradePrice x Multiplier. See create_events_from_trades.
+
     # Validators for specific fields
-    @validator('multiplier', 'strike', 'quantity', 'trade_price', 'trade_money', 'proceeds', 'taxes',
-               'ib_commission', 'net_cash', 'close_price', 'cost_basis', 'fifo_pnl_realized',
-               'mtm_pnl', 'orig_trade_price', pre=True)
+    @validator('multiplier', 'strike', 'quantity', 'trade_price', 'ib_commission', pre=True)
     def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
         return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
 
-    @validator('trade_date', 'report_date', 'expiry', 'orig_trade_date', pre=True)
+    @validator('trade_date', 'expiry', pre=True)
     def validate_date_strings(cls, v: Any) -> Optional[str]:
         if v is None or str(v).strip() == "":
             return None
@@ -93,41 +96,35 @@ class RawTradeRecord(RawBaseRecord):
         extra = 'ignore' # Ignore extra columns not defined in the model
 
 class RawCashTransactionRecord(RawBaseRecord):
+    """One row of the Cash Transactions export. Mirrors `CASH_TRANSACTIONS_COLUMNS` exactly."""
     client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
-    account_alias: Optional[str] = Field(None, alias="AccountAlias")
-    model: Optional[str] = Field(None, alias="Model")
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed from Currency to CurrencyPrimary per PRD
-    fx_rate_to_base: Optional[Decimal] = Field(None, alias="FXRateToBase")
     asset_class: Optional[str] = Field(None, alias="AssetClass") # STK, BOND, OPT, FUT, FUND, CASH
     sub_category: Optional[str] = Field(None, alias="SubCategory")
     symbol: Optional[str] = Field(None, alias="Symbol")
     description: str = Field(alias="Description") # Very important for type determination
     conid: Optional[str] = Field(None, alias="Conid")
-    security_id: Optional[str] = Field(None, alias="SecurityID")
-    security_id_type: Optional[str] = Field(None, alias="SecurityIDType")
-    cusip: Optional[str] = Field(None, alias="Cusip")
     isin: Optional[str] = Field(None, alias="ISIN")
-    listing_exchange: Optional[str] = Field(None, alias="ListingExchange")
     underlying_conid: Optional[str] = Field(None, alias="UnderlyingConid")
-    underlying_symbol: Optional[str] = Field(None, alias="UnderlyingSymbol")
-    issuer: Optional[str] = Field(None, alias="Issuer")
-    report_date: Optional[str] = Field(None, alias="ReportDate") # MODIFIED TO OPTIONAL
-    date_time: Optional[str] = Field(None, alias="DateTime")     # MODIFIED TO OPTIONAL
-    settle_date: str = Field(alias="SettleDate") # Kept as str, as it's present in the sample CSV
+    issuer_country_code: Optional[str] = Field(None, alias="IssuerCountryCode")
+    # The Zufluss, and the only date of a cash transaction this engine has. `DateTime` and
+    # `ReportDate` were declared here and passed to _zufluss_date as second and third
+    # priority until August 2026; neither is exported, so both were dead. See that helper.
+    settle_date: str = Field(alias="SettleDate") # Kept as str
     type: str = Field(alias="Type") # E.g. "Dividends", "Withholding Tax", "Broker Interest Received"
     amount: Decimal = Field(alias="Amount") # Cash amount
-    proceeds: Optional[Decimal] = Field(None, alias="Proceeds") # Usually for sales, may not be relevant here
     transaction_id: Optional[str] = Field(None, alias="TransactionID")
-    # Fields that might appear in some Cash Transaction reports
-    level_of_detail: Optional[str] = Field(None, alias="LevelOfDetail")
-    code: Optional[str] = Field(None, alias="Code") # e.g. 'Po' for Payment in Lieu, 'Re' for Return of Capital
-    issuer_country_code: Optional[str] = Field(None, alias="IssuerCountryCode") # Added as it's in sample CSV
 
-    @validator('fx_rate_to_base', 'amount', 'proceeds', pre=True)
+    # No `Code` field: it is not exported, so the 'DI' / 'IN' / 'PO' shortcuts that once
+    # read it were dead. `Type` and `Description` carry the same distinction and are what
+    # create_events_from_cash_transactions classifies on -- all 26 "Payment In Lieu Of
+    # Dividends" rows in the 2021-2025 history are typed, not coded.
+
+    @validator('amount', pre=True)
     def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
         return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
 
-    @validator('report_date', 'date_time', 'settle_date', pre=True)
+    @validator('settle_date', pre=True)
     def validate_date_strings(cls, v: Any) -> Optional[str]:
         if v is None or str(v).strip() == "":
             return None
@@ -137,90 +134,73 @@ class RawCashTransactionRecord(RawBaseRecord):
         extra = 'ignore'
 
 class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
-    account_id: Optional[str] = Field(None, alias="AccountId")
-    acct_alias: Optional[str] = Field(None, alias="AcctAlias")
-    model: Optional[str] = Field(None, alias="Model")
+    """One row of a Positions snapshot. Mirrors `POSITIONS_COLUMNS`, less the two
+    columns noted in the module docstring that this model does not map at all.
+
+    Carries no option contract terms. `Strike`, `Expiry` and `Put/Call` were declared here
+    and read by `process_positions` until August 2026, but the Positions query does not
+    export them, so an option whose first sighting was a snapshot got
+    `Option(option_type=None, strike_price=None, expiry_date=None)` either way. Measured
+    over 2021-2025: of the 17 distinct OPT conids in the snapshots, 0 are absent from
+    Trades or Options_EAE, both of which do export the terms -- so the snapshot has never
+    been an option's only source. Restoring the capability means adding the three columns
+    to the Flex Query and to POSITIONS_COLUMNS together, not re-declaring them here.
+    """
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed for consistency
     asset_class: str = Field(alias="AssetClass")
     symbol: str = Field(alias="Symbol")
     description: str = Field(alias="Description")
     conid: Optional[str] = Field(None, alias="Conid")
-    security_id: Optional[str] = Field(None, alias="SecurityID")
-    security_id_type: Optional[str] = Field(None, alias="SecurityIDType")
-    cusip: Optional[str] = Field(None, alias="Cusip")
     isin: Optional[str] = Field(None, alias="ISIN")
-    listing_exchange: Optional[str] = Field(None, alias="ListingExchange")
     underlying_conid: Optional[str] = Field(None, alias="UnderlyingConid")
     underlying_symbol: Optional[str] = Field(None, alias="UnderlyingSymbol")
-    underlying_security_id: Optional[str] = Field(None, alias="UnderlyingSecurityID")
-    underlying_listing_exchange: Optional[str] = Field(None, alias="UnderlyingListingExchange")
-    issuer_country_code: Optional[str] = Field(None, alias="IssuerCountryCode")
     multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
-    strike: Optional[Decimal] = Field(None, alias="Strike")
-    expiry: Optional[str] = Field(None, alias="Expiry") # Kept as str
-    put_call: Optional[str] = Field(None, alias="Put/Call")
-    report_date: Optional[str] = Field(None, alias="ReportDate") # MODIFIED TO OPTIONAL (if not in actual CSV)
-    position: Decimal = Field(alias="Quantity") # <--- MODIFIED ALIAS HERE
+    position: Decimal = Field(alias="Quantity")
     mark_price: Optional[Decimal] = Field(None, alias="MarkPrice")
     position_value: Optional[Decimal] = Field(None, alias="PositionValue") # In CurrencyPrimary
-    cost_basis_price: Optional[Decimal] = Field(None, alias="CostBasisPrice")
     cost_basis_money: Optional[Decimal] = Field(None, alias="CostBasisMoney") # Total cost basis in CurrencyPrimary
-    percent_of_nav: Optional[Decimal] = Field(None, alias="PercentOfNAV")
-    fifo_pnl_unrealized: Optional[Decimal] = Field(None, alias="FifoPnlUnrealized")
-    level_of_detail: Optional[str] = Field(None, alias="LevelOfDetail") # e.g. LOT
 
-    @validator('multiplier', 'strike', 'position', 'mark_price', 'position_value',
-               'cost_basis_price', 'cost_basis_money', 'percent_of_nav', 'fifo_pnl_unrealized', pre=True)
+    @validator('multiplier', 'position', 'mark_price', 'position_value',
+               'cost_basis_money', pre=True)
     def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
         return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
-
-    @validator('report_date', 'expiry', pre=True)
-    def validate_date_strings(cls, v: Any) -> Optional[str]:
-        if v is None or str(v).strip() == "":
-            return None
-        return str(v).strip()
 
     class Config:
         extra = 'ignore'
 
 
 class RawCorporateActionRecord(RawBaseRecord): # From corpact*.csv
+    """One row of the Corporate Actions export. Mirrors `CORPORATE_ACTIONS_COLUMNS`, less
+    `Amount`, which this model does not map -- see the module docstring.
+
+    `Report Date` is the only date. `PayDate` and `ExDate` were declared here and took
+    first and third place in the `_zufluss_date` chain until August 2026, with the report
+    date wedged between them as the sole reachable entry; neither is exported. Had the
+    query later started carrying `PayDate`, every corporate action would have moved from
+    its report date to its pay date -- changing which assessment year an event lands in,
+    by nobody's decision. That is the settlement-date defect exactly.
+    """
     client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
-    account_alias: Optional[str] = Field(None, alias="AccountAlias")
-    model: Optional[str] = Field(None, alias="Model")
     currency_primary: Optional[str] = Field(None, alias="CurrencyPrimary") # Made optional as might not be in all CA files
-    fx_rate_to_base: Optional[Decimal] = Field(None, alias="FXRateToBase")
-    asset_class: Optional[str] = Field(None, alias="AssetClass") # Made optional
     symbol: str = Field(alias="Symbol")
     description: str = Field(alias="Description")
     conid: Optional[str] = Field(None, alias="Conid")
-    security_id: Optional[str] = Field(None, alias="SecurityID")
-    security_id_type: Optional[str] = Field(None, alias="SecurityIDType")
-    cusip: Optional[str] = Field(None, alias="Cusip")
     isin: Optional[str] = Field(None, alias="ISIN")
-    listing_exchange: Optional[str] = Field(None, alias="ListingExchange")
     underlying_conid: Optional[str] = Field(None, alias="UnderlyingConid")
     underlying_symbol: Optional[str] = Field(None, alias="UnderlyingSymbol")
-    issuer: Optional[str] = Field(None, alias="Issuer")
     report_date: str = Field(alias="Report Date") # Corrected alias "Report Date"
     action_id_ibkr: Optional[str] = Field(None, alias="ActionID")
-    action_description: Optional[str] = Field(None, alias="ActionDescription")
     code: Optional[str] = Field(None, alias="Code")
     type_ca: str = Field(None, alias="Type")
     quantity: Optional[Decimal] = Field(None, alias="Quantity")
     proceeds: Optional[Decimal] = Field(None, alias="Proceeds")
     value: Optional[Decimal] = Field(None, alias="Value")
-    transaction_id: Optional[str] = Field(None, alias="TransactionID")
-    pay_date: Optional[str] = Field(None, alias="PayDate")
-    ex_date: Optional[str] = Field(None, alias="ExDate")
-    record_date: Optional[str] = Field(None, alias="RecordDate")
 
-
-    @validator('fx_rate_to_base', 'quantity', 'proceeds', 'value', pre=True)
+    @validator('quantity', 'proceeds', 'value', pre=True)
     def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
         return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
 
-    @validator('report_date', 'pay_date', 'ex_date', 'record_date', pre=True)
+    @validator('report_date', pre=True)
     def validate_date_strings(cls, v: Any) -> Optional[str]:
         if v is None or str(v).strip() == "":
             return None

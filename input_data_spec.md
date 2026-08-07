@@ -53,8 +53,21 @@ parser validates with `allow_extra=False`, and the field was removed from the ra
 only because IBKR does not export the column — a declared-but-unread date field is how that
 happened, and there is now nowhere for a settlement date to land.
 
+`TradeTime` and `ReportDate` went the same way in the sweep that followed (issue #64). Neither is
+exported, and both were declared on `RawTradeRecord`; the trade rule now takes a single parameter,
+so there is no slot for either even if a future query started carrying them.
+
 A settlement date is the right date for a **cash transaction**, where the taxable moment is the
 Zufluss; that is the `SettleDate` column of the next file, and the distinction is deliberate.
+
+### Adding a column means two edits, not one
+
+Every field on a raw model must have its header in the matching `*_COLUMNS` tuple, and
+`tests/test_raw_model_fields.py` fails if one does not. A field declared for a column no query
+requests can never be populated, but it reads as a supported input at every call site, so the next
+person wires a fallback to it and the fallback is dead in a way nothing fails on — which is exactly
+how the settlement date became the engine's default. Adding a column therefore means adding it to
+the Flex Query **and** to the tuple **and** to the model, together.
 
 ---
 
@@ -112,7 +125,7 @@ Missing transaction types cause currency EOY balance mismatches (FIFO-tracked ba
 
 | CSV Header         | Model Field Name (Pydantic) | Model Data Type   | Description                                                                 | Notes (Optionality, Example, Parsing Detail)                                                                                                                                           |
 |--------------------|-----------------------------|-------------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ClientAccountID`  | (Effectively ignored)       | `N/A`             | The client's account identifier.                                            | Present in CSV. `RawPositionRecord.account_id` (alias `AccountId`) does not map to this header. `ClientAccountID` data from CSV is ignored by the Pydantic model as currently defined. Example: "U1234567" |
+| `ClientAccountID`  | (Ignored by model)          | `N/A`             | The client's account identifier.                                            | Present in CSV. `RawPositionRecord` declares no field for it, so `Config.extra = 'ignore'` discards it. (Until August 2026 the model carried an `account_id` field aliased `AccountId`, which is a different header and therefore never populated.) Example: "U1234567" |
 | `CurrencyPrimary`  | `currency_primary`          | `str`             | The currency of the position.                                               | Required. Example: "CAD", "EUR", "SGD"                                                                                                                                                 |
 | `AssetClass`       | `asset_class`               | `str`             | The asset class of the instrument (e.g., STK, OPT).                         | Required. Example: "STK", "OPT"                                                                                                                                                        |
 | `SubCategory`      | (Ignored by model)          | `N/A`             | Sub-category of the asset (e.g., COMMON, ETF).                              | Present in CSV. Ignored by `RawPositionRecord` due to `Config.extra = 'ignore'`. Example: "COMMON", "ETF"                                                                                |
