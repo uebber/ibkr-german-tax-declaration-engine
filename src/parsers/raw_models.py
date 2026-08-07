@@ -34,16 +34,23 @@ from pydantic import BaseModel, Field, validator
 from src.utils.type_utils import safe_decimal
 
 class RawBaseRecord(BaseModel):
-    # Common validator for all decimal fields that might appear in subclasses
-    @validator('*', pre=True, allow_reuse=True)
-    def parse_all_decimals(cls, v: Any, field: Any) -> Any:
-        # Check if the field is supposed to be Decimal based on annotations
-        # This is a bit general; specific validators per field are more robust
-        # but this can catch common cases if fields are named consistently for decimal parsing.
-        # For now, relying on specific validators in each model or direct safe_decimal calls.
-        if hasattr(field, 'type_') and field.type_ == Decimal : # Check annotation more safely
-             return safe_decimal(v, default=Decimal("0.0")) # Default to 0 if unparsable
-        return v
+    """Shared base. Deliberately carries no validators -- see below.
+
+    It used to define `parse_all_decimals`, a `@validator('*', pre=True)` that coerced every
+    `Decimal`-typed field with `safe_decimal(v, default=Decimal("0.0"))`. Because pydantic
+    runs a subclass's pre-validators *before* an inherited one, it did not shadow the
+    per-field validators' input, as issue #47 supposed -- it overwrote their **output**. Each
+    model's `parse_decimal_fields` distinguishes blank from zero and returns `None` for a
+    blank optional field; this then turned that `None` straight back into `Decimal("0.0")`,
+    so the distinction could never be observed and the per-field rule read as though it
+    guarded something it did not.
+
+    Removed August 2026. Every `Decimal` field on every model below has its own validator,
+    and `tests/test_raw_model_decimals.py` fails if one is ever added without one -- which is
+    what makes deleting this safe rather than merely tidy. Do not reintroduce a wildcard
+    validator here: one that runs after the specific rules silently discards them, and the
+    ordering that decides which wins is not visible at either site.
+    """
 
 
 class RawTradeRecord(RawBaseRecord):
