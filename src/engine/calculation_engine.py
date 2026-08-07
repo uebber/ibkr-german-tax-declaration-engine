@@ -1294,10 +1294,12 @@ def _calculate_vorabpauschale(
     which is also where each tranche's acquisition date comes from. § 18 Abs. 2 then reduces
     each tranche by one twelfth for every full month before its month of acquisition.
 
-    Applying Abs. 2 per tranche rather than to the holding as a whole is a choice under
-    uncertainty: no Tier 1 or Tier 2 source addresses a holding acquired in several tranches.
-    Both readings are in reference/research/open-legal-questions.md Q13; this one is recorded
-    against GT-INVSTG-011 in docs/legal-implementation-map.md.
+    Applying Abs. 2 per tranche is what Rz. 18.11 does: its worked example reduces the
+    *per-Anteil* Vorabpauschale, at a point before any unit count has entered, so the factor
+    belongs to the units acquired rather than to the position. Settled 2026-08-07 and recorded
+    against GT-INVSTG-011 in docs/legal-implementation-map.md; it is no longer a choice under
+    uncertainty. The one part no source works through is summing the factor tranche by tranche
+    for a holding acquired in several instalments.
 
     Teilfreistellung (20 InvStG) is applied to derive the net figure; the gross figure is what
     goes on the form.
@@ -1328,8 +1330,10 @@ def _calculate_vorabpauschale(
             continue
         # Rz. 18.4: the units held at the close of 31 December of the Vorabpauschale
         # year. Nothing held then means no Vorabpauschale -- which is also how a fund
-        # disposed of during the year drops out (GT-INVSTG-016, Q5 Reading A: the
-        # Abs. 3 Zufluss falls after the disposal).
+        # disposed of during the year drops out (GT-INVSTG-016). That follows from this
+        # count alone: the statute has no disposal counterpart to Abs. 2, so units gone
+        # by 31 December are simply not multiplied. Do not reason it from the Abs. 3
+        # Zuflussfiktion, which fixes when income is received, not whether it arises.
         tranches = opening_lots_by_asset.get(asset_id, [])
 
         # § 18 Abs. 2 turns on the month each tranche was acquired. Where the

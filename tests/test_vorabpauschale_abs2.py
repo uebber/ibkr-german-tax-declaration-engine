@@ -6,11 +6,10 @@ vollen Monat, der dem Monat des Erwerbs vorangeht."*, and [GT-INVSTG-017]
 Rz. 18.4, which fixes the unit count at the close of 31 December. Both in
 reference/investment-tax-law/invstg-18-vorabpauschale.md.
 
-Applying the reduction per acquisition tranche rather than to the holding as a
-whole is a choice under uncertainty: no Tier 1 or Tier 2 source addresses a
-holding acquired in several tranches. Both readings are in
-reference/research/open-legal-questions.md Q13, and the choice is recorded
-against GT-INVSTG-011 in docs/legal-implementation-map.md.
+Applying the reduction per acquisition tranche is what Rz. 18.11 does: its
+worked example reduces the *per-Anteil* Vorabpauschale, before any unit count
+has entered. Settled 2026-08-07 and recorded against GT-INVSTG-011 in
+docs/legal-implementation-map.md; it is no longer a choice under uncertainty.
 
 The failure these guard is a quiet one in both directions. Before this, units
 acquired during the year produced *nothing* — an understatement invisible on the
