@@ -112,6 +112,12 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
     Band A work with its own parity and knowledge-store gates, not part of a
     fix-nonfunc sweep.
 
+    **Tracked as issue #69**, which ranks the three and says what each needs:
+    `Amount` wants a `reference/` answer before any code (at least one corporate
+    action has a non-zero `Amount` disagreeing with both `Proceeds` and `Value`);
+    `SubCategory` wants its masking measured; `ClientAccountID` is inert until the
+    per-Depot flip, because `account_key()` currently has no call sites.
+
     This test fails when the set changes, so the next person either finds the
     decision recorded or has to record their own.
 

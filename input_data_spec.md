@@ -164,10 +164,25 @@ Missing transaction types cause currency EOY balance mismatches (FIFO-tracked ba
 | `UnderlyingConid`  | `underlying_conid`          | `Optional[str]`   | IBKR Conid of the underlying if the CA affects a derivative.                  | Optional. Empty in sample.                                                                                                                  |
 | `UnderlyingSymbol` | `underlying_symbol`         | `Optional[str]`   | Symbol of the underlying if the CA affects a derivative.                      | Optional. Empty in sample.                                                                                                                  |
 | `CurrencyPrimary`  | `currency_primary`          | `Optional[str]`   | The currency of monetary amounts involved in the CA.                          | Optional (model allows None). Example: "JPY", "USD", "EUR"                                                                                  |
-| `Amount`           | (Ignored by model)          | `N/A`             | A monetary amount related to the CA.                                          | Present in CSV (value "0"). Ignored by `RawCorporateActionRecord`; `Value` or `Proceeds` are used for monetary impact.                  |
+| `Amount`           | (Ignored by model)          | `N/A`             | A monetary amount related to the CA.                                          | Present in CSV. Ignored by `RawCorporateActionRecord`; `Value` or `Proceeds` are used for monetary impact. **Not always zero** — see the note below and issue #69. |
 | `Proceeds`         | `proceeds`                  | `Optional[Decimal]`| Monetary proceeds from the CA (e.g., cash from merger).                       | Optional. Example: "0", "10000"                                                                                                             |
 | `Value`            | `value`                     | `Optional[Decimal]`| Monetary value related to the CA (e.g., FMV of stock dividend).               | Optional. Example: "0", "-10000", "111.00" (negative value seems to indicate cost/value given up in sample)                                   |
 | `Quantity`         | `quantity`                  | `Optional[Decimal]`| Quantity of shares/units involved (e.g., new shares from split/dividend).   | Optional. Example: "100", "-100" (negative for shares disposed in merger), "5"                                                              |
+
+### `Amount` is discarded, and that is not yet a decided position
+
+This row used to read *"Present in CSV (value `0`)"*, which invited the conclusion that the
+column is always zero and therefore safe to drop. **It is not always zero.** Across the 2021–2025
+history most corporate actions do carry `0`, but at least one `TC` (merger for cash) row has a
+non-zero `Amount` that disagrees with **both** `Proceeds` and `Value` on the same row — in sign
+with one and in magnitude with the other. So on the single row where the three columns disagree,
+the engine takes `Proceeds` and silently discards the one that dissents.
+
+The engine also already picks between `Proceeds` and `Value` by CA type (`TC` + "CASH" →
+`Proceeds`; `HI`/`SD` → `Value`) without a cited basis. Which of IBKR's three money columns is the
+Veräußerungserlös for a Barabfindung is a `reference/` question, not a code question — see the
+Ground Truth Rule in `CLAUDE.md`. Tracked as issue #69; do not add the field before the store
+settles it.
 
 ---
 
