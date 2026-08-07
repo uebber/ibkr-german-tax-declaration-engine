@@ -162,8 +162,21 @@ uv run pytest tests/test_<area>.py -v      # one area
 with no developer state:
 
 ```bash
-rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q
+cp src/config_example.py src/config.py && uv run pytest -q
 ```
+
+The `cp` still overwrites `src/config.py`, which is gitignored and holds the Flex Query IDs and
+taxpayer identity. Back it up first, or run the protocol in a throwaway worktree
+(`git worktree add /tmp/cc HEAD --detach`), which is a truer clean clone anyway.
+
+**Do not put `rm -rf cache` back into this line.** It stood there until issue #51, by which time
+its only remaining effect was destroying the hand-made asset classifications — which nothing
+rebuilds automatically. It did exactly that once, and the resulting unclassified instrument
+blocked a real-data parity gate. Hermeticity is enforced by construction instead, in two autouse
+fixtures in `tests/conftest.py`: every `src.config` cache path is redirected into a per-test temp
+directory, and any access reaching the real `cache/` raises. A caller that genuinely must clear
+the directory snapshots and restores it on a `trap ... EXIT`; `scripts/parity_check.sh` is the
+model.
 
 **A green suite is weaker evidence than it looks.** Coverage is uneven and the gaps are not where
 the diff is. This is why the gates ask for mutation probes and calibration rather than a passing
