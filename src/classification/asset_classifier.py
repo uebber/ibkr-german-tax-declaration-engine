@@ -14,6 +14,20 @@ from src.domain.enums import AssetCategory, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError
 from src import config as app_config # Added import
 
+# The option an UNKNOWN asset falls back to, and the Enter-key default for one. Named as a
+# constant because `_determine_classification_interactively_or_heuristically` used to find it
+# by matching the literal string "Sonstiges (Standard Anlage KAP)" against the display label:
+# rewording the label would have silently sent the default to option 1, Aktienfonds.
+#
+# It maps to AssetCategory.STOCK, so it applies the Aktienverlusttopf ([GT-ESTG20-033]).
+# **Issue #52 is only half closed by naming that.** It also asks that this stop being the
+# Enter-key default, which is a behaviour change and is not made here.
+FALLBACK_OPTION_LABEL = (
+    "Wie eine Aktie behandeln — Auffangoption; wendet den Aktienverlusttopf an. "
+    "Trifft das nicht zu: „Sonstige Kapitalforderung“, „Anleihe“ oder „Währungssaldo“"
+)
+
+
 class AssetClassifier:
     def __init__(self, cache_file_path: Optional[str] = None): # Modified signature
         if cache_file_path is None:
@@ -22,12 +36,32 @@ class AssetClassifier:
             self.cache_file_path = cache_file_path
 
         self.classifications_cache: Dict[str, Tuple[str, str, str]] = {}
+        # Each label names the CRITERION that decides the option, not just the instrument's
+        # trade name, because the taxpayer is reading a factsheet and has to match it against
+        # something. Two things are deliberately absent:
+        #
+        #   - Teilfreistellung rates. reference/investment-tax-law/invstg-20-teilfreistellung.md
+        #     states that it is "the only statement of the Teilfreistellung rates in this
+        #     library. Do not restate them elsewhere". The quota that DECIDES the fund type is
+        #     what the user needs here; the rate is the consequence and the engine applies it.
+        #   - Zeilen numbers. They are year-specific -- Termingeschaefte are declared on their
+        #     own lines up to VZ 2024 and folded in from VZ 2025 (src/tax_law/registry.py) --
+        #     so a fixed number in a static label would be wrong for half the years the engine
+        #     supports. The form and the Verlustverrechnungskreis are named instead, and the
+        #     report states the lines for the year actually being processed.
         self._dialog_options: List[Tuple[str, AssetCategory, InvestmentFundType]] = [
-            ("Aktienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AKTIENFONDS),
-            ("Mischfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.MISCHFONDS),
-            ("Immobilienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.IMMOBILIENFONDS),
-            ("Auslands-Immobilienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AUSLANDS_IMMOBILIENFONDS),
-            ("Sonstige Investmentfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.SONSTIGE_FONDS),
+            # Fund quotas, all "fortlaufend gemaess den Anlagebedingungen": Aktienfonds is
+            # *mehr als 50 %* Kapitalbeteiligungen ([GT-INVSTG-026]), Mischfonds *mindestens
+            # 25 %* ([GT-INVSTG-027]), Immobilienfonds *mehr als 50 %* of Aktivvermoegen in
+            # Immobilien and Auslands-Immobilienfonds the same test against foreign property
+            # ([GT-INVSTG-029]). The Mischfonds label states no upper bound because the
+            # statute states none — a fund above 50 % is an Aktienfonds by the more specific
+            # rule, which is what "aber kein Aktienfonds" says.
+            ("Aktienfonds — fortlaufend mehr als 50 % Kapitalbeteiligungen (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AKTIENFONDS),
+            ("Mischfonds — fortlaufend mindestens 25 % Kapitalbeteiligungen, aber kein Aktienfonds (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.MISCHFONDS),
+            ("Immobilienfonds — fortlaufend mehr als 50 % des Aktivvermögens in Immobilien / Immobilien-Gesellschaften (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.IMMOBILIENFONDS),
+            ("Auslands-Immobilienfonds — dieselbe Quote, gemessen an ausländischen Immobilien (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AUSLANDS_IMMOBILIENFONDS),
+            ("Sonstige Investmentfonds — Fonds, der keine dieser Quoten erfüllt; keine Teilfreistellung (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.SONSTIGE_FONDS),
             # These two options are the two OUTCOMES of one test, and the test is stated in
             # BMF 14.05.2025 Rz. 57 ([GT-ESTG23-011]): a commodity Inhaberschuldverschreibung
             # is a Sachleistungsanspruch -- and so a 23 EStG asset -- only where the issuer
@@ -36,18 +70,54 @@ class AssetClassifier:
             # sale. Where it is not backed that way, the disposal is 20 Abs. 2 Satz 1 Nr. 7
             # income. The deciding facts are in the Emissionsbedingungen and cannot be read
             # off the IBKR asset class, which is why this is asked rather than inferred.
+            #
+            # The 23 EStG label deliberately does NOT promise "steuerfrei nach einem Jahr".
+            # The engine applies the one-year Frist unconditionally, and [GT-ESTG23-005]
+            # records that as a deviation: 23 Abs. 1 Satz 1 Nr. 2 Satz 4 extends it to ten
+            # years for an asset that produced income in at least one year. Printing the
+            # one-year promise on the prompt would make the engine's own defect look like law.
             ("§23 EStG / Anlage SO — physisch hinterlegter Rohstoff mit ausschließlichem Lieferanspruch (z.B. Xetra-Gold), oder Krypto-ETP", AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE), # Changed from SECTION_23_ESTG_ASSET
-            # Rz. 9 puts the second half of this option beyond doubt: "Zertifikate und
-            # Optionsscheine gehören nicht zu den Termingeschäften" ([GT-ESTG20-038]).
-            ("Sonstige Kapitalforderung §20 Abs. 2 S. 1 Nr. 7, kein Termingeschäft (Anlage KAP Z19/22) — ungedeckter Gold-/Rohstoff-ETC, Zertifikat, Spot-Edelmetall", AssetCategory.SONSTIGE_KAPITALFORDERUNG, InvestmentFundType.NONE),
-            ("Aktie (Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE),
-            ("Anleihe (Anlage KAP)", AssetCategory.BOND, InvestmentFundType.NONE),
-            ("Option/Termingeschäft (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
-            ("Future/Termingeschäft (Anlage KAP)", AssetCategory.FUTURE, InvestmentFundType.NONE),
-            ("CFD (Anlage KAP)", AssetCategory.CFD, InvestmentFundType.NONE),
-            ("Cash / Währungssaldo (ECHT)", AssetCategory.CASH_BALANCE, InvestmentFundType.NONE), # Clarified for interactive prompt
-            ("Devisenhandelspaar (z.B. EUR.USD) - wird als UNKNOWN klassifiziert", AssetCategory.UNKNOWN, InvestmentFundType.NONE), # Added for clarity if interactive
-            ("Sonstiges (Standard Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE), # Default for other unknowns
+            # Rz. 9 puts the "kein Termingeschäft" half beyond doubt: "Zertifikate und
+            # Optionsscheine gehören nicht zu den Termingeschäften" ([GT-ESTG20-038]). That a
+            # Zertifikat is instead a sonstige Kapitalforderung is [GT-ESTG20-008].
+            #
+            # Optionsscheine are excluded from the Termingeschaefte by the same sentence, and
+            # the store does not say where they DO belong. They are therefore named in no
+            # option here, deliberately: guessing them into this one would be implementing a
+            # position no reference file carries. See the gap noted against [GT-ESTG20-038].
+            ("Sonstige Kapitalforderung §20 Abs. 2 S. 1 Nr. 7, kein Termingeschäft — ungedeckter Gold-/Rohstoff-ETC, Zertifikat, Spot-Edelmetall (Anlage KAP)", AssetCategory.SONSTIGE_KAPITALFORDERUNG, InvestmentFundType.NONE),
+            # The Aktienverlusttopf is the one consequence a taxpayer cannot undo later, and
+            # it is still in force after the JStG-2024 repeal of the Termingeschaeft cap:
+            # 20 Abs. 6 Satz 4, "losses from the sale of shares may ONLY be offset against
+            # gains from the sale of shares" ([GT-ESTG20-033]). It is why picking "Aktie" for
+            # something that is not one costs money, and why the label warns rather than
+            # merely naming the instrument.
+            ("Aktie — Anteil an einer Kapitalgesellschaft; Verluste sind NUR mit Aktiengewinnen verrechenbar (Aktienverlusttopf) (Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE),
+            # Same Verlustverrechnungskreis as the Nr. 7 option above, but not the same
+            # handling: a bond's trade price is read as a percentage of nominal, Stueckzinsen
+            # are recognised, and an IBKR "BM" record redeems it at maturity as a deemed
+            # Veraeusserung (20 Abs. 2 Satz 2, [GT-ESTG20-009]). Choosing this for an ETC
+            # divides its proceeds and cost by 100.
+            ("Anleihe — Schuldverschreibung mit Nennwert; Kurs wird als Prozent des Nennwerts gelesen, Stückzinsen und Einlösung bei Fälligkeit werden verarbeitet (Anlage KAP)", AssetCategory.BOND, InvestmentFundType.NONE),
+            # Rz. 9's enumeration: Optionsgeschaefte, Swaps, Devisentermingeschaefte, Forwards,
+            # Futures and CFDs ([GT-ESTG20-038]). Stillhalterpraemien are 20 Abs. 1 Nr. 11 and
+            # are taxed on receipt ([GT-ESTG20-004]).
+            ("Option — Termingeschäft; vereinnahmte Stillhalterprämien werden bei Zufluss versteuert (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
+            ("Future — Termingeschäft (Anlage KAP)", AssetCategory.FUTURE, InvestmentFundType.NONE),
+            ("CFD — Termingeschäft; Basiswert kann eine Aktie, ein Index, ein Währungspaar oder ein Edelmetall sein (Anlage KAP)", AssetCategory.CFD, InvestmentFundType.NONE),
+            # "(ECHT)" used to be the whole distinction here and meant nothing to a reader.
+            # What it was guarding against is the next option, so both now say so.
+            ("Währungssaldo — tatsächlicher Fremdwährungsbestand auf dem Konto, KEIN Handelspaar (Anlage KAP)", AssetCategory.CASH_BALANCE, InvestmentFundType.NONE),
+            # The old label exposed the internal enum name and implied the position is untaxed.
+            # It is not: an FX pair trade becomes a CurrencyConversionEvent keyed off the raw
+            # IBKR asset class, and the gain or loss is realised on the two currency ledgers.
+            # This option records that the INSTRUMENT itself carries none.
+            ("Devisen-Handelspaar (z.B. EUR.USD) — kein eigenes Wirtschaftsgut; Gewinn/Verlust entsteht auf den beteiligten Währungssalden, nicht hier", AssetCategory.UNKNOWN, InvestmentFundType.NONE),
+            # Was "Sonstiges (Standard Anlage KAP)", which reads as a catch-all for ordinary
+            # Anlage KAP income and is in fact AssetCategory.STOCK -- issue #52. It is also
+            # the Enter-key default for an UNKNOWN asset, so the misreading was free to make.
+            # The label now states the treatment first and the word "Sonstiges" not at all.
+            (FALLBACK_OPTION_LABEL, AssetCategory.STOCK, InvestmentFundType.NONE),
         ]
         self.load_classifications()
 
@@ -244,7 +314,7 @@ class AssetClassifier:
                             break
                 elif current_prelim_cat == AssetCategory.UNKNOWN and not is_likely_fx_pair_instrument:
                      for idx, (disp_name, _, _) in enumerate(self._dialog_options):
-                        if "Sonstiges (Standard Anlage KAP)" in disp_name :
+                        if disp_name == FALLBACK_OPTION_LABEL:
                             default_choice_idx = idx
                             break
             except Exception: pass
