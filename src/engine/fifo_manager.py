@@ -132,6 +132,11 @@ class MarkReconciliation:
     reported_quantity: Decimal
     oversell_observed: bool
     mark_label: str
+    # The reconstruction held long AND short lots of the same instrument at once. Not a
+    # position anyone can hold; it means the input's open/close indicators contradict each
+    # other. Distinguished because it has nothing to do with a short trade history, which is
+    # what a first-interval disagreement otherwise means.
+    offsetting_long_and_short: bool = False
 
 
 @dataclass
@@ -588,6 +593,8 @@ class FifoLedger:
             reported_quantity=reported_quantity,
             oversell_observed=inconsistent,
             mark_label=mark_label,
+            offsetting_long_and_short=(reconstructed_total_long_qty > Decimal(0)
+                                       and reconstructed_total_short_qty_abs > Decimal(0)),
         )
 
     def _create_fallback_long_lot(self, asset: Asset, quantity: Decimal,

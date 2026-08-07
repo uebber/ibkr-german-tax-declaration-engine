@@ -38,6 +38,85 @@ from src.processing.withholding_tax_linker import WithholdingTaxLinker
 
 logger = logging.getLogger(__name__)
 
+
+def _drop_cancelled_trade_pairs(raw_trades: List[RawTradeRecord]) -> List[RawTradeRecord]:
+    """Remove every cancelled booking and the row that cancelled it.
+
+    IBKR books a cancellation as its own row: ``Buy/Sell`` carries the ORIGINAL
+    trade's direction word with a ``(Ca.)`` suffix, the quantity is the
+    original's negated, ``Notes/Codes`` is ``Ca``, and the transaction id is
+    later than the original's. A rebooked row normally follows and stands on its
+    own. A cancelled trade did not happen, so the pair is a no-op and neither
+    half should reach the ledger.
+
+    Removing the pair is preferred over interpreting the cancellation row,
+    because that row carries no ``Open/CloseIndicator``: nothing in it says
+    whether the booking it reverses opened a long or closed a short, and the
+    rebooked row is not a reliable guide -- on the one instance in this
+    repository's input the original was ``oc=C`` and the rebook ``oc=O``.
+
+    Until August 2026 these rows were not recognised at all. ``"BUY (Ca.)"``
+    matches neither ``"BUY"`` nor ``"SELL"``, so ``_determine_trade_event_type``
+    fell through to inferring direction from the quantity sign and logged
+    "Buy/Sell indicator missing" -- which was false, the indicator was present
+    and unrecognised. A cancelled BUY became a SELL. In a declared year that
+    produces a disposal that never happened, consuming the oldest lots FIFO and
+    emitting a realised gain, while the end-of-year quantity still reconciles
+    because the rebooked row restores the count.
+
+    An unmatched cancellation raises: it means the input contradicts itself, or
+    the booking it reverses lies before the earliest file loaded. Every case is
+    collected before raising.
+    """
+    cancellations = [r for r in raw_trades if "(CA.)" in (r.buy_sell or "").upper()]
+    if not cancellations:
+        return raw_trades
+
+    def _key(record) -> Tuple[Any, ...]:
+        return (record.isin or "", record.conid or "", record.symbol or "",
+                record.trade_date or "")
+
+    removed: Set[int] = set()
+    unmatched: List[str] = []
+    for cancellation in cancellations:
+        word = (cancellation.buy_sell or "").upper().replace("(CA.)", "").strip()
+        quantity = safe_decimal(cancellation.quantity, default=Decimal(0))
+        candidates = [
+            r for r in raw_trades
+            if id(r) not in removed
+            and r is not cancellation
+            and _key(r) == _key(cancellation)
+            and (r.buy_sell or "").strip().upper() == word
+            and safe_decimal(r.quantity, default=Decimal(0)) == -quantity
+            and (r.transaction_id or "") < (cancellation.transaction_id or "")
+        ]
+        if not candidates:
+            unmatched.append(
+                f"{cancellation.buy_sell} {cancellation.quantity} of "
+                f"{cancellation.isin or cancellation.symbol} on {cancellation.trade_date} "
+                f"(transaction {cancellation.transaction_id})")
+            continue
+        # The nearest preceding booking, where the broker has reused a quantity.
+        original = max(candidates, key=lambda r: (r.transaction_id or ""))
+        removed.add(id(original))
+        removed.add(id(cancellation))
+        logger.info(
+            "Cancelled trade dropped with its cancellation: %s %s of %s on %s "
+            "(original transaction %s, cancellation %s).",
+            original.buy_sell, original.quantity,
+            original.isin or original.symbol, original.trade_date,
+            original.transaction_id, cancellation.transaction_id)
+
+    if unmatched:
+        raise DataIntegrityError(
+            "Trade cancellation rows with no booking to cancel. A '(Ca.)' row reverses an "
+            "earlier trade of the same instrument, date, direction and quantity; without it "
+            "the row cannot be applied, and guessing its direction from the quantity sign is "
+            "how a cancelled purchase becomes a phantom disposal. "
+            f"{len(unmatched)} case(s): " + "; ".join(unmatched))
+
+    return [r for r in raw_trades if id(r) not in removed]
+
 class ParsingOrchestrator:
     def __init__(self, asset_resolver: AssetResolver, asset_classifier: AssetClassifier, interactive_classification: bool = True):
         self.asset_resolver = asset_resolver
@@ -89,7 +168,7 @@ class ParsingOrchestrator:
                            positions_mark_files: Optional[Dict[int, str]] = None):
         # ... (implementation is the same)
         if trades_file:
-            self.raw_trades = parse_trades_csv(trades_file)
+            self.raw_trades = _drop_cancelled_trade_pairs(parse_trades_csv(trades_file))
             logger.info(f"Loaded {len(self.raw_trades)} raw trade records.")
         if cash_transactions_file:
             self.raw_cash_transactions = parse_cash_transactions_csv(cash_transactions_file)

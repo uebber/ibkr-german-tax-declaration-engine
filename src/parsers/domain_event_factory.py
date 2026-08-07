@@ -111,6 +111,23 @@ class DomainEventFactory:
             )
             return FinancialEventType.TRADE_SELL_LONG, False
 
+        if buy_sell:
+            # Present but unrecognised is NOT the same as absent, and treating it as absent is
+            # how "BUY (Ca.)" -- a cancelled purchase -- became a sale of the same size,
+            # consuming the oldest lots FIFO and emitting a realised gain that never happened.
+            # Cancellations are removed with their originals before this point
+            # (`_drop_cancelled_trade_pairs`); anything else unrecognised is a booking kind this
+            # engine has never seen, and guessing its direction from a sign is exactly the
+            # substituted value CLAUDE.md forbids.
+            raise DataIntegrityError(
+                f"Trade {raw_trade.transaction_id or raw_trade.trade_id} "
+                f"({raw_trade.symbol}) on {raw_trade.trade_date} carries an unrecognised "
+                f"Buy/Sell value '{raw_trade.buy_sell}'. Only 'BUY' and 'SELL' are understood, "
+                f"and cancellation rows are paired away before this point. The direction "
+                f"decides whether this is an acquisition or a disposal, so it cannot be "
+                f"inferred from the quantity sign."
+            )
+
         if trade_quantity != Decimal(0):
             logger.warning(
                 f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id}: Buy/Sell indicator missing. "

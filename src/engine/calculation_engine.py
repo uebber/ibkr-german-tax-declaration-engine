@@ -167,17 +167,24 @@ def _grade_mark_outcomes(mark_outcomes, data_gap_collector) -> None:
                 f"broker reported {outcome.reported_quantity}"
                 + (" (an event could not be applied during the interval)"
                    if outcome.oversell_observed else "")
-)
+                + (" (the reconstruction holds a long AND a short position in the same "
+                   "instrument, which is not a holding: the input's open/close indicators "
+                   "contradict each other)"
+                   if outcome.offsetting_long_and_short else ""))
 
     expected = [(a, o) for a, o in discarded if not o.started_confirmed]
     defects = [(a, o) for a, o in discarded if o.started_confirmed]
 
     for asset, outcome in expected:
+        cause = (
+            "The broker's own open/close indicators disagree with each other here, so the "
+            "reconstruction is not short of history -- it is contradictory. "
+            if outcome.offsetting_long_and_short else
+            "This interval did not start from a reported snapshot, so the reconstruction is "
+            "missing whatever was held before the input window opened. ")
         detail = (
-            f"{_describe(asset, outcome)}. This interval did not start from a reported "
-            f"snapshot, so the reconstruction is missing whatever was held before the input "
-            f"window opened. The broker's figure has been taken and the replay continues from "
-            f"it. The quantity carried forward is the broker's; the acquisition date and cost "
+            f"{_describe(asset, outcome)}. {cause}The broker's figure has been taken and the "
+            f"replay continues from it. The quantity carried forward is the broker's; the acquisition date and cost "
             f"basis of those units were never observed, so the lot is flagged as undated and "
             f"consumers that need a real date must refuse it."
         )
