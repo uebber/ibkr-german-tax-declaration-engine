@@ -38,6 +38,28 @@ def _find_import_file(pattern_prefix: str, year: int, suffix: str = ".csv") -> O
     return None
 
 
+def _earliest_import_year() -> int:
+    """The first calendar year any input file covers.
+
+    Used to bound the checkpoint marks. Reads the year out of every
+    `<Prefix>-<YYYY>...csv` in the import directory rather than assuming a start
+    year, so a user whose history begins later gets marks only where snapshots
+    actually exist.
+    """
+    years = []
+    for f in IMPORT_DIR.glob("*-*.csv"):
+        for part in f.stem.split("-"):
+            if len(part) == 4 and part.isdigit():
+                years.append(int(part))
+                break
+    if not years:
+        raise FileNotFoundError(
+            f"No year-stamped input files found in {IMPORT_DIR}/. Expected the naming scheme "
+            f"Trades-YYYY.csv, Positions-YYYY-EoY.csv, etc."
+        )
+    return min(years)
+
+
 def _find_years_available(pattern_prefix: str) -> list[int]:
     """Find all years for which a given file type exists in data_import/."""
     years = []
@@ -226,6 +248,36 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
     else:
         logger.warning("No Positions-%d-EoY.csv found.", tax_year)
         result["positions_end"] = ""
+
+    # --- Intermediate checkpoint marks for the historical replay ---
+    # A partial ledger is the normal starting condition: the transaction files reach back only so
+    # far, so the reconstruction of the earliest interval is missing whatever was held before the
+    # window opened. The position snapshots are the ground truth to recover from, and there is one
+    # at the close of every year, not just at the tax year's own boundary.
+    #
+    # Each `Positions-{Y}-EoY.csv` below the opening snapshot becomes a mark: the replay stops
+    # there, compares, and either keeps the reconstruction or takes the snapshot and carries on.
+    # `Positions-{tax_year-1}-EoY.csv` is NOT included -- it is the opening snapshot loaded above
+    # and reconciled as the final mark by the existing path.
+    #
+    # EoY files only. A `Positions-{Y}-SoY.csv` names the close of the day it names, so on a
+    # trading day it already contains that day's trades, and the same trades arrive again from the
+    # Trades file (see the opening-position comment above). Those files feed the Vorabpauschale
+    # reference prices and nothing else.
+    mark_years = sorted(
+        y for y in range(_earliest_import_year(), tax_year - 1)
+        if _find_import_file("Positions", y, "-EoY.csv")
+    )
+    for year in mark_years:
+        mark_file = _find_import_file("Positions", year, "-EoY.csv")
+        mark_output = WORKING_DIR / f"positions_mark_{year}.csv"
+        _copy_file(mark_file, mark_output)
+        result[f"positions_mark_{year}"] = str(mark_output)
+    if mark_years:
+        logger.info("Historical replay checkpoint marks: %s",
+                    ", ".join(f"{y}-12-31" for y in mark_years))
+    else:
+        logger.info("No intermediate checkpoint marks below %d-12-31.", tax_year - 1)
 
     # --- Positions for the preceding year: needed for the Vorabpauschale ---
     # The VP declared in VZ Y is the one computed FOR calendar Y-1 (18 Abs. 3 InvStG; Anleitung

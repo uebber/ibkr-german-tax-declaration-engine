@@ -70,6 +70,7 @@ class FifoTestCaseBase:
                       trades_data: Optional[List[List[Any]]] = None,
                       positions_start_data: Optional[List[List[Any]]] = None,
                       positions_end_data: Optional[List[List[Any]]] = None,
+                      positions_mark_data: Optional[dict] = None,
                       positions_prior_start_data: Optional[List[List[Any]]] = None,
                       positions_prior_end_data: Optional[List[List[Any]]] = None,
                       cash_transactions_data: Optional[List[List[Any]]] = None,
@@ -114,6 +115,17 @@ class FifoTestCaseBase:
         # the engine reads "a prior-year snapshot was supplied" from the presence of the
         # path, and a headers-only file would suppress the FAIL_FAST gap that a genuinely
         # missing snapshot must raise.
+        # Checkpoint marks: {year: rows of Positions-{year}-EoY.csv}. Written to the temp
+        # directory and passed by path, mirroring what data_preparation does for a real run.
+        # Supplying none means one uninterrupted interval, which is most scenarios.
+        mark_file_paths: dict = {}
+        for mark_year, mark_rows in sorted((positions_mark_data or {}).items()):
+            mark_path = os.path.join(os.path.dirname(paths["pos_start"]),
+                                     f"positions_mark_{mark_year}.csv")
+            with open(mark_path, "w", encoding="utf-8-sig") as f:
+                f.write(create_positions_csv_string(mark_rows))
+            mark_file_paths[mark_year] = mark_path
+
         prior_paths = {"positions_prior_start_file_path": None,
                        "positions_prior_end_file_path": None}
         for key, path_key, data in (
@@ -136,6 +148,7 @@ class FifoTestCaseBase:
                 positions_start_file_path=paths["pos_start"],
                 positions_end_file_path=paths["pos_end"],
                 corporate_actions_file_path=paths["corp_actions"],
+                positions_mark_file_paths=mark_file_paths,
                 interactive_classification_mode=False,
                 tax_year_to_process=tax_year,
                 custom_rate_provider=custom_rate_provider,

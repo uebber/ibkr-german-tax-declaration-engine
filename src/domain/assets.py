@@ -253,3 +253,23 @@ class CashBalance(Asset):
             self.ibkr_symbol = self.currency
         if self.description is None and self.currency:
             self.description = f"Cash Balance {self.currency}"
+
+
+@dataclass(frozen=True)
+class MarkPosition:
+    """One asset's holding as the broker reported it at a checkpoint mark.
+
+    A *mark* is the close of a calendar year inside the historical replay
+    window, taken from `Positions-{Y}-EoY.csv`. The replay stops at each mark
+    and compares; where it disagrees with the broker the reconstruction is
+    replaced by this. Distinct from the SoY record on `Asset` (`soy_quantity`
+    and friends), which is the single opening snapshot for the tax year --
+    itself read from `Positions-{tax_year-1}-EoY.csv`, not from any SoY file.
+
+    Only what reconciliation needs: quantity and the reported cost basis. A
+    mark supplies no acquisition date, which is why a lot built from one is
+    flagged `acquisition_date_is_known=False`.
+    """
+    quantity: Decimal
+    cost_basis_amount: Optional[Decimal]
+    cost_basis_currency: Optional[str]

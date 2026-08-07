@@ -68,7 +68,12 @@ def run_core_processing_pipeline(
     # fund is held. See reference/investment-tax-law/invstg-18-vorabpauschale.md.
     positions_prior_start_file_path: Optional[str] = None,
     positions_prior_end_file_path: Optional[str] = None,
-    positions_prior_opening_file_path: Optional[str] = None
+    positions_prior_opening_file_path: Optional[str] = None,
+    # Checkpoint marks for the historical replay: {year: Positions-{year}-EoY.csv}. Each is a
+    # point where the reconstruction is compared against the broker and, on disagreement,
+    # replaced by it. Absent (or empty) means the replay runs as one uninterrupted interval,
+    # which is what it did before checkpointing.
+    positions_mark_file_paths: Optional[Dict[int, str]] = None
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -98,6 +103,7 @@ def run_core_processing_pipeline(
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
+            positions_mark_files=positions_mark_file_paths,
             tax_year=tax_year_to_process
         )
     except ValueError as e:
@@ -165,6 +171,7 @@ def run_core_processing_pipeline(
             internal_calculation_precision=config.INTERNAL_CALCULATION_PRECISION, # Renamed parameter
             decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
             data_gap_collector=data_gap_collector,
+            mark_positions=orchestrator.mark_positions,
             prior_year_positions_available=bool(
                 positions_prior_start_file_path and positions_prior_end_file_path
             ),

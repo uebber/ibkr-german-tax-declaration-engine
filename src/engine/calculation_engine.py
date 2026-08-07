@@ -17,7 +17,9 @@ from src.domain.events import (
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
     WithholdingTaxEvent, CurrencyConversionEvent
 )
-from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance
+from src.domain.assets import (
+    Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance, MarkPosition,
+)
 from src.identification.asset_resolver import AssetResolver
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.domain.enums import FinancialEventType, InvestmentFundType 
@@ -131,6 +133,88 @@ def _format_asset_info(asset_obj) -> str:
     symbol = asset_obj.ibkr_symbol or "N/A"
     return f"'{desc}' (Symbol: {symbol})"
 
+def _grade_mark_outcomes(mark_outcomes, data_gap_collector) -> None:
+    """Report every checkpoint mark where the reconstruction was discarded.
+
+    The severity turns on what the interval *started* from, not on which mark it
+    ended at:
+
+    * **Started at a confirmed snapshot** — ground truth at both ends, and the
+      replay in between is the engine's own work over events the input actually
+      contains. A disagreement is a defect in the engine or in the input, and it
+      stops the run.
+    * **Started unconfirmed** — in practice the earliest interval, before any
+      snapshot exists. Its ledger begins empty while the real holding did not,
+      so it is *expected* to disagree by whatever was held before the input
+      window opened. That is the ordinary condition of a partial history, it is
+      recorded, and the run continues from the snapshot.
+
+    Both kinds discard real acquisition dates and cost bases for the asset
+    concerned, so neither is silent. Every case is collected before anything
+    raises, so one run names the whole problem.
+    """
+    if not mark_outcomes:
+        return
+
+    discarded = [(asset, outcome) for asset, outcome in mark_outcomes if not outcome.kept]
+    if not discarded:
+        logger.info("Every ledger agreed with the reported snapshot at every checkpoint mark.")
+        return
+
+    def _describe(asset, outcome) -> str:
+        return (f"{asset.get_classification_key()} @ {outcome.mark_label}: "
+                f"reconstructed {outcome.reconstructed_quantity}, "
+                f"broker reported {outcome.reported_quantity}"
+                + (" (an event could not be applied during the interval)"
+                   if outcome.oversell_observed else "")
+)
+
+    expected = [(a, o) for a, o in discarded if not o.started_confirmed]
+    defects = [(a, o) for a, o in discarded if o.started_confirmed]
+
+    for asset, outcome in expected:
+        detail = (
+            f"{_describe(asset, outcome)}. This interval did not start from a reported "
+            f"snapshot, so the reconstruction is missing whatever was held before the input "
+            f"window opened. The broker's figure has been taken and the replay continues from "
+            f"it. The quantity carried forward is the broker's; the acquisition date and cost "
+            f"basis of those units were never observed, so the lot is flagged as undated and "
+            f"consumers that need a real date must refuse it."
+        )
+        if data_gap_collector is not None:
+            data_gap_collector.record(
+                code="REPLAY_MARK_UNCONFIRMED_START",
+                subject=f"{asset.get_classification_key()} @ {outcome.mark_label}",
+                detail=detail,
+                severity=GapSeverity.WARNING,
+            )
+        else:
+            logger.warning("[REPLAY_MARK_UNCONFIRMED_START] %s", detail)
+
+    if not defects:
+        return
+
+    named = "; ".join(_describe(asset, outcome) for asset, outcome in defects)
+    detail = (
+        f"The historical replay disagrees with the broker over an interval that began at a "
+        f"reported snapshot and ended at one. Both ends are ground truth and every event in "
+        f"between is present in the input, so the disagreement is in the engine's handling of "
+        f"those events or in the input itself — it is not a consequence of a short trade "
+        f"history. Real acquisition dates and cost bases would be discarded and replaced by a "
+        f"synthesised lot, which no downstream consumer can tell from a measured one. "
+        f"{len(defects)} case(s): {named}"
+    )
+    if data_gap_collector is not None:
+        data_gap_collector.record(
+            code="REPLAY_MARK_MISMATCH",
+            subject=f"{len(defects)} ledger(s) disagree with a confirmed interval",
+            detail=detail,
+            severity=GapSeverity.FAIL_FAST,
+        )  # records, logs CRITICAL and raises DataGapError
+    else:
+        raise DataGapError(f"[REPLAY_MARK_MISMATCH] {detail}")
+
+
 def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
     """Apply ONE historical stock-for-stock merger — the per-event unit the
     unified replayer streams chronologically in Phase.LEDGER_EVENTS, at the
@@ -191,7 +275,11 @@ def run_main_calculations(
     # declared in VZ `tax_year` is the one for calendar `tax_year - 1` (18 Abs. 3 InvStG), so
     # their absence is a gap rather than an empty portfolio. Defaults False so a caller that
     # has not been updated fails loudly instead of silently dropping deemed income.
-    prior_year_positions_available: bool = False
+    prior_year_positions_available: bool = False,
+    # Checkpoint marks: {year: {asset_id: MarkPosition}} from Positions-{year}-EoY.csv, for
+    # every year strictly below the opening snapshot. Empty means the historical window is
+    # replayed as one uninterrupted interval — the behaviour before checkpointing.
+    mark_positions: Optional[Dict[int, Dict[uuid.UUID, "MarkPosition"]]] = None
 ) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]: 
     """
     Runs the main calculation logic:
@@ -208,6 +296,7 @@ def run_main_calculations(
        any other value would have raised.
     """
     logger.info(f"Starting main calculation engine for tax year {tax_year} with {len(financial_events)} events.")
+    mark_positions = mark_positions or {}
     ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode) # Renamed internal_working_precision
 
     realized_gains_losses: List[RealizedGainLoss] = []
@@ -245,7 +334,15 @@ def run_main_calculations(
         if event_date_obj < tax_year_start_date_obj:
             if isinstance(event, CorpActionMergerStock):
                 historical_merger_events.append(event)
-            elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)):
+            elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend,
+                                    OptionLifecycleEvent, CorpActionMergerCash,
+                                    CorpActionExpireDividendRights)):
+                # OptionLifecycleEvent joined this bucket when checkpointing exposed what its
+                # absence cost: an option opened and closed inside the historical window kept
+                # its lots forever, because nothing removed them. Nine option ledgers on the
+                # maintainer's 2022 data carried a phantom holding into every later year. The
+                # ledger effect is applied by FifoLedger._close_option_lots_historically; no
+                # realised gain is produced, because the historical replay declares nothing.
                 historical_events_by_asset[event.asset_internal_id].append(event)
             elif isinstance(event, CurrencyConversionEvent):
                 # CurrencyConversionEvents need to be associated with the non-EUR currency's asset ID
@@ -285,7 +382,15 @@ def run_main_calculations(
     # AND currencies — under the documented phase contract (see engine/replay.py):
     # LEDGER_EVENTS (chronological, mergers included) -> RECONCILE.
     from src.engine.replay import ReplayStream, Phase
-    stream = ReplayStream()
+
+    # Ledger-event work is COLLECTED first, not streamed straight away: the historical window is
+    # cut into intervals at the checkpoint marks, and each interval is replayed and reconciled
+    # before the next one begins. Items keep their (phase, sort_key) and their insertion order,
+    # so within an interval the ordering contract is exactly what a single stream would give.
+    deferred_items: List[Tuple[Any, Any, Any, str]] = []
+
+    def _defer(phase, sort_key, apply_fn, label: str = "") -> None:
+        deferred_items.append((phase, sort_key, apply_fn, label))
 
     logger.info("Building unified historical replay stream (securities, mergers, currencies)...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
@@ -325,7 +430,7 @@ def run_main_calculations(
             ledger.begin_historical_simulation(asset_obj)
             ledger.announce_historical_simulation(asset_obj, len(sorted_hist_keys_and_events))
             for hist_key, hist_event in sorted_hist_keys_and_events:
-                stream.add(
+                _defer(
                     Phase.LEDGER_EVENTS, hist_key,
                     (lambda l=ledger, a=asset_obj, e=hist_event:
                         l.apply_historical_event(a, e, tax_year)),
@@ -348,7 +453,7 @@ def run_main_calculations(
             except ValueError as e:
                 logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
                 raise e
-            stream.add(
+            _defer(
                 Phase.LEDGER_EVENTS, merger_key,
                 (lambda m=merger_event: _replay_historical_merger(m, fifo_ledgers)),
                 label="merger",
@@ -356,25 +461,35 @@ def run_main_calculations(
     else:
         logger.info("No historical stock mergers to replay.")
 
-    # Reconcile phase: securities ledgers against SoY positions (after every
-    # ledger event, mergers included, has been applied). Items are added for
-    # the SECURITIES ledgers existing now — currency ledgers reconcile against
-    # cash balances separately below.
-    logger.info("Reconciling ledgers with SoY positions...")
+    # Reconcile: securities ledgers against the reported snapshot at each mark, after every
+    # ledger event of that interval (mergers included) has been applied. Currency ledgers
+    # reconcile against cash balances at the final mark only — see below.
+    mark_outcomes: List[Tuple[Asset, "MarkReconciliation"]] = []
+    currency_reconcilers: List[Any] = []
+
     def _reconcile_security_soy(ledger, asset_obj):
         try:
-            ledger.reconcile_with_soy_position(asset_obj, tax_year)
+            mark_outcomes.append((asset_obj, ledger.reconcile_with_soy_position(asset_obj, tax_year)))
         except ValueError as e:
             logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_obj.internal_asset_id}): {e}. Aborting.")
             raise e
-    for (ledger_account, asset_id), ledger in fifo_ledgers.items():
-        asset_obj = asset_resolver.get_asset_by_id(asset_id)
-        if asset_obj:
-            stream.add(
-                Phase.RECONCILE, (0,),
-                (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
-                label=f"reconcile-sec:{asset_obj.get_classification_key()}",
-            )
+
+    def _reconcile_security_mark(ledger, asset_obj, mark_year: int, reported):
+        try:
+            mark_outcomes.append((asset_obj, ledger.reconcile_with_mark(
+                asset_obj,
+                reported_quantity=reported.quantity if reported else Decimal(0),
+                reported_cost_basis=reported.cost_basis_amount if reported else None,
+                reported_cost_basis_currency=reported.cost_basis_currency if reported else None,
+                mark_label=f"{mark_year}-12-31",
+                fallback_acquisition_date=f"{mark_year}-12-31",
+                # Same rule the final mark uses: the first day after the mark.
+                fx_conversion_date=date(mark_year + 1, 1, 1),
+            )))
+        except ValueError as e:
+            logger.critical(f"Fatal error reconciling the {mark_year}-12-31 mark for asset "
+                            f"{asset_obj.get_classification_key()}: {e}. Aborting.")
+            raise e
 
     # Initialize currency FIFO ledgers with comprehensive historical replay
     logger.info("Initializing currency FIFO ledgers for foreign currency positions...")
@@ -439,7 +554,7 @@ def run_main_calculations(
                                     f"for {currency_code}: {e}. Cannot guarantee deterministic order "
                                     f"for FIFO init. Aborting.")
                     raise
-                stream.add(
+                _defer(
                     Phase.LEDGER_EVENTS, hist_key,
                     (lambda e=hist_event, f=_apply_ccy_event: f(e)),
                     label=f"ccy:{currency_code}",
@@ -448,16 +563,88 @@ def run_main_calculations(
         # SOY quantity is authoritative - always reconcile to match it.
         # Historical replay provides accurate lot-level cost basis,
         # but the total quantity MUST match the reported SOY balance.
+        # Currencies reconcile at the FINAL mark only: the intermediate marks come from the
+        # Positions files, which report securities, and no per-year cash-balance snapshot is
+        # loaded. Currency events still replay in strict chronological order across the whole
+        # window, because the intervals are contiguous and ordered.
         if isinstance(currency_asset, CashBalance):
-            stream.add(
-                Phase.RECONCILE, (0,),
-                (lambda l=currency_ledger, a=currency_asset:
-                    _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx)),
-                label=f"reconcile-ccy:{currency_code}",
+            currency_reconcilers.append(
+                (lambda l=currency_ledger, a=currency_asset, c=currency_code:
+                    (f"reconcile-ccy:{c}",
+                     _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx)))
             )
 
-    # === Run the unified historical replay ===
-    stream.run()
+    # === Run the historical replay, one interval per checkpoint mark ===
+    #
+    # A partial ledger is the normal starting condition, not a defect: the transaction files
+    # reach back only so far. The position snapshots are the ground truth to recover from, and
+    # there is one at the close of every year. So the window is cut at each mark; the interval
+    # is replayed; the reconstruction is compared and either kept or replaced by the snapshot;
+    # and the next interval starts from a state the broker vouches for.
+    #
+    # The consequence that matters: a defect can no longer propagate past the next mark. Before
+    # this, one oversell in 2021 offset a ledger for every year that followed.
+    mark_years = sorted(y for y in mark_positions if y < tax_year - 1)
+    interval_ends = [date(y, 12, 31) for y in mark_years] + [date(tax_year - 1, 12, 31)]
+
+    def _interval_of(event_date) -> int:
+        for index, end in enumerate(interval_ends):
+            if event_date <= end:
+                return index
+        # Unreachable: every deferred item is a historical event, so it predates the tax year
+        # and therefore the final interval's end. Kept so a future caller cannot drop work.
+        return len(interval_ends) - 1
+
+    buckets: List[List[Tuple[Any, Any, Any, str]]] = [[] for _ in interval_ends]
+    for phase, sort_key, apply_fn, label in deferred_items:
+        buckets[_interval_of(sort_key[0])].append((phase, sort_key, apply_fn, label))
+
+    logger.info("Historical replay in %d interval(s), marks at %s.",
+                len(interval_ends), ", ".join(str(e) for e in interval_ends))
+
+    for index, interval_end in enumerate(interval_ends):
+        is_final_mark = index == len(interval_ends) - 1
+        stream = ReplayStream()
+        for phase, sort_key, apply_fn, label in buckets[index]:
+            stream.add(phase, sort_key, apply_fn, label=label)
+
+        for (ledger_account, asset_id), ledger in fifo_ledgers.items():
+            asset_obj = asset_resolver.get_asset_by_id(asset_id)
+            if not asset_obj:
+                continue
+            # `_ensure_currency_ledger_exists` registers each currency ledger in BOTH
+            # `currency_fifo_ledgers` and `fifo_ledgers`. Currencies reconcile against cash
+            # balances through `_reconcile_currency_soy`, never against a Positions snapshot,
+            # so they must be excluded here. Before checkpointing this held only because the
+            # securities reconcile items were built before the currency ledgers existed —
+            # an ordering accident, and one the interval loop would otherwise have inherited.
+            if asset_obj.asset_category == AssetCategory.CASH_BALANCE:
+                continue
+            if is_final_mark:
+                stream.add(
+                    Phase.RECONCILE, (0,),
+                    (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
+                    label=f"reconcile-sec:{asset_obj.get_classification_key()}",
+                )
+            else:
+                mark_year = mark_years[index]
+                reported = mark_positions.get(mark_year, {}).get(asset_id)
+                stream.add(
+                    Phase.RECONCILE, (0,),
+                    (lambda l=ledger, a=asset_obj, y=mark_year, r=reported:
+                        _reconcile_security_mark(l, a, y, r)),
+                    label=f"reconcile-mark{mark_year}:{asset_obj.get_classification_key()}",
+                )
+
+        if is_final_mark:
+            for reconciler in currency_reconcilers:
+                stream.add(Phase.RECONCILE, (0,), reconciler, label="reconcile-ccy")
+
+        logger.info("Interval %d/%d (through %s): %d stream item(s).",
+                    index + 1, len(interval_ends), interval_end, len(stream))
+        stream.run()
+
+    _grade_mark_outcomes(mark_outcomes, data_gap_collector)
 
     # Placing the merger ahead of its day's trades (see engine/replay.py) is
     # right for the target — the delivered shares exist before that day's

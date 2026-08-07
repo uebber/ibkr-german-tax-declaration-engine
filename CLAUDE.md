@@ -182,6 +182,14 @@ run.
   *and* gain — only the acquisition date is wrong. A test asserting those four figures on a
   scenario with an SoY snapshot is weaker than it looks.
 
+- **Anything the historical replay silently declines to apply.** Its dispatch handled three
+  event kinds and fell through without an `else` on the rest, so historical option
+  expirations, exercises, assignments and cash mergers never touched a ledger and left a
+  phantom holding in every later year. The suite could not see it: each affected instrument
+  reconciled against a reported zero, which clears the ledger and hides the disagreement. It
+  was found by reconciling at every yearly snapshot instead of only the tax year's. The
+  dispatch now raises on an unhandled corporate-action kind rather than ignoring it.
+
 Add to this list whenever a probe finds a site the suite cannot observe.
 
 Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support/`;

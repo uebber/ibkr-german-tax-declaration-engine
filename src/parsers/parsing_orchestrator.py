@@ -7,7 +7,8 @@ import logging
 import sys 
 
 from src.domain.assets import (
-    Asset, InvestmentFund, Option, CashBalance, Derivative, Stock, Bond, PrivateSaleAsset, Cfd # Changed Section23EstgAsset to PrivateSaleAsset
+    Asset, InvestmentFund, Option, CashBalance, Derivative, Stock, Bond, PrivateSaleAsset, Cfd, # Changed Section23EstgAsset to PrivateSaleAsset
+    MarkPosition,
 )
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
 from src.domain.events import FinancialEvent, OptionLifecycleEvent, TradeEvent
@@ -51,6 +52,10 @@ class ParsingOrchestrator:
         self.raw_positions_prior_start: List[RawPositionRecord] = []
         self.raw_positions_prior_end: List[RawPositionRecord] = []
         self.raw_positions_prior_opening: List[RawPositionRecord] = []
+        # Checkpoint marks for the historical replay: {year: rows of Positions-{year}-EoY.csv}.
+        # Resolved into `mark_positions` (keyed by asset) once assets exist.
+        self.raw_positions_marks: Dict[int, List[RawPositionRecord]] = {}
+        self.mark_positions: Dict[int, Dict[uuid.UUID, MarkPosition]] = {}
         # Which prior-year snapshot fields were read onto which asset, so the pipeline can
         # verify they are still there once classification has run. See
         # _verify_prior_year_snapshot_survived_classification.
@@ -80,7 +85,8 @@ class ParsingOrchestrator:
                              positions_prior_opening_file: Optional[str] = None,
                            corporate_actions_file: Optional[str] = None,
                            cash_balance_file: Optional[str] = None,
-                           options_eae_file: Optional[str] = None):
+                           options_eae_file: Optional[str] = None,
+                           positions_mark_files: Optional[Dict[int, str]] = None):
         # ... (implementation is the same)
         if trades_file:
             self.raw_trades = parse_trades_csv(trades_file)
@@ -112,6 +118,10 @@ class ParsingOrchestrator:
         if options_eae_file:
             self.raw_options_eae = parse_options_eae_csv(options_eae_file)
             logger.info(f"Loaded {len(self.raw_options_eae)} raw OptionEAE records.")
+        for mark_year, mark_file in sorted((positions_mark_files or {}).items()):
+            self.raw_positions_marks[mark_year] = parse_positions_csv(mark_file)
+            logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
+                        f"for the {mark_year}-12-31 checkpoint mark.")
 
     def process_positions(self):
         # ... (implementation is the same)
@@ -177,6 +187,29 @@ class ParsingOrchestrator:
                 "prior_year_eoy_quantity", "prior_year_eoy_position_value",
                 "prior_year_eoy_mark_price", "prior_year_eoy_mark_price_currency",
             ))
+
+        # Checkpoint marks. Resolved to asset-keyed MarkPositions rather than written onto
+        # Asset: there is one of these per year in the window, and the SoY record on Asset is a
+        # single opening snapshot for the tax year. Keeping them apart is deliberate -- conflating
+        # a mark with the SoY record is how a mid-window snapshot would end up feeding the tax
+        # year's cost basis.
+        for mark_year, raw_rows in sorted(self.raw_positions_marks.items()):
+            by_asset: Dict[uuid.UUID, MarkPosition] = {}
+            for raw_pos in raw_rows:
+                asset = self._resolve_asset_from_position(raw_pos)
+                quantity = safe_decimal(raw_pos.position, default=Decimal(0))
+                existing = by_asset.get(asset.internal_asset_id)
+                if existing is not None:
+                    # Same instrument reported on more than one row at the same mark.
+                    quantity += existing.quantity
+                by_asset[asset.internal_asset_id] = MarkPosition(
+                    quantity=quantity,
+                    cost_basis_amount=safe_decimal(raw_pos.cost_basis_money),
+                    cost_basis_currency=raw_pos.currency_primary,
+                )
+            self.mark_positions[mark_year] = by_asset
+            logger.info("Checkpoint mark %d-12-31: %d instrument(s) reported.",
+                        mark_year, len(by_asset))
 
         for raw_pos in self.raw_positions_prior_opening:
             asset = self._resolve_asset_from_position(raw_pos)
@@ -769,6 +802,7 @@ class ParsingOrchestrator:
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
+                             positions_mark_files: Optional[Dict[int, str]] = None,
                              tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
         logger.info("Starting parsing pipeline...")
@@ -783,7 +817,8 @@ class ParsingOrchestrator:
                 positions_prior_opening_file=positions_prior_opening_file,
                 corporate_actions_file=corporate_actions_file,
                 cash_balance_file=cash_balance_file,
-                options_eae_file=options_eae_file
+                options_eae_file=options_eae_file,
+                positions_mark_files=positions_mark_files,
             )
             self.process_positions()
             self._process_cash_balance_positions(tax_year=tax_year)
