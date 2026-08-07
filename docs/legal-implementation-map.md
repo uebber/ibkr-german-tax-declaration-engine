@@ -45,10 +45,18 @@ is an implementation act; it does not belong in the store.
 
 **GT-ESTG20-004, open question Q4 — reading chosen: payment date, in every year.** The paid
 Glattstellungsprämie is booked as negative income when paid. Reason: it matches the JStG-2024
-statutory wording and the administration's practice before it (BMF 18.01.2016 Rz. 25 ff.). It is
-contrary to BFH VIII R 27/21 for any VZ before the amendment took effect, and no § 52 EStG
-application rule for Nr. 11 has been located. **A Stillhalter/Glattstellung pair straddling a year
-end in VZ 2024 or earlier should be reviewed by hand.**
+statutory wording *and* the administration's practice before it (BMF 18.01.2016 Rz. 25 ff., carried
+into 19.05.2022 and 14.05.2025), so the amendment's first year of application cannot change the
+result and does not need to be established.
+
+It remains contrary to **BFH VIII R 27/21**, which puts the cost in the year the Stillhalterprämie
+was received, as a rückwirkendes Ereignis. That route can be the better outcome or the worse one
+depending on which year has losses to absorb, so it is a per-case election rather than a rule the
+engine should take. **A Stillhalter/Glattstellung pair straddling a year end should be reviewed by
+hand**, and the BFH route considered where the earlier year would use the loss.
+
+*Rescoped 2026-08-07 with Q4 itself: this row previously rested part of its reasoning on "no § 52
+EStG application rule for Nr. 11 has been located", which was true and beside the point.*
 
 ### Abs. 2 — disposals
 
@@ -162,7 +170,7 @@ that question: pooling is wrong under both readings.
 | GT-FORM-002 | implements | `src/engine/loss_offsetting.py:249-275` | `test_group6_loss_offsetting.py` | Zeile 19 is a net figure; Zeilen 20/21/22/23 restate parts of it, Zeilen 24/25 do not (*ausschließlich*). The engine gets the Zeile 24 half right and the Zeile 25 half wrong — next row. |
 | GT-FORM-003 | **deviates** | — | — | **Zeile 25 has no representation.** Forderungsausfall and wertlose Ausbuchung losses fall into `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22), which the 2024 Anleitung expressly forbids — *"ausschließlich in Zeile 25"*. Because *ausschließlich* also excludes them from Zeilen 18/19, the same defect **understates nothing but misplaces twice**: the loss appears in Zeile 22 where it may not, and inside the Zeile 19 net figure where it may not. No input in the maintainer's data produces such a loss today, so the path is unexercised, but nothing detects one if it appears. |
 | GT-FORM-004 | **deviates** | — | — | Same shape: a worthless-share write-off should go to Zeile 23 in VZ 2025, and there is no event kind for it. |
-| GT-FORM-005 | not reached | — | — | Nothing is written to Zeilen 21/24 for VZ 2025 under either reading, so no figure turns on the open question. See Q3. |
+| GT-FORM-005 | implements | `src/reporting/form_rules.py` — the 2025 rules write nothing to Zeilen 21/24/25 | `test_group6_loss_offsetting.py` | Nothing is entered on the separate derivative lines for VZ 2025, which is what the claim asserts and what the engine does. Whether the form still prints those numbers is a layout point that decides no figure; it was carried as open question Q3 until 2026-08-07 and is now a note in `reference/tax-forms/anlage-kap-zeilen.md`. |
 | GT-FORM-006 | implements | `ANLAGE_KAP_FOREIGN_TAX_PAID` — sum of withholding events | `test_withholding_tax_linker.py` | Neither ceiling is applied; the Finanzamt applies § 32d Abs. 5 Sätze 1 and 3. See GT-CREDIT-005/006. |
 | GT-FORM-007 | **partially implements** | `src/engine/loss_offsetting.py` | `test_german_kest_detection.py`, `test_withholding_tax_linker.py` | The negative half is implemented: German KESt is off Zeile 41. The positive half (Zeilen 7/37/38/39) is not computable — see GT-CREDIT-021. |
 | GT-FORM-008 | out of scope | — | — | Zeile 4 (Günstigerprüfung) and Zeile 5 (Überprüfung des Steuereinbehalts) are taxpayer elections, not computed figures. |
@@ -504,7 +512,7 @@ German custodian through the broker.
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-FX-001 | implements | `FX_CONVERSION_SALE`, `FX_CONVERSION_SHORT_COVER`, `FX_IMPLICIT_SECURITY_PURCHASE`, `FX_IMPLICIT_SECURITY_SALE`, `FX_IMPLICIT_CASHFLOW_EXPENSE`, `FX_IMPLICIT_CASHFLOW_INCOME` → `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE` / `_VERLUSTE` | `test_group7_currency_fifo.py`, `test_group9_variable_fx.py`, `test_group11_cashflow_currency.py`, `test_fx_rgl_hardening.py` | All currency balances are treated as § 20; see Q7. **The cash-flow debit case (`FX_IMPLICIT_CASHFLOW_EXPENSE`/`_INCOME`) is an extension of this claim, not one of the disposing events Rz. 131 enumerates — see Q10.** |
+| GT-FX-001 | implements | `FX_CONVERSION_SALE`, `FX_CONVERSION_SHORT_COVER`, `FX_IMPLICIT_SECURITY_PURCHASE`, `FX_IMPLICIT_SECURITY_SALE`, `FX_IMPLICIT_CASHFLOW_EXPENSE`, `FX_IMPLICIT_CASHFLOW_INCOME` → `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE` / `_VERLUSTE` | `test_group7_currency_fifo.py`, `test_group9_variable_fx.py`, `test_group11_cashflow_currency.py`, `test_fx_rgl_hardening.py` | All currency balances are treated as § 20; see Q7. **The cash-flow debit case (`FX_IMPLICIT_CASHFLOW_EXPENSE`/`_INCOME`) is an extension of this claim, not one of the disposing events Rz. 131 enumerates — see Q9, instance (b).** |
 | GT-FX-002 | not reached | — | — | Non-interest-bearing accounts. A margin brokerage account pays or charges interest on balances, so the § 23 branch is not exercised — **but nothing tests the account's actual character.** |
 | GT-FX-003 | not reached | — | — | Pure payment accounts. |
 | GT-FX-004 | not reached | — | — | Retroactivity to VZ 2009 and the 2025 bank withholding duty both concern German Zahlstellen. |

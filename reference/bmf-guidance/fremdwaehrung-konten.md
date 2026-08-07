@@ -109,7 +109,7 @@ Consequences, all carried by Rz. 131 above:
 fee, a charge paid out of the balance rather than converted. Rz. 131 opens on *Veraeusserung oder
 Rueckzahlung* and then names specific cases; a payment out of the balance is not among them, and
 no Tier 1 or Tier 2 source deciding it has been located. Registered in
-`../research/open-legal-questions.md` Q10.
+`../research/open-legal-questions.md` Q9, instance (b).
 - **Re-investment and transfer are disposals too.** Placing a matured balance on deposit again, or
   moving it to another interest-bearing account at the same or a different institution, is a
   disposal of the old Kapitalforderung and an acquisition of a new one.

@@ -14,51 +14,34 @@ An unresolved question recorded is ground truth. An unresolved question silently
 |---|-------|----------|--------------------|
 | Q1 | [GT-ESTG23-004] | Does § 108 Abs. 3 AO extend the § 23 Jahresfrist when the anniversary falls on a Saturday, Sunday or public holiday? | `../tax-law/estg-23-private-veraeusserung.md` |
 | Q2 | [GT-ESTG20-013] | Does the *"einzelnes Depot"* boundary of the Fifo rule transpose to a foreign broker's account and sub-account structure? | `../tax-law/estg-20-kapitalvermoegen.md` |
-| Q3 | [GT-FORM-005] | Were Zeilen 21, 24 and 25 physically removed from the VZ 2025 Anlage KAP, or retained and left unused? | `../tax-forms/anlage-kap-zeilen.md` |
-| Q4 | [GT-ESTG20-004] | From which VZ does the JStG-2024 wording of § 20 Abs. 1 Nr. 11 EStG (Glattstellungspraemien as negative Einnahmen *at the time of payment*) apply? | `../tax-law/estg-20-kapitalvermoegen.md` |
+| Q4 | [GT-ESTG20-004] | Does a Glattstellung cost fall in the year it was paid (§ 20 Abs. 1 Nr. 11 EStG and administrative practice) or in the year the Stillhalterpraemie was received (BFH VIII R 27/21, as a rueckwirkendes Ereignis)? | `../tax-law/estg-20-kapitalvermoegen.md` |
 | Q6 | [GT-FORM-023] | What lot-identification rule applies to an *anderes Wirtschaftsgut* under § 23 EStG? | `../tax-forms/anlage-so-zeilen.md` |
 | Q7 | [GT-FX-005] | Are currency gains on an interest-bearing account really § 20 EStG income, or do they remain within § 23 Abs. 1 Satz 1 Nr. 2? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q8 | [GT-FX-006] | How is a short (negative) currency position taxed in Privatvermoegen? | `../bmf-guidance/fremdwaehrung-konten.md` |
-| Q9 | [GT-FX-007] | Is the currency leg embedded in a foreign securities transaction a separate disposal? | `../bmf-guidance/fremdwaehrung-konten.md` |
-| Q10 | [GT-FX-001] | Is a foreign-currency balance debited to settle a cash-flow item disposed of, measured separately in EUR? | this file |
+| Q9 | [GT-FX-007], [GT-FX-001] | Is a currency movement embedded in another transaction a separate disposal, measured in EUR? Two instances: the leg of a securities trade, and a balance spent on a fee or withholding. | `../bmf-guidance/fremdwaehrung-konten.md` |
+| Q11 | [GT-ESTG20-038] | How is unallocated spot precious metal held at a broker taxed -- Termingeschaeft, privates Veraeusserungsgeschaeft, or sonstige Kapitalforderung? | this file |
 
-**Q12 is retired, not free.** It was opened for the day whose Ruecknahmepreis begins the
-Vorabpauschale year and closed on 2026-08-06 -- Rz. 18.3 answers it, and what remained was not a
-legal question. The number is not reused, because prose elsewhere still refers to "Q12" meaning
-that question and a reused number would make those references quietly wrong rather than plainly
-stale.
+**Retired on the same terms, and for the same reason -- a source that settles the point was found,
+or the point was never one.** Numbers are never reused. Each line says what answered it; the
+reasoning lives once, against the claim, which is where a reader acts on it.
 
-**Q5 and Q13 are retired on the same terms, 2026-08-07**, after the BMF-Schreiben of 21.05.2019
-was retrieved in full and its section 18 read end to end for the first time. Both were opened
-against § 18 and both are answered by Randziffern already cited in this library for other
-purposes. Their numbers are not reused.
+| # | Question | What answered it | Recorded at |
+|---|----------|------------------|-------------|
+| Q5 | Vorabpauschale in the year of disposal | Rz. 18.4 -- the multiplier is the units held *"mit Ablauf des 31. Dezember des Kalenderjahres"*, so a holding disposed of in full is multiplied by nothing. Rz. 20.4 confirms it from the other side. Retired 2026-08-07 | [GT-INVSTG-016] |
+| Q12 | The day whose Ruecknahmepreis begins the Vorabpauschale year | Rz. 18.3 -- the same figure serves as the Satz 2 base and the Satz 3 cap's lower bound. Retired 2026-08-06 | [GT-INVSTG-010] |
+| Q13 | The Abs. 2 reduction on a holding acquired in several instalments | Rz. 18.11's worked example applies the reduction to the *per-Anteil* amount, before any unit count enters -- which was the whole of the opposing reading. Retired 2026-08-07 | [GT-INVSTG-011] |
 
-- **Q5 -- Vorabpauschale in the year of disposal.** Answered by **Rz. 18.4**, which states the
-  multiplier as *"die Anzahl der mit Ablauf des 31. Dezember des Kalenderjahres verwahrten oder
-  verwalteten Anteile"*. Units gone by that moment are not in the count, so a holding disposed of
-  in full produces nothing -- the test is what is held at the year's close, not whether a disposal
-  occurred. **Rz. 20.4** confirms it from the other side: a merely *deemed* disposal under
-  § 22 Abs. 1 InvStG leaves the units in the count and the full year stands. The question had been
-  framed on the Zuflussfiktion of Abs. 3 alone, which fixes *when* income is received and so could
-  not settle whether it arises. Recorded at [GT-INVSTG-016].
-- **Q13 -- the Abs. 2 reduction on a holding acquired in several instalments.** Reading A, per
-  acquisition. What decided it is that **Rz. 18.11's worked example applies the reduction to the
-  *per-Anteil* amount** -- the 0,50 € Rz. 18.3 derives per unit, reduced to 0,25 € -- at a point
-  before any unit count has entered. That was the whole of Reading B: that *"die Vorabpauschale"*,
-  definite and singular, denotes one amount for the position. It denotes a per-unit amount, and a
-  per-unit factor is what lets differently-acquired units carry different factors. Supporting, and
-  contradicted by nothing located: **Rz. 18.9**, where the reduction turns on *Anschaffungsdaten*
-  and the full year is the fallback for not knowing them; **Rn. 184a** of BMF 14.05.2025, where a
-  fund holding is administered as *"die Anzahl der zum jeweiligen Anschaffungszeitpunkt erworbenen
-  Investmentanteile"*; and **Rz. 20.4**, where *"Erwerb"* means an actual acquisition. Reading B
-  additionally leaves *"der Monat des Erwerbs"* without a referent for a holding bought in two
-  months of one year, a case inside its own scope. Recorded at [GT-INVSTG-011], where the one step
-  that is a construction rather than a quotation is stated as such.
+Two were retired without being answered, which is a different act and is recorded as such:
+
+| # | Question | Why it left | Recorded at |
+|---|----------|-------------|-------------|
+| Q3 | Were Zeilen 21/24/25 physically removed from the VZ 2025 Anlage KAP, or retained and left unused? | **It decides no figure under either reading**, and this file admits only points that do. Nothing is entered on those lines either way, so the answer cannot change a declaration. It was filed as a legal question because the VZ 2025 form itself could not be retrieved; the evidence is now a note in `../tax-forms/anlage-kap-zeilen.md`. Retired 2026-08-07 | [GT-FORM-005] |
+| Q10 | Is a balance spent on a cash-flow item a separate disposal? | **Not answered -- merged.** It is one instance of Q9, turns on the same finding, and was accumulating the same reasoning twice. Retired into Q9 on 2026-08-07 | [GT-FX-001] |
 
 **Two things Q13's closure does not settle**, recorded so they are not read into it. Which units
-remain at the close of 31 December after a *partial* disposal is a lot-identification question,
-and the boundary of the pool FIFO runs over at a foreign broker is **Q2**, still open. And the day
-that fixes the *Monat des Erwerbs* is not a § 18 question at all: it is the obligatorisches
+remain at the close of 31 December after a *partial* disposal is a lot-identification question, and
+the boundary of the pool FIFO runs over at a foreign broker is **Q2**, still open. And the day that
+fixes the *Monat des Erwerbs* is not a § 18 question at all: it is the obligatorisches
 Rechtsgeschaeft, [GT-ESTG20-040], which no located source puts at settlement.
 
 **Closed 2026-08-03, and recorded here so it is not reopened by habit:** lot identification for
@@ -101,54 +84,30 @@ foreign counterpart.
 Rz. 99 (FIFO applies to Streifbandverwahrung too) shows the administration applies FIFO
 irrespective of custody form, so *whether* FIFO applies is not in doubt -- only the boundary.
 
-## Q3 -- Zeilen 21/24/25 on the VZ 2025 Anlage KAP
+## Q4 -- which year a Glattstellung cost falls in
 
-**Reading A (retained but unused).** No line number *after* 20 moves between the two years: both
-Anleitungen open the block with *"Tragen Sie bitte in die Zeilen 18 bis 26a Kapitalertraege ein,
-die nicht dem inlaendischen Steuerabzug unterlegen haben"*, both head a section *"Zeile 20 und 23"*
-and *"Zeile 26"* / *"Zeile 26a"*, and Zeile 41 is still the noch nicht angerechnete auslaendische
-Steuer in both. On the VZ 2020 form, Zeilen 21 and 24 were printed *"frei"*, so the form has
-precedent for retaining a numbered but unused line.
+**Reading A (payment date).** The Glattstellungspraemie is a negative Einnahme *"zum Zeitpunkt der
+Zahlung"*. This is the JStG-2024 wording of § 20 Abs. 1 Nr. 11 EStG **and** administrative practice
+before it -- BMF 18.01.2016 Rz. 25 ff., carried unchanged into 19.05.2022 and 14.05.2025.
 
-**Reading B (removed).** A Tier 5 summary claims removal. It also claims a three-line
-renumbering, and that half is **refuted** by the Anleitung evidence above, which weakens the
-source.
+**Reading B (the year the Stillhalterpraemie was received).** **BFH v. 02.08.2022 -- VIII R 27/21**
+held that Glattstellung costs reduce the Stillhalterpraemie in the VZ the premium was *received*,
+as a rueckwirkendes Ereignis under § 175 Abs. 1 Satz 1 Nr. 2 AO -- which reopens the earlier
+assessment rather than booking the cost where it was paid.
 
-**Tier 3 evidence found 2026-08-03, and it cuts both ways.** The marginal heading over the
-Verlustverrechnungs block changed from *"Zeile 14, 15, 24 und 25"* in the 2024 Anleitung to
-*"Zeile 14 und 15"* in the 2025 one, and the 2025 block routes the same losses to *"die Zeilen 18
-und / oder 19 und zusaetzlich in Zeile 22"* (Zeile 23 for wertlose Aktien). Neither *"Zeile 24"*
-nor *"Zeile 25"* occurs anywhere in `Anltg_KAP_25.md`. That settles **that nothing is entered on
-them** -- which was never in doubt -- but an Anleitung that stops mentioning a line is not the same
-document as a form that stops printing it.
+**Why it matters:** the same amount falls in different years whenever the two legs straddle a year
+end, and Reading B can be the better outcome or the worse one depending on which year has losses
+to absorb. It is therefore an election to be taken case by case, not a rule that can be settled
+once for every pair.
 
-Not retrievable as of 2026-08-03: the official VZ 2025 form itself, which would settle it.
-Nothing is entered on these lines under either reading.
-
-> **Note, 2026-08-03.** Reading A previously described *"Zeilen 18 bis 26a"* as a "block heading".
-> It is a sentence in the body of the block, and it is identical in the 2024 Anleitung -- so it
-> shows continuity rather than a decision. Restated above with what the two documents actually
-> carry.
-
-## Q4 -- application date of the § 20 Abs. 1 Nr. 11 amendment
-
-**Reading A (payment date, from the amendment).** The JStG-2024 wording books the
-Glattstellungspraemie as a negative Einnahme *"zum Zeitpunkt der Zahlung"*. This matches
-administrative practice before the amendment as well (BMF 18.01.2016 Rz. 25 ff., carried into
-19.05.2022 and 14.05.2025).
-
-**Reading B (year of the Stillhalterpraemie, for earlier VZ).** **BFH v. 02.08.2022 --
-VIII R 27/21** held that Glattstellung costs reduce the Stillhalterpraemie in the VZ the premium
-was *received*, as a rueckwirkendes Ereignis under § 175 Abs. 1 Satz 1 Nr. 2 AO.
-
-**Unestablished:** buzer.de lists two JStG-2024 versions of § 20 EStG -- effective 06.12.2024
-(Art. 3) and 01.01.2025 (Art. 4) -- and does not say which carried Nr. 11. No § 52 EStG
-application rule for Nr. 11 has been located. Tier 5 sources disagree openly: Haufe Finance
-Office states application from 01.01.2024, Haufe Steuer Office Excellence from the day after
-promulgation.
-
-**Why it matters:** the same amount falls in different years whenever the two legs straddle a
-year end.
+> **Rescoped 2026-08-07.** This entry was headed *"application date of the amendment"* and turned
+> on which JStG-2024 article carried Nr. 11 -- buzer.de lists versions effective 06.12.2024 and
+> 01.01.2025 without saying which, no § 52 EStG application rule was located, and Tier 5 sources
+> disagreed openly. **That strand decides nothing and has been dropped.** The administration books
+> the cost at payment both before and after the amendment, so the amendment's first year cannot
+> change the outcome. What was actually open, and remains open, is the divergence between the
+> administrative position and VIII R 27/21 -- which is a question about *which year*, not about
+> *from when*.
 
 ## Q6 -- lot identification under § 23 EStG, for assets other than currency
 
@@ -190,41 +149,49 @@ retrieved and Rz. 131 read in full. The consequences differ per question and are
   Fremdwaehrungsbetraege *inside* the privates Veraeusserungsgeschaeft ([GT-ESTG23-013]).
 - **Q8 (short currency positions)** -- unchanged. Rz. 131 addresses Guthaben throughout and says
   nothing about a negative balance.
-- **Q9 (currency leg of a securities transaction)** -- **the question is now sharper, not
-  softer.** Rz. 131 was the citation the library gave for separate measurement, and reading it
-  shows it does not address the point at all. Q9 has no administrative source on either side.
-
+- **Q9 (a currency movement embedded in another transaction)** -- **sharper, not softer.** Rz. 131
+  was the citation the library gave for separate measurement, and reading it shows it does not
+  address the point at all. Q9 has no administrative source on either side, in either of its two
+  instances.
 A related point that is **no longer open**: lot identification for currency. It is FIFO under both
 classifications -- Rz. 131 for the § 20 branch, § 23 Abs. 1 Satz 1 Nr. 2 Satz 3 for the § 23
 branch. The library previously grounded it in § 20 Abs. 4 Satz 7, which cannot reach a currency
 balance.
 
-## Q10 -- currency consumed to settle a cash-flow item
+## Q9 in full -- a currency movement inside another transaction
 
-A foreign-currency balance is debited to pay withholding tax, a fee, or a similar item. Is that
-debit a disposal of the currency, measured separately in EUR against the acquisition cost of the
-amount consumed?
+**One question, two instances**, merged 2026-08-07 because they turn on the same finding and were
+being reasoned about twice:
+
+- **(a) the leg of a securities trade** -- USD is spent to buy a US share, or received on selling
+  one ([GT-FX-007]);
+- **(b) a balance spent on a cash-flow item** -- withholding tax, a fee, interest ([GT-FX-001]).
+
+In both, is the currency movement a disposal of the currency, measured separately in EUR against
+the acquisition cost of the amount consumed?
 
 **Reading A (a separately measured disposal).** Rz. 131 states the trigger generally before it
 names cases: *"Waehrungsgewinne/-verluste aus der **Veraeusserung oder Rueckzahlung** einer ...
 verzinslichen Kapitalforderung oder eines verzinslichen Fremdwaehrungsguthabens ... sind gemaess
-§ 20 Absatz 2 Satz 1 Nummer 7 und Absatz 4 Satz 1 EStG zu beruecksichtigen."* A payment made out of
-the balance extinguishes part of the Kapitalforderung and so realises the difference between its
-EUR value at acquisition and at extinction, on the same footing as the cases the Randziffer then
-lists. Reading it otherwise lets a currency gain escape measurement whenever the balance is spent
-rather than converted back.
+§ 20 Absatz 2 Satz 1 Nummer 7 und Absatz 4 Satz 1 EStG zu beruecksichtigen."* Spending the balance
+extinguishes part of the Kapitalforderung and so realises the difference between its EUR value at
+acquisition and at extinction, on the same footing as the cases the Randziffer then lists. Reading
+it otherwise lets a currency gain escape measurement whenever the balance is spent rather than
+converted back.
 
 **Reading B (not a separate disposal).** Rz. 131's enumeration is of Rueckzahlung, re-investment
-and transfer to another interest-bearing account. A payment made out of the balance is not among
-them, and the item being settled is itself the taxable event, measured at the rate of its own day.
-On this reading the currency movement is a means of settlement, not a second transaction.
+and transfer to another interest-bearing account. Neither instance is among them, and the
+transaction being settled is itself the taxable event, measured at the rate of its own day. On this
+reading the currency movement is a means of settlement, not a second transaction.
 
-No Tier 1 or Tier 2 statement directly on the point has been located. BMF 14.05.2025 was retrieved
-and Rz. 131 read in full on 2026-08-03; it does not reach the question either way. This is a
-narrower point than Q9, which concerns the currency leg of a securities transaction, and the
-correction recorded there -- that Rz. 131 does not carry separate measurement -- applies here with
-equal force. The choice is not neutral in amount: Reading A produces a gain or loss line that
-Reading B does not.
+**No Tier 1 or Tier 2 statement on either instance has been located.** BMF 14.05.2025 was retrieved
+and Rz. 131 read in full on 2026-08-03; it does not reach the question either way, and it was the
+only citation the library had for Reading A. The choice is not neutral in amount: Reading A
+produces gain and loss lines that Reading B does not.
+
+> **Q10 is retired into this entry, 2026-08-07, and its number is not reused.** It held instance
+> (b) as a separate question. Both instances had accumulated the same reasoning and the same
+> correction -- that Rz. 131 does not carry separate measurement -- in two places.
 
 ---
 

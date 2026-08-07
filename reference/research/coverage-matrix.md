@@ -55,8 +55,8 @@ have is worse than one with a visible hole.
 | Fund sale gain/loss | InvStG | 19 Abs. 1 S. 1-2 | KAP-INV Z14-26 | invstg-19-veraeusserungsgewinne.md |
 | VP deduction on sale | InvStG | 19 Abs. 1 S. 3-4 | KAP-INV **Z53** (not Z55) | invstg-19-veraeusserungsgewinne.md |
 | FX gain (explicit conversion) | EStG | 20 Abs. 2 S. 1 Nr. 7 i.V.m. S. 2 (verzinslich) / 23 Abs. 1 S. 1 Nr. 2 (unverzinslich) | KAP Z19/22 or SO | fremdwaehrung-konten.md |
-| FX gain (currency leg of a securities trade) | -- | **unresolved**; Rz. 131 does *not* address it | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-007], open-legal-questions.md Q9 |
-| FX gain (currency consumed to settle a cash-flow item) | -- | **unresolved**; Rz. 131 names Veraeusserung and Rueckzahlung, not a payment out of the balance | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-001], open-legal-questions.md Q10 |
+| FX gain (currency leg of a securities trade) | -- | **unresolved**; Rz. 131 does *not* address it | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-007], open-legal-questions.md Q9 instance (a) |
+| FX gain (currency consumed to settle a cash-flow item) | -- | **unresolved**; Rz. 131 names Veraeusserung and Rueckzahlung, not a payment out of the balance | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-001], open-legal-questions.md Q9 instance (b) |
 | Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 1 | SO Z54 | estg-23-private-veraeusserung.md |
 | Jahresfrist arithmetic | AO / BGB | 108 Abs. 1 AO, 187 Abs. 1 / 188 Abs. 2-3 BGB | (decides SO Z54 vs. exempt) | estg-23-private-veraeusserung.md |
 | Jahresfrist, currency lot order | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 3 | (decides which acquisition date is compared) | estg-23-private-veraeusserung.md |
@@ -79,7 +79,7 @@ have is worse than one with a visible hole.
 | Rule | 2024 and earlier | 2025 and later | Source |
 |------|------------------|----------------|--------|
 | Derivative loss cap | **Not applied in any year.** The repeal is addressed to *alle offenen Faelle* (52 Abs. 28 S. 25/26 EStG), not to a first year of application -- a return prepared now for VZ 2021-2024 is such a case | Not applied | estg-20-abs6-verlustverrechnung.md |
-| Separate derivative lines (a *form* question, independent of the repeal above) | Z21 gains, Z24 losses -- in use | Not used; derivative gains net into Z19, losses into Z22. Whether the lines were physically removed from the form is **unresolved**, see [open-legal-questions.md](open-legal-questions.md) Q3 | anlage-kap-zeilen.md |
+| Separate derivative lines (a *form* question, independent of the repeal above) | Z21 gains, Z24 losses -- in use | Not used; derivative gains net into Z19, losses into Z22. Nothing is entered on them; whether the numbers are still printed is a form-layout point that decides no figure, noted in anlage-kap-zeilen.md [GT-FORM-005] | anlage-kap-zeilen.md |
 | SO Freigrenze | EUR 1,000 from VZ 2024 (Wachstumschancengesetz v. 27.03.2024, BGBl. 2024 I Nr. 108); EUR 600 before | EUR 1,000 | estg-23-private-veraeusserung.md |
 | Basiszins (for the VP *of* that calendar year, declared the following VZ) | 2.29% (2024), 2.53% (2025) | 3.20% (2026) | basiszins-vorabpauschale.md |
 
