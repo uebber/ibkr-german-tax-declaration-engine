@@ -125,32 +125,30 @@ what survived. Keep it current for that reason.
 | GT-ESTG20-012 | implements | `src/engine/fifo_manager.py` — FIFO lot consumption; `reconcile_with_mark` decides which lots survive each checkpoint | `test_fifo_groups.py`, `test_replay_checkpoint_marks.py`, `tests/docs/spec_fifo.md` | Mandatory fiction; no specific-identification alternative is offered. Which lots a reconciliation keeps is part of it: where the reconstruction exceeds the reported holding the survivors are the **newest**, because FIFO consumed the oldest. Filling from the oldest end (the behaviour before August 2026) returned the wrong lot whenever a ledger held more than one, and the oversell flag previously discarded even an exactly-matching reconstruction. |
 | GT-ESTG20-013 | **deviates** | `src/engine/ledger_views.py`, `src/utils/account_utils.py` | `test_ledger_views.py`, `test_multi_account_harness.py` | See below. |
 | GT-ESTG20-014 | not reached | — | — | Own-depot transfer is not a disposal. No input represents one; a per-depot implementation would have to relocate lots rather than close and reopen them. |
-| GT-ESTG20-039 | implements — **by fallback, not by rule** | `DomainEventFactory._get_prioritized_date()` in `src/parsers/domain_event_factory.py`, feeding `FinancialEvent.event_date` | none guards the rule; `test_group7_currency_fifo.py` and `test_group9_variable_fx.py` assert the rate of the event date, but their fixtures omit the settlement column exactly as the real export does, so the branch that would break this is never taken | Rn. 85: the obligatorisches Rechtsgeschäft fixes the FX rate and the gain computation, so the trade date governs and settlement does not. The engine's dates *are* trade dates — but by fallback: `_get_prioritized_date` tries `settle_date_str` **first**, and the Trades export carries no `SettleDateTarget` column. Measured 2026-08-07: 0 of 6,976 trade rows across `Trades-2021.csv`…`Trades-2025.csv` carry it. See the follow-up below for what would have to happen for that to bite. |
-| GT-ESTG20-040 | implements — same mechanism, same caveat | as above | as above; the § 23 tests (`test_section23_holding_period.py`, `test_section23_holding_period_guards.py`) build lots directly and so do not reach the parser's choice of date either | Rn. 317 defines *Erwerb* as the rechtswirksam abgeschlossener obligatorischer Vertrag; BFH IX R 18/13 (BStBl II 2014, 826, Rz 29) is to the same effect for § 23 and does not stand alone. Acquisition dates therefore have to be trade dates, which is what the ledger holds. The claim reaches past the Vorabpauschale: it also fixes the § 23 Jahresfrist and the month for § 18 Abs. 2. |
+| GT-ESTG20-039 | implements | `DomainEventFactory._trade_contract_date()` in `src/parsers/domain_event_factory.py`, feeding `FinancialEvent.event_date` | `test_trade_event_date.py` — the rule, the signature, the absent-date case, and the wiring through `create_events_from_trades` | Rn. 85: the obligatorisches Rechtsgeschäft fixes the FX rate and the gain computation, so the trade date governs and settlement does not. **By rule since 2026-08-07**, not by fallback: the trade path has its own helper, which takes no settlement or report parameter, and `RawTradeRecord` no longer declares a settlement field. Previously the trades path used the general helper, which orders settlement first, and was right only because IBKR's Trades export omits `SettleDateTarget` — measured that day, 0 of 6,976 rows across `Trades-2021.csv`…`Trades-2025.csv`. |
+| GT-ESTG20-040 | implements | as above | as above. The § 23 tests (`test_section23_holding_period.py`, `test_section23_holding_period_guards.py`) build lots directly and do not reach the parser's choice of date, which is why `test_trade_event_date.py` exists | Rn. 317 defines *Erwerb* as the rechtswirksam abgeschlossener obligatorischer Vertrag; BFH IX R 18/13 (BStBl II 2014, 826, Rz 29) is to the same effect for § 23 and does not stand alone. Acquisition dates are therefore trade dates, which is what the ledger holds. The claim reaches past the Vorabpauschale: it also fixes the § 23 Jahresfrist and the month for § 18 Abs. 2. |
 | GT-ESTG20-041 | implements | `FifoLedger.receive_all_lots_from_merger()` in `src/engine/fifo_manager.py` carries `acquisition_date` across to the replacement lots | `test_stock_merger_fifo.py` asserts the carry-over (four separate assertions on the surviving lot's `acquisition_date`) | Rn. 184a: a steuerneutrale Fondsverschmelzung restates the count *"unter Berücksichtigung des Umtauschverhältnisses"* and does not create a new Anschaffungszeitpunkt. **What the guarding test does not cover:** every case it exercises is a stock merger. The path is shared, but no test merges an `InvestmentFund`, so the § 18 Abs. 2 consequence — a merged fund keeping its acquisition month — is unguarded. The per-acquisition half of Rn. 184a is what grounds GT-INVSTG-011. |
 
-**GT-ESTG20-039 and GT-ESTG20-040 — follow-up:** `fix-nonfunc(parsers)` — make the trade date the
-stated rule for a trade rather than the third fallback behind settlement, so that a legally
-decisive date is chosen by a rule instead of by which fields happen to be populated.
+**GT-ESTG20-039 and GT-ESTG20-040 — done, 2026-08-07.** The follow-up recorded here was to make
+the trade date the stated rule rather than the third fallback behind settlement. It landed in two
+steps: the trade path got its own helper, and then the concept was made unambiguous end to end —
+`event_date` now documents which date each event kind carries and why, the general helper is named
+`_zufluss_date` and says never to call it for a trade, `RawTradeRecord` no longer declares a
+settlement field, and `input_data_spec.md` says not to add the column.
 
-**Correction, 2026-08-07, same day.** This block first said that adding `SettleDateTarget` to the
-Flex Query would make every date *silently* become the settlement date. That is wrong, and the
-claim was made without reading `validate_csv_columns`. The trades parser validates with
-`allow_extra=False`, so that column on its own aborts the run with *"Unexpected columns:
-['SettleDateTarget']"* — loud, not silent. Only `cash_balance_parser` passes `allow_extra=True`.
+**What the pre-fix state actually risked, corrected twice on the day.** It was first written here
+as one Flex Query checkbox away from silently misdating every lot. It is not: the trades parser
+validates with `allow_extra=False`, so that column alone aborts the run. The silent path needed
+two edits — the column added to the query *and* to `TRADES_COLUMNS` — or no CSV at all, since the
+raw model declared the field and a record built in code never meets the validator. Removing the
+field closes the second route; the validator closes the first.
 
-What the real exposure is, stated accurately:
-
-- **Two edits, not one.** The silent path needs the column added to the Flex Query *and* to
-  `TRADES_COLUMNS` in `src/parsers/column_validator.py`. That is the natural pair of edits for
-  "add a column", neither mentions dates, and the abort in between reads as a schema chore rather
-  than a warning.
-- **No CSV needed at all** for a record built in code: `RawTradeRecord` already declares
-  `settle_date_target`, so any programmatic construction gets settlement-first with the validator
-  never involved.
-
-The fix is still worth making — Rn. 85 and Rn. 317 now state the rule, and the code should follow
-it rather than arrive at it — but it closes a two-step hazard, not a one-step one.
+> **Two corrections to this block, both on 2026-08-07, kept because the pattern matters.** It
+> first claimed the hazard was one Flex Query checkbox — asserted from the shape of the helper
+> without reading `validate_csv_columns`. Restated as a two-step hazard, it then stood as an open
+> follow-up for an hour after the first half had already been fixed, because the commit that fixed
+> it did not update the row. Both are the same failure: writing about code from what it looks like
+> it does rather than from what it does.
 
 **GT-ESTG20-013 — known deviation.** The ledger registries are keyed by `(account_key, asset_id)`,
 but every write uses a single `DEFAULT_ACCOUNT` constant and no account identifier is read

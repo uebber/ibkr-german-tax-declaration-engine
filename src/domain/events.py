@@ -12,7 +12,18 @@ from .enums import FinancialEventType
 class FinancialEvent:
     # Positional, non-default arguments
     asset_internal_id: uuid.UUID # Links to the Asset this event pertains to
-    event_date: str # YYYY-MM-DD string representing the primary date of the event (e.g., trade date, payment date, settlement date)
+    # YYYY-MM-DD. The date the law attaches to this event, which differs by event kind and is
+    # never a matter of which field the broker happened to populate:
+    #   trade      -> the contract date, the obligatorisches Rechtsgeschaeft. BMF 14.05.2025
+    #                 Rn. 317 for Erwerb and Rn. 85 for Veraeusserung/Einloesung; it fixes the
+    #                 FX rate, the gain, the assessment year and the Section 23 Jahresfrist.
+    #                 Built by DomainEventFactory._trade_contract_date, which accepts no
+    #                 settlement or report date. [GT-ESTG20-039], [GT-ESTG20-040]
+    #   cash flow  -> the Zufluss: settlement for a cash transaction, pay date for a corporate
+    #                 action. Built by DomainEventFactory._zufluss_date.
+    # A settlement date is never the date of a trade here, and the Trades import carries no
+    # settlement column at all.
+    event_date: str
 
     # Keyword-only arguments, can have defaults
     _: KW_ONLY

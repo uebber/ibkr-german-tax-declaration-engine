@@ -12,11 +12,13 @@ Why this is worth its own file. The date a `TradeEvent` carries is not one fact
 but four: it picks the ECB rate, it decides the assessment year when contract and
 settlement straddle a year end, it starts the § 23 Jahresfrist, and it fixes the
 month § 18 Abs. 2 InvStG counts twelfths from. The engine gets it right today,
-but by fallback rather than by rule — `_get_prioritized_date` prefers the
-settlement date, and only the absence of `SettleDateTarget` from IBKR's Trades
-export makes the trade date win. These tests take the fallback away and assert
-the rule directly, so that a later change to the export, the column list, or the
-helper's ordering fails here instead of in a filed return.
+and by rule since August 2026: `_trade_contract_date` accepts no settlement or
+report date, and `RawTradeRecord` no longer carries a settlement field. Before
+that it was right only by fallback — the general helper preferred the settlement
+date, and only the absence of `SettleDateTarget` from IBKR's Trades export made
+the trade date win. These tests assert the rule directly, so that a later change
+to the export, the column list, or the helper's ordering fails here instead of in
+a filed return.
 
 The distinction that keeps the cash-flow paths correct is asserted too: a
 dividend or interest credit is taxed on its Zufluss, so its settlement date is
@@ -30,7 +32,7 @@ def _contract_date(**kwargs) -> str | None:
 
 
 def _zufluss_date(**kwargs) -> str | None:
-    return DomainEventFactory._get_prioritized_date(**kwargs)
+    return DomainEventFactory._zufluss_date(**kwargs)
 
 
 class TestATradeIsBookedOnTheContractDate:
@@ -86,7 +88,7 @@ class TestTheWiringUsesThatRule:
         """
         Goes through `create_events_from_trades`, not through the rule, so that
         putting the settlement date back at the call site fails here. Probed:
-        restoring `_get_prioritized_date(settle_date_str=rt.settle_date_target, …)`
+        restoring `_zufluss_date(settle_date_str=…, …)` at the call site
         turns this red and leaves every other test in the file green.
         """
         from src.classification.asset_classifier import AssetClassifier
@@ -101,9 +103,13 @@ class TestTheWiringUsesThatRule:
             "Quantity": "10", "TradePrice": "40.00", "Buy/Sell": "BUY",
             "TransactionID": "TX_DATE_1", "Open/CloseIndicator": "O",
         })
-        assert rt.settle_date_target == "2025-01-02", (
+        assert not hasattr(rt, "settle_date_target"), (
+            "RawTradeRecord grew a settlement field again. It was removed in August "
+            "2026 because a declared-but-unread date field is how the settlement date "
+            "became the engine's default; the model must have nowhere to put one.")
+        assert rt.report_date == "2025-01-02", (
             "fixture no longer exercises the case: the raw record dropped the "
-            "settlement date, so this test would pass either way")
+            "competing date, so this test would pass either way")
 
         factory = DomainEventFactory(
             asset_resolver=AssetResolver(

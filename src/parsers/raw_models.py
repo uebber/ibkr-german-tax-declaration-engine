@@ -46,9 +46,13 @@ class RawTradeRecord(RawBaseRecord):
     put_call: Optional[str] = Field(None, alias="Put/Call") # 'P' or 'C'
     trade_id: Optional[str] = Field(None, alias="TradeID")
     report_date: Optional[str] = Field(None, alias="ReportDate") # Kept as str - Ensure this is optional if not always present
+    # The contract date, and the only date of a trade this engine recognises. There is
+    # deliberately no settlement field: IBKR's `SettleDateTarget` is not requested in the Flex
+    # Query, is not in TRADES_COLUMNS, and was removed from this model in August 2026 because a
+    # declared-but-unread date field is how the settlement date became the engine's default in
+    # the first place. See DomainEventFactory._trade_contract_date, [GT-ESTG20-039/040].
     trade_date: str = Field(alias="TradeDate") # Kept as str
     trade_time: Optional[str] = Field(None, alias="TradeTime") # Kept as str
-    settle_date_target: Optional[str] = Field(None, alias="SettleDateTarget") # Kept as str
     transaction_type: Optional[str] = Field(None, alias="TransactionType")
     exchange: Optional[str] = Field(None, alias="Exchange")
     quantity: Decimal = Field(alias="Quantity") # Can be positive (buy) or negative (sell)
@@ -79,7 +83,7 @@ class RawTradeRecord(RawBaseRecord):
     def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
         return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
 
-    @validator('trade_date', 'report_date', 'settle_date_target', 'expiry', 'orig_trade_date', pre=True)
+    @validator('trade_date', 'report_date', 'expiry', 'orig_trade_date', pre=True)
     def validate_date_strings(cls, v: Any) -> Optional[str]:
         if v is None or str(v).strip() == "":
             return None

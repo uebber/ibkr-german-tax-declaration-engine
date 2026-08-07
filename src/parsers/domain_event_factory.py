@@ -47,12 +47,12 @@ class DomainEventFactory:
         Waehrungsumrechnung und die Berechnung des ... Veraeusserungs- bzw.
         Einloesungsgewinns"*. That is the trade date, not the settlement date.
 
-        Kept apart from `_get_prioritized_date` on purpose. That helper orders by
-        settlement first, which is right for the things it is used for -- a dividend or
-        an interest credit is taxed on its Zufluss -- and wrong here. Routing trades
-        through it made the correct date a *fallback*, reached only because IBKR's Trades
-        export carries no settlement column; two edits, adding that column to the Flex
-        Query and to `TRADES_COLUMNS`, would have moved every lot's date silently.
+        Kept apart from `_zufluss_date` on purpose. That helper orders by settlement
+        first, which is right for the things it is used for -- a dividend or an interest
+        credit is taxed on its Zufluss -- and wrong here. Routing trades through it made
+        the correct date a *fallback*, reached only because IBKR's Trades export carries
+        no settlement column; two edits, adding that column to the Flex Query and to
+        `TRADES_COLUMNS`, would have moved every lot's date silently.
 
         Neither a settlement date nor a report date is accepted as a substitute. If the
         trade date is absent the caller records a data error and the run stops, because a
@@ -76,13 +76,25 @@ class DomainEventFactory:
         return None
 
     @staticmethod
-    def _get_prioritized_date(
+    def _zufluss_date(
         settle_date_str: Optional[str] = None,
         pay_date_str: Optional[str] = None,
         trade_or_event_datetime_str: Optional[str] = None,
         trade_date_str: Optional[str] = None,
         report_date_str: Optional[str] = None,
     ) -> Optional[str]:
+        """The day a cash flow is received: its Zufluss, settlement first.
+
+        For a dividend, an interest credit, a withholding entry or a corporate action, the
+        taxable moment is when the amount flows, so the settlement or pay date governs and
+        this ordering is correct.
+
+        **Never call this for a trade.** Rn. 85 and Rn. 317 put both ends of a trade at the
+        obligatorisches Rechtsgeschaeft, so a settlement date must not outrank a contract
+        date -- use `_trade_contract_date`, which takes no settlement parameter at all.
+        Trades were routed through here until August 2026 and got the right answer only
+        because IBKR's Trades export omits the settlement column.
+        """
         parsed_date_obj: Optional[date] = None
         if settle_date_str:
             parsed_date_obj = parse_ibkr_date(settle_date_str)
@@ -525,7 +537,7 @@ class DomainEventFactory:
                     raw_ibkr_sub_category=rct.sub_category
                 )
 
-            event_date_str_or_none = self._get_prioritized_date(
+            event_date_str_or_none = self._zufluss_date(
                 settle_date_str=rct.settle_date,
                 trade_or_event_datetime_str=rct.date_time,
                 report_date_str=rct.report_date
@@ -727,7 +739,7 @@ class DomainEventFactory:
                 continue
             logger.debug(f"CA Record {idx+1}: Asset has ibkr_symbol ('{affected_asset.ibkr_symbol}') or is CashBalance.")
 
-            event_date_str_or_none = self._get_prioritized_date(
+            event_date_str_or_none = self._zufluss_date(
                 pay_date_str=rca.pay_date,
                 report_date_str=rca.report_date,
                 trade_or_event_datetime_str=rca.ex_date
@@ -1073,7 +1085,7 @@ class DomainEventFactory:
                     raw_underlying_symbol=settle_row.underlying_symbol
                 )
 
-                event_date = self._get_prioritized_date(trade_date_str=settle_row.date)
+                event_date = self._zufluss_date(trade_date_str=settle_row.date)
                 if not event_date:
                     data_errors.append(f"OptionEAE: Cannot determine date for Cash Settlement of {settle_row.symbol} (Conid: {settle_row.conid}).")
                     continue

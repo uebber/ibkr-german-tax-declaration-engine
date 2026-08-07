@@ -25,7 +25,7 @@
 | `Strike`               | `strike`                    | `Optional[Decimal]`         | The strike price of an option.                                              | Optional, relevant for OPT. Example: "1.0", "111.0"                                                                                                                        |
 | `Expiry`               | `expiry`                    | `Optional[str]`             | The expiry date of an option or future (YYYY-MM-DD).                        | Optional, relevant for OPT/FUT. Parsed as string. Example: "2023-06-16"                                                                                                     |
 | `Put/Call`             | `put_call`                  | `Optional[str]`             | Indicates if an option is a Put ('P') or Call ('C').                        | Optional, relevant for OPT. Example: "C", "P"                                                                                                                              |
-| `TradeDate`            | `trade_date`                | `str`                       | The date of the trade (YYYY-MM-DD).                                         | Required. Parsed as string. Example: "2023-03-13"                                                                                                                          |
+| `TradeDate`            | `trade_date`                | `str`                       | The **contract** date (YYYY-MM-DD) — the obligatorisches Rechtsgeschäft, and the only date of a trade this engine recognises. | Required. Parsed as string. Example: "2023-03-13". **Do not add `SettleDateTarget` to this query** — see the note under this table.                                        |
 | `Quantity`             | `quantity`                  | `Decimal`                   | The number of units traded. Positive for buy, negative for sell.            | Required. Example: "20000.0", "-11.0"                                                                                                                                      |
 | `TradePrice`           | `trade_price`               | `Decimal`                   | The price per unit for the trade.                                           | Required. Example: "11.00", "1.00000", "1.00"                                                                                                                              |
 | `IBCommission`         | `ib_commission`             | `Optional[Decimal]`         | Commission charged by Interactive Brokers for the trade.                    | Optional. Usually negative. Example: "-11.0", "-1.00000"                                                                                                                   |
@@ -38,6 +38,23 @@
 | `UnderlyingConid`      | `underlying_conid`          | `Optional[str]`             | IBKR's contract identifier for the underlying asset.                        | Optional, relevant for OPT/FUT/CFD. Example: "900003959.0" (parsed as string)                                                                                              |
 | `Multiplier`           | `multiplier`                | `Optional[Decimal]`         | The contract multiplier (e.g., for options, futures).                     | Optional. Example: "1", "100"                                                                                                                                              |
 | `Open/CloseIndicator`  | `open_close_indicator`      | `Optional[str]`             | Indicates if trade opens or closes a position ('O' or 'C').                 | Crucial for determining `FinancialEventType` for standard financial instrument trades in conjunction with `Buy/Sell` (refer to PRD Section 5, Step 7). Expected values: 'O' (Open), 'C' (Close). Missing or invalid values for relevant trades constitute a data inconsistency. Not applicable to currency pair trades (e.g., FX 'CASH' asset class trades like EUR.USD). The provided sample `input_file_2.csv` does not include this column; real input data for accurate trade classification requires it. Model field `open_close_indicator` maps to this. |
+
+### A trade has one date, and it is the contract date
+
+`TradeDate` is the only date of a trade this engine uses, and it is used because the law names it,
+not because it is the field that happens to be present. The obligatorisches Rechtsgeschäft fixes
+the assessment year, the ECB rate the amounts are converted at, the § 23 Jahresfrist and the month
+the § 18 Abs. 2 InvStG twelfths count from — see `[GT-ESTG20-039]` and `[GT-ESTG20-040]` in
+`reference/bmf-guidance/abgeltungsteuer-einzelfragen.md`.
+
+**Do not add `SettleDateTarget` to the Flex Query.** It is not in `TRADES_COLUMNS`, the trades
+parser validates with `allow_extra=False`, and the field was removed from the raw model in August
+2026. Before that the engine ordered settlement ahead of trade date and produced the right answer
+only because IBKR does not export the column — a declared-but-unread date field is how that
+happened, and there is now nowhere for a settlement date to land.
+
+A settlement date is the right date for a **cash transaction**, where the taxable moment is the
+Zufluss; that is the `SettleDate` column of the next file, and the distinction is deliberate.
 
 ---
 
