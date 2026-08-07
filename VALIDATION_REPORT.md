@@ -211,6 +211,39 @@ All 28 loss offsetting test cases (LO_ALL_001 through LO_FUND_MISCH_002) were sp
 Ledger reconciliation and output parity against the maintainer's own IBKR export. Instance data —
 holdings, identifiers, amounts — stays in gitignored working copies; only outcomes are recorded here.
 
+## 2026-08-07
+
+**Supersedes the 2026-08-06 row reading "2024 | aborts on
+`VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN`".** Issue #56 — the root cause recorded below — is
+fixed on this branch by `efb0d97` (a historical merger applies at its own date) and `13f6b6d`
+(reconcile at every yearly snapshot). **VZ 2024 no longer aborts there.**
+
+| VZ | Result |
+|---|---|
+| 2023 | **runs clean**, and declares **no Vorabpauschale**: it carries calendar 2022, whose Basiszins was −0.05 % — negative, so none arises. Zeilen 9–13 all zero. |
+| 2024 | aborts **earlier than before**, during classification |
+| 2025 | aborts during classification |
+
+**Both remaining aborts are the same one instrument**, and it is not a Vorabpauschale problem:
+`CONID:69067924` / `XAUUSD` / `CMDTY` has category `UNKNOWN` and cannot be auto-classified, so
+`DataIntegrityError` stops the run before any figure is produced. The classification it needs is
+Q11 Reading C — a sonstige Kapitalforderung under § 20 Abs. 2 Satz 1 Nr. 7 — and no such category
+exists: **issue #53 now gates two assessment years.** VZ 2024 and VZ 2025 are also the first two
+years in which a Vorabpauschale can be non-zero at all.
+
+**Not re-verified, and not claimed:** whether the Swiss Gold Vorabpauschale chain is now clean.
+The run stops before reaching it.
+
+**The input carries no duplicate trade rows.** Measured across `Trades-2021.csv` …
+`Trades-2025.csv`: 6 976 rows, 6 976 distinct `TransactionID`s, none repeated within a file or
+across files. A working note had described the VZ 2024 failure as caused by "duplicated 2022 trade
+rows"; that is wrong, and the 2026-08-06 entry below already states the correct mechanism —
+phantom units from replay *ordering*, not from the input.
+
+**Classification cache.** Destroyed on this date by the clean-clone protocol
+(`rm -rf cache`, see issue #51) and rebuilt by the maintainer. `XAUUSD` was not reclassified,
+which is why the two aborts above are reachable. No other run state was lost.
+
 ## 2026-08-06
 
 **Supersedes the 2026-08-05 statement that "VZ 2023 cannot be computed and VZ 2022 cannot be run

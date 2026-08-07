@@ -157,9 +157,10 @@ def run_core_processing_pipeline(
                 detail=(
                     "Der Ruecknahmepreis zu Beginn des Kalenderjahres fehlt im Positions-"
                     "Snapshot, obwohl der Fonds zu Jahresbeginn gehalten wurde. Fuer die "
-                    "Vorabpauschale wurde ersatzweise der Preis vom 31.12. verwendet; der "
-                    "Basisertrag stammt damit vom falschen Tag und ist bei gestiegenem Kurs "
-                    "zu hoch."
+                    "Vorabpauschale wurde ersatzweise der letzte vor Jahresbeginn "
+                    "festgesetzte Preis verwendet -- einen Boersentag zu frueh statt ein "
+                    "Jahr zu spaet; der Basisertrag stammt damit vom falschen Tag und ist "
+                    "bei gestiegenem Kurs zu niedrig."
                 ),
             )
         realized_gains_losses, vorabpauschale_items, processed_income_events, eoy_mismatch_error_count_calc = run_main_calculations(
