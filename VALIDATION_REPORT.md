@@ -46,11 +46,11 @@ The form line values (Z24) are unaffected -- they always report gross uncapped a
 **Legal basis:** Options/stocks/bonds/funds are taxed under EStG 20, not EStG 23
 **Reference file:** `reference/tax-law/estg-20-kapitalvermoegen.md`
 
-In `src/engine/fifo_manager.py`, the `is_taxable_under_section_23_flag` defaults to `True` at three locations (lines 608, 732, 879) and is only corrected for `AssetCategory.PRIVATE_SALE_ASSET`. For all other categories (STOCK, BOND, OPTION, CFD, INVESTMENT_FUND), the flag remains `True` -- semantically wrong.
+In `src/engine/fifo_manager.py`, the `is_taxable_under_section_23_flag` defaults to `True` in each of the three realization paths (long sale, short cover, cash merger) and is only corrected for `AssetCategory.PRIVATE_SALE_ASSET`. For all other categories (STOCK, BOND, SONSTIGE_KAPITALFORDERUNG, OPTION, CFD, FUTURE, INVESTMENT_FUND), the flag remains `True` -- semantically wrong. (The line numbers this entry used to give had drifted; the paths are named instead, since they move with every edit to the file.)
 
 Additionally, `src/engine/event_processors/option_processor.py:223` explicitly sets `is_taxable_under_section_23=True` for option expiration RGLs, with a comment acknowledging the contradiction: "Options are Termingeschaefte, not 23".
 
-**Why low impact:** The loss offsetting engine (`src/engine/loss_offsetting.py:99-101`) only checks this flag when `asset_category_at_realization == AssetCategory.PRIVATE_SALE_ASSET`, so the incorrect default does not affect tax calculations. However, it would cause incorrect behavior if the guard logic changes in the future.
+**Why low impact:** The loss offsetting engine only checks this flag when `asset_category_at_realization == AssetCategory.PRIVATE_SALE_ASSET`, so the incorrect default does not affect tax calculations. However, it would cause incorrect behavior if the guard logic changes in the future.
 
 ---
 

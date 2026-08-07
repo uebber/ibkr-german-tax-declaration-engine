@@ -136,7 +136,8 @@ The system must classify assets to determine their correct treatment and placeme
 - **`AssetCategory.INVESTMENT_FUND` (for Anlage KAP-INV):** Identify assets like ETFs and mutual funds. Exclude ETCs/ETPs intended for Anlage SO. **Assumes all investment fund shares were acquired on or after 01.01.2018.**
   - **Fund Type (for KAP-INV lines & Teilfreistellung):** Further classify `InvestmentFund` assets by setting their `fund_type` attribute (of type `InvestmentFundType`) into "Aktienfonds," "Mischfonds," "Immobilienfonds," "Auslands-Immobilienfonds," and "Sonstige Fonds" as per German tax law definitions (§ 2 InvStG) and *Anleitung zur Anlage KAP-INV 2023*. This dictates Teilfreistellung rates.
 - **`AssetCategory.STOCK` (Aktien):** Equity shares not classified as investment funds. Includes common stock and ADRs. For Anlage KAP.
-- **`AssetCategory.BOND` (Anleihen, sonstige Kapitalforderungen):** For Anlage KAP.
+- **`AssetCategory.BOND` (Anleihen):** For Anlage KAP.
+- **`AssetCategory.SONSTIGE_KAPITALFORDERUNG` (sonstige Kapitalforderungen nach 20 Abs. 2 S. 1 Nr. 7, die keine Anleihen sind):** Ungedeckte Gold- und Rohstoff-ETCs, Zertifikate, unallokiertes Spot-Edelmetall. Same Anlage KAP lines as `BOND` (Zeile 19/22), separate category because none of the bond-specific handling (Kursnotierung in Prozent des Nennwerts, Stueckzinsen, BM-Faelligkeit) applies. The determination is per instrument and comes from classification only; it cannot be read off an IBKR asset class.
 - **`AssetCategory.OPTION` & `AssetCategory.CFD` (Termingeschäfte):** Includes listed options and CFDs/FXCFDs. For Anlage KAP.
 - **`AssetCategory.PRIVATE_SALE_ASSET` (Anlage SO):** Identify assets subject to §23 EStG tax if sold within the statutory period (typically 1 year). Examples include physical Gold ETCs (if they offer a claim to physical gold) and Crypto Asset ETPs/ETCs. *These are explicitly NOT investment funds for KAP-INV.*
 - **`AssetCategory.CASH_BALANCE`:** Actual currency holdings.
@@ -335,12 +336,12 @@ The system will first calculate the following fundamental components, based on e
 5. **`kap_other_income_positive`**: Algebraic sum of (all from events with `event_date` in 2023):
    - Gross positive Interest Received (`FinancialEventType.INTEREST_RECEIVED`).
    - Gross positive Non-Fund Dividends (`FinancialEventType.DIVIDEND_CASH` from `STOCK` assets, FMV of taxable `FinancialEventType.CORP_STOCK_DIVIDEND`).
-   - Gross positive Bond Gains (from `RealizedGainLoss` where `asset_category_at_realization == BOND`, `gross_gain_loss_eur > 0`, and `realization_date` is in 2023).
+   - Gross positive gains on 20 Abs. 2 S. 1 Nr. 7 instruments (from `RealizedGainLoss` where `asset_category_at_realization` is `BOND` or `SONSTIGE_KAPITALFORDERUNG`, `gross_gain_loss_eur > 0`, and `realization_date` is in 2023).
    - Net Stückzinsen (`stueckzinsen_received` minus `stueckzinsen_paid`); only if result > 0.
    - **Note: Fund-related items (distributions, gains, Vorabpauschale) are NOT included here as they belong on KAP-INV**
 
 6. **`kap_other_losses_abs`**: Sum of absolute values of (all from events/realizations with `event_date`/`realization_date` in 2023):
-   - Gross Bond Losses (from `RealizedGainLoss` where `asset_category_at_realization == BOND`, `gross_gain_loss_eur < 0`, take absolute value).
+   - Gross losses on 20 Abs. 2 S. 1 Nr. 7 instruments (from `RealizedGainLoss` where `asset_category_at_realization` is `BOND` or `SONSTIGE_KAPITALFORDERUNG`, `gross_gain_loss_eur < 0`, take absolute value).
    - Net Stückzinsen (`stueckzinsen_received` minus `stueckzinsen_paid`); take absolute value if result < 0.
    - **Note: Fund-related losses are NOT included here as they belong on KAP-INV**
 
@@ -634,7 +635,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
     - **`CorporateActionEvent` subtypes:** Adjust FIFO lots for the affected `Asset` or trigger taxable events (e.g., taxable stock dividend income contributes to `kap_other_income_positive`).
     - **`TradeEvent` (Sell/Cover types):** Calculate gross G/L (FIFO) for the relevant `Asset`. Generate `RealizedGainLoss` record with the appropriate `RealizationType`.
       - For `STOCK` sales/covers, G/L contributes to `stock_gains_gross` or `stock_losses_abs`.
-      - For `BOND` sales/covers, G/L contributes to `kap_other_income_positive` or `kap_other_losses_abs`.
+      - For `BOND` and `SONSTIGE_KAPITALFORDERUNG` sales/covers, G/L contributes to `kap_other_income_positive` or `kap_other_losses_abs`.
       - For `INVESTMENT_FUND` sales, calculate Teilfreistellung on G/L. The `net_gain_loss_after_teilfreistellung_eur` contributes to `fund_income_net_taxable` (for internal calculations only, not included in Anlage KAP Zeile 19).
       - For `PRIVATE_SALE_ASSET`, check holding period for taxability and G/L contributes to Anlage SO.
       - Stock trades linked to option events will have their economics adjusted by the option premium before FIFO processing (using the `related_option_event_id` link).

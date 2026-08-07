@@ -64,7 +64,7 @@ EStG application rule for Nr. 11 has been located", which was true and beside th
 |---|---|---|---|---|
 | GT-ESTG20-005 | implements | `LONG_POSITION_SALE` / `SHORT_POSITION_COVER` on `STOCK` → `ANLAGE_KAP_AKTIEN_GEWINN` / `_VERLUST` | `test_fifo_groups.py`, `test_group6_loss_offsetting.py` | Zeilen 20 and 23. |
 | GT-ESTG20-006 | not reached | — | — | Sale of a Dividenden-/Zinsschein detached from the Stammrecht. No event kind, and no broker input produces one. |
-| GT-ESTG20-038 | **not yet reached** (the positive definition) / **relied on** (the exclusion) | — | — | Rz. 9's *definition* is what would let an IBKR asset class be mapped to a Termingeschaeft without an analogy, and nothing consumes it yet: `FXCFD` and `CMDTY` still fall through to UNKNOWN. Its *exclusion* is a different matter — *"Zertifikate und Optionsscheine gehören nicht zu den Termingeschäften"* is what decides Q11 against the Termingeschaeft reading for `CMDTY`, so this claim is load-bearing there even though no code reaches it. Neither exclusion has an IBKR asset class of its own, and a Zertifikat arriving as `STK` is still treated as a share — a known limit, and part of what issue #53 has to fix. |
+| GT-ESTG20-038 | **not yet reached** (the positive definition) / **implements** (the exclusion) | `AssetCategory.SONSTIGE_KAPITALFORDERUNG`; `src/engine/loss_offsetting.py`, `src/engine/fifo_manager.py` route it to Zeile 19/22 | `test_sonstige_kapitalforderung.py::test_gain_feeds_zeile_19`, `::test_loss_feeds_zeile_22` | **Re-decided 2026-08-07 with issue #53.** Rz. 9's *definition* is still unconsumed: `FXCFD` and `CMDTY` fall through to UNKNOWN and no asset class is mapped to a Termingeschaeft by it. Its *exclusion* — *"Zertifikate und Optionsscheine gehören nicht zu den Termingeschäften"* — has moved from **relied on** to **implements**: a Zertifikat or an unallocated spot metal position can now be classified into a category that lands on Zeile 19/22 and is asserted *not* to reach the Termingeschaeft lines. Two limits stand, and neither is closed by #53: the exclusions still have no IBKR asset class of their own, so **a Zertifikat arriving as `STK` is auto-classified `STOCK` and taxed as a share unless the taxpayer classifies it by hand** — see the note on the interactive pass under Q11 — and the positive definition remains unimplemented. |
 | GT-ESTG20-007 | implements | option and CFD close/expiry/settlement paths | `test_options_lifecycle.py`, `test_futures.py`, `test_console_reporter_derivatives.py` | Routed by `get_form_rules(tax_year)` — Zeile 21/24 up to VZ 2024, merged into 19/22 from VZ 2025. |
 | GT-ESTG20-008 | implements | bond disposals; currency disposals via `FX_*` realization types | `test_bond_maturity.py`, `test_group7_currency_fifo.py` | |
 | GT-ESTG20-009 | implements | IBKR corporate action `BM` → synthetic sell → `LONG_POSITION_SALE` | `test_bond_maturity.py::TestBondMaturity` | The Einlösung fiction is what makes a redemption at maturity a disposal at all. |
@@ -102,12 +102,41 @@ readings the Termingeschaeft one was taken" — which treated Reading C as unava
 engine could not express it. That is an implementation constraint standing in for a legal
 conclusion, and Rz. 9 points the other way.
 
-**The engine cannot express the chosen reading, so no figure is produced at all.** A run stops
-during classification on the `CMDTY` instrument being `UNKNOWN`, which is why there is no VZ 2025
-declaration. The blocker is the missing category — **issue #53**, which now carries this decision.
-`BOND` would land the same figures on Zeile 19/22 and has been **declined as a workaround**: it
-makes one category mean two unrelated things and would label a metal position a bond on the
-report.
+**The engine can now express the chosen reading. Issue #53 landed on 2026-08-07**, adding
+`AssetCategory.SONSTIGE_KAPITALFORDERUNG` and the dialog option that reaches it, so an
+unallocated spot metal position is classifiable as a sonstige Kapitalforderung and its disposals
+go to Zeile 19/22 under its own name. `BOND` would have landed the same figures on the same lines
+and was **declined as a workaround**: it makes one category mean two unrelated things, and it does
+not merely mislabel — a bond's trade price is a percentage of nominal and its gross is divided by
+100, which on a metal position understates cost and proceeds by two orders of magnitude. Measured
+2026-08-07 on the test scenario in `tests/test_sonstige_kapitalforderung.py`: the same trades give
+cost 2000.00 / proceeds 2300.00 / gain 300.00 under the new category and 20.00 / 23.00 / 3.00
+under `BOND`.
+
+**What #53 did not do is reclassify anything.** No holding was moved into the new category, and
+`preliminary_classify` never returns it — Rz. 57's test is not readable off an IBKR asset class,
+so it is asked, never inferred. Recording the answer is the follow-up work, and the sequence is
+deliberate: the option had to exist before the interactive pass, or the pass would have forced a
+choice among options that were all wrong and written it into the gitignored cache, where a wrong
+entry cannot be seen afterwards.
+
+**Which instruments are routed here, and why.** One so far, and it is not yet recorded in any
+cache:
+
+| Instrument | Why | Authority |
+|---|---|---|
+| `CONID:69067924` — `XAUUSD`, IBKR AssetClass `CMDTY`, unallocated spot gold at the broker | Not a Termingeschaeft, not a § 23 asset: no expiry and no delayed settlement, no physical backing and no delivery or proceeds claim | Rz. 9 [GT-ESTG20-038]; Rz. 57 [GT-ESTG23-011]; Q11 Reading C, chosen by the taxpayer 2026-08-07 |
+
+Nothing else in the maintainer's data has been assessed against Rz. 57. **The population that
+needs assessing is larger than this row**, and it is not the `CMDTY` rows: a Zertifikat and an
+unbacked ETC both arrive as `STK` and auto-classify to `STOCK` with no prompt. VZ 2024 and VZ 2025
+have 96 and 239 instruments not in the cache respectively (measured 2026-08-07, issue #53), and
+the interactive pass over them is where any further entry to this table will come from.
+
+**Blocker status, measured 2026-08-07.** VZ 2024 no longer stops on `XAUUSD`: with that
+classification supplied, the run reaches the next uncached instrument (`ISIN:SG1L1701REC0`) and
+stops there. So #53 removed this instrument as a blocker and did not, on its own, unblock the
+year — the interactive pass is the remaining step.
 
 **A previous version of this note said the choice lived only in a gitignored cache and that this
 row was its sole public record.** That was true, and it was tested the hard way on 2026-08-07 when
@@ -424,7 +453,7 @@ and nothing distinguishes them.
 | GT-ESTG23-008 | implements | `src/engine/fifo_manager.py` | `test_section23_holding_period.py` | |
 | GT-ESTG23-009 | out of scope (deliberate) | — | — | The Freigrenze applies to the taxpayer's *total* private-sale gain for the year, which one portfolio cannot establish. The engine reports the gross figure and leaves the threshold to the taxpayer and the Finanzamt. |
 | GT-ESTG23-010 | implements | `src/engine/loss_offsetting.py` — § 23 pool separate from § 20 | `test_group6_loss_offsetting.py` | Carryback and carryforward are the Finanzamt's step. |
-| GT-ESTG23-011 | **not implemented — human input** | `src/classification/asset_classifier.py:30` | — | Whether an instrument is a § 23 asset comes from classification, not from any property the engine reads. A cash-settled ETC may well be a Kapitalforderung under § 20 instead. |
+| GT-ESTG23-011 | **implements — as a question, not an inference** | `src/classification/asset_classifier.py` — the two dialog options that are Rz. 57's two outcomes; `AssetCategory.SONSTIGE_KAPITALFORDERUNG` | `test_sonstige_kapitalforderung.py::TestSonstigeKapitalforderungIsClassifiable` | **Re-decided 2026-08-07 with issue #53.** Rz. 57's test — physical backing plus an exclusive delivery-or-proceeds claim — turns on the Emissionsbedingungen, which no input carries, so the engine asks. What changed is that until #53 it could only ask *half* the question: the § 23 outcome had an option and the Nr. 7 outcome had none, so an unbacked ETC had nowhere to go but `BOND` or a wrong category. Both outcomes are now expressible and both are named in the prompt. The previous row read **not implemented — human input**, which was accurate about where the answer comes from and hid that one of the two answers could not be recorded. `test_it_is_never_a_preliminary_classification` holds the store's own conclusion in place: no heuristic may infer this from an asset class label. |
 | GT-ESTG23-012 | implements | `SECTION_23_ESTG_TAXABLE_GAIN` / `_TAXABLE_LOSS` / `_EXEMPT_HOLDING_PERIOD_MET` | `test_section23_holding_period_guards.py::TestSpeculationPeriodFlagIsTruthful` | Dates that cannot decide the question raise `ProcessingError` rather than defaulting to exempt — an undecidable § 23 case is unreported income, not tax-free income. |
 | GT-ESTG23-013 | implements | `src/engine/fifo_manager.py` — currency ledgers consume lots first-in-first-out | `test_group7_currency_fifo.py` | Nr. 2 Satz 3, the statutory FIFO fiction for *gleichartige Fremdwährungsbeträge*. **This is the Tier 1 grounding the currency FIFO always needed and never had.** Until this audit the store cited § 20 Abs. 4 Satz 7, which is confined to vertretbare Wertpapiere in Sammelverwahrung and cannot reach a currency balance. The engine's behaviour is unchanged and was already right; what changes is that it is now sourced. Applies from 31.07.2014 (Art. 2 G. v. 25.07.2014, BGBl. I S. 1266) — earlier assessment years have no statutory ordering for currency. |
 

@@ -236,7 +236,11 @@ class LossOffsettingEngine:
                     derivative_gains_gross = self.ctx.add(derivative_gains_gross, gross_gl_eur)
                 else:
                     derivative_losses_abs = self.ctx.add(derivative_losses_abs, gross_gl_eur.copy_abs())
-            elif cat == AssetCategory.BOND:
+            elif cat in [AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG]:
+                # Both are 20 Abs. 2 Satz 1 Nr. 7 income: Zeile 19 for a gain, Zeile 22 for
+                # a loss. SONSTIGE_KAPITALFORDERUNG carries the Nr. 7 instruments that are
+                # not bonds -- unbacked commodity ETCs ([GT-ESTG23-011], Rz. 57),
+                # Zertifikate and unallocated spot metal ([GT-ESTG20-038], Rz. 9).
                 if gross_gl_eur > Decimal('0'):
                     kap_other_income_positive = self.ctx.add(kap_other_income_positive, gross_gl_eur)
                 else:

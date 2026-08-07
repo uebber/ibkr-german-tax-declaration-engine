@@ -4,7 +4,8 @@ from decimal import Decimal
 from typing import Dict, Set, Optional, Tuple, Any
 
 from src.domain.assets import (
-    Asset, Stock, Bond, InvestmentFund, Option, Cfd, Future, PrivateSaleAsset, CashBalance, Derivative
+    Asset, Stock, Bond, SonstigeKapitalforderung, InvestmentFund, Option, Cfd, Future,
+    PrivateSaleAsset, CashBalance, Derivative
 )
 from src.domain.enums import AssetCategory, InvestmentFundType
 from src.classification.asset_classifier import AssetClassifier # Dependency
@@ -114,6 +115,12 @@ class AssetResolver:
             new_asset = Stock(**common_kwargs)
         elif new_category == AssetCategory.BOND:
             new_asset = Bond(**common_kwargs)
+        elif new_category == AssetCategory.SONSTIGE_KAPITALFORDERUNG:
+            # The only route into this category: it is never a preliminary classification,
+            # because Rz. 57's test is not readable off an IBKR asset class
+            # ([GT-ESTG23-011]). It always arrives as a user classification replacing
+            # whatever the resolver first built.
+            new_asset = SonstigeKapitalforderung(**common_kwargs)
         elif new_category == AssetCategory.OPTION:
             new_asset = Option(
                 option_type=common_kwargs.pop("option_type", None),
@@ -280,6 +287,7 @@ class AssetResolver:
                 0 if isinstance(a, Future) else 1,
                 0 if isinstance(a, Stock) else 1,
                 0 if isinstance(a, Bond) else 1,
+                0 if isinstance(a, SonstigeKapitalforderung) else 1,
                 0 if isinstance(a, PrivateSaleAsset) else 1, # Changed from Section23EstgAsset
                 0 if a.ibkr_isin else 1,
                 0 if a.ibkr_conid else 1,

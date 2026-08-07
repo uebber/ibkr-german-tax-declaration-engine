@@ -344,13 +344,15 @@ def print_asset_pl_summary_debug(
     category_order = {
         AssetCategory.STOCK: 1,
         AssetCategory.BOND: 2,
-        AssetCategory.INVESTMENT_FUND: 3,
-        AssetCategory.OPTION: 4,
-        AssetCategory.CFD: 5,
-        AssetCategory.FUTURE: 6,
-        AssetCategory.PRIVATE_SALE_ASSET: 7,
-        AssetCategory.CASH_BALANCE: 8,
-        AssetCategory.UNKNOWN: 9,
+        # Next to BOND: both are 20 Abs. 2 Satz 1 Nr. 7 and share Zeile 19/22.
+        AssetCategory.SONSTIGE_KAPITALFORDERUNG: 3,
+        AssetCategory.INVESTMENT_FUND: 4,
+        AssetCategory.OPTION: 5,
+        AssetCategory.CFD: 6,
+        AssetCategory.FUTURE: 7,
+        AssetCategory.PRIVATE_SALE_ASSET: 8,
+        AssetCategory.CASH_BALANCE: 9,
+        AssetCategory.UNKNOWN: 10,
     }
 
     # Define fund type sort order (for sub-sorting within INVESTMENT_FUND)

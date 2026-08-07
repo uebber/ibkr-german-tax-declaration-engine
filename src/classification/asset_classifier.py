@@ -7,7 +7,8 @@ from typing import Dict, Optional, Tuple, List
 logger = logging.getLogger(__name__)
 
 from src.domain.assets import (
-    Asset, InvestmentFund, Stock, Bond, Option, Cfd, Future, PrivateSaleAsset, CashBalance
+    Asset, InvestmentFund, Stock, Bond, SonstigeKapitalforderung, Option, Cfd, Future,
+    PrivateSaleAsset, CashBalance
 )
 from src.domain.enums import AssetCategory, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError
@@ -27,7 +28,18 @@ class AssetClassifier:
             ("Immobilienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.IMMOBILIENFONDS),
             ("Auslands-Immobilienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AUSLANDS_IMMOBILIENFONDS),
             ("Sonstige Investmentfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.SONSTIGE_FONDS),
-            ("§23 EStG / Anlage SO (z.B. Gold-ETC, Krypto-ETP)", AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE), # Changed from SECTION_23_ESTG_ASSET
+            # These two options are the two OUTCOMES of one test, and the test is stated in
+            # BMF 14.05.2025 Rz. 57 ([GT-ESTG23-011]): a commodity Inhaberschuldverschreibung
+            # is a Sachleistungsanspruch -- and so a 23 EStG asset -- only where the issuer
+            # must invest the capital almost entirely in the commodity AND the holder's claim
+            # is exclusively to delivery of the deposited commodity or to the proceeds of its
+            # sale. Where it is not backed that way, the disposal is 20 Abs. 2 Satz 1 Nr. 7
+            # income. The deciding facts are in the Emissionsbedingungen and cannot be read
+            # off the IBKR asset class, which is why this is asked rather than inferred.
+            ("§23 EStG / Anlage SO — physisch hinterlegter Rohstoff mit ausschließlichem Lieferanspruch (z.B. Xetra-Gold), oder Krypto-ETP", AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE), # Changed from SECTION_23_ESTG_ASSET
+            # Rz. 9 puts the second half of this option beyond doubt: "Zertifikate und
+            # Optionsscheine gehören nicht zu den Termingeschäften" ([GT-ESTG20-038]).
+            ("Sonstige Kapitalforderung §20 Abs. 2 S. 1 Nr. 7, kein Termingeschäft (Anlage KAP Z19/22) — ungedeckter Gold-/Rohstoff-ETC, Zertifikat, Spot-Edelmetall", AssetCategory.SONSTIGE_KAPITALFORDERUNG, InvestmentFundType.NONE),
             ("Aktie (Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE),
             ("Anleihe (Anlage KAP)", AssetCategory.BOND, InvestmentFundType.NONE),
             ("Option/Termingeschäft (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
@@ -171,6 +183,7 @@ class AssetClassifier:
         if category == AssetCategory.INVESTMENT_FUND: return InvestmentFund
         if category == AssetCategory.STOCK: return Stock
         if category == AssetCategory.BOND: return Bond
+        if category == AssetCategory.SONSTIGE_KAPITALFORDERUNG: return SonstigeKapitalforderung
         if category == AssetCategory.OPTION: return Option
         if category == AssetCategory.CFD: return Cfd
         if category == AssetCategory.FUTURE: return Future

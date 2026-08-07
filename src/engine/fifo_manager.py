@@ -847,7 +847,9 @@ class FifoLedger:
 
                 if self.asset_category == AssetCategory.STOCK:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
-                elif self.asset_category == AssetCategory.BOND:
+                elif self.asset_category in [AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG]:
+                    # Both are 20 Abs. 2 Satz 1 Nr. 7 income and share Zeile 19 / Zeile 22.
+                    # They stay distinct categories so the report can name them apart.
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
                 elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
@@ -984,7 +986,9 @@ class FifoLedger:
 
                 if self.asset_category == AssetCategory.STOCK:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
-                elif self.asset_category == AssetCategory.BOND:
+                elif self.asset_category in [AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG]:
+                    # Both are 20 Abs. 2 Satz 1 Nr. 7 income and share Zeile 19 / Zeile 22.
+                    # They stay distinct categories so the report can name them apart.
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
                 elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
@@ -1145,7 +1149,8 @@ class FifoLedger:
 
             if self.asset_category == AssetCategory.STOCK:
                 tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
-            elif self.asset_category == AssetCategory.BOND:
+            elif self.asset_category in [AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG]:
+                 # Both are 20 Abs. 2 Satz 1 Nr. 7 income and share Zeile 19 / Zeile 22.
                  tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
             elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                  tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST

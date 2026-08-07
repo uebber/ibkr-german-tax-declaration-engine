@@ -143,6 +143,28 @@ class Bond(Asset):
 
 
 @dataclass(eq=False) # Inherit __eq__ and __hash__ from Asset
+class SonstigeKapitalforderung(Asset):
+    """A sonstige Kapitalforderung under 20 Abs. 2 Satz 1 Nr. 7 that is not a bond.
+
+    Unbacked gold and commodity ETCs ([GT-ESTG23-011], BMF 14.05.2025 Rz. 57),
+    Zertifikate ([GT-ESTG20-038], Rz. 9 excludes them from the Termingeschaefte), and
+    unallocated spot precious metal at the broker (Q11, Reading C). Disposals go to
+    Anlage KAP Zeile 19/22, the same lines as a bond, but this is deliberately not
+    ``Bond``: none of the bond-specific handling (percentage-of-nominal trade prices,
+    Stueckzinsen, BM maturity) applies to these instruments.
+
+    Which instrument is routed here is a per-instrument determination that cannot be read
+    off an IBKR asset class ([GT-ESTG23-011]); it comes from classification only.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(asset_category=kwargs.pop('asset_category', AssetCategory.SONSTIGE_KAPITALFORDERUNG), **kwargs)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.asset_category = AssetCategory.SONSTIGE_KAPITALFORDERUNG
+
+
+@dataclass(eq=False) # Inherit __eq__ and __hash__ from Asset
 class InvestmentFund(Asset):
     _: KW_ONLY
     fund_type: Optional[InvestmentFundType] = InvestmentFundType.NONE # Default to NONE

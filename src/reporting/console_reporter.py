@@ -27,6 +27,10 @@ _ASSET_CATEGORY_LABELS = {
     AssetCategory.CFD: ("Termingeschäfte (CFDs)", "CFD-Bezeichnung"),
     AssetCategory.FUTURE: ("Termingeschäfte (Futures)", "Future-Bezeichnung"),
     AssetCategory.BOND: ("Anleihenveräußerungen", "Anleihenbezeichnung"),
+    AssetCategory.SONSTIGE_KAPITALFORDERUNG: (
+        "Veräußerungen sonstiger Kapitalforderungen (§20 Abs. 2 S. 1 Nr. 7, keine Anleihen)",
+        "Bezeichnung",
+    ),
     AssetCategory.INVESTMENT_FUND: ("Investmentfondsveräußerungen", "Fondsbezeichnung"),
     AssetCategory.PRIVATE_SALE_ASSET: ("Private Veräußerungsgeschäfte (§23 EStG)", "Bezeichnung"),
 }
@@ -148,7 +152,8 @@ def generate_console_tax_report(
     # Determine which categories have realizations in this year
     categories_with_rgls = set(rgl.asset_category_at_realization for rgl in current_year_rgls)
     for category in [AssetCategory.STOCK, AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE,
-                     AssetCategory.BOND, AssetCategory.INVESTMENT_FUND, AssetCategory.PRIVATE_SALE_ASSET]:
+                     AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG,
+                     AssetCategory.INVESTMENT_FUND, AssetCategory.PRIVATE_SALE_ASSET]:
         if category in categories_with_rgls:
             _print_per_asset_breakdown(current_year_rgls, asset_resolver, category)
 
@@ -235,6 +240,7 @@ def generate_console_tax_report(
     sum_interest_income_gross = Decimal('0')
     sum_non_fund_dividends_gross = Decimal('0')
     sum_bond_gains_gross = Decimal('0')
+    sum_sonstige_kapitalforderung_gains_gross = Decimal('0')
 
     # Process events for interest and non-fund dividends
     for event in current_year_events: # Already filtered for tax year
@@ -254,17 +260,28 @@ def generate_console_tax_report(
             # Assuming event_gross_eur for CORP_STOCK_DIVIDEND is the taxable FMV
             sum_non_fund_dividends_gross += event_gross_eur
 
-    # Process RGLs for bond gains
+    # Process RGLs for bond gains and for the other §20 Abs. 2 S. 1 Nr. 7 instruments.
+    # Both feed the same Zeile 19, and both are shown, so the components add up.
     for rgl in current_year_rgls: # Already filtered for tax year
-        if rgl.asset_category_at_realization == AssetCategory.BOND and \
-           rgl.gross_gain_loss_eur is not None and rgl.gross_gain_loss_eur > Decimal('0'):
+        if rgl.gross_gain_loss_eur is None or rgl.gross_gain_loss_eur <= Decimal('0'):
+            continue
+        if rgl.asset_category_at_realization == AssetCategory.BOND:
             sum_bond_gains_gross += rgl.gross_gain_loss_eur
-            
+        elif rgl.asset_category_at_realization == AssetCategory.SONSTIGE_KAPITALFORDERUNG:
+            sum_sonstige_kapitalforderung_gains_gross += rgl.gross_gain_loss_eur
+
     print(f"      Zinserträge (brutto positiv): {_q(sum_interest_income_gross)}")
     print(f"      Dividenden (Aktien, brutto positiv, inkl. steuerpfl. Stock-Dividenden): {_q(sum_non_fund_dividends_gross)}")
     print(f"      Gewinne aus Anleihenverkäufen (brutto positiv): {_q(sum_bond_gains_gross)}")
-    
-    total_kap_other_income_positive_components = sum_interest_income_gross + sum_non_fund_dividends_gross + sum_bond_gains_gross
+    # Printed only when such an instrument was disposed of: without one the line is a
+    # constant zero for every taxpayer, and this category is rare by construction.
+    if sum_sonstige_kapitalforderung_gains_gross > Decimal('0'):
+        print(f"      Gewinne aus sonstigen Kapitalforderungen (§20 Abs. 2 S. 1 Nr. 7, keine Anleihen; brutto positiv): {_q(sum_sonstige_kapitalforderung_gains_gross)}")
+
+    total_kap_other_income_positive_components = (
+        sum_interest_income_gross + sum_non_fund_dividends_gross + sum_bond_gains_gross
+        + sum_sonstige_kapitalforderung_gains_gross
+    )
     print(f"      Summe dieser positiven Komponenten (nicht Fonds): {_q(total_kap_other_income_positive_components)}")
     print(f"      (Hinweis: Gezahlte Stückzinsen mindern 'Sonstige Verluste'. Erhaltene Stückzinsen sind i.d.R. in 'Zinserträge' enthalten.)")
     # --- END OF NEW DETAILED BREAKDOWN ---
