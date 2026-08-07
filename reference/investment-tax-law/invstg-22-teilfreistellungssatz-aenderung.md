@@ -99,6 +99,50 @@ conditions *at the time of the fiction*, not at the time of the eventual disposa
 
 ---
 
+## [GT-INVSTG-054] Rz. 20.4 -- the Vorabpauschale in a year the fiction bites
+
+Administrative guidance, BMF-Schreiben of 21.05.2019, BStBl I 2019 S. 527, Rz. 20.4, **as amended
+by BMF-Schreiben of 29.04.2021, GZ IV C 1 - S 1980-1/19/10008 :017, BStBl I 2021 S. 735**, which
+appended the last three Saetze:
+
+> *"Eine Vorabpauschale ist auch dann fuer das gesamte Kalenderjahr anzusetzen, wenn sich der
+> anwendbare Teilfreistellungssatz aendert und der Investmentanteil nach § 22 Absatz 1 InvStG als
+> angeschafft und veraeussert gilt. Die Hoehe der Teilfreistellung richtet sich nach dem
+> anwendbaren Teilfreistellungssatz zum Zuflusszeitpunkt nach § 18 Absatz 3 InvStG. Es wird fuer
+> das Steuerabzugsverfahren nicht beanstandet, wenn die Vorabpauschale fuer die Kalenderjahre 2018
+> und 2019 in Faellen eines vorherigen Teilfreistellungssatzwechsels fuer das betreffende
+> Kalenderjahr lediglich zeitanteilig berechnet wurde. In diesen Faellen ist zu beachten, dass bei
+> einer tatsaechlichen Veraeusserung der Investmentanteile nur die im Steuerabzugsverfahren
+> zugrunde gelegte (gekuerzte) Vorabpauschale den Veraeusserungsgewinn mindert. Eine Korrektur der
+> Vorabpauschale und des Veraeusserungsgewinns im Veranlagungsverfahren ist nicht vorzunehmen."*
+
+**Satz 1 reads § 18 Abs. 2 InvStG narrowly.** The Anschaffungsfiktion of Abs. 1 does not start a
+*"Jahr des Erwerbs"*: the reduction by twelfths is for an actual acquisition, and where the
+acquisition is only deemed, the full calendar year stands. Bearing on [GT-INVSTG-011].
+
+**Satz 1 also shows what the year's Vorabpauschale does and does not turn on.** The same fiction
+deems the unit *veraeussert* during the year, and the Vorabpauschale is nevertheless set for the
+whole year -- because the units are still held at the close of 31 December, which is the count
+Rz. 18.4 multiplies by. The BMF's own wording distinguishes this from *"einer tatsaechlichen
+Veraeusserung der Investmentanteile"* in the appended Saetze. Bearing on [GT-INVSTG-016].
+
+**Satz 2** puts the Teilfreistellung rate at the Zuflusszeitpunkt under § 18 Abs. 3 -- the first
+working day of the following year -- and therefore at the rate in force *after* the change, not
+before it.
+
+**Saetze 3 to 5 are a closed transitional Nichtbeanstandung** for calendar 2018 and 2019 only, and
+only *"fuer das Steuerabzugsverfahren"*, which a foreign custodian does not perform. Where it was
+used, the pro-rated figure is also the one that reduces the later disposal gain, and Satz 5 bars
+correcting either figure in the assessment.
+
+> Retrieved 2026-08-07. Base text from the 21.05.2019 letter (BVL mirror, PDF metadata
+> `Author: BMF`); the amendment from the official BZSt mirror,
+> https://www.bzst.de/SharedDocs/BMF/DE/Downloads/bmf_schreiben_20210429_InvStG_18_anwendung.pdf
+> section VII.1. Applicable tax years: 2018 onward, except Saetze 3 to 5, which are confined to
+> 2018 and 2019 by their own wording.
+
+---
+
 ## Applicable years
 
 From 01.01.2018 with the rest of the InvStG 2018 (56 Abs. 1 Satz 1 InvStG).

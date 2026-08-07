@@ -88,6 +88,15 @@ at all — see the missing-category gap.
 | GT-ESTG20-012 | implements | `src/engine/fifo_manager.py` — FIFO lot consumption; `reconcile_with_mark` decides which lots survive each checkpoint | `test_fifo_groups.py`, `test_replay_checkpoint_marks.py`, `tests/docs/spec_fifo.md` | Mandatory fiction; no specific-identification alternative is offered. Which lots a reconciliation keeps is part of it: where the reconstruction exceeds the reported holding the survivors are the **newest**, because FIFO consumed the oldest. Filling from the oldest end (the behaviour before August 2026) returned the wrong lot whenever a ledger held more than one, and the oversell flag previously discarded even an exactly-matching reconstruction. |
 | GT-ESTG20-013 | **deviates** | `src/engine/ledger_views.py`, `src/utils/account_utils.py` | `test_ledger_views.py`, `test_multi_account_harness.py` | See below. |
 | GT-ESTG20-014 | not reached | — | — | Own-depot transfer is not a disposal. No input represents one; a per-depot implementation would have to relocate lots rather than close and reopen them. |
+| GT-ESTG20-039 | implements — **by fallback, not by rule** | `DomainEventFactory._get_prioritized_date()` in `src/parsers/domain_event_factory.py`, feeding `FinancialEvent.event_date` | none guards the rule; `test_group7_currency_fifo.py` and `test_group9_variable_fx.py` assert the rate of the event date, but their fixtures omit the settlement column exactly as the real export does, so the branch that would break this is never taken | Rn. 85: the obligatorisches Rechtsgeschäft fixes the FX rate and the gain computation, so the trade date governs and settlement does not. The engine's dates *are* trade dates — but only because `_get_prioritized_date` tries `settle_date_str` **first** and the Trades export carries no `SettleDateTarget` column. Measured 2026-08-07: 0 of 6,976 trade rows across `Trades-2021.csv`…`Trades-2025.csv` carry it. Add that column to the Flex Query and every date silently becomes the settlement date. See the follow-up below. |
+| GT-ESTG20-040 | implements — same mechanism, same caveat | as above | as above; the § 23 tests (`test_section23_holding_period.py`, `test_section23_holding_period_guards.py`) build lots directly and so do not reach the parser's choice of date either | Rn. 317 defines *Erwerb* as the rechtswirksam abgeschlossener obligatorischer Vertrag; BFH IX R 18/13 (BStBl II 2014, 826, Rz 29) is to the same effect for § 23 and does not stand alone. Acquisition dates therefore have to be trade dates, which is what the ledger holds. The claim reaches past the Vorabpauschale: it also fixes the § 23 Jahresfrist and the month for § 18 Abs. 2. |
+| GT-ESTG20-041 | implements | `FifoLedger.receive_all_lots_from_merger()` in `src/engine/fifo_manager.py` carries `acquisition_date` across to the replacement lots | `test_stock_merger_fifo.py` asserts the carry-over (four separate assertions on the surviving lot's `acquisition_date`) | Rn. 184a: a steuerneutrale Fondsverschmelzung restates the count *"unter Berücksichtigung des Umtauschverhältnisses"* and does not create a new Anschaffungszeitpunkt. **What the guarding test does not cover:** every case it exercises is a stock merger. The path is shared, but no test merges an `InvestmentFund`, so the § 18 Abs. 2 consequence — a merged fund keeping its acquisition month — is unguarded. The per-acquisition half of Rn. 184a is what grounds GT-INVSTG-011. |
+
+**GT-ESTG20-039 and GT-ESTG20-040 — follow-up:** `fix-nonfunc(parsers)` — make the trade date the
+stated rule in `_get_prioritized_date` rather than the third fallback, so that a legally decisive
+date stops depending on which columns the Flex Query happens to return. Calibration for that
+change is available and cheap, and is the reason to do it: add `SettleDateTarget` to a fixture and
+show that acquisition dates move today.
 
 **GT-ESTG20-013 — known deviation.** The ledger registries are keyed by `(account_key, asset_id)`,
 but every write uses a single `DEFAULT_ACCOUNT` constant and no account identifier is read
@@ -170,16 +179,17 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
 | GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
-| GT-INVSTG-011 | implements (Q13 Reading A: per acquisition) | `_calculate_vorabpauschale()` and `FundUnitTranche.abs2_retained_twelfths()` in `src/engine/calculation_engine.py` | `test_vorabpauschale_abs2.py` | Abs. 2 reduces each tranche by one twelfth per full month before its month of acquisition; units held before the year keep twelve. Applying it per tranche rather than to the holding as a whole is a choice under uncertainty — see `reference/research/open-legal-questions.md` Q13. Superseded text: **Abs. 2 pro-rata was not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
-| GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. |
-| GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | |
+| GT-INVSTG-011 | implements | `_calculate_vorabpauschale()` and `FundUnitTranche.abs2_retained_twelfths()` in `src/engine/calculation_engine.py` | `test_vorabpauschale_abs2.py` | Abs. 2 reduces each acquisition by one twelfth per full month before its month of acquisition; units held before the year keep twelve. **No longer a choice under uncertainty** — the 2026-08-07 audit closed Q13 in favour of exactly this reading, on Rz. 18.11's worked example applying the reduction to the *per-Anteil* amount, with Rz. 18.9 and Rn. 184a alongside. The one residual is recorded in the store, not here: no source works a mixed holding, so summing per acquisition joins two quoted rules. Superseded text: *"implements (Q13 Reading A: per acquisition) … a choice under uncertainty"*; and before that, **Abs. 2 pro-rata was not implemented** at all. |
+| GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. Re-decided 2026-08-07 on Rz. 18.12, now recorded: the Zuflussfiktion is stated there as a Steuerabzug convenience so that a full Sparer-Pauschbetrag is available, **not** as a holding test — which is why it could not carry GT-INVSTG-016 and no longer has to. |
+| GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | Re-decided 2026-08-07 on Rz. 18.13 and 18.14, now recorded. Rz. 18.14 fixes the rate as the value determined for the **erster Börsentag** of the calendar year, which is 2 January only in years whose first exchange day falls on it. This does not reach the engine: it looks up the value the BMF published for the year, and choosing the day is the BMF's step, not the engine's. It does bear on GT-INVSTG-018, where a 2 January date *is* used as a Stichtag. |
 | GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Records which *year* each input is drawn from; the day within it is GT-INVSTG-010. Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
 | GT-INVSTG-015 | implements | gross on Zeilen 9–13 | `test_vorabpauschale.py::TestTeilfreistellungNegativeDistribution` | |
-| GT-INVSTG-016 | **choice under uncertainty** | funds with no end-of-year position are skipped | `test_vorabpauschale.py` | See below. |
+| GT-INVSTG-016 | implements | the unit count at the close of 31 December, from the ledger's own lots — see GT-INVSTG-017 | `test_vorabpauschale.py`, `test_vorabpauschale_price_and_units.py` | **No longer a choice under uncertainty.** The 2026-08-07 audit closed Q5 on Rz. 18.4: the multiplier is the holding at the close of 31 December, so a fund disposed of in full produces nothing without any rule about disposal being needed. The engine already computed it that way. Superseded position: **choice under uncertainty**, reasoned from the Abs. 3 Zuflussfiktion — see below. |
 | GT-INVSTG-017 | implements |  `ParsingOrchestrator._compose_vorabpauschale_base_value()` | `test_vorabpauschale_price_and_units.py` | Rz. 18.4 multiplies by the units held at the **close of 31 December** of the calendar year. The engine multiplies by the units held at its **start** — see below for why. Rounding is compliant: full precision throughout, quantised to two places once, after every multiplication. |
-| GT-INVSTG-018 | implements | ECB conversion at 2 January and 31 December of the Vorabpauschale year, in `_calculate_vorabpauschale()` | `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Rz. 18.6 wants each input converted at the ECB rate of its own Stichtag, which is what the engine does. The Jahresanfang Stichtag it uses is fixed at 2 January, which is the day the price was set only when the year's first trading day is 2 January. |
+| GT-INVSTG-018 | implements, with a known imprecision | ECB conversion at 2 January and 31 December of the Vorabpauschale year, in `_calculate_vorabpauschale()` | `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Rz. 18.6 wants each input converted at the ECB rate of its own Stichtag, which is what the engine does. The Jahresanfang Stichtag it uses is fixed at 2 January, which is the day the price was set only when the year's first trading day is 2 January. Re-decided 2026-08-07 and unchanged, but the imprecision is now sharper: Rz. 18.14 shows the administration anchors the year on its **erster Börsentag** rather than on a fixed calendar date, so pinning any Stichtag to 2 January is a substitution for a day that has to be looked up. Follow-up unchanged, below. |
 | GT-INVSTG-035 | **deviates** | — | — | Rz. 18.7: a fund launched during the year takes its first set price, with Abs. 2 pro-rata on top. The engine skips any fund without a start-of-year position outright, so such a fund produces nothing. Same root cause as GT-INVSTG-011. |
 | GT-INVSTG-036 | **deviates** | — | — | Rz. 18.8: where a fund does not set a Rücknahmepreis at least monthly, the market price takes its place. The engine has no notion of whether a Rücknahmepreis exists and always uses the broker's mark price — the same gap recorded under GT-INVSTG-010 Satz 4 below. |
+| GT-INVSTG-055 | **not reached** (Satz 1) / **out of scope** (Satz 2) | — | — | Rz. 18.9. Satz 1 is confined to the Steuerabzugsverfahren, which a foreign custodian does not perform. Satz 2 is a refund route in the assessment for tax over-withheld by a domestic agent — there is none here. Recorded because it is the administrative statement that the Abs. 2 reduction turns on *Anschaffungsdaten* attaching to units, which is part of what closed Q13 (GT-INVSTG-011). No behaviour follows from it. |
 
 **GT-INVSTG-010 and GT-INVSTG-014 — reached only for some funds until 2026-08-04.** A positions
 row is resolved without its `SubCategory`, so the description is the only fund signal that
@@ -227,8 +237,15 @@ when the year opened. The two coincide for an unchanged holding; on VZ 2024 real
 KAP-INV Zeile 13 393.27 against 491.59.
 
 Bearing on the choice: § 18 Abs. 2 reduces the Vorabpauschale pro rata for units *acquired during
-the year*, which presupposes those units are counted; and the reading recorded for GT-INVSTG-016
-gives no Vorabpauschale for a fund fully disposed of during the year.
+the year*, which presupposes those units are counted; and GT-INVSTG-016 — no longer a reading but
+a consequence of this very Randziffer — gives no Vorabpauschale for a fund fully disposed of
+during the year.
+
+**Re-decided 2026-08-07 and strengthened.** Rz. 18.4 is not a Steuerabzug convention: it sits in
+Textziffer 18.1 *"Ermittlung der Vorabpauschale"* and is unqualified, where the Randziffern of
+this section that *are* confined to withholding say so (Rz. 18.9, Rz. 18.10, both *"im
+Steuerabzugsverfahren"*). It therefore governs the amount itself, which is what lets it carry
+GT-INVSTG-016 as well as the count.
 
 Done. The lots are snapshotted immediately after the historical replay reconciles, which is the
 one moment they describe the close of the preceding calendar year and still carry their
@@ -243,10 +260,27 @@ the start-of-year snapshot, which has no row for it.
 at least monthly from one that does not, so that a market price is used as Satz 4's substitute
 rather than as the default. Closes the Satz 4 gap recorded above at the same time.
 
-**GT-INVSTG-016, open question Q5 — reading chosen: no Vorabpauschale in the year of disposal.**
-Reason: § 18 Abs. 3 deems the inflow to fall on the first working day of the following year, by
-which time the units are gone. This is inferred from the Zuflussfiktion, not stated by any located
-Tier 1 or Tier 2 source, and the opposite reading is defensible.
+**GT-INVSTG-016 — settled 2026-08-07, formerly open question Q5.** The engine's behaviour is
+unchanged; its justification is not. The reading was previously *chosen* from the Abs. 3
+Zuflussfiktion — the units are gone by the first working day of the following year — and recorded
+as a defensible guess. It now rests on Rz. 18.4, which states the multiplier as the units held
+*"mit Ablauf des 31. Dezember des Kalenderjahres"*. A fund disposed of in full is multiplied by
+nothing; no rule about disposal is needed, and none exists. Rz. 20.4 confirms the direction: a
+merely deemed disposal under § 22 Abs. 1 leaves the units in the count and the full year stands
+(GT-INVSTG-054).
+
+This is the same Randziffer the engine already implements for the unit count (GT-INVSTG-017), so
+Q5 was never a separate decision — it was a consequence of one already taken. Recording it as an
+open question, and reasoning it from the wrong Absatz, is the defect the audit corrected.
+
+**Follow-up from closing Q5 and Q13:** `fix-nonfunc(engine)` — three comments now assert something
+false and a reader would trust them. `src/engine/calculation_engine.py:1299` says *"Both readings
+are in reference/research/open-legal-questions.md Q13"*; there are no longer two readings there,
+only a retirement note. Line 1331 attributes the disposal-year result to *"Q5 Reading A: the
+Abs. 3 Zufluss falls after the disposal"*, which is the reasoning this audit replaced — the ground
+is Rz. 18.4. And `tests/test_vorabpauschale_abs2.py:12` describes Q13 as an open question. None
+changes behaviour, which is why they are not in this `ks-maint`; a comment that misstates why a
+figure is correct is how the next reader reopens a settled point or, worse, "fixes" it.
 
 ### § 19 — disposal gains
 
@@ -298,6 +332,7 @@ someone to classify a fund at 50.5 % as Sonstiger Fonds (0 %) when it is an Akti
 | GT-INVSTG-041 | out of scope | — | — | Lapse of a § 20 Abs. 4 proof. |
 | GT-INVSTG-042 | not reached | — | — | The Rücknahmepreis to use for the fiction. |
 | GT-INVSTG-043 | not reached | — | — | Abs. 3 Satz 1 — the fiktive-Veräußerung gain is deemed to flow only on the **actual** disposal. Nothing reaches it because GT-INVSTG-040 is not reached either, but it changes what a fix would have to do: see below. |
+| GT-INVSTG-054 | **not reached** | — | — | Rz. 20.4, as amended 29.04.2021: in a year the § 22 Abs. 1 fiction bites, the Vorabpauschale is set for the **whole** calendar year — a deemed acquisition triggers no Abs. 2 reduction — and the Teilfreistellung follows the rate at the Abs. 3 Zuflusszeitpunkt. Not reached for the same reason as GT-INVSTG-040: nothing detects a rate change. **It constrains the eventual § 22 fix**, which must not pro-rate the Vorabpauschale of the fiction year. Its Sätze 3–5 are a 2018/2019 Steuerabzug Nichtbeanstandung and are out of scope by their own wording. Recorded now because the audit found the 29.04.2021 amendment, which no file in this repository had. |
 
 **GT-INVSTG-043 changes the shape of the GT-INVSTG-040 gap.** Implementing § 22 is not "emit a
 disposal in the year the rate changes". Abs. 3 Satz 1 defers the Zufluss to the actual disposal, so
