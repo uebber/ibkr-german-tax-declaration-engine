@@ -351,6 +351,33 @@ instead of recording it. Any argument of the form "this can only overstate, whic
 side" is an argument for putting a number nobody can check on a tax return. Both directions are
 wrong; the choice is between a figure and no figure, not between two figures.
 
+**A legal grey area is not a gap, and the rule above does not reach it.** The rule governs a
+missing *input*: the data cannot support the computation, so any direction you pick is invented.
+A grey area is the opposite situation — the data are complete and the figure is well founded under
+either reading; what is unsettled is the law. Both readings produce a defensible number, and
+choosing between them is a position, not a fabrication.
+
+**In a genuine grey area, lean to the taxpayer.** This produces a *declaration*, not a submission
+to a moot court. Where experts disagree and the sources tie, the favourable reading is a position
+the Finanzamt can assess differently, and being assessed differently is the normal working of the
+process — not a wrong declaration. Do not spend the maintainer's money defending the revenue's
+side of a question the revenue has not taken a side on.
+
+Three conditions, and the third is the one that bites:
+
+- **It must be a real tie.** Two readings each with authority behind them, recorded in
+  `reference/research/open-legal-questions.md` with both sides. One reading nobody supports is not
+  a grey area, it is an error with a preference attached.
+- **It never licenses an invented input.** If the reason a figure is uncertain is that the data are
+  missing, you are in the paragraph above, not this one.
+- **Silence is not the same as contradiction.** Where the administration has said nothing, choose
+  freely. Where a published BMF position says otherwise, the taxpayer is still not bound by it —
+  it binds the Finanzamt — but the deviation is then a deliberate act to take *visibly*, and the
+  choice is the maintainer's to make, not an implementation detail to settle in a commit.
+
+The choice, its reasoning and which condition it relied on go in `docs/legal-implementation-map.md`
+against the claim ID, as any other choice under uncertainty does.
+
 **Verify your rationale, not just your citations.** A reason given in a comment, a commit message or
 a document is a claim, and a plausible one is the hardest kind to catch. Check it, or mark it
 unverified.
