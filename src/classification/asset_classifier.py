@@ -14,19 +14,6 @@ from src.domain.enums import AssetCategory, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError
 from src import config as app_config # Added import
 
-# The option an UNKNOWN asset falls back to, and the Enter-key default for one. Named as a
-# constant because `_determine_classification_interactively_or_heuristically` used to find it
-# by matching the literal string "Sonstiges (Standard Anlage KAP)" against the display label:
-# rewording the label would have silently sent the default to option 1, Aktienfonds.
-#
-# It maps to AssetCategory.STOCK, so it applies the Aktienverlusttopf ([GT-ESTG20-033]).
-# **Issue #52 is only half closed by naming that.** It also asks that this stop being the
-# Enter-key default, which is a behaviour change and is not made here.
-FALLBACK_OPTION_LABEL = (
-    "Wie eine Aktie behandeln — Auffangoption; wendet den Aktienverlusttopf an. "
-    "Trifft das nicht zu: „Sonstige Kapitalforderung“, „Anleihe“ oder „Währungssaldo“"
-)
-
 
 class AssetClassifier:
     def __init__(self, cache_file_path: Optional[str] = None): # Modified signature
@@ -125,11 +112,15 @@ class AssetClassifier:
             # IBKR asset class, and the gain or loss is realised on the two currency ledgers.
             # This option records that the INSTRUMENT itself carries none.
             ("Devisen-Handelspaar (z.B. EUR.USD) — kein eigenes Wirtschaftsgut; Gewinn/Verlust entsteht auf den beteiligten Währungssalden, nicht hier", AssetCategory.UNKNOWN, InvestmentFundType.NONE),
-            # Was "Sonstiges (Standard Anlage KAP)", which reads as a catch-all for ordinary
-            # Anlage KAP income and is in fact AssetCategory.STOCK -- issue #52. It is also
-            # the Enter-key default for an UNKNOWN asset, so the misreading was free to make.
-            # The label now states the treatment first and the word "Sonstiges" not at all.
-            (FALLBACK_OPTION_LABEL, AssetCategory.STOCK, InvestmentFundType.NONE),
+            # There is deliberately NO catch-all option, and nothing here may become one.
+            #
+            # A fifteenth option used to sit at this line: "Sonstiges (Standard Anlage KAP)",
+            # which reads as ordinary Anlage KAP income and was AssetCategory.STOCK -- issue
+            # #52. Renaming it to say "wie eine Aktie" left it a second door to the Aktie
+            # option above, differing only in wording, so it is gone rather than reworded
+            # twice. An instrument that matches no option is a gap in this list or a question
+            # the store has not answered; either way the answer is not a residual bucket that
+            # applies the Aktienverlusttopf ([GT-ESTG20-033]) to whatever lands in it.
         ]
         self.load_classifications()
 
@@ -306,35 +297,50 @@ class AssetClassifier:
             for i, (display_name, _, _) in enumerate(self._dialog_options):
                 print(f"  {i+1}. {display_name}")
             
-            default_choice_idx = 0 
-            try:
-                current_prelim_cat = asset.asset_category
-                current_prelim_ft = asset.fund_type if isinstance(asset, InvestmentFund) and asset.fund_type else InvestmentFundType.NONE
-                
-                exact_match_found = False
+            # The Enter key may only CONFIRM a classification the engine actually arrived at.
+            # Where it arrived at none, there is no default and the prompt insists on a number
+            # -- issue #52. The two ways a default used to appear without anything behind it:
+            #
+            #   - UNKNOWN. It matched the Devisen-Handelspaar option, whose category is
+            #     UNKNOWN, and was then redirected to the "Sonstiges" catch-all, which was
+            #     STOCK. Either way Enter bought the Aktienverlusttopf ([GT-ESTG20-033]) on an
+            #     instrument nothing had classified.
+            #   - An InvestmentFund whose fund_type matches no option, InvestmentFundType.NONE
+            #     among them. No branch caught that, so the default stayed at its initial 0 --
+            #     Aktienfonds, and with it a Teilfreistellung the fund may not be entitled to.
+            #
+            # Hence: exact match on what the preliminary pass produced, or nothing. The
+            # second, category-only loop that used to follow was unreachable -- for any
+            # non-fund category the exact-match condition already reduces to the same test.
+            default_choice_idx: Optional[int] = None
+            current_prelim_cat = asset.asset_category
+            current_prelim_ft = asset.fund_type if isinstance(asset, InvestmentFund) and asset.fund_type else InvestmentFundType.NONE
+
+            if current_prelim_cat != AssetCategory.UNKNOWN:
                 for idx, (_, cat_opt, ft_opt) in enumerate(self._dialog_options):
                     if cat_opt == current_prelim_cat and \
                        (current_prelim_cat != AssetCategory.INVESTMENT_FUND or ft_opt == current_prelim_ft):
                         default_choice_idx = idx
-                        exact_match_found = True
                         break
-                
-                if not exact_match_found and current_prelim_cat != AssetCategory.INVESTMENT_FUND:
-                    for idx, (_, cat_opt, _) in enumerate(self._dialog_options):
-                        if cat_opt == current_prelim_cat:
-                            default_choice_idx = idx
-                            break
-                elif current_prelim_cat == AssetCategory.UNKNOWN and not is_likely_fx_pair_instrument:
-                     for idx, (disp_name, _, _) in enumerate(self._dialog_options):
-                        if disp_name == FALLBACK_OPTION_LABEL:
-                            default_choice_idx = idx
-                            break
-            except Exception: pass
 
+            if default_choice_idx is None:
+                print(
+                    f"Kein Vorschlag: diese Position konnte nicht automatisch eingeordnet "
+                    f"werden. Bitte 1-{len(self._dialog_options)} wählen."
+                )
+                prompt = f"Enter number (1-{len(self._dialog_options)}): "
+            else:
+                prompt = (
+                    f"Enter number (1-{len(self._dialog_options)}) "
+                    f"[Default: {default_choice_idx+1} - {self._dialog_options[default_choice_idx][0]}]: "
+                )
 
             while True:
-                choice_str = input(f"Enter number (1-{len(self._dialog_options)}) [Default: {default_choice_idx+1} - {self._dialog_options[default_choice_idx][0]}]: ")
+                choice_str = input(prompt)
                 if not choice_str:
+                    if default_choice_idx is None:
+                        print("Kein Vorschlag für diese Position — bitte eine Zahl eingeben.")
+                        continue
                     chosen_index = default_choice_idx
                     break
                 try:
@@ -344,7 +350,7 @@ class AssetClassifier:
                         break
                     else: print("Invalid choice. Please try again.")
                 except ValueError: print("Invalid input. Please enter a number.")
-            
+
             _, chosen_tax_cat_dialog, chosen_fund_type_dialog = self._dialog_options[chosen_index]
             target_asset_cat = chosen_tax_cat_dialog
             target_fund_type = chosen_fund_type_dialog if target_asset_cat == AssetCategory.INVESTMENT_FUND else InvestmentFundType.NONE

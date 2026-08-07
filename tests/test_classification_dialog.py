@@ -5,7 +5,7 @@ a label that misdescribes its option changes the declaration as surely as a rout
 issue #52, where "Sonstiges (Standard Anlage KAP)" read as a catch-all for ordinary Anlage
 KAP income and mapped to `AssetCategory.STOCK`.
 
-Two invariants are held here. Both are about failure modes that leave the suite green and
+Three invariants are held here. All are about failure modes that leave the suite green and
 the output plausible.
 
 1. **No option that routes to `STOCK` may hide it.** Routing to `STOCK` applies the
@@ -14,20 +14,23 @@ the output plausible.
    offsettable only against share gains. The direction is against the taxpayer and nothing
    in the output says so.
 
-2. **The Enter-key default still resolves.** The default for an UNKNOWN asset used to be
-   found by matching the literal label text `"Sonstiges (Standard Anlage KAP)"`. Rewording
-   the label breaks that match silently, and the default falls through to index 0 —
-   Aktienfonds, a KAP-INV fund with a 30 % Teilfreistellung. Pressing Enter would have
-   declared an unclassifiable instrument as an equity fund. The lookup is now by constant;
-   this test is what keeps it honest.
+2. **No option is a catch-all.** Exactly one option may route to `STOCK`, and it is the one
+   that names a share. A second option with the same effect and a residual-sounding label is
+   how #52 happened, and renaming such an option does not stop it being the easy answer for
+   someone who cannot find theirs.
+
+3. **The Enter key only ever confirms, never decides.** Where the preliminary pass produced
+   no classification, there is no default and Enter re-prompts. The old code defaulted an
+   `UNKNOWN` asset to the `STOCK` catch-all — ring-fencing for free — and an investment fund
+   whose type matched no option to index 0, Aktienfonds with its Teilfreistellung.
 """
 
 from decimal import Decimal
 
 import pytest
 
-from src.classification.asset_classifier import AssetClassifier, FALLBACK_OPTION_LABEL
-from src.domain.assets import Asset
+from src.classification.asset_classifier import AssetClassifier
+from src.domain.assets import Asset, InvestmentFund
 from src.domain.enums import AssetCategory, InvestmentFundType
 
 
@@ -42,9 +45,8 @@ def test_every_option_label_is_distinct(classifier):
 
 
 def test_no_option_routing_to_stock_hides_that_it_does(classifier):
-    """Issue #52. Two options map to `STOCK` — "Aktie" and the fallback — and both must say
-    so on their face. A label that reads as "other" or "miscellaneous" while applying the
-    Aktienverlusttopf is the defect, not the duplication."""
+    """Issue #52. An option that maps to `STOCK` must say so on its face. A label that reads
+    as "other" or "miscellaneous" while applying the Aktienverlusttopf is the defect."""
     for label, category, _ in classifier._dialog_options:
         if category is not AssetCategory.STOCK:
             continue
@@ -54,30 +56,34 @@ def test_no_option_routing_to_stock_hides_that_it_does(classifier):
         )
 
 
-def test_the_fallback_option_exists_exactly_once_and_is_the_stock_route(classifier):
-    matches = [
-        (label, cat, ft) for label, cat, ft in classifier._dialog_options
-        if label == FALLBACK_OPTION_LABEL
-    ]
-    assert len(matches) == 1, (
-        "FALLBACK_OPTION_LABEL no longer matches exactly one dialog option, so the "
-        "Enter-key default lookup silently falls through to option 1"
+def test_exactly_one_option_routes_to_stock(classifier):
+    """Issue #52's residue. The catch-all was renamed to "wie eine Aktie" before it was
+    removed, which satisfied the test above while leaving two doors to the same treatment —
+    one of them the one an unsure reader takes. A single share option is the invariant; a
+    second `STOCK` entry is a catch-all whatever it is called."""
+    stock_options = [label for label, cat, _ in classifier._dialog_options if cat is AssetCategory.STOCK]
+    assert len(stock_options) == 1, (
+        f"{len(stock_options)} options route to STOCK and apply the Aktienverlusttopf: "
+        f"{stock_options!r}. One of them is a catch-all."
     )
-    _, category, fund_type = matches[0]
-    assert category is AssetCategory.STOCK
-    assert fund_type is InvestmentFundType.NONE
 
 
-def test_pressing_enter_on_an_unknown_asset_selects_the_fallback_not_a_fund(
-    classifier, monkeypatch
-):
-    """Drives the real prompt. `input()` returns "" for both questions — the choice and the
-    notes — which is what pressing Enter twice does.
+def _prompting_input(answers):
+    """Fake `input()` that records the prompts it was shown and replays `answers` in order."""
+    prompts, remaining = [], iter(answers)
+    def fake_input(prompt=""):
+        prompts.append(prompt)
+        return next(remaining)
+    return fake_input, prompts
 
-    This asserts the CURRENT behaviour, and issue #52 argues that behaviour is wrong: a
-    default that applies stock ring-fencing should not be what an unsure user gets for free.
-    When #52 changes it, this test is the thing that has to be changed with it, deliberately.
-    What it rules out in the meantime is the default moving somewhere nobody chose.
+
+def test_pressing_enter_on_an_unknown_asset_decides_nothing(classifier, monkeypatch):
+    """Issue #52, ask 2. An asset the preliminary pass could not classify has no default:
+    Enter re-prompts rather than buying the Aktienverlusttopf for free.
+
+    Driven through the real prompt. The first two answers are Enter; if either selected an
+    option, the third answer would be read as the notes and the classification would be
+    whatever Enter chose. It is the third answer that must decide.
     """
     asset = Asset(
         asset_category=AssetCategory.UNKNOWN,
@@ -87,19 +93,59 @@ def test_pressing_enter_on_an_unknown_asset_selects_the_fallback_not_a_fund(
         ibkr_conid="CON_XAGUSD",
         ibkr_asset_class_raw="CMDTY",
     )
+    chosen = next(
+        i for i, (_, cat, _) in enumerate(classifier._dialog_options)
+        if cat is AssetCategory.SONSTIGE_KAPITALFORDERUNG
+    )
 
-    monkeypatch.setattr("builtins.input", lambda *_args, **_kwargs: "")
+    fake_input, prompts = _prompting_input(["", "", str(chosen + 1), ""])
+    monkeypatch.setattr("builtins.input", fake_input)
 
     category, fund_type, _notes, _needs_replacement = classifier.ensure_final_classification(
         asset, interactive_mode=True
     )
 
-    assert category is AssetCategory.STOCK, (
-        f"the Enter-key default landed on {category.name}, not the fallback option — the "
-        f"label lookup in _determine_classification_interactively_or_heuristically no "
-        f"longer finds FALLBACK_OPTION_LABEL"
+    assert category is AssetCategory.SONSTIGE_KAPITALFORDERUNG, (
+        f"an Enter press decided the classification: got {category.name} without the user "
+        f"naming an option"
     )
     assert fund_type is InvestmentFundType.NONE
+    assert not any("Default" in p for p in prompts), (
+        f"the prompt offered a default for an unclassifiable asset: {prompts!r}"
+    )
+
+
+def test_a_fund_whose_type_matches_no_option_gets_no_default(classifier, monkeypatch):
+    """The same defect one category over, and the reason the default rule is "exact match or
+    nothing". `InvestmentFundType.NONE` is representable and no dialog option carries it, so
+    the old code left the default at its initial index 0 — Aktienfonds, and a
+    Teilfreistellung the fund may not be entitled to."""
+    asset = InvestmentFund(
+        description="Some Fund With No Type Yet",
+        currency="EUR",
+        ibkr_symbol="NOTYPE",
+        ibkr_conid="CON_NOTYPE",
+        ibkr_asset_class_raw="FUND",
+        fund_type=InvestmentFundType.NONE,
+    )
+    chosen = next(
+        i for i, (_, cat, ft) in enumerate(classifier._dialog_options)
+        if cat is AssetCategory.INVESTMENT_FUND and ft is InvestmentFundType.MISCHFONDS
+    )
+
+    fake_input, prompts = _prompting_input(["", str(chosen + 1), ""])
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    _category, fund_type, _notes, _needs = classifier.ensure_final_classification(
+        asset, interactive_mode=True
+    )
+
+    assert fund_type is InvestmentFundType.MISCHFONDS, (
+        f"an Enter press decided the fund type: got {fund_type.name}"
+    )
+    assert not any("Default" in p for p in prompts), (
+        f"the prompt offered a default for a fund with no recognised type: {prompts!r}"
+    )
 
 
 def test_an_fx_pair_is_never_defaulted_into_a_cash_balance(classifier, monkeypatch):
