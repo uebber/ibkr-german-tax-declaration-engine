@@ -57,8 +57,8 @@ class AssetClassifier:
             # ([GT-INVSTG-029]). The Mischfonds label states no upper bound because the
             # statute states none — a fund above 50 % is an Aktienfonds by the more specific
             # rule, which is what "aber kein Aktienfonds" says.
-            ("Aktienfonds — fortlaufend mehr als 50 % Kapitalbeteiligungen (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AKTIENFONDS),
-            ("Mischfonds — fortlaufend mindestens 25 % Kapitalbeteiligungen, aber kein Aktienfonds (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.MISCHFONDS),
+            ("Aktienfonds — fortlaufend mehr als 50 % des Aktivvermögens in Kapitalbeteiligungen (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AKTIENFONDS),
+            ("Mischfonds — fortlaufend mindestens 25 % des Aktivvermögens in Kapitalbeteiligungen, aber kein Aktienfonds (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.MISCHFONDS),
             ("Immobilienfonds — fortlaufend mehr als 50 % des Aktivvermögens in Immobilien / Immobilien-Gesellschaften (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.IMMOBILIENFONDS),
             ("Auslands-Immobilienfonds — dieselbe Quote, gemessen an ausländischen Immobilien (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AUSLANDS_IMMOBILIENFONDS),
             ("Sonstige Investmentfonds — Fonds, der keine dieser Quoten erfüllt; keine Teilfreistellung (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.SONSTIGE_FONDS),
@@ -99,12 +99,24 @@ class AssetClassifier:
             # Veraeusserung (20 Abs. 2 Satz 2, [GT-ESTG20-009]). Choosing this for an ETC
             # divides its proceeds and cost by 100.
             ("Anleihe — Schuldverschreibung mit Nennwert; Kurs wird als Prozent des Nennwerts gelesen, Stückzinsen und Einlösung bei Fälligkeit werden verarbeitet (Anlage KAP)", AssetCategory.BOND, InvestmentFundType.NONE),
-            # Rz. 9's enumeration: Optionsgeschaefte, Swaps, Devisentermingeschaefte, Forwards,
-            # Futures and CFDs ([GT-ESTG20-038]). Stillhalterpraemien are 20 Abs. 1 Nr. 11 and
-            # are taxed on receipt ([GT-ESTG20-004]).
-            ("Option — Termingeschäft; vereinnahmte Stillhalterprämien werden bei Zufluss versteuert (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
+            # Rz. 9 enumerates these expressly -- "Optionsgeschaefte, Swaps,
+            # Devisentermingeschaefte und Forwards oder Futures ... sowie Contracts for
+            # Difference (CFDs)" ([GT-ESTG20-038]). A CFD is a Termingeschaeft by name, not by
+            # analogy, which makes it the best-grounded of these three.
+            #
+            # CAUTION, and this label got it wrong once: Rz. 9 carries TWO enumerations and they
+            # are not interchangeable. The five *Bezugsgroessen* the price may depend on include
+            # "Waren oder Edelmetallen"; the *Basiswerte* named for CFDs are "Aktien, Indizes,
+            # Waehrungspaare oder Zinssaetze". A CFD on a precious metal is still a
+            # Termingeschaeft -- via the Edelmetalle Bezugsgroesse -- but Edelmetall is not in
+            # the Basiswerte list and must not be presented as if it were. See the same
+            # distinction drawn in reference/research/coverage-matrix.md.
+            #
+            # Stillhalterpraemien are 20 Abs. 1 Nr. 11, taxable "die ... vereinnahmt werden"
+            # ([GT-ESTG20-004]).
+            ("Option — Termingeschäft; Stillhalterprämien sind bei Vereinnahmung steuerpflichtig (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
             ("Future — Termingeschäft (Anlage KAP)", AssetCategory.FUTURE, InvestmentFundType.NONE),
-            ("CFD — Termingeschäft; Basiswert kann eine Aktie, ein Index, ein Währungspaar oder ein Edelmetall sein (Anlage KAP)", AssetCategory.CFD, InvestmentFundType.NONE),
+            ("CFD — Termingeschäft; Basiswert z.B. Aktie, Index, Währungspaar oder Zinssatz (Anlage KAP)", AssetCategory.CFD, InvestmentFundType.NONE),
             # "(ECHT)" used to be the whole distinction here and meant nothing to a reader.
             # What it was guarding against is the next option, so both now say so.
             ("Währungssaldo — tatsächlicher Fremdwährungsbestand auf dem Konto, KEIN Handelspaar (Anlage KAP)", AssetCategory.CASH_BALANCE, InvestmentFundType.NONE),
