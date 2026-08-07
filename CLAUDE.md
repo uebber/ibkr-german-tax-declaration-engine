@@ -363,20 +363,33 @@ the Finanzamt can assess differently, and being assessed differently is the norm
 process — not a wrong declaration. Do not spend the maintainer's money defending the revenue's
 side of a question the revenue has not taken a side on.
 
-Three conditions, and the third is the one that bites:
+**The permission is narrow, and every one of these must hold.** Fail any one and the rule is
+simply unavailable — they are conditions, not factors to weigh against each other:
 
-- **It must be a real tie.** Two readings each with authority behind them, recorded in
-  `reference/research/open-legal-questions.md` with both sides. One reading nobody supports is not
-  a grey area, it is an error with a preference attached.
+- **Never against Tier 1 or Tier 2.** If the statute settles it, or a BMF-Schreiben or the EStH
+  states it, that is the answer whichever way it falls. There is no favourable exception and no
+  sign-off that unlocks one. It does not matter that administrative guidance binds the Finanzamt
+  rather than the taxpayer: this engine does not implement a position that a Tier 1 or Tier 2
+  source contradicts. A reading that needs the guidance to be wrong is not a grey area, it is a
+  dispute, and a dispute is not something to bake into a generated figure.
+- **BMF must not have stated otherwise**, including where it reaches the point indirectly or by
+  clear implication rather than in a sentence about it. What is required is that the administration
+  has *not spoken*, not merely that no one has found the sentence yet. If the search was shallow,
+  the condition is unmet.
+- **The ambiguity must be documented, not constructed.** Either expert commentary records the point
+  as disputed, or the law plainly leaves it open. Two readings that can be written down are not a
+  grey area — with enough ingenuity anything has two readings, and that ingenuity is exactly what
+  this condition exists to disallow.
 - **It never licenses an invented input.** If the reason a figure is uncertain is that the data are
   missing, you are in the paragraph above, not this one.
-- **Silence is not the same as contradiction.** Where the administration has said nothing, choose
-  freely. Where a published BMF position says otherwise, the taxpayer is still not bound by it —
-  it binds the Finanzamt — but the deviation is then a deliberate act to take *visibly*, and the
-  choice is the maintainer's to make, not an implementation detail to settle in a commit.
+- **Ask, and get permission, before implementing.** Put both readings, the authority behind each,
+  and what the choice moves to the user, and wait. A grey area is never resolved inside a commit,
+  however well the commit message explains itself. The decision is the taxpayer's; they sign the
+  return.
 
-The choice, its reasoning and which condition it relied on go in `docs/legal-implementation-map.md`
-against the claim ID, as any other choice under uncertainty does.
+The choice, its reasoning, and the evidence that each condition above was met go in
+`docs/legal-implementation-map.md` against the claim ID, as any other choice under uncertainty
+does.
 
 **Verify your rationale, not just your citations.** A reason given in a comment, a commit message or
 a document is a claim, and a plausible one is the hardest kind to catch. Check it, or mark it

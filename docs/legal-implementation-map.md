@@ -89,8 +89,12 @@ What supports it, all already in the store:
 
 It is also the taxpayer-favourable reading against Reading A — no derivative ring-fencing, so
 losses offset against all capital income rather than sitting in the Termingeschaeft pot with the
-pre-2025 cap. Under the grey-area rule in CLAUDE.md that rests on the first condition: a real tie
-between recorded readings, decided the taxpayer's way.
+pre-2025 cap. **Checked against every condition of the grey-area rule in CLAUDE.md**, since the
+rule is unavailable if any one fails: no Tier 1 or Tier 2 source contradicts Reading C, and Rz. 9
+positively excludes the alternative; the BMF has not addressed unallocated spot metal at a broker
+in any located passage, directly or by implication; the ambiguity is documented rather than
+constructed, as three readings each constrained by Tier 4 and none chosen by Tier 1 or Tier 2; and
+the taxpayer was asked and decided, on 2026-08-07.
 
 **Superseded, and why it is recorded rather than deleted.** This row previously read *"reading
 chosen: Termingeschaeft (Reading A)"*, reasoned as "§ 23 is out, and between the two remaining
@@ -541,7 +545,7 @@ German custodian through the broker.
 | GT-FX-002 | not reached | — | — | Non-interest-bearing accounts. A margin brokerage account pays or charges interest on balances, so the § 23 branch is not exercised — **but nothing tests the account's actual character.** |
 | GT-FX-003 | not reached | — | — | Pure payment accounts. |
 | GT-FX-004 | not reached | — | — | Retroactivity to VZ 2009 and the 2025 bank withholding duty both concern German Zahlstellen. |
-| GT-FX-005 | **choice under uncertainty** | as GT-FX-001 | same | § 20 throughout. Reason: the administrative position, and a margin account's balances bear interest. The § 23 reading would make gains after a year tax-free, so the choice is not conservative in the taxpayer's favour — it is the one that follows the administration. |
+| GT-FX-005 | implements | as GT-FX-001 | same | § 20 throughout. Reason: the administrative position, and a margin account's balances bear interest. The § 23 reading would make gains after a year tax-free, so this is **not** the taxpayer-favourable choice — and under the grey-area rule in CLAUDE.md it is not a choice at all. BMF 14.05.2025 Rz. 131 states the § 20 treatment at Tier 2, verbatim and verified, drawn on the verzinslich/unverzinslich line; the rule's first condition bars implementing against it, whichever way it falls. **Do not reopen this on the ground that the favourable reading exists.** What remains genuinely open is whether the administration's position is correct, which is Q7 and is not something a generated figure should take a side on. Position changed from *"choice under uncertainty"* on 2026-08-07: Rz. 131 having been verified, following it is compliance, not a selection. |
 | GT-FX-006 | **choice under uncertainty** | short currency positions tracked and taxed symmetrically with long ones | `test_group7_currency_fifo.py` | No guidance addresses a negative balance in Privatvermögen. Symmetry is an assumption. |
 | GT-FX-007 | **choice under uncertainty — now unsourced outright** | currency legs of securities trades measured separately (`FX_IMPLICIT_*`) | `test_group9_variable_fx.py`, `test_group10_options_variable_fx.py` | See below. |
 | GT-FX-008 | implements | `src/engine/fifo_manager.py` — currency lots consumed FIFO | `test_group7_currency_fifo.py` | FIFO for currency, now sourced on both branches: BMF 14.05.2025 Rz. 131 for § 20, § 23 Abs. 1 S. 1 Nr. 2 S. 3 for § 23 ([GT-ESTG23-013]). Same ordering either way, so the unresolved classification in GT-FX-005 does not put the lot order in doubt. |
