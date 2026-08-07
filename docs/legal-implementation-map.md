@@ -64,26 +64,51 @@ EStG application rule for Nr. 11 has been located", which was true and beside th
 |---|---|---|---|---|
 | GT-ESTG20-005 | implements | `LONG_POSITION_SALE` / `SHORT_POSITION_COVER` on `STOCK` → `ANLAGE_KAP_AKTIEN_GEWINN` / `_VERLUST` | `test_fifo_groups.py`, `test_group6_loss_offsetting.py` | Zeilen 20 and 23. |
 | GT-ESTG20-006 | not reached | — | — | Sale of a Dividenden-/Zinsschein detached from the Stammrecht. No event kind, and no broker input produces one. |
-| GT-ESTG20-038 | **not yet reached** | — | — | Rz. 9's definition is what would let an IBKR asset class be mapped to a Termingeschaeft without an analogy. Nothing consumes it yet: `FXCFD` and `CMDTY` still fall through to UNKNOWN. **`CMDTY` is not covered by this claim — see Q11.** The two exclusions Rz. 9 states (Zertifikate, Optionsscheine) have no IBKR asset class of their own and are not distinguished — a Zertifikat arrives as `STK` and is treated as a share. Recorded as a known limit. |
+| GT-ESTG20-038 | **not yet reached** (the positive definition) / **relied on** (the exclusion) | — | — | Rz. 9's *definition* is what would let an IBKR asset class be mapped to a Termingeschaeft without an analogy, and nothing consumes it yet: `FXCFD` and `CMDTY` still fall through to UNKNOWN. Its *exclusion* is a different matter — *"Zertifikate und Optionsscheine gehören nicht zu den Termingeschäften"* is what decides Q11 against the Termingeschaeft reading for `CMDTY`, so this claim is load-bearing there even though no code reaches it. Neither exclusion has an IBKR asset class of its own, and a Zertifikat arriving as `STK` is still treated as a share — a known limit, and part of what issue #53 has to fix. |
 | GT-ESTG20-007 | implements | option and CFD close/expiry/settlement paths | `test_options_lifecycle.py`, `test_futures.py`, `test_console_reporter_derivatives.py` | Routed by `get_form_rules(tax_year)` — Zeile 21/24 up to VZ 2024, merged into 19/22 from VZ 2025. |
 | GT-ESTG20-008 | implements | bond disposals; currency disposals via `FX_*` realization types | `test_bond_maturity.py`, `test_group7_currency_fifo.py` | |
 | GT-ESTG20-009 | implements | IBKR corporate action `BM` → synthetic sell → `LONG_POSITION_SALE` | `test_bond_maturity.py::TestBondMaturity` | The Einlösung fiction is what makes a redemption at maturity a disposal at all. |
 
 
-**Q11 — reading chosen: Termingeschaeft (Reading A).** An unallocated spot precious-metal position
-held at the broker ("London Gold", no expiry, no underlying, monthly carrying fee) is classified
-as a derivative and declared on the Termingeschaeft lines. Chosen by the taxpayer, not derived:
-`reference/research/open-legal-questions.md` Q11 records three readings and no Tier 1/2 source
-chooses between them. The reason given is that § 23 requires physical backing with an exclusive
-delivery or proceeds claim (BMF 14.05.2025 Rz. 57, [GT-ESTG23-011]) and the broker evidences
-neither, so the § 23 route is unavailable; between the two remaining readings the Termingeschaeft
-one was taken.
+**Q11 — reading chosen: sonstige Kapitalforderung (Reading C), § 20 Abs. 2 Satz 1 Nr. 7 →
+Zeile 19/22.** An unallocated spot precious-metal position held at the broker (no expiry, no
+underlying, monthly carrying fee) is **not** a Termingeschaeft. It is treated like a Zertifikat.
+Chosen by the taxpayer, 2026-08-07; `reference/research/open-legal-questions.md` Q11 records three
+readings and no Tier 1/2 source chooses between them.
 
-**This choice lives in a gitignored classification cache and nowhere else in the repository.** It
-is recorded here because that is the only public record of it. If the cache is rebuilt and the
-instrument classified differently, this row is wrong and the declared figures move. Reading C
-(sonstige Kapitalforderung, § 20 Abs. 2 Satz 1 Nr. 7 → Zeile 19/22) is not currently expressible
-at all — see the missing-category gap.
+What supports it, all already in the store:
+
+- **Rz. 9 excludes it from the Termingeschaeft route expressly** — *"Zertifikate und Optionsscheine
+  gehören nicht zu den Termingeschäften, vgl. Rn. 8 f."* ([GT-ESTG20-038]). The same Randziffer
+  opens by requiring an Options- or Festgeschaeft *"die zeitlich verzögert zu erfüllen sind"*,
+  which a rolling position with no maturity does not obviously satisfy.
+- **§ 23 is unavailable**: Rz. 57 requires physical backing with an exclusive delivery or proceeds
+  claim ([GT-ESTG23-011]) and the broker evidences neither.
+- **Nothing located argues against Reading C.** Q11 records that the BFH line cutting against it
+  presupposes a delivery claim, which is absent here, so it neither supports nor excludes it.
+
+It is also the taxpayer-favourable reading against Reading A — no derivative ring-fencing, so
+losses offset against all capital income rather than sitting in the Termingeschaeft pot with the
+pre-2025 cap. Under the grey-area rule in CLAUDE.md that rests on the first condition: a real tie
+between recorded readings, decided the taxpayer's way.
+
+**Superseded, and why it is recorded rather than deleted.** This row previously read *"reading
+chosen: Termingeschaeft (Reading A)"*, reasoned as "§ 23 is out, and between the two remaining
+readings the Termingeschaeft one was taken" — which treated Reading C as unavailable because the
+engine could not express it. That is an implementation constraint standing in for a legal
+conclusion, and Rz. 9 points the other way.
+
+**The engine cannot express the chosen reading, so no figure is produced at all.** A run stops
+during classification on the `CMDTY` instrument being `UNKNOWN`, which is why there is no VZ 2025
+declaration. The blocker is the missing category — **issue #53**, which now carries this decision.
+`BOND` would land the same figures on Zeile 19/22 and has been **declined as a workaround**: it
+makes one category mean two unrelated things and would label a metal position a bond on the
+report.
+
+**A previous version of this note said the choice lived only in a gitignored cache and that this
+row was its sole public record.** That was true, and it was tested the hard way on 2026-08-07 when
+the cache was destroyed by the clean-clone protocol: the classification was lost and this row was
+what survived. Keep it current for that reason.
 
 ### Abs. 4 — gain calculation and lot identification
 
