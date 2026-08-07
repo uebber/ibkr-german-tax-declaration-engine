@@ -14,19 +14,43 @@ Items are processed in ascending (phase, sort_key, seq) order:
 
 1. ``Phase.LEDGER_EVENTS`` — every currency- or security-ledger-affecting
    event, globally chronological (``get_event_sort_key``: date, type
-   priority, transaction id). Handlers touch exactly ONE ledger, so events of
-   different assets/currencies commute; relative order WITHIN a ledger is
-   what matters and is preserved via ``seq``.
-2. ``Phase.MERGERS`` — historical stock-for-stock mergers, chronological.
-   These are tax-neutral under §20 Abs. 4a Satz 1-2 EStG: the new shares step
-   into the tax position of the old ones, so the lots move ACROSS asset
-   ledgers with their acquisition date and cost basis intact
-   (reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"). They are
-   deliberately ordered after all plain ledger events of the historical
-   window (the established Pass-2 semantics every merger scenario encodes).
-   Future cross-ledger events join the stream with their own documented
-   priority instead of growing new passes.
-3. ``Phase.RECONCILE`` — start-of-year reconciliation against the reported
+   priority, transaction id). Most handlers touch exactly ONE ledger, so
+   events of different assets/currencies commute; relative order WITHIN a
+   ledger is what matters and is preserved via ``seq``.
+
+   Historical stock-for-stock mergers are ordinary members of this phase,
+   placed at their own date. They are tax-neutral under §20 Abs. 4a Satz 1-2
+   EStG — the new shares step into the tax position of the old ones, so the
+   lots move ACROSS asset ledgers with their acquisition date and cost basis
+   intact — and Satz 6 fixes the moment the measure takes effect at the
+   *Einbuchung in das Depot* (GT-ESTG20-015, GT-ESTG20-018;
+   reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a").
+
+   A merger is the one handler that touches TWO ledgers, so unlike everything
+   else in this phase its correctness depends on the global interleaving and
+   not merely on per-ledger order. What that costs is one intra-day rule:
+
+       On its date, the merger is applied BEFORE that day's trades.
+
+   Until 2026-08 mergers instead ran in a phase of their own, after every
+   ledger event in the whole window. A disposal of merged-in shares occurring
+   inside the historical window therefore hit a ledger that did not yet hold
+   them: the sale overshot, the merger then delivered lots nothing could
+   consume, and the reconstruction exceeded the reported SoY by exactly the
+   transferred quantity. Reconcile discarded the whole reconstruction and
+   synthesised a lot — right quantity, right cost basis, fabricated
+   acquisition date. See issue #56 and
+   ``test_merged_in_shares_sold_inside_the_historical_window``.
+
+   **The intra-day rule currently holds by accident and is pinned by a test.**
+   ``sorting_utils.py`` places the transaction id ahead of the type priority
+   in the secondary key, so ``_INTRA_DAY_SORT_ORDER_CORP_ACTION`` does not
+   decide anything between events with different ids. Corporate actions sort
+   first only because ``Corporate_Actions-*.csv`` carries no ``TransactionID``
+   column, leaving ``ibkr_transaction_id`` None and the key element ``""``.
+   Should IBKR ever supply that column the order would flip silently, which is
+   what ``test_merger_sorts_before_same_day_trades`` exists to catch.
+2. ``Phase.RECONCILE`` — start-of-year reconciliation against the reported
    snapshots, after all lot state exists: securities ledgers against SoY
    positions, currency ledgers against SoY cash balances.
 
@@ -54,8 +78,7 @@ from typing import Callable, List, Tuple
 
 class Phase(IntEnum):
     LEDGER_EVENTS = 0
-    MERGERS = 1
-    RECONCILE = 2
+    RECONCILE = 1
 
 
 @dataclass(frozen=True)

@@ -105,10 +105,10 @@ that question: pooling is wrong under both readings.
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-ESTG20-015 | implements | `CORP_MERGER_STOCK` → tax-neutral basis transfer (FIFO drain/receive) | `test_stock_merger_fifo.py`, `test_historical_merger_replay_guard.py` | Cash consideration is handled separately as `CORP_MERGER_CASH` → `CASH_MERGER_PROCEEDS`. |
+| GT-ESTG20-015 | implements | `CORP_MERGER_STOCK` → tax-neutral basis transfer (FIFO drain/receive) | `test_stock_merger_fifo.py` (incl. `test_merged_in_shares_sold_inside_the_historical_window`), `test_historical_merger_replay_guard.py` | Cash consideration is handled separately as `CORP_MERGER_CASH` → `CASH_MERGER_PROCEEDS`. Until issue #56 the transfer did not survive a disposal of the merged-in shares *inside* the historical window: the replay applied mergers after every ledger event, so the reconstruction overshot, reconcile discarded it and substituted a lot with a fabricated acquisition date. Basis and date now transfer in that case too. |
 | GT-ESTG20-016 | **deviates** | `CORP_STOCK_DIVIDEND` → new shares at EUR 0 basis | `test_stock_merger_fifo.py` (adjacent coverage only) | Satz 5 is the *residual* case, conditional on Sätze 3, 4 and 7 not applying. The engine applies the EUR 0 treatment without testing those three conditions. |
 | GT-ESTG20-017 | not reached | — | — | Abspaltung. No corporate-action type maps to it. |
-| GT-ESTG20-018 | not reached | — | — | Timing by Einbuchung date. The engine uses the corporate action's reported date; no input distinguishes the two. Note Satz 6 governs Sätze 1–5 only, not the Satz 7 Abspaltung. |
+| GT-ESTG20-018 | implements | Merger streamed chronologically at its own date (`engine/replay.py` `Phase.LEDGER_EVENTS`, `calculation_engine._replay_historical_merger`) | `test_stock_merger_fifo.py::TestMergerIntraDayOrdering`, `test_merged_in_shares_sold_inside_the_historical_window` | Satz 6 has two consequences and the engine reaches one. **Reached:** the measure takes effect at that moment, so the same day's disposals can consume the delivered lots — this is what fixed issue #56, and the intra-day rule is merger-before-trades. **Not reached:** *which* date is the Einbuchung. The engine uses the corporate action's reported date as a proxy; no input distinguishes the two. Note Satz 6 governs Sätze 1–5 only, not the Satz 7 Abspaltung. |
 | GT-ESTG20-019 | not reached | — | — | Wandel-/Umtauschanleihen. |
 | GT-ESTG20-020 | not reached | — | — | Bezugsrechte. |
 

@@ -303,7 +303,8 @@ class FifoLedger:
             self.apply_historical_event(asset, hist_event, tax_year)
 
     def reconcile_with_soy_position(self, asset: Asset, tax_year: int):
-        """Pass 3: Compare reconstructed lots against SoY position and apply fallback if needed."""
+        """Reconcile phase: compare reconstructed lots against the SoY position,
+        and apply the snapshot fallback if they disagree."""
         historical_simulation_inconsistent = getattr(self, '_historical_simulation_inconsistent', False)
 
         reconstructed_long_lots_snapshot = list(self.lots)

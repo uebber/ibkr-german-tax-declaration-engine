@@ -133,10 +133,13 @@ def _format_asset_info(asset_obj) -> str:
 
 def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
     """Apply ONE historical stock-for-stock merger — the per-event unit the
-    unified replayer streams in the MERGERS phase. Tax-neutral under §20
-    Abs. 4a Satz 1-2 EStG (the new shares step into the tax position of the
-    old ones), so the lots transfer with their acquisition date and cost
-    basis: reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"."""
+    unified replayer streams chronologically in Phase.LEDGER_EVENTS, at the
+    merger's own date. Tax-neutral under §20 Abs. 4a Satz 1-2 EStG (the new
+    shares step into the tax position of the old ones), so the lots transfer
+    with their acquisition date and cost basis, and Satz 6 places the transfer
+    at the Einbuchung date so that day's disposals can consume it:
+    reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"
+    (GT-ESTG20-015, GT-ESTG20-018)."""
     source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
     target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
 
@@ -280,7 +283,7 @@ def run_main_calculations(
     # === Unified historical replay (AR5) ===
     # ONE ordered stream rebuilds all pre-tax-year ledger state — securities
     # AND currencies — under the documented phase contract (see engine/replay.py):
-    # LEDGER_EVENTS (chronological) -> MERGERS (chronological) -> RECONCILE.
+    # LEDGER_EVENTS (chronological, mergers included) -> RECONCILE.
     from src.engine.replay import ReplayStream, Phase
     stream = ReplayStream()
 
@@ -332,8 +335,13 @@ def run_main_calculations(
             fifo_ledgers[(DEFAULT_ACCOUNT, asset_id)] = ledger
     securities_ledger_count = len(fifo_ledgers)
 
+    # Mergers join the chronological stream at their own date, not a phase of
+    # their own: §20 Abs. 4a Satz 6 EStG fixes the moment a Kapitalmassnahme
+    # takes effect at the Einbuchung into the depot (GT-ESTG20-018), so the
+    # transferred lots must exist for that day's disposals. Ordering them after
+    # the whole window instead was issue #56.
     if historical_merger_events:
-        logger.info(f"Pass 2: Replaying {len(historical_merger_events)} historical stock merger(s)...")
+        logger.info(f"Streaming {len(historical_merger_events)} historical stock merger(s) chronologically...")
         for merger_event in historical_merger_events:
             try:
                 merger_key = get_event_sort_key(merger_event, asset_resolver)
@@ -341,17 +349,18 @@ def run_main_calculations(
                 logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
                 raise e
             stream.add(
-                Phase.MERGERS, merger_key,
+                Phase.LEDGER_EVENTS, merger_key,
                 (lambda m=merger_event: _replay_historical_merger(m, fifo_ledgers)),
                 label="merger",
             )
     else:
-        logger.info("Pass 2: No historical stock mergers to replay.")
+        logger.info("No historical stock mergers to replay.")
 
-    # Reconcile phase: securities ledgers against SoY positions (after merger
-    # lots are in place). Items are added for the SECURITIES ledgers existing
-    # now — currency ledgers reconcile against cash balances separately below.
-    logger.info("Pass 3: Reconciling ledgers with SoY positions...")
+    # Reconcile phase: securities ledgers against SoY positions (after every
+    # ledger event, mergers included, has been applied). Items are added for
+    # the SECURITIES ledgers existing now — currency ledgers reconcile against
+    # cash balances separately below.
+    logger.info("Reconciling ledgers with SoY positions...")
     def _reconcile_security_soy(ledger, asset_obj):
         try:
             ledger.reconcile_with_soy_position(asset_obj, tax_year)
@@ -449,6 +458,41 @@ def run_main_calculations(
 
     # === Run the unified historical replay ===
     stream.run()
+
+    # Placing the merger ahead of its day's trades (see engine/replay.py) is
+    # right for the target — the delivered shares exist before that day's
+    # disposals — and is the wrong end of the day for the source: a purchase of
+    # the old instrument booked on the merger date lands in the source ledger
+    # *after* the drain and can never transfer. The source then reconciles
+    # against a reported zero and the lots are dropped, cost basis and all,
+    # with nothing in the output to say so.
+    #
+    # It is a narrow case (a trade in an instrument on the day its ISIN is
+    # replaced) and no input here exhibits it, but it is the price of a single
+    # intra-day slot and it must not be silent. Every offender is collected
+    # before raising, so one run names the whole problem.
+    if historical_merger_events:
+        orphaned: List[str] = []
+        for merger_event in historical_merger_events:
+            source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
+            if source_ledger is None:
+                continue
+            leftover = (sum(lot.quantity for lot in source_ledger.lots)
+                        + sum(lot.quantity_shorted for lot in source_ledger.short_lots))
+            if leftover:
+                source_asset = asset_resolver.get_asset_by_id(merger_event.asset_internal_id)
+                name = (source_asset.get_classification_key() if source_asset
+                        else str(merger_event.asset_internal_id))
+                orphaned.append(
+                    f"{name}: {leftover} unit(s) remain after the merger on "
+                    f"{merger_event.event_date} transferred its holding away")
+        if orphaned:
+            raise ProcessingError(
+                "Historical replay: a merged-away instrument still holds lots after the "
+                "replay. The merger is applied before that day's trades, so an acquisition "
+                "of the old instrument booked on or after the merger date cannot transfer "
+                "and would be discarded silently at reconciliation. "
+                + "; ".join(orphaned))
 
     # The lots as they stand right here are the holding at the close of the
     # preceding calendar year: the historical replay has run and been reconciled

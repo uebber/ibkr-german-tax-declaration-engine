@@ -177,10 +177,10 @@ run.
 - **The ends of a new channel.** When the data-gap channel was added, its second recording site
   and its entire report-rendering block could each be deleted with the suite green. Probe the
   ends, not the middle.
-- **Anything a start-of-year snapshot can rebuild.** Pass 3 reconciles against the Positions
-  file, so a defect that loses lots stays invisible in quantity, cost basis, proceeds *and* gain
-  — only the acquisition date is wrong. A test asserting those four figures on a scenario with an
-  SoY snapshot is weaker than it looks.
+- **Anything a start-of-year snapshot can rebuild.** The reconcile phase compares against the
+  Positions file, so a defect that loses lots stays invisible in quantity, cost basis, proceeds
+  *and* gain — only the acquisition date is wrong. A test asserting those four figures on a
+  scenario with an SoY snapshot is weaker than it looks.
 
 Add to this list whenever a probe finds a site the suite cannot observe.
 

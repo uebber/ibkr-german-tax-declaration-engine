@@ -1,13 +1,13 @@
 # tests/test_historical_merger_replay_guard.py
 """
-Guard: the Pass 2 historical-merger replay must actually transfer the source
-lots, and the transferred lot must keep its original acquisition date.
+Guard: the historical-merger replay must actually transfer the source lots,
+and the transferred lot must keep its original acquisition date.
 
 Why this needs its own test. In `run_main_calculations` the two ledger lookups
 that open the replay are not symmetric: a missing TARGET ledger raises, but a
 missing SOURCE ledger only logs a warning and `continue`s. A silently skipped
-merger is then papered over by Pass 3, which reconciles every ledger against the
-SoY snapshot and synthesises a fallback lot for the shortfall -- and that
+merger is then papered over by the reconcile phase, which compares every ledger
+against the SoY snapshot and synthesises a fallback lot for the shortfall -- and that
 fallback lot is dated `f"{tax_year-1}-12-31"` (`FifoLedger.reconcile_with_soy_
 position`), not the real acquisition date, while its cost basis is read from the
 Positions file.
@@ -16,7 +16,8 @@ Because a merged holding's SoY cost basis *is* the carried-over basis, the
 fallback reproduces the correct cost basis exactly. The pre-existing merger
 tests assert quantity, cost basis, proceeds and gain -- all four of which the
 fallback gets right -- so they pass whether or not the replay ran. Demonstrated:
-breaking the Pass 2 source lookup leaves the entire 463-test suite green.
+breaking the source lookup in `_replay_historical_merger` left the entire
+463-test suite green.
 
 The acquisition date is the one observable that separates the two paths, so it
 is what this test pins. It is not cosmetic: for a `PRIVATE_SALE_ASSET` the
@@ -43,9 +44,9 @@ class TestHistoricalMergerReplayGuard(FifoTestCaseBase):
         2023: SELL 130 SGBS
 
         The lot sold in 2023 must carry GZUR's 2022-03-01 acquisition date. If
-        Pass 2 skipped the transfer, Pass 3's SoY fallback supplies a lot dated
-        2022-12-31 with the same cost basis, and every other assertion below
-        still holds.
+        the replay skipped the transfer, the reconcile phase's SoY fallback
+        supplies a lot dated 2022-12-31 with the same cost basis, and every
+        other assertion below still holds.
         """
         tax_year = 2023
         account = "U_HIST_MERGER_GUARD"

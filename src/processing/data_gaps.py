@@ -45,7 +45,8 @@ declaration is filed.
 
 Conditions NOT routed through this channel, each still handled at its own site:
 ``_apply_historical_currency_event`` swallowing every exception at DEBUG level
-(issue #49), and Pass 2's warn-and-continue on a missing merger source ledger
+(issue #49), and ``_replay_historical_merger``'s warn-and-continue on a
+missing merger source ledger
 (issue #50). Wiring those up is future work, not a property of this module.
 
 The collector travels with the pipeline result (``ProcessingOutput.data_gaps``)
