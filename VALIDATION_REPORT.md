@@ -224,12 +224,28 @@ fixed on this branch by `efb0d97` (a historical merger applies at its own date) 
 | 2024 | aborts **earlier than before**, during classification |
 | 2025 | aborts during classification |
 
-**Both remaining aborts are the same one instrument**, and it is not a Vorabpauschale problem:
-`CONID:69067924` / `XAUUSD` / `CMDTY` has category `UNKNOWN` and cannot be auto-classified, so
-`DataIntegrityError` stops the run before any figure is produced. The classification it needs is
-Q11 Reading C — a sonstige Kapitalforderung under § 20 Abs. 2 Satz 1 Nr. 7 — and no such category
-exists: **issue #53 now gates two assessment years.** VZ 2024 and VZ 2025 are also the first two
-years in which a Vorabpauschale can be non-zero at all.
+**Both remaining runs stop on the same instrument** — `CONID:69067924` / `XAUUSD` / `CMDTY` has
+category `UNKNOWN` and cannot be auto-classified, so `DataIntegrityError` fires before any figure
+is produced. The classification it needs is Q11 Reading C, a sonstige Kapitalforderung under
+§ 20 Abs. 2 Satz 1 Nr. 7, and no such category exists: **issue #53.** VZ 2024 and VZ 2025 are also
+the first two years in which a Vorabpauschale can be non-zero at all.
+
+**But #53 is not the only thing between here and those two declarations, and an earlier version of
+this entry said it was.** The classification cache was rebuilt on 2026-08-07 against a VZ 2023 run,
+so it covers that year's instruments and no others. Measured by comparing cache keys against the
+instruments each year's window contains:
+
+| VZ | instrument keys in window | not in cache | composition of the uncached |
+|---|---|---|---|
+| 2023 | 169 | **0** | — |
+| 2024 | 265 | **96** | 68 `OPT`, 24 `STK`, 1 `CMDTY`, 1 `CASH`, 2 blank |
+| 2025 | 408 | **239** | 175 `OPT`, 58 `STK`, 1 `CMDTY`, 3 `CASH`, 2 blank |
+
+Only about three per year refuse outright and stop the run. **The quieter risk is the `STK`
+rows:** they auto-classify to `STOCK` without prompting, and this account's fund descriptions
+contain no "ETF" marker, so a fund among them is silently declared as a share — wrong form lines
+and no Teilfreistellung, with nothing failing. Both years therefore need an interactive
+classification pass, not just #53.
 
 **Not re-verified, and not claimed:** whether the Swiss Gold Vorabpauschale chain is now clean.
 The run stops before reaching it.
