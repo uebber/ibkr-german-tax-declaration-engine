@@ -259,7 +259,7 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py`; the Satz 2 price for a fund bought mid-year comes from `src/processing/fund_prices.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py`, `test_fund_price_store.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
+| GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py`; the Satz 2 price for a fund bought mid-year comes from `src/processing/fund_prices.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale.py::TestAFundTheEngineCannotPrice`, `test_vorabpauschale_reclassification.py`, `test_fund_price_store.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04, and a fund it could not price dropped out silently until 2026-08-09 — see below. |
 | GT-INVSTG-011 | implements | `_calculate_vorabpauschale()` and `FundUnitTranche.abs2_retained_twelfths()` in `src/engine/calculation_engine.py` | `test_vorabpauschale_abs2.py` | Abs. 2 reduces each acquisition by one twelfth per full month before its month of acquisition; units held before the year keep twelve. **No longer a choice under uncertainty** — the 2026-08-07 audit closed Q13 in favour of exactly this reading, on Rz. 18.11's worked example applying the reduction to the *per-Anteil* amount, with Rz. 18.9 and Rn. 184a alongside. The one residual is recorded in the store, not here: no source works a mixed holding, so summing per acquisition joins two quoted rules. Superseded text: *"implements (Q13 Reading A: per acquisition) … a choice under uncertainty"*; and before that, **Abs. 2 pro-rata was not implemented** at all. |
 | GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. Re-decided 2026-08-07 on Rz. 18.12, now recorded: the Zuflussfiktion is stated there as a Steuerabzug convenience so that a full Sparer-Pauschbetrag is available, **not** as a holding test — which is why it could not carry GT-INVSTG-016 and no longer has to. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | Re-decided 2026-08-07 on Rz. 18.13 and 18.14, now recorded. Rz. 18.14 fixes the rate as the value determined for the **erster Börsentag** of the calendar year, which is 2 January only in years whose first exchange day falls on it. This does not reach the engine: it looks up the value the BMF published for the year, and choosing the day is the BMF's step, not the engine's. It bore on GT-INVSTG-018, where a 2 January date *was* used as a Stichtag; that was closed on 2026-08-08 and the two now read the same way. |
@@ -335,6 +335,23 @@ market prices only, and its ETF NAV ticks (92–99) reach one session back.
 
 The conversion of this price is no longer pinned to 2 January; the follow-up that stood here is
 closed under GT-INVSTG-018 below.
+
+**A price the engine cannot use no longer removes the figure quietly, 2026-08-09.** Four paths in
+`_calculate_vorabpauschale()` dropped a single fund and let the run finish: no Satz 2 price, that
+price not convertible to EUR, no Satz 3 price though units were held at the close, that price not
+convertible. Each was a log line and a `continue`, so an instrument the engine had itself
+classified as an investment fund contributed no deemed income and the report said nothing —
+measured on 2026-08-07, four funds across VZ 2024 and VZ 2025 with Anlage KAP-INV Zeilen 9–13 at
+0.00 and an empty gap section. All four now collect and record one `VORABPAUSCHALE_PRICE_UNUSABLE`
+FAIL_FAST naming every affected fund with its reason. The figure in these cases is not zero, it is
+un-computable, and a zero on Zeile 9 is indistinguishable from a lawful one (issue #55).
+
+Two boundaries on that gap. It is **not** recorded for a calendar year whose Basiszins is not
+positive — Satz 2 multiplies by it, so no fund owes anything whatever its price was, and calendar
+2021 and 2022 are such years; without the guard VZ 2023's lawful zero would start aborting. And it
+is recorded **after** `VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN`, so a tree missing both keeps
+aborting on the acquisition dates as it did before: a FAIL_FAST raises where it is recorded, so
+only the first of two ever reaches the report.
 
 **GT-INVSTG-017 — the unit count. Closed.** Rz. 18.4 multiplies the per-unit Basisertrag by the
 units held at the close of 31 December of the calendar year, and the engine now does exactly that,

@@ -1326,6 +1326,13 @@ def _calculate_vorabpauschale(
 
     Still not implemented, rather than silently approximated: Abs. 1 S. 4 (Boersen- oder
     Marktpreis only where no Ruecknahmepreis was set) -- GT-INVSTG-036.
+
+    **A fund whose Satz 2 or Satz 3 price cannot be used is not skipped.** It is
+    collected and reported as one `VORABPAUSCHALE_PRICE_UNUSABLE` FAIL_FAST gap naming
+    every affected fund, at the foot of this function -- see the comment there for the
+    two boundaries on that. Four separate `continue`s did it silently until 2026-08-09
+    (issue #55). Passing no `data_gap_collector` restores the silent skip, which is why
+    the pipeline always passes one.
     """
     from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
@@ -1353,6 +1360,11 @@ def _calculate_vorabpauschale(
 
     results: List[VorabpauschaleData] = []
     funds_without_acquisition_dates: List[Tuple[str, str]] = []
+    # Every fund dropped for want of a usable Satz 2 or Satz 3 price, with the
+    # reason. Collected rather than recorded on the spot for the same reason as
+    # the list above: the gap is FAIL_FAST and raises as it is recorded, so one
+    # entry per fund would stop at the first and hide the rest.
+    funds_without_a_usable_price: List[Tuple[str, str, str]] = []
 
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if not isinstance(asset_obj, InvestmentFund):
@@ -1415,12 +1427,21 @@ def _calculate_vorabpauschale(
         soy_price_foreign = asset_obj.prior_year_soy_mark_price
         soy_currency = asset_obj.prior_year_soy_mark_price_currency or asset_obj.currency
         if soy_price_foreign is None or soy_currency is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No start-of-{vorabpauschale_year} price. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No start-of-{vorabpauschale_year} price. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"kein Ruecknahmepreis zum Jahresbeginn {vorabpauschale_year} "
+                "(§ 18 Abs. 1 Satz 2 InvStG)"))
             continue
 
         soy_price_eur = currency_converter.convert_to_eur(soy_price_foreign, soy_currency, soy_conversion_date)
         if soy_price_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} price to EUR. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} price to EUR. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"der Preis zum Jahresbeginn ({soy_price_foreign} {soy_currency} zum "
+                f"{soy_conversion_date.isoformat()}) konnte nicht in EUR umgerechnet "
+                "werden -- kein EZB-Referenzkurs fuer diesen Stichtag (Rz. 18.6)"))
             continue
 
         # Abs. 1 S. 3: the last Ruecknahmepreis set in the year, PER UNIT.
@@ -1429,12 +1450,22 @@ def _calculate_vorabpauschale(
         eoy_price_foreign = asset_obj.prior_year_eoy_mark_price
         eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
         if eoy_price_foreign is None or eoy_currency is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} price though units were held at the close. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} price though units were held at the close. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"kein Ruecknahmepreis zum Jahresende {vorabpauschale_year}, obwohl "
+                "zum 31.12. Anteile gehalten wurden -- die Deckelung nach § 18 "
+                "Abs. 1 Satz 3 InvStG ist damit nicht berechenbar"))
             continue
 
         eoy_price_eur = currency_converter.convert_to_eur(eoy_price_foreign, eoy_currency, eoy_conversion_date)
         if eoy_price_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert end-of-{vorabpauschale_year} price to EUR. Skipping VP.")
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert end-of-{vorabpauschale_year} price to EUR. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"der Preis zum Jahresende ({eoy_price_foreign} {eoy_currency} zum "
+                f"{eoy_conversion_date.isoformat()}) konnte nicht in EUR umgerechnet "
+                "werden -- kein EZB-Referenzkurs fuer diesen Stichtag (Rz. 18.6)"))
             continue
 
         distributions_eur = distributions_by_asset.get(asset_id, Decimal('0'))
@@ -1536,6 +1567,56 @@ def _calculate_vorabpauschale(
                 "die Einkuenfte untererfasst. Die historische Rekonstruktion "
                 "widerspricht hier dem Positionsbericht des Brokers -- die Ursache "
                 "liegt in den Transaktionsdateien, nicht in fehlenden Preisen."
+            ),
+            severity=GapSeverity.FAIL_FAST,
+        )
+
+    # The same report for a fund whose Satz 2 or Satz 3 price could not be used.
+    # Until 2026-08-08 each of these four conditions was a log line and a
+    # `continue`, so a fund the engine had itself classified as an investment
+    # fund contributed no deemed income and nothing said so -- measured live on
+    # 2026-08-07, four funds across VZ 2024 and VZ 2025, with Zeilen 9-13 at
+    # 0.00 and an empty gap section (issue #55).
+    #
+    # FAIL_FAST, for the reason `VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING`
+    # already is at whole-year scale: the figure is not zero, it is
+    # un-computable, and a zero on Zeile 9 is indistinguishable from a real one.
+    #
+    # Recorded after the block above so that a tree missing both keeps aborting
+    # on the acquisition dates, as it did before this existed -- a FAIL_FAST
+    # raises where it is recorded, so only the first of the two is ever seen.
+    #
+    # One code for all four, with the reason per fund in the detail. #55 asked
+    # for the year-start path to be split so that a fund *not held* when the
+    # year opened would not abort next to one whose price is genuinely missing;
+    # that split now exists a layer up, in `resolve_year_start_prices()`, which
+    # prices every fund owing a Vorabpauschale before the engine runs. A second
+    # code here would separate nothing and would cost the single report.
+    #
+    # Guarded on the Basiszins: a year whose rate is not positive yields no
+    # Vorabpauschale for any fund, because Abs. 1 Satz 2 multiplies by it, so a
+    # price nobody could obtain removed nothing from the declaration. Calendar
+    # 2021 and 2022 are such years -- without this, VZ 2023 would start aborting
+    # over a zero that is lawful. Same reasoning as the early return in
+    # `src/processing/fund_prices.py`.
+    if (funds_without_a_usable_price and basiszins > Decimal(0)
+            and data_gap_collector is not None):
+        named = "; ".join(
+            f"{key} ({description}): {reason}"
+            for key, description, reason in funds_without_a_usable_price)
+        data_gap_collector.record(
+            code="VORABPAUSCHALE_PRICE_UNUSABLE",
+            subject=f"{len(funds_without_a_usable_price)} Fonds: {named}",
+            detail=(
+                f"Fuer diese Fonds wurden zum Ende des Kalenderjahres "
+                f"{vorabpauschale_year} Anteile gehalten, sodass nach § 18 Abs. 1 "
+                "InvStG eine -- gegebenenfalls nach Abs. 2 zeitanteilig geminderte "
+                "-- Vorabpauschale anzusetzen waere. Der dafuer benoetigte "
+                "Ruecknahmepreis liess sich nicht verwenden; der Grund steht je "
+                "Fonds oben. Es wurde daher KEINE Vorabpauschale angesetzt, was die "
+                "Einkuenfte untererfasst. Eine Null in den Zeilen 9-13 der Anlage "
+                "KAP-INV waere von einer zutreffenden Null nicht zu unterscheiden, "
+                "deshalb bricht der Lauf ab."
             ),
             severity=GapSeverity.FAIL_FAST,
         )
