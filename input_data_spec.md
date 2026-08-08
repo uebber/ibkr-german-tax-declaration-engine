@@ -1,6 +1,10 @@
 ## General Information
 - **CSV Encoding:** All input CSV files are expected to be `utf-8-sig` encoded.
-- **Decimal Parsing:** Numerical monetary values and quantities are parsed into Python's `Decimal` type, preserving precision from the string representation. Empty strings or unparsable numeric values typically default to `None` or `Decimal("1.0")` based on field definition and parsing logic (`safe_decimal` utility).
+- **Decimal Parsing:** Numerical monetary values and quantities are parsed into Python's `Decimal` type, preserving precision from the string representation. A blank **optional** decimal is `None` — absent, not zero. A blank **required** decimal fails validation, and by the row rule below that stops the run. There is no `Decimal("1.0")` default; the description that claimed one predates issue #47.
+- **`Optional` in the tables below is the Pydantic annotation, not a claim that IBKR omits the column.** What the exports actually contain is settled in `data_import/`, and measured over 2021–2025, every file:
+  - **No `Decimal` column has ever been blank, in any of the six exports. Not once.**
+  - **Blanks are descriptor columns only, and mean *not applicable*, not *missing*.** Trades: `Strike` / `Expiry` / `Put/Call` / `UnderlyingConid` ~75% (the non-options), `UnderlyingSymbol` ~47%, `ISIN` ~32%, `Notes/Codes` ~23%, `SubCategory` and `Open/CloseIndicator` ~8% (currency trades). Cash transactions: every instrument identifier, 88–98%. Positions: `ISIN` ~20%, `UnderlyingSymbol` ~48%, `UnderlyingConid` ~79%. Corporate actions: `Code` and the underlying pair, always. Options EAE: `ISIN` ~82%, option terms and underlying identifiers 11–17%. Cash balance: never.
+  - Regenerate rather than quoting these forever — the window is the input window. **Count before treating a blank column as a case to handle** (CLAUDE.md, Gates).
 - **Date Parsing:** Date strings are parsed from various common formats (e.g., YYYY-MM-DD, YYYYMMDD) into Python `datetime.date` or `datetime.datetime` objects.
 - **Column Validation:** Each parser validates that the CSV header row contains exactly the columns defined in `src/parsers/column_validator.py`. Missing or unexpected columns cause a `ValueError` before any rows are parsed. This ensures the IBKR Flex Query export configuration matches what the engine expects. This sentence was true of `validate_csv_columns` and false of the parsers until August 2026: each caught the `ValueError` one frame later, printed it and returned an empty record list.
 - **Row failures are fatal, and reported together.** A row that fails model validation is not skipped. `src/parsers/csv_reader.py` collects every such row in a file and raises `DataIntegrityError` naming each one — its line number, its `TransactionID`/`ActionID` where the export carries one, and the columns that failed with the values they contained. A missing file raises `FileNotFoundError` rather than reading as empty.
@@ -8,11 +12,11 @@
 ---
 
 ## 1. Trades File
-- **Default Name (from `config.py`):** `trades.csv`
-- **Sample File Provided:** `input_file_2.csv`
+- **Input:** `data_import/Trades-{YYYY}.csv`, concatenated across every year <= the tax year
 - **Associated Pydantic Model:** `RawTradeRecord`
 
-**Column Specifications (based on `input_file_2.csv` headers):**
+**Column Specifications** — `TRADES_COLUMNS` in `src/parsers/column_validator.py`, checked
+against every real export by `tests/test_raw_model_fields.py`:
 
 | CSV Header             | Model Field Name (Pydantic) | Model Data Type             | Description                                                                 | Notes (Optionality, Example, Parsing Detail)                                                                                                                               |
 |------------------------|-----------------------------|-----------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -38,7 +42,7 @@
 | `Conid`                | `conid`                     | `Optional[str]`             | IBKR's contract identifier for the instrument.                              | Optional. Example: "900003167", "90000633"                                                                                                                                 |
 | `UnderlyingConid`      | `underlying_conid`          | `Optional[str]`             | IBKR's contract identifier for the underlying asset.                        | Optional, relevant for OPT/FUT/CFD. Example: "900003959.0" (parsed as string)                                                                                              |
 | `Multiplier`           | `multiplier`                | `Optional[Decimal]`         | The contract multiplier (e.g., for options, futures).                     | Optional. Example: "1", "100"                                                                                                                                              |
-| `Open/CloseIndicator`  | `open_close_indicator`      | `Optional[str]`             | Indicates if trade opens or closes a position ('O' or 'C').                 | Crucial for determining `FinancialEventType` for standard financial instrument trades in conjunction with `Buy/Sell` (refer to PRD Section 5, Step 7). Expected values: 'O' (Open), 'C' (Close). Missing or invalid values for relevant trades constitute a data inconsistency. Not applicable to currency pair trades (e.g., FX 'CASH' asset class trades like EUR.USD). The provided sample `input_file_2.csv` does not include this column; real input data for accurate trade classification requires it. Model field `open_close_indicator` maps to this. |
+| `Open/CloseIndicator`  | `open_close_indicator`      | `Optional[str]`             | Indicates if trade opens or closes a position ('O' or 'C').                 | Crucial for determining `FinancialEventType` for standard financial instrument trades in conjunction with `Buy/Sell` (refer to PRD Section 5, Step 7). Expected values: 'O' (Open), 'C' (Close). Missing or invalid values for relevant trades constitute a data inconsistency. Not applicable to currency pair trades (e.g., FX 'CASH' asset class trades like EUR.USD). The exports carry the column. Measured 2021–2025: blank on 586 rows, 584 of them `AssetClass=CASH` — **the other two are the data inconsistency this note describes, and they are real rows, not a hypothetical.** |
 
 ### A trade has one date, and it is the contract date
 
@@ -73,11 +77,10 @@ the Flex Query **and** to the tuple **and** to the model, together.
 ---
 
 ## 2. Cash Transactions File
-- **Default Name (from `config.py`):** `cash_transactions.csv`
-- **Sample File Provided:** `input_file_1.csv` (structure inferred from image and code)
+- **Input:** `data_import/Cash_Transactions-{YYYY}.csv`, concatenated across every year <= the tax year
 - **Associated Pydantic Model:** `RawCashTransactionRecord`
 
-**Column Specifications (based on `input_file_1.csv` headers):**
+**Column Specifications** — `CASH_TRANSACTIONS_COLUMNS`, checked against every real export:
 
 | CSV Header         | Model Field Name (Pydantic) | Model Data Type   | Description                                                                          | Notes (Optionality, Example, Parsing Detail)                                                                                                |
 |--------------------|-----------------------------|-------------------|--------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
@@ -118,11 +121,12 @@ Missing transaction types cause currency EOY balance mismatches (FIFO-tracked ba
 ---
 
 ## 3. Positions File (Start of Year / End of Year)
-- **Default Names (from `config.py`):** `positions_start_of_year.csv`, `positions_end_of_year.csv`
-- **Sample Files Provided:** `input_file_3.csv` (Start), `input_file_4.csv` (End)
+- **Input:** `data_import/Positions-{YYYY}-SoY.csv` and `-EoY.csv`, one snapshot per year, never
+  concatenated; `src/data_preparation.py` writes the working copies `positions_start_of_year.csv`
+  and `positions_end_of_year.csv` under `data/`
 - **Associated Pydantic Model:** `RawPositionRecord`
 
-**Column Specifications (based on `input_file_3.csv` / `input_file_4.csv` headers):**
+**Column Specifications** — `POSITIONS_COLUMNS`, checked against every real export:
 
 | CSV Header         | Model Field Name (Pydantic) | Model Data Type   | Description                                                                 | Notes (Optionality, Example, Parsing Detail)                                                                                                                                           |
 |--------------------|-----------------------------|-------------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -145,11 +149,10 @@ Missing transaction types cause currency EOY balance mismatches (FIFO-tracked ba
 ---
 
 ## 4. Corporate Actions File
-- **Default Name (from `config.py`):** `corporate_actions.csv`
-- **Sample File Provided:** `input_file_0.csv`
+- **Input:** `data_import/Corporate_Actions-{YYYY}.csv`, concatenated across every year <= the tax year
 - **Associated Pydantic Model:** `RawCorporateActionRecord`
 
-**Column Specifications (based on `input_file_0.csv` headers):**
+**Column Specifications** — `CORPORATE_ACTIONS_COLUMNS`, checked against every real export:
 
 | CSV Header         | Model Field Name (Pydantic) | Model Data Type   | Description                                                                   | Notes (Optionality, Example, Parsing Detail)                                                                                                |
 |--------------------|-----------------------------|-------------------|-------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
@@ -188,10 +191,10 @@ settles it.
 ---
 
 ## 5. Cash Balance File (Currency Balances)
-- **Default Name (from `config.py`):** `cash_balance.csv`
-- **Sample File Provided:** `Gemini_Cash_Balance.csv`
+- **Input:** `data_import/Cash_Balance-{YYYY}.csv`, one per year; `src/data_preparation.py` writes
+  the working copy `cash_balance.csv` under `data/`
 - **Purpose:** Records currency holdings at start and end of year for tracking FX positions and potential currency gains/losses under §23 EStG.
-- **Associated Pydantic Model:** `RawCashBalanceRecord` (to be implemented)
+- **Associated Pydantic Model:** `RawCashBalanceRecord`
 
 **Column Specifications (based on IBKR Cash Report Flex Query):**
 
@@ -215,7 +218,7 @@ settles it.
 ---
 
 ## 6. Options Exercises, Assignments & Expirations File (Optional)
-- **Default Name:** `options_eae.csv`
+- **Input:** `data_import/Options_EAE-{YYYY}.csv`, concatenated across every year <= the tax year
 - **Purpose:** Records option exercises, assignments, expirations, and cash settlements. Required for cash-settled index options (e.g. SPX, ESTX50) where no underlying stock trade exists. If you don't trade index options, this file is not needed.
 - **When it is required is decided from the data, not from the filename.** Only the `Cash Settlement` rows carry information found nowhere else — the physical-delivery and Assignment/Exercise rows duplicate the Trades export. `ParsingOrchestrator._require_option_cash_settlements` pairs every assignment/exercise of an option with no resolvable underlying against its settlement row, and stops the run naming each unpaired contract. A `Cash Settlement` row whose `Proceeds` are zero is skipped at parse time and counts as absent.
 - **Associated Pydantic Model:** `RawOptionsEAERecord`
