@@ -60,16 +60,17 @@ That collision is the common case, not a corner case — every trade is streamed
 twice under the SAME event sort key, once for its security ledger and once for
 its currency ledger, and all RECONCILE items share the constant key ``(0,)``.
 
-What ``seq`` does NOT do is make replay deterministic across runs. ``sort_key``
-comes from ``get_event_sort_key``, whose tail element is ``event.event_id``, a
-``uuid.uuid4()`` regenerated on every run (PRD 5.8 calls that "deterministic";
-it is unique-within-a-run, which is a different property). So the order of
-DISTINCT same-day events sharing a transaction id is redrawn each run, and no
-tie-breaker downstream can recover it — ``seq`` only stabilises items whose
-keys are already identical. Ordering within a single ledger is what decides a
-figure, and that is unaffected today; it stops being safe once same-day
-disposals compete for lots across per-Depot ledgers. The repair belongs in the
-PRD and in ``get_event_sort_key``, not here.
+What ``seq`` does NOT do is make replay deterministic across runs, and until
+August 2026 nothing did. ``sort_key`` comes from ``get_event_sort_key``, whose
+tail element was ``event.event_id``, a ``uuid.uuid4()`` regenerated on every
+run (PRD 5.8 called that "deterministic"; it is unique-within-a-run, which is a
+different property). The order of DISTINCT same-day events sharing a
+transaction id was therefore redrawn each run, and no tie-breaker downstream
+could recover it — ``seq`` only stabilises items whose keys are already
+identical. That tail element is now ``event.creation_sequence``, fixed at
+construction, so equal ``sort_key`` means the same two items on every run and
+``seq`` decides between them as designed. Issue #71 has the measurement: 14
+OptionEAE cash settlements reordering freely between two captures of one tree.
 """
 from dataclasses import dataclass
 from enum import IntEnum

@@ -332,7 +332,10 @@ renamed INFO messages, the two SGBS oversell warnings gone, and
 merger's transfer line moving to its chronological position, plus reordered
 `OPTION_CASH_SETTLEMENT` lines — the last of which a same-tree VZ 2025 control reproduced exactly
 (6 changed lines, all option settlements, no merger or reconcile lines), so it is the `event_id`
-uuid4 nondeterminism `replay.py` already documents and not this change.
+uuid4 nondeterminism `replay.py` documented at the time and not this change. That nondeterminism
+was removed in August 2026 (issue #71): the sort key's tail element is now
+`event.creation_sequence`, so a control capture no longer has to absorb reordered settlement
+lines. The 8- and 6-line counts above stand as measured against the tree of the day.
 
 VZ 2024, previously aborting: now exits 0. SGBS reconstructs 100 against a reported 100 with
 `Inconsistent: False`, `VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN` goes from 5 log mentions to 0,

@@ -599,28 +599,28 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
 8. **Process dividend rights matching** (`_process_dividend_rights_matching`): Match DI/ED pairs and re-link associated cash events to underlying stocks.
 
 9. Sort all `FinancialEvent` objects chronologically (`ParsingOrchestrator.get_all_financial_events`). **Only events whose `event_date` falls within the current tax year are considered for further processing and reporting.** Enhanced tax year end date filtering excludes events after tax year. This filtering should ideally occur when events are first created or retrieved by `get_all_financial_events`, before enrichment and FIFO processing.
-   - **Deterministic Sorting Requirement:** Event sorting must be stable and deterministic to ensure correct FIFO processing and calculation results. Each `FinancialEvent` object is unique due to its `event_id` (UUID). Parsers ensure one event object per logical entry from IBKR reports, even if identifiers like `ibkr_transaction_id` are shared across entries.
+   - **Deterministic Sorting Requirement:** Event sorting must be stable and deterministic **across runs**, to ensure correct FIFO processing and calculation results. Parsers ensure one event object per logical entry from IBKR reports, even if identifiers like `ibkr_transaction_id` are shared across entries; each such object is unique within a run due to its `event_id` (UUID). **`event_id` is not the tie-break and must never be used as one** — it is a `uuid4` redrawn on every run, so ordering by it is random rather than deterministic. The tie-break is `event.creation_sequence`, a counter assigned at construction; see issue #71 for the run-to-run reorder that use of `event_id` produced on VZ 2025.
    - **Enhanced Chronological Ordering (v3.3.1):** The sorting algorithm prioritizes IBKR transaction IDs as the primary secondary sort key for same-date events, leveraging IBKR's sequential transaction ID assignment to maintain accurate chronological order critical for FIFO calculations.
    - **Primary Sort Key Component: `event_date`** (parsed to `datetime.date` object). Events with unparseable dates are flagged as errors.
-   - **Secondary Sort Key Components (for Tie-breaking on the same `event_date`):** A tuple of subsequent keys is used, constructed based on the `FinancialEventType`. The `event.event_id` (UUID) is always the last element in this tuple to guarantee uniqueness and deterministic order.
+   - **Secondary Sort Key Components (for Tie-breaking on the same `event_date`):** A tuple of subsequent keys is used, constructed based on the `FinancialEventType`. The `event.creation_sequence` (int) is always the last element in this tuple to guarantee uniqueness and deterministic order.
      - **For `TradeEvent`, `OptionLifecycleEvent` subtypes (e.g., `OptionExerciseEvent`, `OptionAssignmentEvent`), and `CurrencyConversionEvent`:**
-       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.event_id)`
+       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.creation_sequence)`
        - `event.ibkr_transaction_id`: The Transaction ID from IBKR. A placeholder (e.g., empty string or `None` that sorts predictably) is used if not applicable.
        - `asset.asset_category`: The `AssetCategory` of the `Asset` linked to the `FinancialEvent` (via `event.asset_internal_id`). This is crucial for distinguishing events like an option exercise (e.g., `AssetCategory.OPTION`) from its resulting stock trade (e.g., `AssetCategory.STOCK`) when they share the same `event_date` and `ibkr_transaction_id`.
-       - `event.event_id`: The unique UUID of the event, ensuring deterministic order if all prior fields are identical.
+       - `event.creation_sequence`: The event's construction counter, ensuring deterministic order if all prior fields are identical.
      - **For `CashFlowEvent` (e.g., dividends, interest), `WithholdingTaxEvent`, and `FeeEvent`:**
-       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.gross_amount_foreign_currency, event.event_id)`
+       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.gross_amount_foreign_currency, event.creation_sequence)`
        - `event.ibkr_transaction_id` and `asset.asset_category` as above.
        - `event.gross_amount_foreign_currency`: The gross amount of the event. This helps differentiate multiple cash-related events that might share the same `ibkr_transaction_id` and `asset_category` on the same day.
-       - `event.event_id`: The unique UUID of the event.
+       - `event.creation_sequence`: The event's construction counter.
      - **For `CorporateActionEvent` subtypes:**
-       - Sort Key Tuple: `(asset.ibkr_symbol, event.ca_action_id_ibkr, event.description, event.event_id)`
+       - Sort Key Tuple: `(asset.ibkr_symbol, event.ca_action_id_ibkr, event.description, event.creation_sequence)`
        - `asset.ibkr_symbol`: The IBKR symbol of the `Asset` associated with the corporate action.
        - `event.ca_action_id_ibkr`: The IBKR Action ID for the corporate action, if available.
        - `event.description`: The description of the corporate action event (e.g., from the `corpact*.csv`) can provide further differentiation for CAs on the same asset and date if `ca_action_id_ibkr` is missing or identical.
-       - `event.event_id`: The unique UUID of the event.
+       - `event.creation_sequence`: The event's construction counter.
    - **Null/None Handling:** Placeholders for missing optional key components (like `ibkr_transaction_id` or `ca_action_id_ibkr`) must be handled consistently to ensure correct sort order (e.g., `None` typically sorts before strings/numbers, or a specific sentinel value can be used).
-   - **Ensuring Determinism:** The inclusion of `event.event_id` as the final component in each sort key tuple guarantees that the overall sorting order is strictly deterministic, as each `FinancialEvent` object has a unique `event_id`.
+   - **Ensuring Determinism:** The inclusion of `event.creation_sequence` as the final component in each sort key tuple makes the overall sorting order strictly deterministic *and reproducible across runs*: every `FinancialEvent` receives a distinct counter value at construction, and the construction order is fixed by the order rows are read out of the concatenated input. A per-run identifier such as `event_id` satisfies only the first half and must not be substituted here.
 
 10. Enrich data (`enrich_financial_events`): Convert all financial amounts in the filtered (current tax year) `FinancialEvent` objects to EUR using `Decimal` arithmetic (with `INTERNAL_CALCULATION_PRECISION`) and ECB rates, storing results in EUR-specific fields (e.g., `gross_amount_eur`, `commission_eur`). Enhanced asset information formatting in log messages.
 

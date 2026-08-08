@@ -50,7 +50,8 @@ def print_grouped_event_details(
         if asset and isinstance(asset, InvestmentFund) and asset.fund_type != InvestmentFundType.NONE:
             print(f"    Fund Type: {asset.fund_type.name}")
 
-        for event in sorted(asset_events, key=lambda e: (e.event_date, e.event_id)): 
+        # creation_sequence, not event_id — see the note in console_reporter (issue #71).
+        for event in sorted(asset_events, key=lambda e: (e.event_date, e.creation_sequence)):
             details = [f"  {event.event_date}", f"{event.event_type.name[:25]:<25}"]
             display_precision = config.OUTPUT_PRECISION_AMOUNTS # Renamed
             per_share_precision = config.OUTPUT_PRECISION_PER_SHARE # Renamed
