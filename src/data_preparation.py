@@ -161,7 +161,13 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         "corporate_actions": "Corporate_Actions",
     }
 
-    # Optional transaction types (no error if missing)
+    # Optional here because whether the file is needed cannot be decided from its name:
+    # an account that never traded options needs none, and one that only ever took
+    # physical delivery needs none either -- those OptionEAE rows duplicate the Trades
+    # export. Only a cash settlement carries information found nowhere else, and only the
+    # trades say whether one happened. So the requirement is decided after parsing, in
+    # `ParsingOrchestrator._require_option_cash_settlements`, not by a missing-file check
+    # here. Absent means absent; it does not mean unnecessary.
     optional_transaction_types = {
         "options_eae": "Options_EAE",
     }

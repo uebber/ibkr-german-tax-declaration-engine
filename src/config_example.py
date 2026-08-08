@@ -74,7 +74,11 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "positions": None,
     "corporate_actions": None,
     "cash_balance": None,
-    "options_eae": None,         # Optional: for cash-settled index options (e.g. SPX, ESTX50)
+    # Needed once, and only once, a cash-settled index option (SPX, ESTX50, ...) is
+    # assigned or exercised: that settlement's proceeds are the whole realised gain and
+    # appear in no other export. A run that needs it and does not have it stops and names
+    # the contracts -- see ParsingOrchestrator._require_option_cash_settlements.
+    "options_eae": None,
 }
 
 # Cache directory for downloaded Flex Query CSVs

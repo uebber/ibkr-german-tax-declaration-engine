@@ -216,6 +216,7 @@ settles it.
 ## 6. Options Exercises, Assignments & Expirations File (Optional)
 - **Default Name:** `options_eae.csv`
 - **Purpose:** Records option exercises, assignments, expirations, and cash settlements. Required for cash-settled index options (e.g. SPX, ESTX50) where no underlying stock trade exists. If you don't trade index options, this file is not needed.
+- **When it is required is decided from the data, not from the filename.** Only the `Cash Settlement` rows carry information found nowhere else — the physical-delivery and Assignment/Exercise rows duplicate the Trades export. `ParsingOrchestrator._require_option_cash_settlements` pairs every assignment/exercise of an option with no resolvable underlying against its settlement row, and stops the run naming each unpaired contract. A `Cash Settlement` row whose `Proceeds` are zero is skipped at parse time and counts as absent.
 - **Associated Pydantic Model:** `RawOptionsEAERecord`
 
 **Column Specifications (based on IBKR Option Exercises, Assignments and Expirations Flex Query):**

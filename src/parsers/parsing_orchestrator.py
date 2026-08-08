@@ -11,7 +11,10 @@ from src.domain.assets import (
     MarkPosition,
 )
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
-from src.domain.events import FinancialEvent, OptionLifecycleEvent, TradeEvent
+from src.domain.events import (
+    FinancialEvent, OptionLifecycleEvent, TradeEvent,
+    OptionAssignmentEvent, OptionExerciseEvent, OptionCashSettlementEvent,
+)
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError
 from src.identification.asset_resolver import AssetResolver
@@ -147,6 +150,10 @@ class ParsingOrchestrator:
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
         self.raw_options_eae: List[RawOptionsEAERecord] = []
+        # Whether an OptionEAE file was offered at all, as opposed to offered and empty.
+        # Only the wording of _require_option_cash_settlements' error depends on it: the
+        # requirement itself comes from the trades, never from the file's presence.
+        self.options_eae_file_supplied: bool = False
 
         self.domain_financial_events: List[FinancialEvent] = []
         # NEW: Store collections for linking
@@ -197,6 +204,7 @@ class ParsingOrchestrator:
             self.raw_cash_balances = parse_cash_balance_csv(cash_balance_file)
             logger.info(f"Loaded {len(self.raw_cash_balances)} raw cash balance records.")
         if options_eae_file:
+            self.options_eae_file_supplied = True
             self.raw_options_eae = parse_options_eae_csv(options_eae_file)
             logger.info(f"Loaded {len(self.raw_options_eae)} raw OptionEAE records.")
         for mark_year, mark_file in sorted((positions_mark_files or {}).items()):
@@ -835,9 +843,94 @@ class ParsingOrchestrator:
         self.domain_financial_events.extend(ca_events)
         self.domain_financial_events.extend(options_eae_events)
 
+        self._require_option_cash_settlements(all_trade_events, options_eae_events)
+
         logger.info(f"DomainEventFactory created {len(self.domain_financial_events)} total financial events initially.")
         logger.info(f"Collected {len(self.candidate_option_lifecycle_events)} candidate option lifecycle events for linking.")
         logger.info(f"Collected {len(self.candidate_stock_trades_for_linking)} candidate stock trades for linking.")
+
+    def _require_option_cash_settlements(self,
+                                         trade_derived_events: List[FinancialEvent],
+                                         options_eae_events: List[FinancialEvent]) -> None:
+        """A cash-settled option's assignment/exercise must have its OptionEAE row.
+
+        The OptionEAE export is optional *as a file* -- an account that never traded
+        options needs none, and one that only ever took physical delivery needs none
+        either, because those rows duplicate the Trades export. What is not optional is
+        the `Cash Settlement` row behind a settlement that actually happened: it is the
+        sole carrier of the settlement proceeds, and without it the realised gain of an
+        index-option position is the premium alone.
+
+        **The requirement is derivable from the Trades export by itself**, which is what
+        makes checking it possible at all. `OptionExerciseProcessor` and
+        `OptionAssignmentProcessor` both step aside for an option with no underlying
+        link -- an index option, whose underlying is not an instrument the account can
+        hold -- on the stated ground that `OptionCashSettlementProcessor` handles it.
+        That was an assumption with nothing behind it. Here it becomes a contract:
+        every A/EX event those two hand on must have a settlement event to be handed to.
+
+        Unmatched cases are collected and reported together, so one run names every
+        contract rather than the first.
+
+        Without this the failure is real but reads as something else. The option lot is
+        never consumed, so the calculated end-of-year quantity stands against a contract
+        the broker no longer reports and EOY validation aborts on a position mismatch --
+        whose own message lists missing trades, corporate actions, option exercises and
+        double-identified instruments as the causes to go looking for, and not the file.
+        Measured 2026-08-08: a VZ 2025 run against the real import with
+        `Options_EAE-2025.csv` withheld produced `EOY_RECONCILIATION_FAILED` naming 14
+        index-option positions; with this check it stops at parse time naming the same
+        14 and the file to export.
+
+        For a settlement in a *prior* year there is no signal at all:
+        `reconcile_with_mark` discards a reconstruction that disagrees with the snapshot
+        and takes the snapshot, so the phantom lot is absorbed in silence. Hence the
+        whole replay window is checked, not only the assessment year.
+        """
+        settled_keys = {
+            (ev.asset_internal_id, ev.event_date)
+            for ev in options_eae_events
+            if isinstance(ev, OptionCashSettlementEvent)
+        }
+
+        unpaired: List[str] = []
+        for event in trade_derived_events:
+            if not isinstance(event, (OptionAssignmentEvent, OptionExerciseEvent)):
+                continue
+            option_asset = self.asset_resolver.get_asset_by_id(event.asset_internal_id)
+            if not isinstance(option_asset, Option):
+                continue
+            if option_asset.underlying_asset_internal_id is not None:
+                continue  # Physically settled: the delivery leg is in the Trades export.
+            if (event.asset_internal_id, event.event_date) in settled_keys:
+                continue
+            unpaired.append(
+                f"{option_asset.description or option_asset.get_classification_key()} "
+                f"(Conid: {option_asset.ibkr_conid}) {event.event_type.name} on "
+                f"{event.event_date}, {event.quantity_contracts} contract(s)"
+            )
+
+        if not unpaired:
+            return
+
+        if self.options_eae_file_supplied:
+            cause = (
+                "An OptionEAE file was read, but it carries no 'Cash Settlement' row for "
+                "these contracts on these dates. A row whose Proceeds are exactly zero is "
+                "skipped at parse time and counts as absent here."
+            )
+        else:
+            cause = (
+                "No OptionEAE file was supplied. Export it as Options_EAE-YYYY.csv into "
+                "data_import/ for every year listed below (see input_data_spec.md)."
+            )
+
+        raise DataIntegrityError(
+            f"{len(unpaired)} cash-settled option assignment(s)/exercise(s) have no "
+            f"matching OptionEAE Cash Settlement. The settlement proceeds are the whole "
+            f"gain on these positions, so the run cannot produce a figure for them.\n"
+            f"  {cause}\n  " + "\n  ".join(unpaired)
+        )
 
 
     def get_all_financial_events(self) -> List[FinancialEvent]:

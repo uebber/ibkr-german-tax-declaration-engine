@@ -258,7 +258,7 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "positions": 123458,         # Your Positions query ID (used for both SOY/EOY)
     "corporate_actions": 123459, # Your Corporate Actions query ID
     "cash_balance": 123460,      # Your Cash Balance query ID
-    "options_eae": None,         # Your Options EAE query ID (or None if not needed)
+    "options_eae": None,         # Your Options EAE query ID (None if you never traded index options)
 }
 ```
 
@@ -271,7 +271,7 @@ Trades-{YYYY}.csv               # One file per year
 Cash_Transactions-{YYYY}.csv    # One file per year
 Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
-Options_EAE-{YYYY}.csv          # One file per year (optional, for cash-settled index options)
+Options_EAE-{YYYY}.csv          # One file per year (only if you trade index options — see below)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
@@ -279,6 +279,8 @@ Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 The `data_import/` directory is **read-only** and never modified by the application.
 
 **History concatenation:** Transaction files (Trades, Cash_Transactions, Corporate_Actions, Options_EAE) for all available years up to the tax year are automatically concatenated to provide full FIFO history. Position and Cash Balance files are used only for the selected tax year.
+
+**When Options_EAE is actually needed:** only once a cash-settled index option (SPX, ESTX50, …) has been assigned or exercised. That settlement's proceeds are the entire realised gain on the position and appear in no other export, so the run cannot compute a figure without them. You do not have to work out whether that applies to you: the engine derives it from the trades, and a run that needs a settlement it does not have stops and names the contract, the date and the file to export. An account that never traded index options needs no file, and one that only ever took physical delivery needs none either — those rows duplicate the Trades export.
 
 ### Automatic Download
 

@@ -1026,6 +1026,11 @@ class DomainEventFactory:
             for settle_row in settlement_rows:
                 proceeds = safe_decimal(settle_row.proceeds, default=Decimal("0"))
                 if proceeds == Decimal("0"):
+                    # No event, so the option lot is not consumed here. That is caught
+                    # rather than tolerated: `_require_option_cash_settlements` treats a
+                    # skipped row as an absent one and stops the run naming the contract.
+                    # None of the 14 Cash Settlement rows in the 2021-2025 import reach
+                    # this branch (measured 2026-08-08).
                     logger.debug(f"OptionEAE: Skipping zero-proceeds Cash Settlement for {settle_row.symbol} on {date_str}")
                     continue
 
