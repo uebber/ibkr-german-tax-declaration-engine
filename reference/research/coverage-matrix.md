@@ -14,6 +14,7 @@ have is worse than one with a visible hole.
 | Options/Derivatives | EStG 20 Abs. 1 Nr. 11, Abs. 2 S. 1 Nr. 3 Buchst. a/b, Abs. 4 S. 5 | BMF 14.05.2025 Rz. 9-47 | Anlage KAP Z19-24 | tax-law/estg-20-kapitalvermoegen.md |
 | Unallocated spot precious metal | unsettled -- 20 Abs. 2 Nr. 3 / 23 Abs. 1 Nr. 2 / 20 Abs. 2 Nr. 7 | none located | unsettled | **open-legal-questions.md Q11** -- three readings, no Tier 1/2 source chooses |
 | CFDs | EStG 20 Abs. 2 S. 1 Nr. 3 | BMF 14.05.2025 **Rz. 9** | Anlage KAP Z19-24 | abgeltungsteuer-einzelfragen.md [GT-ESTG20-038] -- Rz. 9 names CFDs expressly, with Waehrungspaare among the Basiswerte and Edelmetalle among the Bezugsgroessen. No longer an analogy. |
+| Optionsscheine (warrants) | EStG 20 Abs. 1 Nr. 7, Abs. 2 S. 1 Nr. 7 | BMF 14.05.2025 **Rn. 8** | Anlage KAP Z19,22 | abgeltungsteuer-einzelfragen.md [GT-ESTG20-038] -- *"Optionsscheine sind Kapitalforderungen im Sinne des § 20 Absatz 1 Nummer 7 EStG"*, and expressly not a Termingeschaeft. Never traded on this account; recorded so Rn. 9's exclusion does not dangle. |
 | Private Sale Assets | EStG 23 Abs. 1 S. 1 Nr. 2 | BMF 14.05.2025 Rz. 57; EStH Anhang 26, H 23 EStH | Anlage SO Z48-55 | tax-law/estg-23-private-veraeusserung.md |
 | Foreign Currency | EStG 20 Abs. 2 S. 1 Nr. 7 / 23 Abs. 1 S. 1 Nr. 2 (depends on verzinslich) | BMF 14.05.2025 Rz. 131 | Anlage KAP Z19,22 or Anlage SO | bmf-guidance/fremdwaehrung-konten.md |
 

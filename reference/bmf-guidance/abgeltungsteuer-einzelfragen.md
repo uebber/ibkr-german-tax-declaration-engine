@@ -97,7 +97,14 @@ Edelmetalle Bezugsgroesse.
 
 **The negative boundary is stated in the same sentence and matters as much:** Zertifikate and
 Optionsscheine are *not* Termingeschaefte (Rn. 8 f.). The enumeration is *"insbesondere"*, so it
-is open -- but the two exclusions are closed.
+is open -- but the two exclusions are closed. **Where each goes instead:** a Zertifikat under
+Satz 1 Nr. 7, [GT-ESTG20-008]; an Optionsschein likewise, by the Randziffer this sentence
+cross-refers to -- Rn. 8, under the heading *"In Optionsscheinen verbriefte Kapitalforderungen"*,
+opens *"Optionsscheine sind Kapitalforderungen im Sinne des § 20 Absatz 1 Nummer 7 EStG"*
+(page 6 of 137, retrieved 2026-08-08 from the URL above with the query string
+`?__blob=publicationFile&v=6`; the bare path returns HTML with HTTP 200). Rn. 8 f. also covers
+Vollrisikozertifikat running income and Knock-out (Rn. 8a) and Nutzungsersatz on unwound
+Verbraucherdarlehen (Rn. 8b), neither bearing on either exclusion.
 
 What the cited unit also contains: the remaining three Bezugsgroessen (Boersen-/Marktpreis of
 Wertpapiere and of Geldmarktinstrumente, and Zinssaetze oder andere Ertraege), and a
