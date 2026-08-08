@@ -473,10 +473,11 @@ def prompt_for_fund_price(
     premium to NAV. `anchor` is what the account paid per unit, shown beside it
     so a figure off by a factor is visible.
 
-    With no snapshot the currency defaults to the fund's own and the day to the
-    year's first trading day. Both are confirmable rather than assumed, since a
-    price from another day converts at another rate ([GT-INVSTG-018]) -- and for
-    a fund launched mid-year the right day is its first, not the year's.
+    With no snapshot the currency defaults to the fund's own and **no day is
+    proposed at all**. For a fund launched mid-year the right day is its own
+    first, not the year's (Rz. 18.7, [GT-INVSTG-035]), and a price from another
+    day converts at another rate ([GT-INVSTG-018]) -- so an empty answer is
+    taken as a refusal rather than filled in.
     """
     # No default day where nothing was offered. A calendar date would be wrong
     # for a fund launched during the year, whose first set price is its own

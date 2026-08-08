@@ -368,10 +368,14 @@ for the first value published in the calendar year, and a series that starts at 
 Rz. 18.7 without anyone establishing a launch date. The earlier note here said closing this
 *"needs the launch date, which no input this pipeline holds supplies"*; that was wrong.
 
-**What is still open is the manual path.** Where no provider can be reached the taxpayer is asked,
-and the prompt offers the year's first trading day as the default date — which is wrong for a fund
-launched in April. The prompt states which price is wanted, so the default misleads rather than
-decides, but it misleads.
+**The manual path proposes no day it was not given.** Where no provider can be reached the
+taxpayer is asked, and where the fund has no start-of-year row the prompt offers no default date:
+the year's first trading day is wrong for a fund launched in April, and a proposed date is the
+kind of thing that gets accepted with Enter. An empty answer is a refusal, not a guess
+(`test_fund_price_store.py::TestThePromptDefaults::test_with_no_report_row_no_day_is_proposed`).
+Superseded position, written 2026-08-08 in the same commit that fixed it: *"What is still open is
+the manual path … the prompt offers the year's first trading day as the default date."* It
+described the behaviour the code half of `366f832` had already removed.
 
 **GT-INVSTG-036 — follow-up withdrawn 2026-08-08.** It named a `fix-func(engine)` to distinguish a
 fund that sets a Rücknahmepreis at least monthly from one that does not. There is nothing for it to
