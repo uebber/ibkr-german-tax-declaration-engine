@@ -36,14 +36,18 @@ The conditions routed through this channel, as of 2026-08-08:
     EOY_QTY_MISMATCH                                   WARNING
     KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED  WARNING
     REPLAY_MARK_UNCONFIRMED_START                      WARNING
+    VORABPAUSCHALE_PRICE_ISSUER_NAV                    WARNING
+    VORABPAUSCHALE_PRICE_MARKET_FALLBACK               WARNING
+    VORABPAUSCHALE_PRICE_USER_SUPPLIED                 WARNING
     VORABPAUSCHALE_PRICE_WRONG_DAY                     WARNING
     EOY_RECONCILIATION_FAILED                          FAIL_FAST
     REPLAY_MARK_MISMATCH                               FAIL_FAST
     VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN            FAIL_FAST
     VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING         FAIL_FAST
+    VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN            FAIL_FAST
 
 This paragraph said "today exactly one condition" until 2026-08-08, by which
-time there were ten. Keep it in step or delete it; a list that undercounts
+time there were eleven. Keep it in step or delete it; a list that undercounts
 the channel invites the next reader to conclude it is barely used and settle
 their condition locally, which is the habit it exists to end. The list above was
 extracted by parsing every `record(` call in `src/`, not written from memory —
@@ -61,11 +65,11 @@ describing the "log, count, continue" behaviour that predates the abort.
 divergence is about input completeness rather than a ledger disagreeing about a
 holding, so it is recorded and the run proceeds.
 
-One WARNING entry records something the run then *uses* rather than something it
-lacks: a Vorabpauschale price taken from the wrong day. It is here because a
-figure resting on an input the broker never reported is exactly what the
-taxpayer must check before filing, and the report section is the only place that
-reaches them.
+Two of the WARNING entries record something the run then *uses* rather than
+something it lacks: a Vorabpauschale price taken from the wrong day, and one the
+taxpayer supplied by hand. They are here because a figure resting on an input
+the broker never reported is exactly what the taxpayer must check before filing,
+and the report section is the only place that reaches them.
 
 **A WARNING is not a statement that the declared figures are unaffected.** An
 EoY quantity mismatch is the very signature of a disposal the engine did not

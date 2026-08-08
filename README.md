@@ -468,7 +468,47 @@ the note above). They are reported as `CURRENCY_EOY_MISMATCH` in the console and
 
 1.  **Console:** Processing logs and, with `--report-tax-declaration`, a summary of figures for direct tax form entry.
 2.  **PDF Report:** Detailed report with taxpayer info, Anlage KAP/KAP-INV/SO summaries, income events, realized gains/losses, and corporate actions.
-3.  **Cache Files:** `cache/user_classifications.json` and `cache/ecb_exchange_rates.json`.
+3.  **Cache Files:** `cache/user_classifications.json`, `cache/ecb_exchange_rates.json` and
+    `cache/user_fund_prices.json`.
+
+### `cache/user_fund_prices.json` -- year-start fund prices you supply
+
+A fund you bought *during* a year is not in that year's start-of-year positions report, because
+the report lists what you held. The Vorabpauschale nevertheless needs the fund's Ruecknahmepreis
+at the **start of that calendar year** (§ 18 Abs. 1 Satz 2 InvStG) -- a property of the fund, not
+of your holding -- and then reduces the result by a twelfth for each full month before the month
+you bought (§ 18 Abs. 2). A July purchase owes six twelfths, not nothing.
+
+No IBKR export carries that price, and neither does the IBKR API: its historical endpoints serve
+market prices, and its ETF NAV ticks reach only one session back. So an interactive run asks you
+for it, once per fund per year, and remembers the answer here.
+
+**The year-start price is looked up at the fund provider, for every fund.** § 18 Abs. 1 Satz 2
+InvStG asks for the *Rücknahmepreis*, and Satz 4 allows a stock-exchange or market price only where
+no Rücknahmepreis was set. A fund that redeems units at its NAV sets one -- so the run fetches that
+NAV by ISIN (iShares, SPDR and VanEck, in Europe and the US, then Swiss Fund Data for everything
+else) rather than reaching for the closing mark in your positions report.
+
+A price once obtained is cached in `cache/user_fund_prices.json`, and a past year's first NAV never
+changes, so only the first run for a given year does any lookups.
+
+**Where no Rücknahmepreis can be had**, in this order:
+
+1. you are asked, and offered the positions report's price as the default if the report has one --
+   press Enter to take it;
+2. in a `--no-interactive` run the report's price is used automatically, if there is one;
+3. otherwise the run **stops**, naming every fund it needs a price for, so one run tells you the
+   whole list.
+
+Cases 1 and 2 record `VORABPAUSCHALE_PRICE_MARKET_FALLBACK` against the fund, because the figure
+then rests on Satz 4's substitute rather than on the Rücknahmepreis. That difference is an ETF's
+premium or discount to NAV, and it is deducted again from the gain when you sell
+(§ 19 Abs. 1 Satz 3, Anlage KAP-INV Zeile 53) -- but you can see which funds it applies to.
+
+Set `FUND_PRICE_AUTO_FETCH = False` in `src/config.py` to keep the run offline entirely; funds your
+report prices then use that price, and funds it does not price stop the run.
+
+Like `user_classifications.json`, nothing recomputes the price cache. Back it up.
 
 ## German Tax Form Mapping
 

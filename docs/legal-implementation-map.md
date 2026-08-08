@@ -259,7 +259,7 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
+| GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py`; the Satz 2 price for a fund bought mid-year comes from `src/processing/fund_prices.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py`, `test_fund_price_store.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
 | GT-INVSTG-011 | implements | `_calculate_vorabpauschale()` and `FundUnitTranche.abs2_retained_twelfths()` in `src/engine/calculation_engine.py` | `test_vorabpauschale_abs2.py` | Abs. 2 reduces each acquisition by one twelfth per full month before its month of acquisition; units held before the year keep twelve. **No longer a choice under uncertainty** — the 2026-08-07 audit closed Q13 in favour of exactly this reading, on Rz. 18.11's worked example applying the reduction to the *per-Anteil* amount, with Rz. 18.9 and Rn. 184a alongside. The one residual is recorded in the store, not here: no source works a mixed holding, so summing per acquisition joins two quoted rules. Superseded text: *"implements (Q13 Reading A: per acquisition) … a choice under uncertainty"*; and before that, **Abs. 2 pro-rata was not implemented** at all. |
 | GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. Re-decided 2026-08-07 on Rz. 18.12, now recorded: the Zuflussfiktion is stated there as a Steuerabzug convenience so that a full Sparer-Pauschbetrag is available, **not** as a holding test — which is why it could not carry GT-INVSTG-016 and no longer has to. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | Re-decided 2026-08-07 on Rz. 18.13 and 18.14, now recorded. Rz. 18.14 fixes the rate as the value determined for the **erster Börsentag** of the calendar year, which is 2 January only in years whose first exchange day falls on it. This does not reach the engine: it looks up the value the BMF published for the year, and choosing the day is the BMF's step, not the engine's. It bore on GT-INVSTG-018, where a 2 January date *was* used as a Stichtag; that was closed on 2026-08-08 and the two now read the same way. |
@@ -268,8 +268,8 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 | GT-INVSTG-016 | implements | the unit count at the close of 31 December, from the ledger's own lots — see GT-INVSTG-017 | `test_vorabpauschale.py`, `test_vorabpauschale_price_and_units.py` | **No longer a choice under uncertainty.** The 2026-08-07 audit closed Q5 on Rz. 18.4: the multiplier is the holding at the close of 31 December, so a fund disposed of in full produces nothing without any rule about disposal being needed. The engine already computed it that way. Superseded position: **choice under uncertainty**, reasoned from the Abs. 3 Zuflussfiktion — see below. |
 | GT-INVSTG-017 | implements | the unit count is taken from the ledger's own lots at the close of 31 December, snapshotted immediately after the historical replay reconciles | `test_vorabpauschale_price_and_units.py` | Rz. 18.4 multiplies by the units held at the **close of 31 December** of the calendar year, and the engine does exactly that. Rounding is compliant: full precision throughout, quantised to two places once, after every multiplication. See below for what it replaced and why the moment of the snapshot matters. |
 | GT-INVSTG-018 | implements | ECB conversion at the day each price was set, carried on `Asset.prior_year_*_mark_price_date` and applied in `_calculate_vorabpauschale()`; the days themselves come from `src/utils/snapshot_dates.py` | `test_vorabpauschale_stichtag.py`, `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Rz. 18.6 converts each input at the ECB rate of its own Stichtag, and a Stichtag is a day a price was set, never a fixed calendar date — the reading Rz. 18.14 confirms by anchoring the year on its **erster Börsentag**. **Re-decided 2026-08-08, and the imprecision is closed.** Superseded position: *"implements, with a known imprecision"* — the Jahresanfang Stichtag was hardcoded to 2 January and the Jahresende to 31 December. Measured over 2021–2025, 2 January is the first trading day in only 2024 and 2025, and in 2021 and 2022 it is a Saturday and a Sunday, so the ECB had no rate and `MAX_FALLBACK_DAYS_EXCHANGE_RATES` silently supplied one from another day. The 31 December instance was in neither this row nor issue #60 and was found by measurement: it is a weekend in 2022 and 2023. **What remains, and is not this claim's:** the day is derived from the snapshot naming convention, not read from the export, because the Positions report carries no date — issue #59. |
-| GT-INVSTG-035 | **deviates** | — | — | Rz. 18.7: a fund launched during the year takes its first set price, with Abs. 2 pro-rata on top. The engine skips any fund without a start-of-year position outright, so such a fund produces nothing. Same root cause as GT-INVSTG-011. |
-| GT-INVSTG-036 | **deviates** | — | — | Rz. 18.8: where a fund does not set a Rücknahmepreis at least monthly, the market price takes its place. The engine has no notion of whether a Rücknahmepreis exists and always uses the broker's mark price — the same gap recorded under GT-INVSTG-010 Satz 4 below. |
+| GT-INVSTG-035 | **implements** where a price can be fetched, re-decided 2026-08-08 | `_first_price_set_in_year()` in `src/processing/fund_price_sources.py`; `src/processing/fund_prices.py` otherwise | `test_fund_price_sources.py::TestFirstPriceSetInYear`, `test_fund_price_store.py` | Rz. 18.7: a fund launched during the year takes its first set price, with Abs. 2 pro-rata on top. **No launch date is needed** — a provider's published series begins at launch, so the first new publication in the calendar year is Rz. 18.7's base for a launch year and the ordinary Satz 2 base otherwise, by one rule. Measured 2026-08-08 on a fund with an 18 April 2018 inception: calendar 2018 resolves to 19 April 2018, calendar 2019 to 2 January. Superseded positions: **deviates** — first *"skips any fund without a start-of-year position outright"*, then *"the launch date is still unknown"*. The second was written the same day and was wrong. |
+| GT-INVSTG-036 | **not reached**, re-decided 2026-08-08 | — | — | Rz. 18.8: where a fund does not set a Rücknahmepreis at least monthly, the market price takes its place. **Both branches land on a price the engine already uses** — the Rücknahmepreis where one is set, the broker's market price where none is — so the determination cannot change a figure here and no behaviour follows from it. Superseded position: **deviates**, on the ground that the engine *"has no notion of whether a Rücknahmepreis exists and always uses the broker's mark price"*. Both halves were wrong: the second stopped being true on 2026-08-08, and the first described a distinction with no consequence. Which price is used, and why, is GT-INVSTG-010 Satz 4 below. |
 | GT-INVSTG-055 | **not reached** (Satz 1) / **out of scope** (Satz 2) | — | — | Rz. 18.9. Satz 1 is confined to the Steuerabzugsverfahren, which a foreign custodian does not perform. Satz 2 is a refund route in the assessment for tax over-withheld by a domestic agent — there is none here. Recorded because it is the administrative statement that the Abs. 2 reduction turns on *Anschaffungsdaten* attaching to units, which is part of what closed Q13 (GT-INVSTG-011). No behaviour follows from it. |
 
 **GT-INVSTG-010 and GT-INVSTG-014 — reached only for some funds until 2026-08-04.** A positions
@@ -292,10 +292,23 @@ itemisation is exercised with a record present (`test_pdf_vorabpauschale.py`) �
 pre-rename `tax_year` field and would have raised `AttributeError` on the first run that
 produced one.
 
-**GT-INVSTG-010, Satz 4 — partial.** The Rücknahmepreis is the primary measure and a market price
-substitutes only where none was set. The engine uses the broker's position mark price
-unconditionally, without establishing that no Rücknahmepreis exists for the instrument. Correct
-wherever the fund publishes no Rücknahmepreis; **not verified per instrument.**
+**GT-INVSTG-010, Satz 4 — closed for any fund a provider publishes, 2026-08-08.** The
+Ruecknahmepreis is the primary measure and a market price substitutes only where none was set. An
+open-ended fund that redeems units at its NAV sets one — *Rücknahme* plus *Preis*, the price it
+takes the share back at.
+
+The engine therefore looks that price up, by ISIN, **for every fund held across the year end** —
+not only for one the start-of-year position report cannot price. Until 2026-08-08 it used the
+report's mark wherever it had one and only went looking when it did not, which put Satz 4's
+substitute ahead of the primary measure for every fund held on 1 January. Superseded positions:
+first *"uses the broker's position mark price unconditionally"*; then, for one day, a
+`--vorabpauschale-strict-nav` switch that made the NAV opt-in. The switch is gone — an opt-in
+default is still the substitute for everyone who does not know to ask for it.
+
+**What remains is the fallback, and it is recorded.** Where no Ruecknahmepreis can be obtained the
+taxpayer is asked and offered the report's price, and in a non-interactive run that price is used
+outright; both record `VORABPAUSCHALE_PRICE_MARKET_FALLBACK` against the fund, so a reader can see
+which figures rest on the substitute. A fund that nothing can price stops the run.
 
 **GT-INVSTG-010 — the Satz 2 price.** *Ruecknahmepreis zu Beginn des Kalenderjahres* is the
 first Rücknahmepreis set in the calendar year. Rz. 18.3 of the BMF-Schreiben demonstrates it: one
@@ -307,6 +320,18 @@ sold on that day and so has no price there, the last price set before the year b
 `VORABPAUSCHALE_PRICE_WRONG_DAY` data gap is recorded. How the stored reports are read into a
 position history is described in `src/data_preparation.py` and
 `src/parsers/parsing_orchestrator.py`.
+
+**A third source, for the fund the export cannot price at all.** A fund bought during the year has
+no row in that year's start-of-year report, because the report lists what was held. The price
+nevertheless exists — it is a property of the fund, not of the holding — so the figure is due and
+buying mid-year is an ordinary event, not a data gap. `src/processing/fund_prices.py` asks the
+taxpayer for the price and caches it under the asset's classification key and the calendar year,
+the same shape as the classification cache; each supplied price is recorded as a
+`VORABPAUSCHALE_PRICE_USER_SUPPLIED` gap at WARNING so the report states what the Basisertrag rests
+on and where it came from. **Nothing is invented:** a run that cannot obtain a price stops on a
+`VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN` FAIL_FAST naming every affected fund. Neither IBKR nor
+any broker export can supply this price — measured 2026-08-08: IBKR's historical endpoints serve
+market prices only, and its ETF NAV ticks (92–99) reach one session back.
 
 The conversion of this price is no longer pinned to 2 January; the follow-up that stood here is
 closed under GT-INVSTG-018 below.
@@ -332,14 +357,27 @@ Done. The lots are snapshotted immediately after the historical replay reconcile
 one moment they describe the close of the preceding calendar year and still carry their
 acquisition dates.
 
-**GT-INVSTG-035 — partly closed.** The Abs. 2 pro-rata now applies to units acquired during the
-year, so a fund launched mid-year is no longer skipped outright. Still open: Rz. 18.7's first
-*set* price as the base for a fund that did not exist at the year's start — the engine still reads
-the start-of-year snapshot, which has no row for it.
+**GT-INVSTG-035 — partly closed, and re-decided 2026-08-08.** The Abs. 2 pro-rata applies to units
+acquired during the year (`e70099b`), and the price is no longer unobtainable: a fund with no
+start-of-year row is asked about rather than skipped, so a taxpayer who has the first price the
+fund actually set can enter it and Rz. 18.7's base is used.
 
-**GT-INVSTG-036 — follow-up:** `fix-func(engine)` — distinguish a fund that sets a Rücknahmepreis
-at least monthly from one that does not, so that a market price is used as Satz 4's substitute
-rather than as the default. Closes the Satz 4 gap recorded above at the same time.
+**It does not need to tell the two apart.** The engine cannot distinguish a fund *newly launched*
+mid-year from one merely *bought* mid-year, and that turns out not to matter: it asks the provider
+for the first value published in the calendar year, and a series that starts at launch answers
+Rz. 18.7 without anyone establishing a launch date. The earlier note here said closing this
+*"needs the launch date, which no input this pipeline holds supplies"*; that was wrong.
+
+**What is still open is the manual path.** Where no provider can be reached the taxpayer is asked,
+and the prompt offers the year's first trading day as the default date — which is wrong for a fund
+launched in April. The prompt states which price is wanted, so the default misleads rather than
+decides, but it misleads.
+
+**GT-INVSTG-036 — follow-up withdrawn 2026-08-08.** It named a `fix-func(engine)` to distinguish a
+fund that sets a Rücknahmepreis at least monthly from one that does not. There is nothing for it to
+close: both branches of Rz. 18.8 land on a price the engine already uses, so the distinction cannot
+move a figure. The Satz 4 choice it also claimed to close is a separate matter and is decided under
+GT-INVSTG-010 above.
 
 **GT-INVSTG-016 — settled 2026-08-07, formerly open question Q5.** The engine's behaviour is
 unchanged; its justification is not. The reading was previously *chosen* from the Abs. 3

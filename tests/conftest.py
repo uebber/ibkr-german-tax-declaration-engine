@@ -333,3 +333,46 @@ def _global_config_leak_tripwire(_hermetic_cache_paths):
         f"{ {k: f'{v[0]!r} -> {v[1]!r}' for k, v in changed.items()} }. "
         f"Use the monkeypatch fixture so the change is auto-reverted."
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_issuer_lookups():
+    """No test reaches a fund provider's website.
+
+    Since 2026-08-08 the year-start Ruecknahmepreis is fetched for **every** fund
+    that owes a Vorabpauschale, not only for one the position report cannot
+    price, so an ordinary pipeline test would otherwise open five providers'
+    sites. Two guards, because either alone is weak:
+
+    - `FUND_PRICE_AUTO_FETCH` off, which is the switch a user has;
+    - a tripwire on the fetch itself, so a test that wires the lookup up by hand
+      fails loudly instead of going to the network. A suite whose speed and
+      result depend on a provider being up is not a suite.
+
+    A test that wants a lookup injects its own `fetch`, which the resolver takes
+    as a parameter and which never reaches this function.
+    """
+    from src import config as config_module
+    from src.processing import fund_price_sources
+
+    had = hasattr(config_module, "FUND_PRICE_AUTO_FETCH")
+    previous = getattr(config_module, "FUND_PRICE_AUTO_FETCH", None)
+    config_module.FUND_PRICE_AUTO_FETCH = False
+
+    real = fund_price_sources.fetch_year_start_price
+
+    def _tripwire(*args, **kwargs):
+        raise AssertionError(
+            "fetch_year_start_price reached the network during a test. Inject a "
+            "`fetch` callable instead; see tests/conftest.py::_no_issuer_lookups."
+        )
+
+    fund_price_sources.fetch_year_start_price = _tripwire
+    try:
+        yield
+    finally:
+        fund_price_sources.fetch_year_start_price = real
+        if had:
+            config_module.FUND_PRICE_AUTO_FETCH = previous
+        else:
+            delattr(config_module, "FUND_PRICE_AUTO_FETCH")

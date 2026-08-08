@@ -18,6 +18,8 @@ from src.processing.enrichment import enrich_financial_events
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider, ExchangeRateProvider # Added base for custom provider
 from src.processing.data_gaps import DataGap, DataGapCollector
+from src.processing.fund_prices import (
+    FundPriceStore, make_price_prompt, resolve_year_start_prices)
 from src.engine.calculation_engine import run_main_calculations
 from src.identification.asset_resolver import AssetResolver
 
@@ -163,6 +165,30 @@ def run_core_processing_pipeline(
                     "bei gestiegenem Kurs zu niedrig."
                 ),
             )
+
+        # A fund bought during the Vorabpauschale year is absent from that year's
+        # start-of-year snapshot, so no price reached it above. That is ordinary and
+        # the figure is still due (18 Abs. 1 Satz 2 with Abs. 2), so the price is
+        # asked for and remembered rather than skipped or invented. Runs here, after
+        # classification has settled which assets are funds and before the engine,
+        # which then sees a price like any other. See src/processing/fund_prices.py.
+        resolve_year_start_prices(
+            assets=list(orchestrator.asset_resolver.assets_by_internal_id.values()),
+            vorabpauschale_year=tax_year_to_process - 1,
+            store=FundPriceStore(),
+            # The resolved run setting, not config.IS_INTERACTIVE_CLASSIFICATION:
+            # --no-interactive overrides the config, and reading the global here
+            # meant a --no-interactive run still tried to prompt and died on EOF.
+            interactive=interactive_classification_mode,
+            data_gap_collector=data_gap_collector,
+            # The events go in so the prompt can show what the account paid per
+            # unit beside the price being asked for; the issuer lookup fills in
+            # the default. Both are aids to a person answering, and neither
+            # answers for them -- see src/processing/fund_price_sources.py.
+            ask=make_price_prompt(financial_events_enriched),
+            auto_fetch=getattr(config, "FUND_PRICE_AUTO_FETCH", True),
+        )
+
         realized_gains_losses, vorabpauschale_items, processed_income_events, eoy_mismatch_error_count_calc = run_main_calculations(
             financial_events=financial_events_enriched,
             asset_resolver=orchestrator.asset_resolver, # Use the resolver from the orchestrator

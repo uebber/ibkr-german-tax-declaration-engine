@@ -16,6 +16,24 @@ CLASSIFICATION_CACHE_FILE_PATH = "cache/user_classifications.json"
 # Cache file for ECB exchange rates
 ECB_RATES_CACHE_FILE_PATH = "cache/ecb_exchange_rates.json"
 
+# Cache file for year-start Ruecknahmepreise supplied by hand. A fund bought
+# during the year is absent from that year's start-of-year positions snapshot,
+# but 18 Abs. 1 Satz 2 InvStG still measures the Basisertrag from its price at
+# the start of the calendar year. No IBKR export carries that price, so the
+# interactive run asks for it and remembers the answer here. Like the
+# classification cache, nothing recomputes this file.
+FUND_PRICE_CACHE_FILE_PATH = "cache/user_fund_prices.json"
+
+# Whether the run looks the year-start Ruecknahmepreis up in the published NAV
+# history (iShares, SPDR, VanEck, Swiss Fund Data). 18 Abs. 1 Satz 2 InvStG asks
+# for the Ruecknahmepreis and Satz 4 admits the position report's market price
+# only where none was set, so the lookup runs for every fund held across the year
+# end -- not only for one the report cannot price. Set False to keep the run
+# offline: funds the report prices then use that price, recorded as the substitute
+# it is, and a fund the report does not price stops the run.
+# A price once obtained is cached, so only the first run per year is slow.
+FUND_PRICE_AUTO_FETCH = True
+
 # Taxpayer Information
 TAXPAYER_NAME = "Your Name"  # Update with your name
 ACCOUNT_ID = "U1234567"      # Update with your IBKR account ID
