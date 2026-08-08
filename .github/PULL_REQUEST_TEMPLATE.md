@@ -28,7 +28,7 @@ failure it prevents; read that line before deciding a gate is overhead.
 
 ## Every change
 
-- [ ] Clean-clone: `rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q`
+- [ ] Clean-clone: `cp src/config_example.py src/config.py && uv run pytest -q`
 - [ ] No silent default — anything unresolvable raises, after collecting every case
 - [ ] No account data; no reference to a document this repo does not contain
 - [ ] No half-converted tree — sites enumerated **including docs, comments and docstrings**; `grep` count before/after: 

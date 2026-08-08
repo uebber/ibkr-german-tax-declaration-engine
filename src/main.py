@@ -104,11 +104,17 @@ def main_application():
             positions_end_file_path=data_paths["positions_end"],
             positions_prior_start_file_path=data_paths.get("positions_prior_start") or None,
             positions_prior_end_file_path=data_paths.get("positions_prior_end") or None,
+            positions_prior_opening_file_path=data_paths.get("positions_prior_opening") or None,
             corporate_actions_file_path=data_paths["corporate_actions"],
             interactive_classification_mode=run_ctx.interactive,
             tax_year_to_process=tax_year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
-            options_eae_file_path=data_paths.get("options_eae", "") or None
+            options_eae_file_path=data_paths.get("options_eae", "") or None,
+            positions_mark_file_paths={
+                int(key.rsplit("_", 1)[1]): path
+                for key, path in data_paths.items()
+                if key.startswith("positions_mark_") and path
+            },
         )
     except Exception as e:
         logger.critical(f"Core processing pipeline failed: {e}. Exiting.", exc_info=True)

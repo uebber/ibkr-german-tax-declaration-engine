@@ -97,7 +97,14 @@ Edelmetalle Bezugsgroesse.
 
 **The negative boundary is stated in the same sentence and matters as much:** Zertifikate and
 Optionsscheine are *not* Termingeschaefte (Rn. 8 f.). The enumeration is *"insbesondere"*, so it
-is open -- but the two exclusions are closed.
+is open -- but the two exclusions are closed. **Where each goes instead:** a Zertifikat under
+Satz 1 Nr. 7, [GT-ESTG20-008]; an Optionsschein likewise, by the Randziffer this sentence
+cross-refers to -- Rn. 8, under the heading *"In Optionsscheinen verbriefte Kapitalforderungen"*,
+opens *"Optionsscheine sind Kapitalforderungen im Sinne des § 20 Absatz 1 Nummer 7 EStG"*
+(page 6 of 137, retrieved 2026-08-08 from the URL above with the query string
+`?__blob=publicationFile&v=6`; the bare path returns HTML with HTTP 200). Rn. 8 f. also covers
+Vollrisikozertifikat running income and Knock-out (Rn. 8a) and Nutzungsersatz on unwound
+Verbraucherdarlehen (Rn. 8b), neither bearing on either exclusion.
 
 What the cited unit also contains: the remaining three Bezugsgroessen (Boersen-/Marktpreis of
 Wertpapiere and of Geldmarktinstrumente, and Zinssaetze oder andere Ertraege), and a
@@ -133,6 +140,98 @@ https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuer
 - Wording is identical in the 18.01.2016 version -- stable practice, not a 2025 change
 - Full verbatim text: [estg-20-kapitalvermoegen.md](../tax-law/estg-20-kapitalvermoegen.md),
   [GT-ESTG20-013]
+
+#### [GT-ESTG20-039] The moment a disposal is measured (Rn. 85)
+
+> *"Der Zeitpunkt, in dem das der Veraeusserung/Einloesung zugrundeliegende obligatorische
+> Rechtsgeschaeft abgeschlossen wird, ist der massgebliche Zeitpunkt fuer die Waehrungsumrechnung
+> und die Berechnung des steuerlichen Veraeusserungs- bzw. Einloesungsgewinns oder -verlustes
+> sowie fuer die Freistellungsauftragsverwaltung und die Verlustverrechnung."*
+
+The **obligatorisches Rechtsgeschaeft** -- the day the contract is struck, not the day it settles
+-- fixes four things at once: the currency-conversion rate, the computation of the gain or loss,
+the Freistellungsauftrag, and the loss offsetting. Two of the four decide declared figures for a
+holder without a domestic withholding agent: the rate and the gain. The remaining two are
+Steuerabzug administration.
+
+Because it fixes the day, it also fixes the **assessment year** whenever contract and settlement
+straddle a year end.
+
+What the cited unit also contains: nothing further; Rn. 85 is one Satz. The following Rn. 85a is a
+separate point on Vorschusszinsen as Veraeusserungskosten. **Rn. 85 addresses only the disposal
+side** -- *"Veraeusserung/Einloesung"*; for the acquisition side see [GT-ESTG20-040].
+
+Applicable tax years: all open cases, per Rn. 324. Retrieved 2026-08-07 from the 14.05.2025 PDF,
+page 39 of 137.
+
+#### [GT-ESTG20-040] What counts as *Erwerb* (Rn. 317)
+
+> *"§ 23 Absatz 1 Satz 1 Nummer 2 EStG a. F. ist letztmals auf private Veraeusserungsgeschaefte mit
+> Wertpapieren anzuwenden, die vor dem 1. Januar 2009 erworben wurden. Der Begriff des Erwerbs
+> beinhaltet den Tatbestand des 'rechtswirksam abgeschlossenen obligatorischen Vertrags oder
+> gleichstehenden Rechtsaktes'."*
+
+The second Satz defines *Erwerb* for Wertpapiere as the **rechtswirksam abgeschlossener
+obligatorischer Vertrag** -- the same criterion Rn. 85 applies to the disposal side, so acquisition
+and disposal are measured symmetrically at the contract, not at settlement.
+
+**Weigh the context before leaning on it.** The definition is given inside a § 52 application rule
+about which Wertpapiere still fall under § 23 a. F., so it is stated for a transitional purpose
+even though the definition itself is general in form. It is the only administrative definition of
+*Erwerb* for securities located in this document.
+
+**Tier 4 support, which does not stand alone.** For § 23 EStG it is staendige Rechtsprechung that
+both ends of the period are the moments the obligatorische Vertraege were concluded, not the
+transfer of wirtschaftliches Eigentum and not Erfuellung: BFH vom 08.04.2014 -- IX R 18/13,
+BFHE 245, 323, BStBl II 2014, 826, Rz 29, continuing BFH vom 15.12.1993 -- X R 49/91,
+BStBl II 1994, 687 and BFH vom 08.04.2003 -- IX R 1/01. The reasoning given is that the taxpayer
+has secured the increase in value with the Verpflichtungsgeschaeft. The located decisions concern
+Grundstuecke under Nr. 1; the principle is stated generally.
+
+**No located source puts the acquisition day at settlement**, on any reading.
+
+What the cited unit also contains: the first Satz, the § 52 cut-off itself. The following Rn. 318
+is a separate transitional rule on Umtausch- and Aktienanleihen in 2008/2009.
+
+Applicable tax years: all open cases, per Rn. 324. Retrieved 2026-08-07 from the 14.05.2025 PDF,
+page 130 of 137.
+
+#### [GT-ESTG20-041] Acquisition data of Investmentanteile are held per acquisition (Rn. 184a)
+
+On a transfer of Investmentanteile between custodians, the data to be passed on is enumerated:
+
+> *"Unter den Begriff der Anschaffungsdaten sind saemtliche bei Anschaffung der Investmentanteile
+> vorliegenden Daten zu fassen. Im Einzelnen sind die folgenden Anschaffungsdaten zu uebermitteln:
+> - der Anschaffungszeitpunkt,
+> - die Anschaffungskosten (Ausgabepreis oder bei einem Erwerb auf dem Sekundaermarkt der
+>   Kaufpreis einschliesslich Anschaffungsnebenkosten) der zum jeweiligen Anschaffungszeitpunkt
+>   erworbenen Investmentanteile,
+> - die Anzahl der zum jeweiligen Anschaffungszeitpunkt erworbenen Investmentanteile (sofern
+>   zwischenzeitlich eine steuerneutrale Fondsverschmelzung vorgenommen wurde: die Anzahl der
+>   erworbenen Anteile unter Beruecksichtigung des Umtauschverhaeltnisses der
+>   Fondsverschmelzung)."*
+
+Two things follow, and both decide figures.
+
+**A holding of one fund is administered as several acquisitions, each with its own date and its
+own unit count.** The repeated *"zum jeweiligen Anschaffungszeitpunkt"* presupposes more than one
+acquisition point within a single holding. This is the data on which § 18 Abs. 2 InvStG's
+reduction operates -- see [GT-INVSTG-011].
+
+**A steuerneutrale Fondsverschmelzung does not create a new acquisition point.** Only the *count*
+is restated, *"unter Beruecksichtigung des Umtauschverhaeltnisses"*; the Anschaffungszeitpunkt
+carried in the Anschaffungsdaten is the original one. So units received in a fund merger keep the
+acquisition date of the units given up.
+
+What the cited unit also contains: a further requirement to notify the Zwischengewinn for
+transfers up to 31.12.2017 under the InvStG in its then-applicable version; a Nichtbeanstandung
+allowing the receiving institution to determine the Immobiliengewinn from the Anschaffungszeitpunkt
+rather than have it transmitted; and correction figures for units acquired in a pre-2018
+steuerneutrale Verschmelzung under §§ 14, 17a InvStG a. F. All three are Steuerabzug mechanics
+between custodians.
+
+Applicable tax years: all open cases, per Rn. 324. Retrieved 2026-08-07 from the 14.05.2025 PDF,
+pages 80-81 of 137.
 
 #### Corporate Actions
 - Stock-for-stock merger: steuerneutral, cost basis rollover (20 Abs. 4a)

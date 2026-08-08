@@ -1053,9 +1053,6 @@ class PdfReportGenerator:
 
         self.story.append(Paragraph("2.3 Sonstige Kapitalerträge (Zinsen, Dividenden, etc.)", self.styles['H3']))
         
-        all_other_income_positive_components = []
-        all_other_income_negative_components_abs = [] 
-
         self.story.append(Paragraph("2.3.1 Zinserträge", self.styles['SmallText']))
         interest_events = [ev for ev in self.all_financial_events if isinstance(ev, CashFlowEvent) and ev.event_type == FinancialEventType.INTEREST_RECEIVED]
         if interest_events:
@@ -1076,11 +1073,9 @@ class PdfReportGenerator:
                 if gross_eur > 0:
                     positive_events.append((name, event.event_date, gross_eur))
                     total_positive_interest += gross_eur
-                    all_other_income_positive_components.append(gross_eur)
                 elif gross_eur < 0:
                     negative_events.append((name, event.event_date, gross_eur))
                     total_negative_interest += gross_eur
-                    all_other_income_negative_components_abs.append(gross_eur.copy_abs())
             
             # Add positive interest events
             if positive_events:
@@ -1121,7 +1116,6 @@ class PdfReportGenerator:
                 gross_eur = event.gross_amount_eur or Decimal(0)
                 data.append([name, isin_symbol, format_date_german(event.event_date), self._format_decimal(gross_eur).replace('.',',')]) # Removed WHT data
                 total_dividends += gross_eur
-                if gross_eur > 0: all_other_income_positive_components.append(gross_eur)
             data.append([Paragraph("Summe Dividenden:", self.styles['TableHeader']), "", "", Paragraph(self._format_decimal(total_dividends).replace('.',','), self.styles['TableCellRight'])]) # Adjusted for removed column
             table = self._create_styled_table(data, col_widths=[5*cm, 3*cm, 2.5*cm, 4.5*cm]) # Adjusted col_widths
             self.story.append(KeepTogether(table))
@@ -1154,7 +1148,6 @@ class PdfReportGenerator:
                         self._format_decimal(taxable_income).replace('.',',')
                     ])
                     total_taxable_sd_income += taxable_income
-                    all_other_income_positive_components.append(taxable_income)
             if total_taxable_sd_income > 0:
                 data.append([Paragraph("Summe:", self.styles['TableHeader']),"", "", "", "", Paragraph(self._format_decimal(total_taxable_sd_income).replace('.',','), self.styles['TableCellRight'])])
                 # Adjusted quantity col width
@@ -1182,8 +1175,6 @@ class PdfReportGenerator:
                     self._format_decimal(gross_gl).replace('.',',')
                 ])
                 total_bond_gl += gross_gl
-                if gross_gl > 0: all_other_income_positive_components.append(gross_gl)
-                elif gross_gl < 0: all_other_income_negative_components_abs.append(gross_gl.copy_abs())
             data.append([Paragraph("Summe G/V Anleihen:", self.styles['TableHeader']), "", "", "", "", "", "", Paragraph(self._format_decimal(total_bond_gl).replace('.',','), self.styles['TableCellRight'])])
             # Adjusted quantity col width
             table = self._create_styled_table(data, col_widths=[3*cm, 2.5*cm, 1.8*cm, 1.8*cm, 2*cm, 1.8*cm, 2*cm, 2.2*cm])
@@ -1207,9 +1198,6 @@ class PdfReportGenerator:
             stueckzinsen_data_exists = True
         
         if stueckzinsen_data_exists:
-            if total_stueckzinsen_paid_abs > 0:
-                 all_other_income_negative_components_abs.append(total_stueckzinsen_paid_abs)
-            
             stueckzinsen_table_data.append([Paragraph("Summe gezahlter Stückzinsen (als neg. Ertrag):", self.styles['TableHeader']), "", "", Paragraph(self._format_decimal(total_stueckzinsen_paid_abs).replace('.',','), self.styles['TableCellRight'])])
             table = self._create_styled_table(stueckzinsen_table_data, col_widths=[7*cm, 3*cm, 2*cm, 3*cm])
             self.story.append(KeepTogether(table))
@@ -1264,6 +1252,41 @@ class PdfReportGenerator:
         else:
             self.story.append(Paragraph("Keine Nettoerträge aus Investmentfonds für 'Sonstige Kapitalerträge'.", self.styles['BodyText']))
 
+        # 2.3.7 -- the §20 Abs. 2 Satz 1 Nr. 7 instruments that are NOT bonds: unbacked
+        # commodity ETCs ([GT-ESTG23-011], BMF 14.05.2025 Rz. 57), Zertifikate and
+        # unallocated spot metal ([GT-ESTG20-038], Rz. 9). Same Zeile 19/22 as 2.3.4, shown
+        # apart from it so the report does not call a metal position a bond.
+        #
+        # Emitted only when such an instrument was disposed of. 2.3.4 prints an empty-state
+        # line instead, which is right for bonds -- an account holding none is unremarkable
+        # and the reader still wants the line accounted for. This category is different:
+        # nothing lands here without a deliberate per-instrument classification, so an
+        # empty section is not an absence worth reporting, it is the normal case.
+        sk_rgls = [
+            rgl for rgl in self.realized_gains_losses
+            if rgl.asset_category_at_realization == AssetCategory.SONSTIGE_KAPITALFORDERUNG
+        ]
+        if sk_rgls:
+            self.story.append(Paragraph(
+                "2.3.7 Gewinne/Verluste aus sonstigen Kapitalforderungen (§20 Abs. 2 S. 1 Nr. 7, keine Anleihen)",
+                self.styles['SmallText']))
+            data = [["Asset Name", "ISIN/Symbol", "Verk. Datum", "Menge", "Erlös EUR", "Ansch. Datum", "Kosten EUR", "G/V Brutto EUR"]]
+            total_sk_gl = Decimal(0)
+            for rgl in sorted(sk_rgls, key=lambda x: (self._get_asset_details(x.asset_internal_id)[0], x.realization_date)):
+                name, isin_symbol, _ = self._get_asset_details(rgl.asset_internal_id)
+                gross_gl = rgl.gross_gain_loss_eur or Decimal(0)
+                data.append([
+                    name, isin_symbol, format_date_german(rgl.realization_date),
+                    self._format_decimal(rgl.quantity_realized, "integer_quantity"),
+                    self._format_decimal(rgl.total_realization_value_eur).replace('.',','),
+                    format_date_german(rgl.acquisition_date),
+                    self._format_decimal(rgl.total_cost_basis_eur).replace('.',','),
+                    self._format_decimal(gross_gl).replace('.',',')
+                ])
+                total_sk_gl += gross_gl
+            data.append([Paragraph("Summe G/V sonstige Kapitalforderungen:", self.styles['TableHeader']), "", "", "", "", "", "", Paragraph(self._format_decimal(total_sk_gl).replace('.',','), self.styles['TableCellRight'])])
+            table = self._create_styled_table(data, col_widths=[3*cm, 2.5*cm, 1.8*cm, 1.8*cm, 2*cm, 1.8*cm, 2*cm, 2.2*cm])
+            self.story.append(KeepTogether(table))
 
 
     def _add_so_details(self):

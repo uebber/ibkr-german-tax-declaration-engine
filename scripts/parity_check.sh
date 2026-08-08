@@ -48,6 +48,22 @@
 #    developed; it sat in the PDF-difference branch, so it only broke once there
 #    was something to report. Uses `wc -c`.
 #
+# 4. COMPLETE-OR-REFUSE. Every artifact of both captures must exist and be
+#    non-empty before anything is compared, and a capture that fails to produce
+#    one is a failed capture. Without this, an absent artifact compares as
+#    IDENTICAL rather than as unmeasured: `pdf_strip_meta` on a missing file
+#    emits nothing, and `cmp` of two empty streams is a match, so a run that
+#    aborted before the PDF stage certified a parity it never measured. The same
+#    held for the console leg, where two empty files diff clean. The abort does
+#    not have to be loud -- main.py logs an error and exits 0 when loss
+#    offsetting is unavailable, so `set -e` never sees it.
+#    The capture side clears the label's artifacts first for the same reason: the
+#    run overwrites console.txt and log.txt by redirection but not the PDF or the
+#    meta, so a second capture under a label that aborts leaves the *first*
+#    capture's PDF and args in place, and compare then measures a PDF no run in
+#    this tree produced. Observed in parity/ on 2026-08-07: a 0-byte
+#    base25.console.txt beside an 18-hour-older base25.pdf.
+#
 # Console and PDF differences are fatal. A log-only difference is reported but
 # not fatal, since adding a log line is a legitimate change that should not block
 # an output-neutral refactor; set PARITY_STRICT_LOG=1 to enforce it too.
@@ -62,6 +78,8 @@ mkdir -p parity
 
 _cache_backup=""
 _cache_existed=0
+_pdf_tmp_a=""
+_pdf_tmp_b=""
 
 restore_cache() {  # runs on every exit path, including Ctrl-C and pipeline failure
   [ -n "$_cache_backup" ] || return 0
@@ -70,7 +88,13 @@ restore_cache() {  # runs on every exit path, including Ctrl-C and pipeline fail
   rm -rf "$_cache_backup"
   _cache_backup=""
 }
-trap restore_cache EXIT
+
+cleanup() {
+  restore_cache
+  [ -z "$_pdf_tmp_a" ] || rm -f "$_pdf_tmp_a"
+  [ -z "$_pdf_tmp_b" ] || rm -f "$_pdf_tmp_b"
+}
+trap cleanup EXIT
 
 snapshot_cache() {
   _cache_backup="$(mktemp -d "${TMPDIR:-/tmp}/parity-cache.XXXXXX")"
@@ -99,6 +123,29 @@ sys.stdout.buffer.write(b)
 PY
 }
 
+# The artifacts a capture must produce. `meta` is one of them: it is written
+# last, so its absence marks a run that did not finish, and compare's argument
+# check reads it -- two captures with no meta used to agree on the empty string.
+ARTIFACTS="console.txt log.txt pdf meta"
+
+require_capture() {  # <label>; every artifact present, non-empty and readable, or refuse
+  # Readability is checked here rather than in each leg because every leg reads
+  # its inputs through a subshell -- `normalize` inside diff's <(...) as much as
+  # `pdf_strip_meta` -- where a failure to open the file yields an empty stream
+  # and no status anyone sees.
+  local label=$1 missing="" f
+  for f in $ARTIFACTS; do
+    if [ ! -s "parity/${label}.${f}" ] || [ ! -r "parity/${label}.${f}" ]; then
+      missing="${missing} parity/${label}.${f}"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    echo "REFUSING: capture '${label}' is incomplete -- missing, empty or unreadable:${missing}" >&2
+    echo "  An artifact that cannot be read is unmeasured, not equal; re-capture '${label}'." >&2
+    return 1
+  fi
+}
+
 diff_leg() {  # <name> <fileA> <fileB> <outfile>; prints verdict, returns 1 on difference
   local name=$1 a=$2 b=$3 out=$4
   if diff <(normalize "$a") <(normalize "$b") > "$out"; then
@@ -113,6 +160,11 @@ diff_leg() {  # <name> <fileA> <fileB> <outfile>; prints verdict, returns 1 on d
 case "$cmd" in
   capture)
     label=${2:?label required}; shift 2
+    # Clear this label's artifacts before the run: the redirections below replace
+    # console.txt and log.txt but nothing replaces a PDF or a meta the run never
+    # reaches, and a survivor from an earlier capture is indistinguishable from
+    # one this run produced. See property 4 above.
+    for f in $ARTIFACTS; do rm -f "parity/${label}.${f}"; done
     snapshot_cache   # restored by the EXIT trap; see property 1 above
     # --no-interactive + stdin /dev/null: a capture must be deterministic; an
     # unexpected classification prompt fails fast (EOFError) instead of hanging.
@@ -120,18 +172,36 @@ case "$cmd" in
     uv run python -m src.main --report-tax-declaration --no-interactive \
       --pdf-output-file "parity/${label}.pdf" "$@" \
       < /dev/null > "parity/${label}.console.txt" 2> "parity/${label}.log.txt"
+    # A zero exit is not evidence the run produced anything: main.py logs an
+    # error and exits 0 when loss offsetting is unavailable, emitting neither the
+    # console report nor the PDF. Check the artifacts, not the status.
+    for f in console.txt log.txt pdf; do
+      if [ ! -s "parity/${label}.${f}" ]; then
+        echo "CAPTURE FAILED: the run produced no parity/${label}.${f}" >&2
+        echo "  No meta written, so compare will refuse this label. See parity/${label}.log.txt" >&2
+        exit 1
+      fi
+    done
     # Record the invocation so compare can refuse unlike runs -- two captures
-    # taken at different --tax-year values are not a parity result.
+    # taken at different --tax-year values are not a parity result. Written last:
+    # its presence is what marks the capture complete.
     printf 'args=%s\nhead=%s\n' "$*" "$(git rev-parse HEAD 2>/dev/null || echo unknown)" \
       > "parity/${label}.meta"
-    echo "captured parity/${label}.{console.txt,log.txt,pdf}"
+    echo "captured parity/${label}.{console.txt,log.txt,pdf,meta}"
     ;;
   compare)
     a=${2:?labelA}; b=${3:?labelB}
     fail=0
 
-    args_a=$(sed -n 's/^args=//p' "parity/${a}.meta" 2>/dev/null || true)
-    args_b=$(sed -n 's/^args=//p' "parity/${b}.meta" 2>/dev/null || true)
+    # Before any comparison: both captures complete. Every check below reports a
+    # match when it is handed nothing, so this one has to come first.
+    incomplete=0
+    require_capture "$a" || incomplete=1
+    require_capture "$b" || incomplete=1
+    if [ "$incomplete" -eq 1 ]; then exit 2; fi
+
+    args_a=$(sed -n 's/^args=//p' "parity/${a}.meta")
+    args_b=$(sed -n 's/^args=//p' "parity/${b}.meta")
     if [ "$args_a" != "$args_b" ]; then
       echo "REFUSING: captures used different arguments ('${args_a}' vs '${args_b}')" >&2
       exit 2
@@ -149,11 +219,22 @@ case "$cmd" in
       fi
     fi
 
-    if ! cmp -s <(pdf_strip_meta "parity/${a}.pdf") <(pdf_strip_meta "parity/${b}.pdf"); then
+    # Stripped to real files, not process substitution: a failing pdf_strip_meta
+    # inside <(...) is invisible to cmp and to set -e, so an unreadable PDF would
+    # contribute an empty stream and compare as a match.
+    _pdf_tmp_a="$(mktemp "${TMPDIR:-/tmp}/parity-pdf.XXXXXX")"
+    _pdf_tmp_b="$(mktemp "${TMPDIR:-/tmp}/parity-pdf.XXXXXX")"
+    if ! pdf_strip_meta "parity/${a}.pdf" > "$_pdf_tmp_a"; then
+      echo "REFUSING: parity/${a}.pdf could not be read for comparison" >&2; exit 2
+    fi
+    if ! pdf_strip_meta "parity/${b}.pdf" > "$_pdf_tmp_b"; then
+      echo "REFUSING: parity/${b}.pdf could not be read for comparison" >&2; exit 2
+    fi
+    if cmp -s "$_pdf_tmp_a" "$_pdf_tmp_b"; then
+      echo "pdf: IDENTICAL (metadata-stripped)"
+    else
       echo "PDF DIFF (metadata-stripped): sizes $(wc -c < "parity/${a}.pdf") vs $(wc -c < "parity/${b}.pdf") bytes"
       fail=1
-    else
-      echo "pdf: IDENTICAL (metadata-stripped)"
     fi
     exit $fail
     ;;

@@ -102,18 +102,29 @@ So a **share** written off as worthless follows the Aktienverlust route (Zeile 2
 general one. Note this is stated in the 2025 Anleitung; **"Zeile 25" does not occur anywhere in
 `Anltg_KAP_25.md`**, which bears on the open question below.
 
-### [GT-FORM-005] Which lines exist in VZ 2025 -- unresolved
+### [GT-FORM-005] The separate derivative lines in VZ 2025 -- nothing is entered on them
 
-For VZ 2025 the Verlustverrechnungsbeschraenkung for Termingeschaefte is gone, so nothing is
-entered on the separate derivative lines. **Whether Zeilen 21, 24 and 25 were physically removed
-from the 2025 form, or retained and left unused, is not established.** Both readings and the
-authorities are in
-[`../research/open-legal-questions.md`](../research/open-legal-questions.md).
+For VZ 2025 the Verlustverrechnungsbeschraenkung for Termingeschaefte is gone, so **nothing is
+entered on Zeilen 21, 24 or 25**. That is what the claim asserts, and it is settled: the 2025
+Anleitung routes the same losses to *"die Zeilen 18 und / oder 19 und zusaetzlich in Zeile 22"*
+(Zeile 23 for wertlose Aktien), its marginal heading over the Verlustverrechnungs block changed
+from *"Zeile 14, 15, 24 und 25"* in the 2024 Anleitung to *"Zeile 14 und 15"*, and neither
+*"Zeile 24"* nor *"Zeile 25"* occurs anywhere in `Anltg_KAP_25.md`.
 
-> **Correction, 2026-08-03.** This file previously stated *"21 | (entfaellt / removed)"* and
-> *"24 | (entfaellt / removed)"* as fact, while the library's own register recorded the same
-> question as unresolved. A reference file must not settle by assertion a question the store
-> elsewhere holds open. Validation Protocol item 7.
+**Whether those line numbers are still printed on the form is a separate matter, and it is not
+established** -- the VZ 2025 form itself was not retrievable as of 2026-08-03. On the VZ 2020 form
+Zeilen 21 and 24 were printed *"frei"*, so the form has precedent for retaining a numbered but
+unused line; a Tier 5 summary claims removal, but the same source also claims a three-line
+renumbering that the Anleitung evidence refutes. **No figure turns on it either way**, which is why
+it is recorded here as a note rather than in the register of open questions.
+
+> **Corrections.** *2026-08-03:* this file previously stated *"21 | (entfaellt / removed)"* and
+> *"24 | (entfaellt / removed)"* as fact, while the library's register recorded the same point as
+> unresolved -- a reference file must not settle by assertion a question the store elsewhere holds
+> open (Validation Protocol item 7). *2026-08-07:* the point was carried in that register as
+> **Q3** until it was noticed that it decides no figure under either reading, which is the
+> register's own admission test. Q3 is retired and its evidence moved here; the number is not
+> reused.
 
 ---
 

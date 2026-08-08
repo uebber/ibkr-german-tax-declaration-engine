@@ -22,8 +22,11 @@ from src.domain.enums import (
 from src.domain.events import CashFlowEvent
 from src.domain.results import VorabpauschaleData, LossOffsettingResult, RealizedGainLoss
 from src.domain.enums import RealizationType
-from src.processing.data_gaps import DataGapCollector, GapSeverity
+from src.processing.data_gaps import DataGapCollector, DataGapError, GapSeverity
+from datetime import date as dt_date
+
 from src.engine.calculation_engine import (
+    FundUnitTranche,
     _calculate_vorabpauschale,
     _collect_fund_distributions_for_year,
     _get_vp_reporting_category,
@@ -62,9 +65,14 @@ def _make_fund(
     # reverts to reading the tax year's own snapshot, every test in this module fails.
     fund.prior_year_soy_quantity = soy_qty
     fund.prior_year_soy_position_value = soy_position_value
+    fund.prior_year_soy_mark_price = (soy_position_value / soy_qty
+                                      if soy_position_value is not None and soy_qty else None)
     fund.prior_year_soy_mark_price_currency = soy_mark_price_currency
     fund.prior_year_eoy_position_value = eoy_position_value
+    fund.prior_year_eoy_mark_price = (eoy_position_value / eoy_qty
+                                      if eoy_position_value is not None and eoy_qty else None)
     fund.prior_year_eoy_mark_price_currency = eoy_mark_price_currency
+    fund.prior_year_eoy_quantity = eoy_qty
     return fund
 
 
@@ -94,6 +102,25 @@ def _fx_converter(rate: Decimal):
         if currency == "EUR":
             return amount
         return amount / rate
+    converter.convert_to_eur.side_effect = _convert
+    return converter
+
+
+def _converter_failing_in(month: int):
+    """A converter with no ECB rate for one end of the year.
+
+    Discriminates on the Stichtag's month, which is what separates the two
+    conversions the Vorabpauschale performs: the Satz 2 price converts at the
+    year's first trading day and the Satz 3 price at its last (Rz. 18.6). So
+    `month=1` fails only the year-start conversion and `month=12` only the
+    year-end one, on a fixture where both prices are present and in the same
+    currency.
+    """
+    converter = MagicMock()
+    def _convert(amount, currency, dt):
+        if dt.month == month:
+            return None
+        return amount if currency == "EUR" else amount / Decimal("1.1")
     converter.convert_to_eur.side_effect = _convert
     return converter
 
@@ -144,7 +171,8 @@ def _make_resolver_with_fund(fund: InvestmentFund) -> AssetResolver:
     return resolver
 
 
-def _run_vp(fund, events=None, vorabpauschale_year=2024, converter=None):
+def _run_vp(fund, events=None, vorabpauschale_year=2024, converter=None,
+            acquisition_date=None, collector=None):
     """Compute the Vorabpauschale FOR calendar `vorabpauschale_year`.
 
     Note this is the year the VP is *for*, not the Veranlagungszeitraum it is declared in --
@@ -159,12 +187,51 @@ def _run_vp(fund, events=None, vorabpauschale_year=2024, converter=None):
     distributions = _collect_fund_distributions_for_year(
         events or [], vorabpauschale_year, resolver, ctx
     )
+    # Units held at the close of the Vorabpauschale year (Rz. 18.4). `acquisition_date`
+    # defaults to well before the year, so no 18 Abs. 2 reduction applies -- the shape
+    # every test here assumed when the count came from the snapshot. Pass it to exercise
+    # a mid-year purchase, which is the only way Abs. 2 reaches a declared figure.
+    held_at_year_end = fund.prior_year_eoy_quantity
+    if acquisition_date is None:
+        acquisition_date = dt_date(vorabpauschale_year - 3, 5, 20)
+    lots = {fund.internal_asset_id: [FundUnitTranche(
+        quantity=held_at_year_end,
+        acquisition_date=acquisition_date)]} if held_at_year_end else {}
     return _calculate_vorabpauschale(
         asset_resolver=resolver,
         distributions_by_asset=distributions,
         currency_converter=converter,
         vorabpauschale_year=vorabpauschale_year,
+        opening_lots_by_asset=lots,
         ctx=ctx,
+        data_gap_collector=collector,
+    )
+
+
+def _run_vp_over(funds, vorabpauschale_year=2024, converter=None, collector=None):
+    """`_run_vp` for more than one fund, so a collected report can be observed.
+
+    Same shape as `_run_vp` and deliberately not merged with it: every existing
+    caller passes one fund, and the resolver mock there is what pins that the
+    engine iterates `assets_by_internal_id`.
+    """
+    resolver = MagicMock(spec=AssetResolver)
+    resolver.assets_by_internal_id = {f.internal_asset_id: f for f in funds}
+    ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION, rounding=config.DECIMAL_ROUNDING_MODE)
+    lots = {
+        f.internal_asset_id: [FundUnitTranche(
+            quantity=f.prior_year_eoy_quantity,
+            acquisition_date=dt_date(vorabpauschale_year - 3, 5, 20))]
+        for f in funds if f.prior_year_eoy_quantity
+    }
+    return _calculate_vorabpauschale(
+        asset_resolver=resolver,
+        distributions_by_asset={},
+        currency_converter=converter or _eur_converter(),
+        vorabpauschale_year=vorabpauschale_year,
+        opening_lots_by_asset=lots,
+        ctx=ctx,
+        data_gap_collector=collector,
     )
 
 
@@ -242,14 +309,15 @@ class TestVorabpauschaleCalculation:
         assert len(results) == 1
         assert results[0].gross_vorabpauschale_eur == Decimal("50.00")
 
-    def test_no_soy_position_no_vp(self):
-        """Fund not held at SoY -> no VP."""
-        fund = _make_fund(soy_qty=Decimal("0"))
-        results = _run_vp(fund)
-        assert len(results) == 0
-
     def test_no_eoy_position_no_vp(self):
-        """Fund sold during year (no EoY position) -> no VP."""
+        """Fund sold during year (no EoY position) -> no VP.
+
+        legal_basis: Rz. 18.4 [GT-INVSTG-017], and [GT-INVSTG-016] as its
+        consequence — the multiplier is the holding at the close of
+        31 December, so a fund disposed of in full is multiplied by nothing.
+        Settled 2026-08-07; formerly open question Q5. **This one is correct**,
+        unlike the year-*start* case in TestAFundAcquiredDuringTheYear below.
+        """
         fund = _make_fund(eoy_position_value=None, eoy_qty=None)
         results = _run_vp(fund)
         assert len(results) == 0
@@ -381,6 +449,235 @@ class TestVorabpauschaleCalculation:
         assert len(results) == 1
         # Negative distribution not counted, so VP = full Basisertrag (capped)
         assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+
+
+# ---------------------------------------------------------------------------
+# Tests: a fund bought during the Vorabpauschale year
+# ---------------------------------------------------------------------------
+
+class TestAFundAcquiredDuringTheYear:
+    """Bought mid-year, still held at 31 December. Three rules meet here.
+
+    Replaces `test_no_soy_position_no_vp`, whose docstring read *"Fund not held
+    at SoY -> no VP"*. That is not the law: § 18 Abs. 2 **reduces** the
+    Vorabpauschale for units bought during the year, it does not remove it, and
+    Rz. 18.4 counts the units held at the *close*. The old test also conflated
+    two different facts — it set `soy_qty=0`, which the fixture helper turns
+    into a missing *price* — so it pinned the skip path while claiming to pin a
+    rule about quantity. It dates from `a1c7bf0`, before Rz. 18.4, before the
+    Abs. 2 pro-rata, and before the 2026-08-07 audit closed Q5 and Q13.
+
+    What is covered where, so no rule is assumed to be someone else's job:
+
+    | Rule | Says | Engine | Guarded |
+    |---|---|---|---|
+    | Rz. 18.4 [GT-INVSTG-017] | multiplier is the units held at the close of 31 Dec | implements | here, and `test_vorabpauschale_price_and_units.py` |
+    | § 18 Abs. 2 [GT-INVSTG-011] | 12 twelfths less one per full month before the month of acquisition | implements | the twelfths in `test_vorabpauschale_abs2.py`; **their effect on a declared figure only here** |
+    | § 18 Abs. 1 S. 2 [GT-INVSTG-010] | Basisertrag from the Rücknahmepreis at the start of the year | asks for it, and stops where nobody can supply one | `test_fund_price_store.py`; the engine's own residual skip in `TestAFundTheEngineCannotPrice` below |
+
+    That last row said *"cannot: no export carries it for a fund not held then
+    — issue #65; the silence about it is #55"* until 2026-08-09. Both halves
+    have since closed: `resolve_year_start_prices()` obtains the price or stops
+    the run, and #55 replaced the engine's four silent skips with a recorded
+    gap.
+
+    The Abs. 2 row is why this class exists rather than one more case in the
+    file above. Measured 2026-08-08: replacing the engine's
+    `if twelfths != 12:` reduction with `if False:` left all 869 tests green.
+    `test_vorabpauschale_abs2.py` exercises `FundUnitTranche` in isolation, so
+    the engine could stop applying the result and nothing observed it.
+    """
+
+    # 100 units at a year-start price of 100: 100 * 0.0229 * 0.7 = 1.603 per unit,
+    # under the Satz 3 cap of (110 - 100) = 10, so 160.30 for a full twelve twelfths.
+    FULL_YEAR_VP = Decimal("160.30")
+
+    @pytest.mark.parametrize("month,twelfths,expected", [
+        (1, 12, Decimal("160.30")),   # no full month precedes January
+        (7, 6, Decimal("80.15")),     # January to June are six full months
+        (12, 1, Decimal("13.36")),    # a December purchase still attracts one twelfth
+    ])
+    def test_abs2_reduces_the_declared_figure(self, month, twelfths, expected):
+        """The pro-rata reaches the figure, not just the helper that computes it."""
+        fund = _make_fund()
+        results = _run_vp(fund, acquisition_date=dt_date(2024, month, 15))
+
+        assert len(results) == 1, "a mid-year purchase is entitled to a reduced VP, not none"
+        assert results[0].gross_vorabpauschale_eur == expected
+        assert expected == (self.FULL_YEAR_VP * twelfths / 12).quantize(Decimal("0.01"))
+
+    def test_the_units_counted_are_those_held_at_the_close(self):
+        """Rz. 18.4. Holding nothing when the year opened does not reduce the
+        count; only Abs. 2's twelfths reduce, and they are a separate step."""
+        fund = _make_fund(soy_qty=Decimal("0"))
+        fund.prior_year_soy_mark_price = Decimal("100")   # the fund had a price; we did not hold it
+
+        results = _run_vp(fund, acquisition_date=dt_date(2024, 7, 15))
+
+        assert len(results) == 1
+        assert results[0].gross_vorabpauschale_eur == Decimal("80.15")
+
+    def test_without_a_year_start_price_it_is_dropped_at_the_price_check(self, caplog):
+        """Pins **which** branch fires, not merely that nothing comes out.
+
+        The engine has two ways to produce nothing here and only one of them is
+        lawful. Asserting the count alone would pass if a regression started
+        dropping the fund on its unit count instead — which is the reading
+        `test_no_soy_position_no_vp` enshrined.
+
+        The discrimination is the pair, not a log string: this fixture and the
+        one in `test_the_units_counted_are_those_held_at_the_close` differ in
+        the year-start price and nothing else, and that one produces a figure.
+        So the price is the only thing that can account for the difference.
+        Deliberately not asserted: the text of the message. #55 replaced that
+        warning with a recorded gap, and this test still passes because it hands
+        the engine no collector — which is also what pins that the branch, and
+        not the gap, is what drops the fund.
+        """
+        import logging
+
+        fund = _make_fund(soy_qty=Decimal("0"))          # -> no year-start price
+        with caplog.at_level(logging.DEBUG):
+            results = _run_vp(fund, acquisition_date=dt_date(2024, 7, 15))
+
+        assert len(results) == 0
+        assert "nothing held at the close" not in caplog.text, (
+            "dropped for the wrong reason: 100 units were held at 31 December")
+
+    def test_a_dropped_fund_is_recorded_rather_than_only_logged(self):
+        """A skipped fund contributes no deemed income and the report is silent.
+
+        Asserts only that *something* is recorded: the gap code and severity are
+        #55's to choose, and pinning them here would fix its design from a test.
+
+        Carried an `xfail(strict=True)` until #55 landed, whose reason line said
+        the marker had to come out when it did. It chose `FAIL_FAST`, which
+        raises as it records, so the call is wrapped — the collector is read
+        after the raise, and what is asserted is still only that something
+        reached it. `TestAFundTheEngineCannotPrice` below pins the code and the
+        severity.
+        """
+        collector = DataGapCollector()
+        fund = _make_fund(soy_qty=Decimal("0"))
+
+        with pytest.raises(DataGapError):
+            _run_vp(fund, acquisition_date=dt_date(2024, 7, 15), collector=collector)
+
+        assert len(collector) > 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: a fund the engine cannot price (issue #55)
+# ---------------------------------------------------------------------------
+
+class TestAFundTheEngineCannotPrice:
+    """Four ways `_calculate_vorabpauschale` used to drop one fund and continue.
+
+    Each left an instrument the engine had itself classified as an investment
+    fund contributing **no** § 18 deemed income, with nothing in the report
+    saying so — the shape `src/processing/data_gaps.py` exists to end. Measured
+    live on 2026-08-07: four funds across VZ 2024 and VZ 2025 printed 0.00 on
+    Anlage KAP-INV Zeilen 9–13 with an empty DATENLÜCKEN section.
+
+    The prices are what § 18 Abs. 1 Sätze 2 and 3 are built from
+    ([GT-INVSTG-010]); without one of them the figure is not zero, it is
+    un-computable, so the run stops naming the funds instead of declaring a
+    zero nobody can tell from a real one.
+
+    One code covers all four, with the reason carried per fund in the detail.
+    Issue #55 asked for the year-start path to be split, so that a fund *not
+    held* when the year opened would not abort alongside one whose snapshot
+    price is genuinely missing. That split now exists a layer up:
+    `resolve_year_start_prices()` prices every fund that owes a Vorabpauschale
+    before the engine runs, so the not-held case never reaches here. A second
+    code would buy nothing and would cost the single report — a `FAIL_FAST`
+    raises as it is recorded, so two of them mean the second never reaches the
+    collector.
+    """
+
+    CODE = "VORABPAUSCHALE_PRICE_UNUSABLE"
+
+    def _gap(self, fund, converter=None, year=2024):
+        """Run, expect the abort, and hand back the one gap that was recorded."""
+        collector = DataGapCollector()
+        with pytest.raises(DataGapError):
+            _run_vp(fund, vorabpauschale_year=year, converter=converter,
+                    collector=collector)
+        assert len(collector.gaps) == 1
+        return collector.gaps[0]
+
+    def test_no_year_start_price(self):
+        """Abs. 1 Satz 2 has nothing to multiply by the Basiszins."""
+        gap = self._gap(_make_fund(soy_qty=Decimal("0")))
+
+        assert gap.code == self.CODE
+        assert gap.severity is GapSeverity.FAIL_FAST
+        assert "Jahresbeginn" in gap.subject
+
+    def test_year_start_price_does_not_convert(self):
+        """Rz. 18.6 converts at the day the price was set; no rate, no figure."""
+        gap = self._gap(_make_fund(currency="USD", soy_mark_price_currency="USD",
+                                   eoy_mark_price_currency="USD"),
+                        converter=_converter_failing_in(month=1))
+
+        assert gap.code == self.CODE
+        assert gap.severity is GapSeverity.FAIL_FAST
+        assert "umgerechnet" in gap.subject
+
+    def test_no_year_end_price(self):
+        """Abs. 1 Satz 3's cap needs the last price set in the year."""
+        gap = self._gap(_make_fund(eoy_position_value=None))
+
+        assert gap.code == self.CODE
+        assert gap.severity is GapSeverity.FAIL_FAST
+        assert "Jahresende" in gap.subject
+
+    def test_year_end_price_does_not_convert(self):
+        """The quietest of the four: a DEBUG line until 2026-08-07."""
+        gap = self._gap(_make_fund(currency="USD", soy_mark_price_currency="USD",
+                                   eoy_mark_price_currency="USD"),
+                        converter=_converter_failing_in(month=12))
+
+        assert gap.code == self.CODE
+        assert gap.severity is GapSeverity.FAIL_FAST
+        assert "umgerechnet" in gap.subject
+
+    def test_every_affected_fund_is_named_in_one_gap(self):
+        """One run states the whole problem.
+
+        A `FAIL_FAST` raises as it is recorded, so recording per fund would stop
+        at the first and hide the rest — the reason
+        `VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN` collects too.
+        """
+        unpriced = _make_fund(soy_qty=Decimal("0"), description="No Start Price")
+        uncapped = _make_fund(eoy_position_value=None, description="No End Price")
+        collector = DataGapCollector()
+
+        with pytest.raises(DataGapError):
+            _run_vp_over([unpriced, uncapped], collector=collector)
+
+        assert len(collector.gaps) == 1
+        gap = collector.gaps[0]
+        assert "No Start Price" in gap.subject and "No End Price" in gap.subject
+        assert "2 Fonds" in gap.subject
+
+    def test_a_year_whose_basiszins_is_not_positive_reports_nothing(self):
+        """Calendar 2022's Basiszins was −0.05 %, so no fund owes anything.
+
+        Abs. 1 Satz 2 multiplies the year-start price by it, so the figure is
+        zero for every fund whatever the price was — a price nobody could
+        obtain removed nothing from the declaration and there is no gap. VZ
+        2023 is the year this protects: its zero is lawful, and it is the year
+        that made the defect look normal for as long as it was the only one
+        that ran.
+        """
+        collector = DataGapCollector()
+
+        results = _run_vp(_make_fund(soy_qty=Decimal("0")),
+                          vorabpauschale_year=2022, collector=collector)
+
+        assert results == []
+        assert collector.gaps == []
 
 
 # ---------------------------------------------------------------------------

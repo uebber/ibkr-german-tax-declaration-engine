@@ -155,6 +155,24 @@ class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({f"ISIN:{self.ISIN}": [category, fund_type, "user"]}, f)
 
+    def _acquisition_row(self, trade_date, quantity, price):
+        """The purchase that put the units on the books.
+
+        Without it the historical reconstruction has nothing, disagrees with the
+        opening snapshot, and the ledger falls back to a lot whose acquisition
+        date the engine invents — which § 18 Abs. 2 refuses to compute from. The
+        trade is not incidental scaffolding: a real holding has one.
+        """
+        # ClientAccountID, CurrencyPrimary, AssetClass, SubCategory, Symbol,
+        # Description, ISIN, Strike, Expiry, Put/Call, TradeDate, Quantity,
+        # TradePrice, IBCommission, IBCommissionCurrency, Buy/Sell,
+        # TransactionID, Notes/Codes, UnderlyingSymbol, Conid, UnderlyingConid,
+        # Multiplier, Open/CloseIndicator
+        return ["U1234567", "EUR", "STK", "", "XYZ1", "XYZ1 BOND INDEX",
+                self.ISIN, "", "", "", trade_date, quantity, price, "0", "EUR",
+                "BUY", f"TX{trade_date.replace('-', '')}", "", "", self.CONID,
+                "", "1", "O"]
+
     def _position_row(self, quantity, mark_price, position_value):
         # ClientAccountID, CurrencyPrimary, AssetClass, SubCategory, Symbol,
         # Description, ISIN, Quantity, PositionValue, MarkPrice, CostBasisMoney,
@@ -176,6 +194,9 @@ class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
 
         results = self._run_pipeline(
             tax_year=2025,
+            # Acquired well before the Vorabpauschale year, so 18 Abs. 2 does
+            # not reduce it and the expected figure below is the full one.
+            trades_data=[self._acquisition_row("2023-03-15", "100", "90")],
             positions_prior_start_data=[self._position_row("100", "100", "10000")],
             positions_prior_end_data=[self._position_row("100", "110", "11000")],
             positions_start_data=[self._position_row("100", "110", "11000")],
@@ -271,6 +292,9 @@ class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
 
         results = self._run_pipeline(
             tax_year=2025,
+            # Acquired well before the Vorabpauschale year, so 18 Abs. 2 does
+            # not reduce it and the expected figure below is the full one.
+            trades_data=[self._acquisition_row("2023-03-15", "100", "90")],
             positions_prior_start_data=[self._position_row("100", "100", "10000")],
             positions_prior_end_data=[self._position_row("100", "110", "11000")],
             positions_start_data=[self._position_row("100", "110", "11000")],

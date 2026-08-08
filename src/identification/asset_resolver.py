@@ -4,7 +4,8 @@ from decimal import Decimal
 from typing import Dict, Set, Optional, Tuple, Any
 
 from src.domain.assets import (
-    Asset, Stock, Bond, InvestmentFund, Option, Cfd, Future, PrivateSaleAsset, CashBalance, Derivative
+    Asset, Stock, Bond, SonstigeKapitalforderung, InvestmentFund, Option, Cfd, Future,
+    PrivateSaleAsset, CashBalance, Derivative
 )
 from src.domain.enums import AssetCategory, InvestmentFundType
 from src.classification.asset_classifier import AssetClassifier # Dependency
@@ -69,9 +70,20 @@ class AssetResolver:
             # Zeilen 9-13 with nothing recorded.
             "prior_year_soy_quantity": asset.prior_year_soy_quantity,
             "prior_year_soy_position_value": asset.prior_year_soy_position_value,
+            "prior_year_soy_mark_price": asset.prior_year_soy_mark_price,
             "prior_year_soy_mark_price_currency": asset.prior_year_soy_mark_price_currency,
+            # The Stichtag travels with its price. A retyped fund that kept the price
+            # but lost the day would be converted at a date derived from the year
+            # instead, which is wrong by a year on the substitution path.
+            "prior_year_soy_mark_price_date": asset.prior_year_soy_mark_price_date,
+            "prior_year_eoy_quantity": asset.prior_year_eoy_quantity,
             "prior_year_eoy_position_value": asset.prior_year_eoy_position_value,
+            "prior_year_eoy_mark_price": asset.prior_year_eoy_mark_price,
             "prior_year_eoy_mark_price_currency": asset.prior_year_eoy_mark_price_currency,
+            "prior_year_eoy_mark_price_date": asset.prior_year_eoy_mark_price_date,
+            "prior_year_opening_quantity": asset.prior_year_opening_quantity,
+            "prior_year_opening_mark_price": asset.prior_year_opening_mark_price,
+            "prior_year_opening_mark_price_currency": asset.prior_year_opening_mark_price_currency,
             "eoy_quantity": asset.eoy_quantity,
             "eoy_mark_price_currency": asset.eoy_mark_price_currency,
             "eoy_market_price": asset.eoy_market_price, # Renamed from eoy_mark_price
@@ -108,6 +120,12 @@ class AssetResolver:
             new_asset = Stock(**common_kwargs)
         elif new_category == AssetCategory.BOND:
             new_asset = Bond(**common_kwargs)
+        elif new_category == AssetCategory.SONSTIGE_KAPITALFORDERUNG:
+            # The only route into this category: it is never a preliminary classification,
+            # because Rz. 57's test is not readable off an IBKR asset class
+            # ([GT-ESTG23-011]). It always arrives as a user classification replacing
+            # whatever the resolver first built.
+            new_asset = SonstigeKapitalforderung(**common_kwargs)
         elif new_category == AssetCategory.OPTION:
             new_asset = Option(
                 option_type=common_kwargs.pop("option_type", None),
@@ -274,6 +292,7 @@ class AssetResolver:
                 0 if isinstance(a, Future) else 1,
                 0 if isinstance(a, Stock) else 1,
                 0 if isinstance(a, Bond) else 1,
+                0 if isinstance(a, SonstigeKapitalforderung) else 1,
                 0 if isinstance(a, PrivateSaleAsset) else 1, # Changed from Section23EstgAsset
                 0 if a.ibkr_isin else 1,
                 0 if a.ibkr_conid else 1,

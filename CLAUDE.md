@@ -91,6 +91,16 @@ overhead.
 - **The standing constraints below honoured**, any departure explicitly asked for and answered.
 - **Every factual claim in the description says how it was measured.**
   An unmeasured claim reads exactly like a measured one.
+- **What the exports contain is settled in `data_import/`, never assumed.** It is ground truth for
+  input behaviour as `reference/` is for the law, and the same rule applies: look before you
+  claim. Any claim that a column can be absent, blank or malformed is counted there before it
+  becomes work — the condition that would produce the wrong figure, not a precursor of it, as N of
+  M rows across the window. Zero means stop: write the assumption where the code relies on it, and
+  open nothing. Does not reach a `reference/` deviation, a defect at zero incidence because there
+  the law is ground truth and the data is not.
+  Every other gate here points at the harm of a silent substitution and none asked whether the
+  input ever goes missing. On 2026-08-09 that produced two issues (#72, #73) for failures with
+  zero occurrences in five years, in a session whose one costly error sat unread in the report.
 
 **Band A adds:**
 
@@ -104,6 +114,10 @@ overhead.
   A test that was never red proves nothing about the fix. Parity without a year is
   unfalsifiable — a change keyed to a form-year rule is identical for one assessment year and
   different for another.
+- **Every input the figure depends on named, with what the code does when it is absent, and how
+  often it is absent in fact.** Once, in writing, per figure. Inputs always present need no entry
+  — and "always present" is the count above, not an impression. The ones that matter are where
+  something is substituted and the run continues, and each is either removed or argued.
 - `ks-maint`: no red-first and no parity — it changes nothing. Instead, **every claim the audit
   touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will
   close it. A row left at `implements` because no code was touched, when the audit just moved the
@@ -159,8 +173,21 @@ uv run pytest tests/test_<area>.py -v      # one area
 with no developer state:
 
 ```bash
-rm -rf cache && cp src/config_example.py src/config.py && uv run pytest -q
+cp src/config_example.py src/config.py && uv run pytest -q
 ```
+
+The `cp` still overwrites `src/config.py`, which is gitignored and holds the Flex Query IDs and
+taxpayer identity. Back it up first, or run the protocol in a throwaway worktree
+(`git worktree add /tmp/cc HEAD --detach`), which is a truer clean clone anyway.
+
+**Do not put `rm -rf cache` back into this line.** It stood there until issue #51, by which time
+its only remaining effect was destroying the hand-made asset classifications — which nothing
+rebuilds automatically. It did exactly that once, and the resulting unclassified instrument
+blocked a real-data parity gate. Hermeticity is enforced by construction instead, in two autouse
+fixtures in `tests/conftest.py`: every `src.config` cache path is redirected into a per-test temp
+directory, and any access reaching the real `cache/` raises. A caller that genuinely must clear
+the directory snapshots and restores it on a `trap ... EXIT`; `scripts/parity_check.sh` is the
+model.
 
 **A green suite is weaker evidence than it looks.** Coverage is uneven and the gaps are not where
 the diff is. This is why the gates ask for mutation probes and calibration rather than a passing
@@ -173,10 +200,14 @@ run.
 - **The ends of a new channel.** When the data-gap channel was added, its second recording site
   and its entire report-rendering block could each be deleted with the suite green. Probe the
   ends, not the middle.
-- **Anything a start-of-year snapshot can rebuild.** Pass 3 reconciles against the Positions
-  file, so a defect that loses lots stays invisible in quantity, cost basis, proceeds *and* gain
-  — only the acquisition date is wrong. A test asserting those four figures on a scenario with an
-  SoY snapshot is weaker than it looks.
+- **Anything a start-of-year snapshot can rebuild.** The reconcile phase compares against the
+  Positions file, so a defect that loses lots stays invisible in quantity, cost basis, proceeds
+  *and* gain — only the acquisition date is wrong. A test asserting those four figures on a
+  scenario with an SoY snapshot is weaker than it looks.
+- **A dispatch that falls through without an `else`.** The historical replay ignored four event
+  kinds this way, and each affected instrument reconciled against a reported zero — which clears
+  the ledger and hides the disagreement. Probe by reconciling at every yearly snapshot, not only
+  the tax year's. Written up in `docs/research_historical_replay_defects.md`.
 
 Add to this list whenever a probe finds a site the suite cannot observe.
 
@@ -185,7 +216,28 @@ Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support
 
 ## Validation against real data
 
-- `validate_ledgers.py` — reconciles start-of-year and end-of-year positions per tax year.
+**Assessment years before 2023 are never processed. Every end-to-end run, regression baseline
+and parity capture against real data starts at VZ 2023.** Earlier data is still *imported* — the
+transaction files from 2021 on are concatenated to build the historical FIFO ledger, so a lot
+acquired in 2021 keeps its real acquisition date and cost basis. What is forbidden is treating a
+figure from VZ 2021 or VZ 2022 as a result, a baseline or a parity capture.
+
+VZ 2021 has no opening position at all: `Positions-2020-EoY.csv` does not exist
+(`src/data_preparation.py:211`). VZ 2022 realises gains against a cost basis nobody observed —
+lots carried in from before the data window have no acquisition date, so reconciliation discards
+the reconstruction and synthesises a single lot dated `f"{tax_year-1}-12-31"`
+(`src/engine/fifo_manager.py:400`). The opening quantities at 2021-01-01 are derivable, but a
+derivable quantity does not make an unobserved date safe to invent; see the fallback rule under
+Engineering rules. The measurement establishing VZ 2023 as the first year whose opening lots are
+all traceable is in `VALIDATION_REPORT.md` § 2026-08-06.
+
+**The failure this prevents is an invented figure, not a visibly wrong one.** A contaminated year
+still produces plausible output, because a synthesised lot carries a well-formed date no
+downstream consumer can distinguish from a measured one.
+
+- `validate_ledgers.py` — reconciles start-of-year and end-of-year positions per tax year. Its
+  `find_complete_years()` selects on `Positions-{Y}-SoY.csv`, which is not what the pipeline
+  opens from; pass `--year` explicitly rather than trusting the sweep to exclude an early year.
 - `scripts/parity_check.sh` — captures a full run (console, log, PDF) and compares two captures,
   for proving a change is output-neutral. It is cache-hermetic and order-sensitive; read its
   header before relying on it, and take a same-tree control capture first so ambient
@@ -247,6 +299,35 @@ needing a citation carried one. Its mirror image *is* enforced: `reference/` sta
 contains no implementation state, which is the Purity Rule in `docs/knowledge-store.md`, checked
 by `tests/test_reference_purity.py`.
 
+### When the sources tie: lean to the taxpayer
+
+**A legal grey area is not a data gap, and the fallback rule under Engineering rules does not
+reach it.** That rule governs a missing *input*, where any direction you pick is invented. A grey
+area is the opposite: the data are complete and the figure is well founded under either reading;
+what is unsettled is the law. Choosing between them is a position, not a fabrication.
+
+**In a genuine grey area, lean to the taxpayer.** This produces a *declaration*, not a submission
+to a moot court — the favourable reading is a position the Finanzamt can assess differently, and
+being assessed differently is the normal working of the process.
+
+**The permission is narrow.** Every one of these must hold; they are conditions, not factors to
+weigh against each other:
+
+- **Never against Tier 1 or Tier 2**, whichever way it falls, and administrative guidance binding
+  the Finanzamt rather than the taxpayer changes nothing. A reading that needs the statute or the
+  guidance to be wrong is a dispute, and a dispute is not something to bake into a figure.
+- **BMF must not have stated otherwise**, including by clear implication. What is required is that
+  the administration has *not spoken* — a shallow search does not meet this.
+- **The ambiguity must be documented as disputed, not constructed.** With enough ingenuity
+  anything has two readings, and that ingenuity is what this condition exists to disallow.
+- **It never licenses an invented input.** If the figure is uncertain because the data are
+  missing, you are in the fallback rule, not this one.
+- **Ask, and get permission, before implementing** — both readings, the authority behind each,
+  what the choice moves. The taxpayer signs the return; a grey area is never resolved in a commit.
+
+The choice and the evidence that each condition was met go in
+`docs/legal-implementation-map.md` against the claim ID.
+
 ## Engineering rules
 
 ### SoY → EoY must reconcile (non-negotiable)
@@ -281,6 +362,23 @@ this computation" conditions through `src/processing/data_gaps.py`, and choose t
 honestly — recording a condition as a warning asserts the declared figures are still safe. When you
 do raise, check every case first and report them together, so one run identifies the whole problem.
 
+**Derive freely; never invent a stand-in for a missing import.** Computing a value from inputs that
+are all present is fine, and often better than importing it — a per-unit price from a value and a
+count. What is forbidden is a value standing in for an input this run does not have: a fallback
+lot's `acquisition_date` set to `f"{tax_year-1}-12-31"` is the missing import wearing its clothes,
+and downstream it is a well-formed date no consumer can tell from a measured one. Standing in for
+a missing input is a decision about someone's tax return, not an implementation detail — route it
+through `src/processing/data_gaps.py` and let the run stop, or ask, but never both invent it and
+continue. **Never add such a fallback without asking first:** a value missing often enough that you
+are reaching for a default is a finding to report, not a hole to fill — and "often enough" is the
+count under Gates, not an impression.
+
+**There is no safe direction to be wrong.** "This can only overstate, which is the safer side" is
+an argument for putting a number nobody can check on a tax return. Understatement versus
+overstatement only ranks a gap that has *already been recorded*; it is never a reason to prefer one
+wrong figure over another, nor a licence to compute through a gap instead of recording it. The
+choice is between a figure and no figure, not between two figures.
+
 **Verify your rationale, not just your citations.** A reason given in a comment, a commit message or
 a document is a claim, and a plausible one is the hardest kind to catch. Check it, or mark it
 unverified.
@@ -293,10 +391,23 @@ float construction — `tests/test_precision.py` tests the arithmetic, not how t
 write to it. Working copies go in `data/`. See `input_data_spec.md` for the naming scheme and
 column specifications. Nothing enforces this either.
 
-**This repository is public.** Account data must never reach a commit — no holdings, identifiers or
-amounts. Public documents state the mechanism; instance data stays in gitignored notes. There is no
-tripwire, and this is the rule with the worst violation record here: three separate commits have
-been cleanups after account data had already been published.
+**This repository is public.** What must never reach a commit is **anything from which the size of
+the account can be inferred**: monetary amounts at portfolio scale, cash balances, position values,
+settlement proceeds, realised gains, and the account number. Not in code, not in tests, not in
+docs, not in a commit message. Illustrative figures are invented, never copied from a real export —
+copying is how every violation here happened, because real data makes an example feel concrete.
+
+**Deliberately not in scope**, so that a cleanup does not turn into an unbounded rewrite: ticker
+symbols, instrument descriptions, ISINs, IBKR contract identifiers (a Conid names a contract, not a
+person), transaction and action IDs, and small non-round figures used to make an example real.
+Those identify *instruments*, not wealth, and scrubbing them churns test fixtures that key off
+symbols and descriptions for nothing the owner cares about.
+
+**Check before committing, since nothing else will.** Public documents state the mechanism;
+instance data stays in gitignored notes. Cross-check the staged diff against `data_import/`:
+extract the monetary columns, and grep the diff for those values. A leak is a figure that appears
+in both. There is no tripwire, and this is the rule with the worst record here — **four** cleanups
+after publication, the most recent in August 2026.
 
 ## Standing constraints
 

@@ -1,26 +1,17 @@
 # src/parsers/cash_transactions_parser.py
-import csv
 from typing import List
-from pydantic import ValidationError
 
+from .csv_reader import parse_records
 from .raw_models import RawCashTransactionRecord
-from .column_validator import validate_csv_columns, CASH_TRANSACTIONS_COLUMNS
+from .column_validator import CASH_TRANSACTIONS_COLUMNS
+
 
 def parse_cash_transactions_csv(file_path: str, encoding='utf-8-sig') -> List[RawCashTransactionRecord]:
-    raw_cash_transactions: List[RawCashTransactionRecord] = []
-    try:
-        with open(file_path, mode='r', encoding=encoding) as csvfile:
-            reader = csv.DictReader(csvfile)
-            validate_csv_columns(reader.fieldnames or [], CASH_TRANSACTIONS_COLUMNS, f"Cash Transactions ({file_path})")
-            for i, row_dict in enumerate(reader):
-                try:
-                    raw_cash_transactions.append(RawCashTransactionRecord(**row_dict))
-                except ValidationError as e:
-                    print(f"Validation Error parsing cash transaction row {i+2}: {row_dict}. Error: {e.errors()}")
-                except Exception as e:
-                    print(f"Unexpected error parsing cash transaction row {i+2}: {row_dict}. Error: {e}")
-    except FileNotFoundError:
-        print(f"Cash transactions file not found: {file_path}")
-    except Exception as e:
-        print(f"Error reading cash transactions file {file_path}: {e}")
-    return raw_cash_transactions
+    """Parse the IBKR Cash Transactions export.
+
+    A dropped row here is the worst case the reader guards: dividends, interest
+    and withholding tax touch no share quantity, so the securities reconciliation
+    stays green and the income is simply not declared.
+    """
+    return parse_records(file_path, RawCashTransactionRecord, CASH_TRANSACTIONS_COLUMNS,
+                         "Cash Transactions", encoding=encoding)

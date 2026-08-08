@@ -7,11 +7,13 @@ from typing import Dict, Optional, Tuple, List
 logger = logging.getLogger(__name__)
 
 from src.domain.assets import (
-    Asset, InvestmentFund, Stock, Bond, Option, Cfd, Future, PrivateSaleAsset, CashBalance
+    Asset, InvestmentFund, Stock, Bond, SonstigeKapitalforderung, Option, Cfd, Future,
+    PrivateSaleAsset, CashBalance
 )
 from src.domain.enums import AssetCategory, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError
 from src import config as app_config # Added import
+
 
 class AssetClassifier:
     def __init__(self, cache_file_path: Optional[str] = None): # Modified signature
@@ -21,21 +23,112 @@ class AssetClassifier:
             self.cache_file_path = cache_file_path
 
         self.classifications_cache: Dict[str, Tuple[str, str, str]] = {}
+        # Each label names the CRITERION that decides the option, not just the instrument's
+        # trade name, because the taxpayer is reading a factsheet and has to match it against
+        # something. Two things are deliberately absent:
+        #
+        #   - Teilfreistellung rates. reference/investment-tax-law/invstg-20-teilfreistellung.md
+        #     states that it is "the only statement of the Teilfreistellung rates in this
+        #     library. Do not restate them elsewhere". The quota that DECIDES the fund type is
+        #     what the user needs here; the rate is the consequence and the engine applies it.
+        #   - Zeilen numbers. They are year-specific -- Termingeschaefte are declared on their
+        #     own lines up to VZ 2024 and folded in from VZ 2025 (src/tax_law/registry.py) --
+        #     so a fixed number in a static label would be wrong for half the years the engine
+        #     supports. The form and the Verlustverrechnungskreis are named instead, and the
+        #     report states the lines for the year actually being processed.
         self._dialog_options: List[Tuple[str, AssetCategory, InvestmentFundType]] = [
-            ("Aktienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AKTIENFONDS),
-            ("Mischfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.MISCHFONDS),
-            ("Immobilienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.IMMOBILIENFONDS),
-            ("Auslands-Immobilienfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AUSLANDS_IMMOBILIENFONDS),
-            ("Sonstige Investmentfonds (KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.SONSTIGE_FONDS),
-            ("§23 EStG / Anlage SO (z.B. Gold-ETC, Krypto-ETP)", AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE), # Changed from SECTION_23_ESTG_ASSET
-            ("Aktie (Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE),
-            ("Anleihe (Anlage KAP)", AssetCategory.BOND, InvestmentFundType.NONE),
-            ("Option/Termingeschäft (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
-            ("Future/Termingeschäft (Anlage KAP)", AssetCategory.FUTURE, InvestmentFundType.NONE),
-            ("CFD (Anlage KAP)", AssetCategory.CFD, InvestmentFundType.NONE),
-            ("Cash / Währungssaldo (ECHT)", AssetCategory.CASH_BALANCE, InvestmentFundType.NONE), # Clarified for interactive prompt
-            ("Devisenhandelspaar (z.B. EUR.USD) - wird als UNKNOWN klassifiziert", AssetCategory.UNKNOWN, InvestmentFundType.NONE), # Added for clarity if interactive
-            ("Sonstiges (Standard Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE), # Default for other unknowns
+            # Fund quotas, all "fortlaufend gemaess den Anlagebedingungen": Aktienfonds is
+            # *mehr als 50 %* Kapitalbeteiligungen ([GT-INVSTG-026]), Mischfonds *mindestens
+            # 25 %* ([GT-INVSTG-027]), Immobilienfonds *mehr als 50 %* of Aktivvermoegen in
+            # Immobilien and Auslands-Immobilienfonds the same test against foreign property
+            # ([GT-INVSTG-029]). The Mischfonds label states no upper bound because the
+            # statute states none — a fund above 50 % is an Aktienfonds by the more specific
+            # rule, which is what "aber kein Aktienfonds" says.
+            ("Aktienfonds — fortlaufend mehr als 50 % des Aktivvermögens in Kapitalbeteiligungen (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AKTIENFONDS),
+            ("Mischfonds — fortlaufend mindestens 25 % des Aktivvermögens in Kapitalbeteiligungen, aber kein Aktienfonds (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.MISCHFONDS),
+            ("Immobilienfonds — fortlaufend mehr als 50 % des Aktivvermögens in Immobilien / Immobilien-Gesellschaften (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.IMMOBILIENFONDS),
+            ("Auslands-Immobilienfonds — dieselbe Quote, gemessen an ausländischen Immobilien (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.AUSLANDS_IMMOBILIENFONDS),
+            ("Sonstige Investmentfonds — Fonds, der keine dieser Quoten erfüllt; keine Teilfreistellung (Anlage KAP-INV)", AssetCategory.INVESTMENT_FUND, InvestmentFundType.SONSTIGE_FONDS),
+            # These two options are the two OUTCOMES of one test, and the test is stated in
+            # BMF 14.05.2025 Rz. 57 ([GT-ESTG23-011]): a commodity Inhaberschuldverschreibung
+            # is a Sachleistungsanspruch -- and so a 23 EStG asset -- only where the issuer
+            # must invest the capital almost entirely in the commodity AND the holder's claim
+            # is exclusively to delivery of the deposited commodity or to the proceeds of its
+            # sale. Where it is not backed that way, the disposal is 20 Abs. 2 Satz 1 Nr. 7
+            # income. The deciding facts are in the Emissionsbedingungen and cannot be read
+            # off the IBKR asset class, which is why this is asked rather than inferred.
+            #
+            # The 23 EStG label deliberately does NOT promise "steuerfrei nach einem Jahr".
+            # The engine applies the one-year Frist unconditionally, and [GT-ESTG23-005]
+            # records that as a deviation: 23 Abs. 1 Satz 1 Nr. 2 Satz 4 extends it to ten
+            # years for an asset that produced income in at least one year. Printing the
+            # one-year promise on the prompt would make the engine's own defect look like law.
+            #
+            # It no longer names Krypto-ETP either -- issue #66. Rz. 57's test is worded to a
+            # Rohstoff throughout, so the label was answering for an instrument the Randziffer
+            # does not reach, and [GT-ESTG23-011] no longer carries a crypto row. Both options
+            # state a criterion rather than an instrument list; a crypto ETP is matched against
+            # them by the taxpayer, on the Emissionsbedingungen, which is where the deciding
+            # facts are and where no input to this engine goes.
+            ("§23 EStG / Anlage SO — physisch hinterlegter Rohstoff mit ausschließlichem Lieferanspruch (z.B. Xetra-Gold)", AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE), # Changed from SECTION_23_ESTG_ASSET
+            # Rz. 9 puts the "kein Termingeschäft" half beyond doubt: "Zertifikate und
+            # Optionsscheine gehören nicht zu den Termingeschäften" ([GT-ESTG20-038]). That a
+            # Zertifikat is instead a sonstige Kapitalforderung is [GT-ESTG20-008].
+            #
+            # Optionsscheine are excluded by the same sentence and belong here too -- Rn. 8,
+            # "Optionsscheine sind Kapitalforderungen im Sinne des § 20 Absatz 1 Nummer 7
+            # EStG" ([GT-ESTG20-038]). The label does not name them because none has ever
+            # been traded on this account; if one ever is, note that a warrant arriving as
+            # OPT is classified OPTION and never reaches this dialog at all.
+            ("Sonstige Kapitalforderung §20 Abs. 2 S. 1 Nr. 7, kein Termingeschäft — ungedeckter Gold-/Rohstoff-ETC, Zertifikat, Spot-Edelmetall (Anlage KAP)", AssetCategory.SONSTIGE_KAPITALFORDERUNG, InvestmentFundType.NONE),
+            # The Aktienverlusttopf is the one consequence a taxpayer cannot undo later, and
+            # it is still in force after the JStG-2024 repeal of the Termingeschaeft cap:
+            # 20 Abs. 6 Satz 4, "losses from the sale of shares may ONLY be offset against
+            # gains from the sale of shares" ([GT-ESTG20-033]). It is why picking "Aktie" for
+            # something that is not one costs money, and why the label warns rather than
+            # merely naming the instrument.
+            ("Aktie — Anteil an einer Kapitalgesellschaft; Verluste sind NUR mit Aktiengewinnen verrechenbar (Aktienverlusttopf) (Anlage KAP)", AssetCategory.STOCK, InvestmentFundType.NONE),
+            # Same Verlustverrechnungskreis as the Nr. 7 option above, but not the same
+            # handling: a bond's trade price is read as a percentage of nominal, Stueckzinsen
+            # are recognised, and an IBKR "BM" record redeems it at maturity as a deemed
+            # Veraeusserung (20 Abs. 2 Satz 2, [GT-ESTG20-009]). Choosing this for an ETC
+            # divides its proceeds and cost by 100.
+            ("Anleihe — Schuldverschreibung mit Nennwert; Kurs wird als Prozent des Nennwerts gelesen, Stückzinsen und Einlösung bei Fälligkeit werden verarbeitet (Anlage KAP)", AssetCategory.BOND, InvestmentFundType.NONE),
+            # Rz. 9 enumerates these expressly -- "Optionsgeschaefte, Swaps,
+            # Devisentermingeschaefte und Forwards oder Futures ... sowie Contracts for
+            # Difference (CFDs)" ([GT-ESTG20-038]). A CFD is a Termingeschaeft by name, not by
+            # analogy, which makes it the best-grounded of these three.
+            #
+            # CAUTION, and this label got it wrong once: Rz. 9 carries TWO enumerations and they
+            # are not interchangeable. The five *Bezugsgroessen* the price may depend on include
+            # "Waren oder Edelmetallen"; the *Basiswerte* named for CFDs are "Aktien, Indizes,
+            # Waehrungspaare oder Zinssaetze". A CFD on a precious metal is still a
+            # Termingeschaeft -- via the Edelmetalle Bezugsgroesse -- but Edelmetall is not in
+            # the Basiswerte list and must not be presented as if it were. See the same
+            # distinction drawn in reference/research/coverage-matrix.md.
+            #
+            # Stillhalterpraemien are 20 Abs. 1 Nr. 11, taxable "die ... vereinnahmt werden"
+            # ([GT-ESTG20-004]).
+            ("Option — Termingeschäft; Stillhalterprämien sind bei Vereinnahmung steuerpflichtig (Anlage KAP)", AssetCategory.OPTION, InvestmentFundType.NONE),
+            ("Future — Termingeschäft (Anlage KAP)", AssetCategory.FUTURE, InvestmentFundType.NONE),
+            ("CFD — Termingeschäft; Basiswert z.B. Aktie, Index, Währungspaar oder Zinssatz (Anlage KAP)", AssetCategory.CFD, InvestmentFundType.NONE),
+            # "(ECHT)" used to be the whole distinction here and meant nothing to a reader.
+            # What it was guarding against is the next option, so both now say so.
+            ("Währungssaldo — tatsächlicher Fremdwährungsbestand auf dem Konto, KEIN Handelspaar (Anlage KAP)", AssetCategory.CASH_BALANCE, InvestmentFundType.NONE),
+            # The old label exposed the internal enum name and implied the position is untaxed.
+            # It is not: an FX pair trade becomes a CurrencyConversionEvent keyed off the raw
+            # IBKR asset class, and the gain or loss is realised on the two currency ledgers.
+            # This option records that the INSTRUMENT itself carries none.
+            ("Devisen-Handelspaar (z.B. EUR.USD) — kein eigenes Wirtschaftsgut; Gewinn/Verlust entsteht auf den beteiligten Währungssalden, nicht hier", AssetCategory.UNKNOWN, InvestmentFundType.NONE),
+            # There is deliberately NO catch-all option, and nothing here may become one.
+            #
+            # A fifteenth option used to sit at this line: "Sonstiges (Standard Anlage KAP)",
+            # which reads as ordinary Anlage KAP income and was AssetCategory.STOCK -- issue
+            # #52. Renaming it to say "wie eine Aktie" left it a second door to the Aktie
+            # option above, differing only in wording, so it is gone rather than reworded
+            # twice. An instrument that matches no option is a gap in this list or a question
+            # the store has not answered; either way the answer is not a residual bucket that
+            # applies the Aktienverlusttopf ([GT-ESTG20-033]) to whatever lands in it.
         ]
         self.load_classifications()
 
@@ -73,6 +166,11 @@ class AssetClassifier:
         if "XETRA-GOLD" in desc_upper or "PHYSICAL GOLD" in desc_upper or \
            "GOLD ETC" in desc_upper or symbol_upper in ("4GLD", "XAD5", "GZLD"):
             return True
+        # Redundant while `preliminary_classify` returns UNKNOWN for these, since UNKNOWN
+        # reaches the catch-all at the end of this method anyway. Kept as the second line of
+        # defence, and it is a real one: this test sits ahead of the STOCK/BOND branch below,
+        # so a crypto ETP that someone later lets fall through to STOCK is still put to the
+        # taxpayer rather than silently taxed as a share.
         if "BTCETC" in desc_upper or "BITCOIN ETP" in desc_upper or "CRYPTO ETP" in desc_upper or \
            "ETHEREUM ETP" in desc_upper or symbol_upper in ("BTCE", "ETCZERO", "BITC"):
              return True
@@ -122,10 +220,28 @@ class AssetClassifier:
                 fund_type_guess = InvestmentFundType.IMMOBILIENFONDS
             return AssetCategory.INVESTMENT_FUND, fund_type_guess
 
-        # Handle §23 EStG Assets (Gold, Crypto ETCs/ETPs)
+        # A crypto ETP gets NO preliminary answer -- issue #66. The § 23 branch below used to
+        # claim it, on the strength of [GT-ESTG23-011], whose crypto row had no authority and
+        # was removed by the audit of 2026-08-08. Rz. 57 is worded to a Rohstoff in both of
+        # its limbs -- capital invested "nahezu vollstaendig in Gold oder einen anderen
+        # Rohstoff", an exclusive claim to "Auslieferung des hinterlegten Rohstoffs" or to the
+        # proceeds of its sale -- so it reaches a crypto ETP in neither direction.
+        #
+        # UNKNOWN rather than a fall-through, and the difference is the point: only UNKNOWN
+        # suppresses the dialog default, and only UNKNOWN raises in a non-interactive run
+        # instead of continuing. Allowed to fall through, a crypto ETP arriving as STK would
+        # be classified STOCK and collect the Aktienverlusttopf ([GT-ESTG20-033]) from a
+        # keystroke.
+        if "BTCETC" in desc_upper or "BITCOIN" in desc_upper or "CRYPTO" in desc_upper or \
+           "ETHEREUM" in desc_upper or sym_upper in ("BTCE", "ETCZERO", "BITC"):
+            return AssetCategory.UNKNOWN, InvestmentFundType.NONE
+
+        # Handle §23 EStG Assets (Gold and other commodity ETCs). Rz. 57 is authority for the
+        # Rohstoff case; whether a heuristic should pre-answer even that, when the deciding
+        # facts are in the Emissionsbedingungen, is a separate question this change does not
+        # reopen.
         if "XETRA-GOLD" in desc_upper or "PHYSICAL GOLD" in desc_upper or sym_upper in ("4GLD", "XAD5", "GZLD") or \
-           "BTCETC" in desc_upper or "BITCOIN ETP" in desc_upper or sym_upper == "BTCE" or \
-           ("ETC" in desc_upper and ("GOLD" in desc_upper or "CRYPTO" in desc_upper or "BITCOIN" in desc_upper)):
+           ("ETC" in desc_upper and "GOLD" in desc_upper):
             return AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE # Changed from SECTION_23_ESTG_ASSET
         
         # Handle Options and CFDs
@@ -171,6 +287,7 @@ class AssetClassifier:
         if category == AssetCategory.INVESTMENT_FUND: return InvestmentFund
         if category == AssetCategory.STOCK: return Stock
         if category == AssetCategory.BOND: return Bond
+        if category == AssetCategory.SONSTIGE_KAPITALFORDERUNG: return SonstigeKapitalforderung
         if category == AssetCategory.OPTION: return Option
         if category == AssetCategory.CFD: return Cfd
         if category == AssetCategory.FUTURE: return Future
@@ -211,35 +328,50 @@ class AssetClassifier:
             for i, (display_name, _, _) in enumerate(self._dialog_options):
                 print(f"  {i+1}. {display_name}")
             
-            default_choice_idx = 0 
-            try:
-                current_prelim_cat = asset.asset_category
-                current_prelim_ft = asset.fund_type if isinstance(asset, InvestmentFund) and asset.fund_type else InvestmentFundType.NONE
-                
-                exact_match_found = False
+            # The Enter key may only CONFIRM a classification the engine actually arrived at.
+            # Where it arrived at none, there is no default and the prompt insists on a number
+            # -- issue #52. The two ways a default used to appear without anything behind it:
+            #
+            #   - UNKNOWN. It matched the Devisen-Handelspaar option, whose category is
+            #     UNKNOWN, and was then redirected to the "Sonstiges" catch-all, which was
+            #     STOCK. Either way Enter bought the Aktienverlusttopf ([GT-ESTG20-033]) on an
+            #     instrument nothing had classified.
+            #   - An InvestmentFund whose fund_type matches no option, InvestmentFundType.NONE
+            #     among them. No branch caught that, so the default stayed at its initial 0 --
+            #     Aktienfonds, and with it a Teilfreistellung the fund may not be entitled to.
+            #
+            # Hence: exact match on what the preliminary pass produced, or nothing. The
+            # second, category-only loop that used to follow was unreachable -- for any
+            # non-fund category the exact-match condition already reduces to the same test.
+            default_choice_idx: Optional[int] = None
+            current_prelim_cat = asset.asset_category
+            current_prelim_ft = asset.fund_type if isinstance(asset, InvestmentFund) and asset.fund_type else InvestmentFundType.NONE
+
+            if current_prelim_cat != AssetCategory.UNKNOWN:
                 for idx, (_, cat_opt, ft_opt) in enumerate(self._dialog_options):
                     if cat_opt == current_prelim_cat and \
                        (current_prelim_cat != AssetCategory.INVESTMENT_FUND or ft_opt == current_prelim_ft):
                         default_choice_idx = idx
-                        exact_match_found = True
                         break
-                
-                if not exact_match_found and current_prelim_cat != AssetCategory.INVESTMENT_FUND:
-                    for idx, (_, cat_opt, _) in enumerate(self._dialog_options):
-                        if cat_opt == current_prelim_cat:
-                            default_choice_idx = idx
-                            break
-                elif current_prelim_cat == AssetCategory.UNKNOWN and not is_likely_fx_pair_instrument:
-                     for idx, (disp_name, _, _) in enumerate(self._dialog_options):
-                        if "Sonstiges (Standard Anlage KAP)" in disp_name :
-                            default_choice_idx = idx
-                            break
-            except Exception: pass
 
+            if default_choice_idx is None:
+                print(
+                    f"Kein Vorschlag: diese Position konnte nicht automatisch eingeordnet "
+                    f"werden. Bitte 1-{len(self._dialog_options)} wählen."
+                )
+                prompt = f"Enter number (1-{len(self._dialog_options)}): "
+            else:
+                prompt = (
+                    f"Enter number (1-{len(self._dialog_options)}) "
+                    f"[Default: {default_choice_idx+1} - {self._dialog_options[default_choice_idx][0]}]: "
+                )
 
             while True:
-                choice_str = input(f"Enter number (1-{len(self._dialog_options)}) [Default: {default_choice_idx+1} - {self._dialog_options[default_choice_idx][0]}]: ")
+                choice_str = input(prompt)
                 if not choice_str:
+                    if default_choice_idx is None:
+                        print("Kein Vorschlag für diese Position — bitte eine Zahl eingeben.")
+                        continue
                     chosen_index = default_choice_idx
                     break
                 try:
@@ -249,7 +381,7 @@ class AssetClassifier:
                         break
                     else: print("Invalid choice. Please try again.")
                 except ValueError: print("Invalid input. Please enter a number.")
-            
+
             _, chosen_tax_cat_dialog, chosen_fund_type_dialog = self._dialog_options[chosen_index]
             target_asset_cat = chosen_tax_cat_dialog
             target_fund_type = chosen_fund_type_dialog if target_asset_cat == AssetCategory.INVESTMENT_FUND else InvestmentFundType.NONE

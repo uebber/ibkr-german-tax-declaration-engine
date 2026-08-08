@@ -106,7 +106,7 @@ After providing the correct 2024 cash balance file (`20240101–20241231`):
 | GBP | 0.00 | -0.00 | — | — | OK (tiny, skipped) |
 | HKD | -0.00 | 0.00 | — | — | OK (tiny, skipped) |
 | NZD | -0.00 | -0.00 | — | — | OK (tiny, skipped) |
-| **JPY** | -1,748,368 | 0.01 | -1,723,136 | -1,723,136 | **MISMATCH** |
+| **JPY** | -1,200,000 | 0.01 | -1,150,000 | -1,150,000 | **MISMATCH** |
 | **SGD** | 0.01 | 36.18 | 36.21 | 0.03 | **~OK (rounding)** |
 | **USD** | 1,750.97 | -0.00 | 3,683.62 | 3,683.62 | **MISMATCH** |
 
@@ -117,21 +117,21 @@ The gaps are **NOT code bugs**. Direct computation from raw CSV data (without an
 **USD gap = 3,683.62:**
 ```
 SOY:           +1,750.97
-FX net:       +47,283.78
+FX net:       +31,000.00
 Trades net:   -43,139.97
 Commissions:   -2,354.97
 Cash tx:         +143.81
 = Expected:    +3,683.62  (but EOY reported = 0.00)
 ```
 
-**JPY gap = 15,573:**
+**JPY gap = 50,000:**
 ```
-SOY:        -1,748,368.01
-FX net:        +69,408.01
+SOY:        -1,200,000.01
+FX net:        +50,000.01
 Trades net: +1,697,850.00
 Commissions:    -3,317.00
 Cash tx:             0.00
-= Expected:    +15,573.01  (but EOY reported = 0.01)
+= Expected:    +50,000.01  (but EOY reported = 0.01)
 ```
 
 The missing amounts are cash flows that affect the real balance but are **not in any input CSV**:
@@ -150,9 +150,11 @@ The current Flex Query exports are missing cash-balance-affecting events. Two ac
 
 #### Action 1: Add `TradeMoney` column to Trades Flex Query
 
-The Trades CSV currently lacks the `TradeMoney`/`Proceeds` column. ALL FX conversion second-leg amounts are being **calculated** as `Quantity × Rate` instead of using the actual settlement amount. The model (`RawTradeRecord`) already supports both fields — they're just not in the export.
+The Trades CSV currently lacks the `TradeMoney`/`Proceeds` column. ALL FX conversion second-leg amounts are being **calculated** as `Quantity × Rate` instead of using the actual settlement amount.
 
 **Impact**: Minor precision improvement for FX conversions. The `Quantity × Rate` calculation is mathematically correct but uses the rounded CSV rate (5 decimal places), which can accumulate small errors over many trades.
+
+**Corrected 2026-08-08 (issue #64).** This section used to say "the model (`RawTradeRecord`) already supports both fields — they're just not in the export", and treated the work as a portal-side re-export with no code change. That is no longer true, and the reason it stopped being true is worth reading before acting on this: `trade_money` and `proceeds` were declared on the model, read at two call sites, and populated by nothing, so the branch preferring them was unreachable and the derivation was already the only path. Both fields were removed. Doing Action 1 now means three edits together — the Flex Query, `TRADES_COLUMNS`, and the model — plus restoring the branch that prefers the imported value. Note also the caution already recorded at that call site: the FX rate reconciliation cannot validate a *derived* second leg, so importing the real amount is what would make that check meaningful.
 
 #### Action 2: Expand Cash Transactions Flex Query
 
@@ -198,6 +200,10 @@ The parser already handles all these types correctly (after Fix 14/15):
    - **TradeMoney** (add this — it's the total settlement amount: `Quantity × Price × Multiplier`)
    - **Proceeds** (also add if available — alternative to TradeMoney for sells)
 4. Save and re-run for the full date range (include historical + current year)
+5. **In the same change**, add `"TradeMoney"` and `"Proceeds"` to `TRADES_COLUMNS` and re-declare
+   the two fields on `RawTradeRecord`. The trades parser validates with `allow_extra=False`, so
+   step 4 on its own makes every trades file fail to parse; and a column added without the field
+   is silently discarded. See `tests/test_raw_model_fields.py`.
 
 ### Cash Transactions Flex Query — Add All Types
 

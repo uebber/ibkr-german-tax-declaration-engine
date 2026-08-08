@@ -21,7 +21,7 @@ from src.parsers.raw_models import (
     RawOptionsEAERecord
 )
 from src.domain.exceptions import DataIntegrityError
-from src.utils.type_utils import parse_ibkr_date, parse_ibkr_datetime, safe_decimal
+from src.utils.type_utils import parse_ibkr_date, safe_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -35,33 +35,67 @@ class DomainEventFactory:
         )
 
     @staticmethod
-    def _get_prioritized_date(
-        settle_date_str: Optional[str] = None,
-        pay_date_str: Optional[str] = None,
-        trade_or_event_datetime_str: Optional[str] = None,
-        trade_date_str: Optional[str] = None,
-        report_date_str: Optional[str] = None,
-    ) -> Optional[str]:
-        parsed_date_obj: Optional[date] = None
-        if settle_date_str:
-            parsed_date_obj = parse_ibkr_date(settle_date_str)
-            if parsed_date_obj: return parsed_date_obj.isoformat()
-        if pay_date_str:
-            parsed_date_obj = parse_ibkr_date(pay_date_str)
-            if parsed_date_obj: return parsed_date_obj.isoformat()
-        if trade_or_event_datetime_str:
-            dt_obj = parse_ibkr_datetime(trade_or_event_datetime_str)
-            if dt_obj: return dt_obj.date().isoformat()
-            else:
-                parsed_date_obj = parse_ibkr_date(trade_or_event_datetime_str)
-                if parsed_date_obj: return parsed_date_obj.isoformat()
-        if trade_date_str:
-            parsed_date_obj = parse_ibkr_date(trade_date_str)
-            if parsed_date_obj: return parsed_date_obj.isoformat()
-        if report_date_str:
-            parsed_date_obj = parse_ibkr_date(report_date_str)
-            if parsed_date_obj: return parsed_date_obj.isoformat()
-        return None
+    def _trade_contract_date(trade_date_str: Optional[str]) -> Optional[str]:
+        """The day a trade is booked on: the obligatorisches Rechtsgeschaeft.
+
+        BMF 14.05.2025 Rn. 317 [GT-ESTG20-040] puts *Erwerb* at the *"rechtswirksam
+        abgeschlossenen obligatorischen Vertrag"*, and Rn. 85 [GT-ESTG20-039] puts the
+        disposal side on the same day -- it is *"der massgebliche Zeitpunkt fuer die
+        Waehrungsumrechnung und die Berechnung des ... Veraeusserungs- bzw.
+        Einloesungsgewinns"*. That is the trade date, not the settlement date.
+
+        Kept apart from `_zufluss_date` on purpose. That helper answers when an amount
+        *flows*, which is right for a dividend or an interest credit and wrong here.
+        Routing trades through it made the correct date a *fallback*, reached only because
+        IBKR's Trades export carries no settlement column; two edits, adding that column
+        to the Flex Query and to `TRADES_COLUMNS`, would have moved every lot's date
+        silently.
+
+        `TradeDate` is the sole date parameter because it is the sole date column: the
+        separate datetime slot this took until August 2026 was fed
+        `f"{TradeDate} {TradeTime}"`, and `TradeTime` is not exported either, so it only
+        ever received midnight. `parse_ibkr_date` splits a time component off anyway, so a
+        `TradeDate` that did arrive with one still resolves. Neither a settlement nor a
+        report date is accepted as a substitute. If the trade date is absent the caller
+        records a data error and the run stops, because a date that decides the assessment
+        year, the FX rate and the Section 23 Jahresfrist is not something to approximate
+        from a neighbouring field.
+        """
+        if not trade_date_str:
+            return None
+        parsed = parse_ibkr_date(trade_date_str)
+        return parsed.isoformat() if parsed else None
+
+    @staticmethod
+    def _zufluss_date(zufluss_date_str: Optional[str]) -> Optional[str]:
+        """The day a cash flow is received: its Zufluss.
+
+        For a dividend, an interest credit, a withholding entry, a corporate action or an
+        option cash settlement, the taxable moment is when the amount flows. Each of the
+        three callers has exactly one date in its export, and each is that flow date:
+
+        - cash transactions -> `SettleDate`
+        - corporate actions -> `Report Date`
+        - option cash settlements -> the OptionEAE `Date`
+
+        **This takes one date on purpose.** Until August 2026 it took five in a priority
+        order -- settlement, pay, event datetime, trade, report -- of which, for any given
+        caller, four were always `None`: the columns behind them are not requested in any
+        Flex Query. A chain that looks considered but has one reachable entry is the shape
+        that produced the settlement-date defect, and it was primed to produce it again.
+        Had the corporate-actions query started carrying `PayDate`, every corporate action
+        would have silently moved off its report date. Restoring a priority here means
+        deciding an order between dates that actually arrive, in the open. See issue #64.
+
+        **Never call this for a trade.** Rn. 85 and Rn. 317 put both ends of a trade at the
+        obligatorisches Rechtsgeschaeft, so a flow date must not decide it -- use
+        `_trade_contract_date`. Trades were routed through here until August 2026 and got
+        the right answer only because IBKR's Trades export omits the settlement column.
+        """
+        if not zufluss_date_str:
+            return None
+        parsed_date_obj: Optional[date] = parse_ibkr_date(zufluss_date_str)
+        return parsed_date_obj.isoformat() if parsed_date_obj else None
 
 
     def _determine_trade_event_type(self, raw_trade: RawTradeRecord) -> Tuple[FinancialEventType, bool]:
@@ -73,7 +107,7 @@ class DomainEventFactory:
         """
         buy_sell = (raw_trade.buy_sell or "").upper()
         open_close_ind = (raw_trade.open_close_indicator or "").upper()
-        trade_quantity = safe_decimal(raw_trade.quantity, default=Decimal(0))
+        trade_quantity = raw_trade.quantity
 
         # Detect position flip (C;O or O;C)
         is_flip = "C" in open_close_ind and "O" in open_close_ind
@@ -81,7 +115,7 @@ class DomainEventFactory:
         if buy_sell == "BUY":
             if is_flip:
                 logger.info(
-                    f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (BUY): "
+                    f"Trade ID {raw_trade.transaction_id} (BUY): "
                     f"Position flip detected (Open/CloseIndicator='{raw_trade.open_close_indicator}'). "
                     f"Classifying as BUY_SHORT_COVER; open portion will be split at FIFO dispatch."
                 )
@@ -89,7 +123,7 @@ class DomainEventFactory:
             if open_close_ind == "O": return FinancialEventType.TRADE_BUY_LONG, False
             if open_close_ind == "C": return FinancialEventType.TRADE_BUY_SHORT_COVER, False
             logger.warning(
-                f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (BUY): "
+                f"Trade ID {raw_trade.transaction_id} (BUY): "
                 f"Missing or unexpected Open/Close Indicator: '{raw_trade.open_close_indicator}'. Notes/Codes was: '{raw_trade.notes_codes}'. "
                 f"Assuming TRADE_BUY_LONG as default for BUY based on PRD directive for data inconsistency."
             )
@@ -97,7 +131,7 @@ class DomainEventFactory:
         elif buy_sell == "SELL":
             if is_flip:
                 logger.info(
-                    f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (SELL): "
+                    f"Trade ID {raw_trade.transaction_id} (SELL): "
                     f"Position flip detected (Open/CloseIndicator='{raw_trade.open_close_indicator}'). "
                     f"Classifying as SELL_LONG; open portion will be split at FIFO dispatch."
                 )
@@ -105,15 +139,32 @@ class DomainEventFactory:
             if open_close_ind == "O": return FinancialEventType.TRADE_SELL_SHORT_OPEN, False
             if open_close_ind == "C": return FinancialEventType.TRADE_SELL_LONG, False
             logger.warning(
-                f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id} (SELL): "
+                f"Trade ID {raw_trade.transaction_id} (SELL): "
                 f"Missing or unexpected Open/Close Indicator: '{raw_trade.open_close_indicator}'. Notes/Codes was: '{raw_trade.notes_codes}'. "
                 f"Assuming TRADE_SELL_LONG as default for SELL based on PRD directive for data inconsistency."
             )
             return FinancialEventType.TRADE_SELL_LONG, False
 
+        if buy_sell:
+            # Present but unrecognised is NOT the same as absent, and treating it as absent is
+            # how "BUY (Ca.)" -- a cancelled purchase -- became a sale of the same size,
+            # consuming the oldest lots FIFO and emitting a realised gain that never happened.
+            # Cancellations are removed with their originals before this point
+            # (`_drop_cancelled_trade_pairs`); anything else unrecognised is a booking kind this
+            # engine has never seen, and guessing its direction from a sign is exactly the
+            # substituted value CLAUDE.md forbids.
+            raise DataIntegrityError(
+                f"Trade {raw_trade.transaction_id} "
+                f"({raw_trade.symbol}) on {raw_trade.trade_date} carries an unrecognised "
+                f"Buy/Sell value '{raw_trade.buy_sell}'. Only 'BUY' and 'SELL' are understood, "
+                f"and cancellation rows are paired away before this point. The direction "
+                f"decides whether this is an acquisition or a disposal, so it cannot be "
+                f"inferred from the quantity sign."
+            )
+
         if trade_quantity != Decimal(0):
             logger.warning(
-                f"Trade ID {raw_trade.transaction_id or raw_trade.trade_id}: Buy/Sell indicator missing. "
+                f"Trade ID {raw_trade.transaction_id}: Buy/Sell indicator missing. "
                 f"Using quantity sign to infer trade direction. Open/CloseIndicator was '{open_close_ind}'."
             )
             if trade_quantity > 0:
@@ -122,7 +173,7 @@ class DomainEventFactory:
                 return (FinancialEventType.TRADE_SELL_SHORT_OPEN if open_close_ind == "O" else FinancialEventType.TRADE_SELL_LONG), is_flip
 
         err_msg = (
-            f"Could not determine trade event type for trade: {raw_trade.transaction_id or raw_trade.trade_id}, "
+            f"Could not determine trade event type for trade: {raw_trade.transaction_id}, "
             f"Symbol: {raw_trade.symbol}, Buy/Sell: '{buy_sell}', Open/CloseIndicator: '{open_close_ind}', "
             f"Quantity: {trade_quantity}, Notes/Codes: '{raw_trade.notes_codes}'. "
             "This indicates critical missing or inconsistent data in the trade record."
@@ -137,7 +188,7 @@ class DomainEventFactory:
         It marks the trade ID as processed to avoid re-processing as a generic TradeEvent for the option.
         """
         if not isinstance(asset, Option):
-            logger.warning(f"Attempted to process option trade for non-Option asset: {asset.get_classification_key()} (Type: {type(asset).__name__}), Trade ID: {raw_trade.transaction_id or raw_trade.trade_id}. Skipping.")
+            logger.warning(f"Attempted to process option trade for non-Option asset: {asset.get_classification_key()} (Type: {type(asset).__name__}), Trade ID: {raw_trade.transaction_id}. Skipping.")
             return None
 
         notes_codes_parts = {part.strip() for part in (raw_trade.notes_codes or "").upper().split(';') if part.strip()}
@@ -155,10 +206,10 @@ class DomainEventFactory:
             option_event_type = FinancialEventType.OPTION_EXPIRATION_WORTHLESS
 
         if option_event_type:
-            raw_trade_quantity_val = safe_decimal(raw_trade.quantity, default=Decimal(0))
+            raw_trade_quantity_val = raw_trade.quantity
             qty_contracts = raw_trade_quantity_val.copy_abs()
 
-            tx_id_for_event = raw_trade.transaction_id or raw_trade.trade_id
+            tx_id_for_event = raw_trade.transaction_id
             if not tx_id_for_event:
                 logger.error(f"Option lifecycle event ({option_event_type.name}) for {asset.get_classification_key()} on {event_date_str} lacks a transaction ID. Skipping event.")
                 return None
@@ -187,9 +238,10 @@ class DomainEventFactory:
             if option_event:
                 logger.debug(f"Created {option_event_type.name} for option {asset.get_classification_key()} from trade ID {tx_id_for_event}, Contracts: {qty_contracts}")
 
+                # `TransactionID` is the only trade identifier exported. A second entry
+                # under `TradeID` was added here alongside it until August 2026, but that
+                # column is not in TRADES_COLUMNS, so the set only ever gained the one id.
                 self.processed_ibkr_trade_ids_for_options.add(tx_id_for_event)
-                if raw_trade.trade_id and raw_trade.trade_id != raw_trade.transaction_id:
-                    self.processed_ibkr_trade_ids_for_options.add(raw_trade.trade_id)
 
                 return option_event
         return None
@@ -204,13 +256,13 @@ class DomainEventFactory:
         self.processed_ibkr_trade_ids_for_options.clear()
 
         for rt in raw_trades:
-            tx_id_primary = rt.transaction_id or rt.trade_id
+            tx_id_primary = rt.transaction_id
             if not tx_id_primary:
-                 data_errors.append(f"Trade record for Symbol: {rt.symbol}, Date: {rt.trade_date}, Qty: {rt.quantity} lacks both transaction_id and trade_id.")
+                 data_errors.append(f"Trade record for Symbol: {rt.symbol}, Date: {rt.trade_date}, Qty: {rt.quantity} lacks a transaction_id.")
                  continue
 
             asset = self.asset_resolver.get_or_create_asset(
-                raw_isin=rt.isin or rt.security_id if rt.security_id_type == "ISIN" else rt.isin,
+                raw_isin=rt.isin,
                 raw_conid=rt.conid, raw_symbol=rt.symbol, raw_currency=rt.currency_primary,
                 raw_ibkr_asset_class=rt.asset_class, raw_description=rt.description,
                 description_source_type="trade",
@@ -219,13 +271,9 @@ class DomainEventFactory:
                 raw_underlying_conid=rt.underlying_conid, raw_underlying_symbol=rt.underlying_symbol
             )
 
-            trade_datetime_str = f"{rt.trade_date} {rt.trade_time or '00:00:00'}" if rt.trade_date else None
-            event_date_str_or_none = self._get_prioritized_date(
-                settle_date_str=rt.settle_date_target,
-                trade_or_event_datetime_str=trade_datetime_str,
-                trade_date_str=rt.trade_date,
-                report_date_str=rt.report_date
-            )
+            # The contract date, never the settlement or report date -- see
+            # _trade_contract_date and [GT-ESTG20-039] / [GT-ESTG20-040].
+            event_date_str_or_none = self._trade_contract_date(rt.trade_date)
             if not event_date_str_or_none:
                  data_errors.append(f"Trade {tx_id_primary}, Symbol: {rt.symbol}: could not determine a valid event date.")
                  continue
@@ -255,19 +303,17 @@ class DomainEventFactory:
                     from_curr, to_curr = "", ""
                     from_amt_val, to_amt_val = Decimal(0), Decimal(0)
 
-                    rate = safe_decimal(rt.trade_price, default=Decimal(0))
-                    base_monetary_value_raw = rt.trade_money if rt.trade_money is not None else rt.proceeds
-                    base_monetary_value = safe_decimal(base_monetary_value_raw, default=Decimal(0))
-                    trade_quantity_val = safe_decimal(rt.quantity, default=Decimal(0))
+                    rate = rt.trade_price
+                    trade_quantity_val = rt.quantity
 
-                    if base_monetary_value == Decimal(0) and trade_quantity_val != Decimal(0) and rate != Decimal(0):
-                        # Expected path: the IBKR trades export (TRADES_COLUMNS) does not carry
+                    base_monetary_value = Decimal(0)
+                    if trade_quantity_val != Decimal(0) and rate != Decimal(0):
+                        # The only path: the IBKR trades export (TRADES_COLUMNS) does not carry
                         # TradeMoney/Proceeds, so the second leg is reconstructed from the FX pair's
-                        # Quantity (base-currency amount) × TradePrice (the exchange rate).
-                        #
-                        # Logged at debug rather than warning because this is the normal path for
-                        # every FX pair trade in this export format (~1200 occurrences on a full
-                        # 2021-2025 history), not an anomaly.
+                        # Quantity (base-currency amount) × TradePrice (the exchange rate). Those two
+                        # fields were declared on RawTradeRecord and read here until August 2026;
+                        # both were always None, so this branch already ran for every FX pair trade
+                        # (~1200 occurrences on a full 2021-2025 history).
                         #
                         # CAUTION: the rate reconciliation further down CANNOT validate this
                         # branch. It recomputes the rate from the two legs, but the second leg was
@@ -347,47 +393,41 @@ class DomainEventFactory:
                     data_errors.append(f"Trade {tx_id_primary}: error determining type: {e}")
                     continue
 
-                trade_quantity_val = safe_decimal(rt.quantity, default=Decimal('0'))
-                trade_price = safe_decimal(rt.trade_price, default=Decimal('0.0'))
-                calculated_gross_amount_raw_source = rt.trade_money if rt.trade_money is not None else rt.proceeds
-                calculated_gross_amount = safe_decimal(calculated_gross_amount_raw_source)
+                trade_quantity_val = rt.quantity
+                trade_price = rt.trade_price
 
-                if calculated_gross_amount is None:
-                    asset_multiplier_trade = getattr(asset, 'multiplier', Decimal(1))
-                    asset_multiplier_trade = safe_decimal(asset_multiplier_trade, default=Decimal(1))
-                    if asset_multiplier_trade == Decimal(0): asset_multiplier_trade = Decimal(1)
+                # Always derived, never imported. TradeMoney and Proceeds are not exported,
+                # so the branch that preferred them was unreachable; deriving Qty x Price x
+                # Multiplier from columns that are all present is not a substituted value.
+                asset_multiplier_trade = getattr(asset, 'multiplier', Decimal(1))
+                asset_multiplier_trade = safe_decimal(asset_multiplier_trade, default=Decimal(1))
+                if asset_multiplier_trade == Decimal(0): asset_multiplier_trade = Decimal(1)
 
-                    if trade_price is not None and trade_quantity_val is not None:
-                        # Initial calculation: Qty * Price
-                        raw_calculated_gross = trade_quantity_val.copy_abs() * trade_price
-                        
-                        # Apply multiplier if it's significant (not 1 or 0)
-                        if asset_multiplier_trade != Decimal(1):
-                            raw_calculated_gross *= asset_multiplier_trade
-                            logger.debug(f"Trade {tx_id_primary}: Applied multiplier {asset_multiplier_trade}. Intermediate Q*P*M: {raw_calculated_gross}")
+                # Initial calculation: Qty * Price
+                raw_calculated_gross = trade_quantity_val.copy_abs() * trade_price
 
-                        if isinstance(asset, Bond) or asset.asset_category == AssetCategory.BOND:
-                            # Bond prices are typically percentages of nominal value.
-                            # Gross value = (Nominal Quantity * Percentage Price / 100) * Multiplier
-                            # Since multiplier might already be applied above if it's not 1,
-                            # we just need to divide by 100 here.
-                            # If multiplier was 1, raw_calculated_gross = Qty * Price. We need (Qty * Price / 100).
-                            calculated_gross_amount = raw_calculated_gross / Decimal(100)
-                            logger.debug(f"Trade {tx_id_primary} (Bond {asset.get_classification_key()}): "
-                                         f"Applied /100 for percentage price. Original Q*P*(M if applicable): {raw_calculated_gross}, "
-                                         f"Final Gross amount: {calculated_gross_amount}")
-                        else:
-                            calculated_gross_amount = raw_calculated_gross
-                            logger.debug(f"Trade {tx_id_primary} (Non-Bond {asset.get_classification_key()}): "
-                                         f"Calculated gross amount {calculated_gross_amount} from Qty*Price*(Multiplier if applicable).")
-                    else:
-                        logger.warning(f"Trade {tx_id_primary} for {asset.get_classification_key()} missing proceeds/trade_money and price/quantity for gross amount calculation. Defaulting gross amount to 0.")
-                        calculated_gross_amount = Decimal('0.0')
+                # Apply multiplier if it's significant (not 1 or 0)
+                if asset_multiplier_trade != Decimal(1):
+                    raw_calculated_gross *= asset_multiplier_trade
+                    logger.debug(f"Trade {tx_id_primary}: Applied multiplier {asset_multiplier_trade}. Intermediate Q*P*M: {raw_calculated_gross}")
+
+                if isinstance(asset, Bond) or asset.asset_category == AssetCategory.BOND:
+                    # Bond prices are typically percentages of nominal value.
+                    # Gross value = (Nominal Quantity * Percentage Price / 100) * Multiplier
+                    # Since multiplier might already be applied above if it's not 1,
+                    # we just need to divide by 100 here.
+                    # If multiplier was 1, raw_calculated_gross = Qty * Price. We need (Qty * Price / 100).
+                    calculated_gross_amount = raw_calculated_gross / Decimal(100)
+                    logger.debug(f"Trade {tx_id_primary} (Bond {asset.get_classification_key()}): "
+                                 f"Applied /100 for percentage price. Original Q*P*(M if applicable): {raw_calculated_gross}, "
+                                 f"Final Gross amount: {calculated_gross_amount}")
                 else:
-                    logger.debug(f"Trade {tx_id_primary}: Using provided gross amount from TradeMoney/Proceeds: {calculated_gross_amount} (Source: '{calculated_gross_amount_raw_source}')")
+                    calculated_gross_amount = raw_calculated_gross
+                    logger.debug(f"Trade {tx_id_primary} (Non-Bond {asset.get_classification_key()}): "
+                                 f"Calculated gross amount {calculated_gross_amount} from Qty*Price*(Multiplier if applicable).")
 
 
-                commission_val = safe_decimal(rt.ib_commission, default=Decimal('0.0'))
+                commission_val = rt.ib_commission
 
                 trade_event = TradeEvent(
                     asset_internal_id=asset.internal_asset_id,
@@ -441,7 +481,7 @@ class DomainEventFactory:
         for rct in raw_cash_transactions:
             tx_id_for_event = rct.transaction_id
             if not tx_id_for_event:
-                data_errors.append(f"Cash transaction (Type: {rct.type}, Desc: {rct.description}, Date: {rct.settle_date or rct.date_time or rct.report_date}) lacks a transaction ID.")
+                data_errors.append(f"Cash transaction (Type: {rct.type}, Desc: {rct.description}, Date: {rct.settle_date}) lacks a transaction ID.")
                 continue
 
             is_instrument_specific_ct = bool(
@@ -452,7 +492,7 @@ class DomainEventFactory:
             asset_for_event: Asset
             if is_instrument_specific_ct:
                 asset_for_event = self.asset_resolver.get_or_create_asset(
-                    raw_isin=rct.isin or rct.security_id if rct.security_id_type == "ISIN" else rct.isin,
+                    raw_isin=rct.isin,
                     raw_conid=rct.conid, raw_symbol=rct.symbol, raw_currency=rct.currency_primary,
                     raw_ibkr_asset_class=rct.asset_class, raw_description=rct.description,
                     description_source_type="cash_tx",
@@ -467,11 +507,8 @@ class DomainEventFactory:
                     raw_ibkr_sub_category=rct.sub_category
                 )
 
-            event_date_str_or_none = self._get_prioritized_date(
-                settle_date_str=rct.settle_date,
-                trade_or_event_datetime_str=rct.date_time,
-                report_date_str=rct.report_date
-            )
+            # SettleDate is the Zufluss and the only date this export carries.
+            event_date_str_or_none = self._zufluss_date(rct.settle_date)
             if not event_date_str_or_none:
                 data_errors.append(f"Cash transaction {rct.transaction_id}, Type: {rct.type}, Desc: {rct.description}: could not determine a valid event date.")
                 continue
@@ -479,9 +516,8 @@ class DomainEventFactory:
 
             event_type_str_upper = (rct.type or "").upper()
             desc_upper = (rct.description or "").upper()
-            code_upper = (rct.code or "").upper()
             domain_event_instance: Optional[FinancialEvent] = None
-            raw_amount = safe_decimal(rct.amount, default=Decimal(0))
+            raw_amount = rct.amount
             # Gross amount for events should be absolute for income, or represent the cost if it's an expense.
             # For WithholdingTaxEvent and FeeEvent, raw_amount is typically negative.
             # For CashFlowEvents (Dividend, Interest), raw_amount is typically positive.
@@ -501,8 +537,7 @@ class DomainEventFactory:
                 event_type_str_upper in ["DIVIDEND", "INTEREST", "PAYMENT IN LIEU"] or
                 "DIVIDEND" in event_type_str_upper or
                 "INTEREST" in event_type_str_upper or
-                "PAYMENT IN LIEU" in event_type_str_upper or
-                code_upper in ["DI", "IN", "PO"]
+                "PAYMENT IN LIEU" in event_type_str_upper
             )
             if is_income_type:
                 # For types that can be both income (positive) and expense (negative),
@@ -514,11 +549,10 @@ class DomainEventFactory:
                 "local_currency": rct.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": rct.description,
-                "ibkr_notes_codes": rct.code
+                "ibkr_notes_codes": None  # `Code` is not exported; see RawCashTransactionRecord.
             }
 
-            if "DIVIDEND" in event_type_str_upper or \
-               (code_upper == "DI" and asset_for_event.asset_category != AssetCategory.CASH_BALANCE and "INTEREST" not in desc_upper):
+            if "DIVIDEND" in event_type_str_upper:
                 if raw_amount < Decimal(0) and "PAYMENT IN LIEU" in event_type_str_upper:
                     # Negative Payment In Lieu = you pay (short stock lending fee)
                     # This is a cash outflow, classify as FEE_TRANSACTION
@@ -532,7 +566,7 @@ class DomainEventFactory:
                     evt_type = FinancialEventType.DIVIDEND_CASH
                 domain_event_instance = CashFlowEvent(asset_for_event.internal_asset_id, event_date_str, event_type=evt_type, source_country_code=rct.issuer_country_code, **event_params_kw)
 
-            elif "INTEREST" in event_type_str_upper or code_upper == "IN" or desc_upper.startswith("CREDIT INTEREST") or desc_upper.startswith("DEBIT INTEREST"):
+            elif "INTEREST" in event_type_str_upper or desc_upper.startswith("CREDIT INTEREST") or desc_upper.startswith("DEBIT INTEREST"):
                 source_country_for_interest = rct.issuer_country_code
                 if asset_for_event.asset_category == AssetCategory.CASH_BALANCE and \
                    ("BROKER INTEREST" in desc_upper or "DEPOSIT INTEREST" in desc_upper or desc_upper.startswith("CREDIT INTEREST")):
@@ -571,7 +605,7 @@ class DomainEventFactory:
                     source_country_code=source_country_for_interest, **event_params_kw
                 )
 
-            elif "WITHHOLDING TAX" in event_type_str_upper or code_upper == "WHT" or self.wht_on_interest_pattern.match(rct.description or ""):
+            elif "WITHHOLDING TAX" in event_type_str_upper or self.wht_on_interest_pattern.match(rct.description or ""):
                 source_country_for_wht: Optional[str] = rct.issuer_country_code
                 if self.wht_on_interest_pattern.match(rct.description or "") and not source_country_for_wht:
                     match_country_in_desc = re.search(r"\b([A-Z]{2})\b\s*\(DETAILS\)", desc_upper) # Example pattern
@@ -588,7 +622,7 @@ class DomainEventFactory:
                 )
 
 
-            elif "FEE" in event_type_str_upper or code_upper == "FE" or "FEES" in event_type_str_upper:
+            elif "FEE" in event_type_str_upper or "FEES" in event_type_str_upper:
                 # Fees are costs, raw_amount typically negative. Store as positive cost.
                 event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
                 domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
@@ -650,9 +684,9 @@ class DomainEventFactory:
             logger.debug(f"CA Record {idx+1}: Passed initial essential field check.")
 
             affected_asset = self.asset_resolver.get_or_create_asset(
-                raw_isin=rca.isin or rca.security_id if rca.security_id_type == "ISIN" else rca.isin,
+                raw_isin=rca.isin,
                 raw_conid=rca.conid, raw_symbol=rca.symbol,
-                raw_currency=rca.currency_primary, raw_ibkr_asset_class=rca.asset_class,
+                raw_currency=rca.currency_primary, raw_ibkr_asset_class=None,  # AssetClass is not exported for CAs
                 raw_description=rca.description,
                 description_source_type="corp_act_asset"
             )
@@ -665,16 +699,13 @@ class DomainEventFactory:
                 continue
 
             if not affected_asset.ibkr_symbol and affected_asset.asset_category != AssetCategory.CASH_BALANCE:
-                data_errors.append(f"CA Record {idx+1}: Corporate action (ActionID: {rca.action_id_ibkr}, Type: {rca.type_ca}, CSV Date: {rca.report_date or rca.pay_date or rca.ex_date}) affects asset {affected_asset.internal_asset_id} which lacks an 'ibkr_symbol'.")
+                data_errors.append(f"CA Record {idx+1}: Corporate action (ActionID: {rca.action_id_ibkr}, Type: {rca.type_ca}, CSV Date: {rca.report_date}) affects asset {affected_asset.internal_asset_id} which lacks an 'ibkr_symbol'.")
                 continue
             logger.debug(f"CA Record {idx+1}: Asset has ibkr_symbol ('{affected_asset.ibkr_symbol}') or is CashBalance.")
 
-            event_date_str_or_none = self._get_prioritized_date(
-                pay_date_str=rca.pay_date,
-                report_date_str=rca.report_date,
-                trade_or_event_datetime_str=rca.ex_date
-            )
-            logger.debug(f"CA Record {idx+1}: Prioritized date determined: '{event_date_str_or_none}' (Pay: {rca.pay_date}, Report: {rca.report_date}, Ex: {rca.ex_date})")
+            # `Report Date` is the Zufluss and the only date this export carries.
+            event_date_str_or_none = self._zufluss_date(rca.report_date)
+            logger.debug(f"CA Record {idx+1}: Event date determined: '{event_date_str_or_none}' (Report: {rca.report_date})")
             if not event_date_str_or_none:
                  data_errors.append(f"CA Record {idx+1}: Could not determine a valid event date for corporate action: {rca.action_id_ibkr}, Type: {rca.type_ca}, Symbol: {rca.symbol}.")
                  continue
@@ -687,8 +718,7 @@ class DomainEventFactory:
             logger.debug(f"CA Record {idx+1}: Parsed CA Type from file: '{ca_type_from_file}', Code: '{ca_code_from_file}', Parsed CA Desc from file (upper): '{ca_desc_from_file[:100]}...'")
 
             domain_ca_event_instance: Optional[CorporateActionEvent] = None
-            quantity_ca = safe_decimal(rca.quantity)
-            logger.debug(f"CA Record {idx+1}: Raw Quantity: {rca.quantity}, Parsed Decimal Quantity: {quantity_ca}")
+            quantity_ca = rca.quantity
 
             gross_amount_ca_raw = None
             if ca_type_from_file == "TC" and "CASH" in ca_desc_from_file: # Merger for cash
@@ -708,8 +738,8 @@ class DomainEventFactory:
 
             common_ca_params_kw_base = {
                 "ca_action_id_ibkr": rca.action_id_ibkr,
-                "ibkr_transaction_id": rca.transaction_id,
-                "ibkr_activity_description": rca.action_description or rca.description,
+                "ibkr_transaction_id": None,  # TransactionID is not exported for CAs
+                "ibkr_activity_description": rca.description,
                 "local_currency": rca.currency_primary or affected_asset.currency,
                 "gross_amount_foreign_currency": None # Will be set by specific CA type if applicable
             }
@@ -838,7 +868,7 @@ class DomainEventFactory:
                                  raw_isin=None, raw_conid=None,
                                  raw_symbol=new_asset_symbol_from_desc,
                                  raw_currency=rca.currency_primary or affected_asset.currency,
-                                 raw_ibkr_asset_class=rca.asset_class or affected_asset.ibkr_asset_class_raw,
+                                 raw_ibkr_asset_class=affected_asset.ibkr_asset_class_raw,
                                  raw_description=f"New asset from merger: {new_asset_symbol_from_desc}",
                                  description_source_type="corp_act_generated"
                              )
@@ -940,8 +970,8 @@ class DomainEventFactory:
                     commission_currency=maturity_currency,
                     local_currency=maturity_currency,
                     gross_amount_foreign_currency=maturity_proceeds.copy_abs(),
-                    ibkr_transaction_id=rca.transaction_id or f"BM-{rca.action_id_ibkr}",
-                    ibkr_activity_description=rca.action_description or rca.description,
+                    ibkr_transaction_id=f"BM-{rca.action_id_ibkr}",
+                    ibkr_activity_description=rca.description,
                 )
                 domain_ca_events.append(bm_event)
                 continue
@@ -995,6 +1025,11 @@ class DomainEventFactory:
             for settle_row in settlement_rows:
                 proceeds = safe_decimal(settle_row.proceeds, default=Decimal("0"))
                 if proceeds == Decimal("0"):
+                    # No event, so the option lot is not consumed here. That is caught
+                    # rather than tolerated: `_require_option_cash_settlements` treats a
+                    # skipped row as an absent one and stops the run naming the contract.
+                    # None of the 14 Cash Settlement rows in the 2021-2025 import reach
+                    # this branch (measured 2026-08-08).
                     logger.debug(f"OptionEAE: Skipping zero-proceeds Cash Settlement for {settle_row.symbol} on {date_str}")
                     continue
 
@@ -1015,7 +1050,8 @@ class DomainEventFactory:
                     raw_underlying_symbol=settle_row.underlying_symbol
                 )
 
-                event_date = self._get_prioritized_date(trade_date_str=settle_row.date)
+                # The OptionEAE `Date` is when the settlement amount flows.
+                event_date = self._zufluss_date(settle_row.date)
                 if not event_date:
                     data_errors.append(f"OptionEAE: Cannot determine date for Cash Settlement of {settle_row.symbol} (Conid: {settle_row.conid}).")
                     continue

@@ -50,7 +50,8 @@ def print_grouped_event_details(
         if asset and isinstance(asset, InvestmentFund) and asset.fund_type != InvestmentFundType.NONE:
             print(f"    Fund Type: {asset.fund_type.name}")
 
-        for event in sorted(asset_events, key=lambda e: (e.event_date, e.event_id)): 
+        # creation_sequence, not event_id — see the note in console_reporter (issue #71).
+        for event in sorted(asset_events, key=lambda e: (e.event_date, e.creation_sequence)):
             details = [f"  {event.event_date}", f"{event.event_type.name[:25]:<25}"]
             display_precision = config.OUTPUT_PRECISION_AMOUNTS # Renamed
             per_share_precision = config.OUTPUT_PRECISION_PER_SHARE # Renamed
@@ -344,13 +345,15 @@ def print_asset_pl_summary_debug(
     category_order = {
         AssetCategory.STOCK: 1,
         AssetCategory.BOND: 2,
-        AssetCategory.INVESTMENT_FUND: 3,
-        AssetCategory.OPTION: 4,
-        AssetCategory.CFD: 5,
-        AssetCategory.FUTURE: 6,
-        AssetCategory.PRIVATE_SALE_ASSET: 7,
-        AssetCategory.CASH_BALANCE: 8,
-        AssetCategory.UNKNOWN: 9,
+        # Next to BOND: both are 20 Abs. 2 Satz 1 Nr. 7 and share Zeile 19/22.
+        AssetCategory.SONSTIGE_KAPITALFORDERUNG: 3,
+        AssetCategory.INVESTMENT_FUND: 4,
+        AssetCategory.OPTION: 5,
+        AssetCategory.CFD: 6,
+        AssetCategory.FUTURE: 7,
+        AssetCategory.PRIVATE_SALE_ASSET: 8,
+        AssetCategory.CASH_BALANCE: 9,
+        AssetCategory.UNKNOWN: 10,
     }
 
     # Define fund type sort order (for sub-sorting within INVESTMENT_FUND)

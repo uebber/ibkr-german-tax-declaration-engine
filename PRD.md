@@ -136,9 +136,10 @@ The system must classify assets to determine their correct treatment and placeme
 - **`AssetCategory.INVESTMENT_FUND` (for Anlage KAP-INV):** Identify assets like ETFs and mutual funds. Exclude ETCs/ETPs intended for Anlage SO. **Assumes all investment fund shares were acquired on or after 01.01.2018.**
   - **Fund Type (for KAP-INV lines & Teilfreistellung):** Further classify `InvestmentFund` assets by setting their `fund_type` attribute (of type `InvestmentFundType`) into "Aktienfonds," "Mischfonds," "Immobilienfonds," "Auslands-Immobilienfonds," and "Sonstige Fonds" as per German tax law definitions (§ 2 InvStG) and *Anleitung zur Anlage KAP-INV 2023*. This dictates Teilfreistellung rates.
 - **`AssetCategory.STOCK` (Aktien):** Equity shares not classified as investment funds. Includes common stock and ADRs. For Anlage KAP.
-- **`AssetCategory.BOND` (Anleihen, sonstige Kapitalforderungen):** For Anlage KAP.
+- **`AssetCategory.BOND` (Anleihen):** For Anlage KAP.
+- **`AssetCategory.SONSTIGE_KAPITALFORDERUNG` (sonstige Kapitalforderungen nach 20 Abs. 2 S. 1 Nr. 7, die keine Anleihen sind):** Ungedeckte Gold- und Rohstoff-ETCs, Zertifikate, unallokiertes Spot-Edelmetall. Same Anlage KAP lines as `BOND` (Zeile 19/22), separate category because none of the bond-specific handling (Kursnotierung in Prozent des Nennwerts, Stueckzinsen, BM-Faelligkeit) applies. The determination is per instrument and comes from classification only; it cannot be read off an IBKR asset class.
 - **`AssetCategory.OPTION` & `AssetCategory.CFD` (Termingeschäfte):** Includes listed options and CFDs/FXCFDs. For Anlage KAP.
-- **`AssetCategory.PRIVATE_SALE_ASSET` (Anlage SO):** Identify assets subject to §23 EStG tax if sold within the statutory period (typically 1 year). Examples include physical Gold ETCs (if they offer a claim to physical gold) and Crypto Asset ETPs/ETCs. *These are explicitly NOT investment funds for KAP-INV.*
+- **`AssetCategory.PRIVATE_SALE_ASSET` (Anlage SO):** Identify assets subject to §23 EStG tax if sold within the statutory period (typically 1 year). Examples include physical Gold and commodity ETCs, where the Emissionsbedingungen give an exclusive claim to delivery of the deposited commodity or to the proceeds of its sale. A crypto ETP is **not** listed as an example and gets no preliminary classification: the authority behind this category, BMF 14.05.2025 Rz. 57, is worded to a Rohstoff throughout and reaches a crypto product in neither direction, so the category it belongs in is the taxpayer's determination alone (issue #66). *These are explicitly NOT investment funds for KAP-INV.*
 - **`AssetCategory.CASH_BALANCE`:** Actual currency holdings.
 - **`AssetCategory.UNKNOWN`:** For assets that couldn't be definitively categorized or for instruments like FX trading pairs (e.g., "EUR.USD" from IBKR "CASH" asset class) which are not cash balances but instruments whose trades result in `CurrencyConversionEvent`s.
 
@@ -335,12 +336,12 @@ The system will first calculate the following fundamental components, based on e
 5. **`kap_other_income_positive`**: Algebraic sum of (all from events with `event_date` in 2023):
    - Gross positive Interest Received (`FinancialEventType.INTEREST_RECEIVED`).
    - Gross positive Non-Fund Dividends (`FinancialEventType.DIVIDEND_CASH` from `STOCK` assets, FMV of taxable `FinancialEventType.CORP_STOCK_DIVIDEND`).
-   - Gross positive Bond Gains (from `RealizedGainLoss` where `asset_category_at_realization == BOND`, `gross_gain_loss_eur > 0`, and `realization_date` is in 2023).
+   - Gross positive gains on 20 Abs. 2 S. 1 Nr. 7 instruments (from `RealizedGainLoss` where `asset_category_at_realization` is `BOND` or `SONSTIGE_KAPITALFORDERUNG`, `gross_gain_loss_eur > 0`, and `realization_date` is in 2023).
    - Net Stückzinsen (`stueckzinsen_received` minus `stueckzinsen_paid`); only if result > 0.
    - **Note: Fund-related items (distributions, gains, Vorabpauschale) are NOT included here as they belong on KAP-INV**
 
 6. **`kap_other_losses_abs`**: Sum of absolute values of (all from events/realizations with `event_date`/`realization_date` in 2023):
-   - Gross Bond Losses (from `RealizedGainLoss` where `asset_category_at_realization == BOND`, `gross_gain_loss_eur < 0`, take absolute value).
+   - Gross losses on 20 Abs. 2 S. 1 Nr. 7 instruments (from `RealizedGainLoss` where `asset_category_at_realization` is `BOND` or `SONSTIGE_KAPITALFORDERUNG`, `gross_gain_loss_eur < 0`, take absolute value).
    - Net Stückzinsen (`stueckzinsen_received` minus `stueckzinsen_paid`); take absolute value if result < 0.
    - **Note: Fund-related losses are NOT included here as they belong on KAP-INV**
 
@@ -598,28 +599,28 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
 8. **Process dividend rights matching** (`_process_dividend_rights_matching`): Match DI/ED pairs and re-link associated cash events to underlying stocks.
 
 9. Sort all `FinancialEvent` objects chronologically (`ParsingOrchestrator.get_all_financial_events`). **Only events whose `event_date` falls within the current tax year are considered for further processing and reporting.** Enhanced tax year end date filtering excludes events after tax year. This filtering should ideally occur when events are first created or retrieved by `get_all_financial_events`, before enrichment and FIFO processing.
-   - **Deterministic Sorting Requirement:** Event sorting must be stable and deterministic to ensure correct FIFO processing and calculation results. Each `FinancialEvent` object is unique due to its `event_id` (UUID). Parsers ensure one event object per logical entry from IBKR reports, even if identifiers like `ibkr_transaction_id` are shared across entries.
+   - **Deterministic Sorting Requirement:** Event sorting must be stable and deterministic **across runs**, to ensure correct FIFO processing and calculation results. Parsers ensure one event object per logical entry from IBKR reports, even if identifiers like `ibkr_transaction_id` are shared across entries; each such object is unique within a run due to its `event_id` (UUID). **`event_id` is not the tie-break and must never be used as one** — it is a `uuid4` redrawn on every run, so ordering by it is random rather than deterministic. The tie-break is `event.creation_sequence`, a counter assigned at construction; see issue #71 for the run-to-run reorder that use of `event_id` produced on VZ 2025.
    - **Enhanced Chronological Ordering (v3.3.1):** The sorting algorithm prioritizes IBKR transaction IDs as the primary secondary sort key for same-date events, leveraging IBKR's sequential transaction ID assignment to maintain accurate chronological order critical for FIFO calculations.
    - **Primary Sort Key Component: `event_date`** (parsed to `datetime.date` object). Events with unparseable dates are flagged as errors.
-   - **Secondary Sort Key Components (for Tie-breaking on the same `event_date`):** A tuple of subsequent keys is used, constructed based on the `FinancialEventType`. The `event.event_id` (UUID) is always the last element in this tuple to guarantee uniqueness and deterministic order.
+   - **Secondary Sort Key Components (for Tie-breaking on the same `event_date`):** A tuple of subsequent keys is used, constructed based on the `FinancialEventType`. The `event.creation_sequence` (int) is always the last element in this tuple to guarantee uniqueness and deterministic order.
      - **For `TradeEvent`, `OptionLifecycleEvent` subtypes (e.g., `OptionExerciseEvent`, `OptionAssignmentEvent`), and `CurrencyConversionEvent`:**
-       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.event_id)`
+       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.creation_sequence)`
        - `event.ibkr_transaction_id`: The Transaction ID from IBKR. A placeholder (e.g., empty string or `None` that sorts predictably) is used if not applicable.
        - `asset.asset_category`: The `AssetCategory` of the `Asset` linked to the `FinancialEvent` (via `event.asset_internal_id`). This is crucial for distinguishing events like an option exercise (e.g., `AssetCategory.OPTION`) from its resulting stock trade (e.g., `AssetCategory.STOCK`) when they share the same `event_date` and `ibkr_transaction_id`.
-       - `event.event_id`: The unique UUID of the event, ensuring deterministic order if all prior fields are identical.
+       - `event.creation_sequence`: The event's construction counter, ensuring deterministic order if all prior fields are identical.
      - **For `CashFlowEvent` (e.g., dividends, interest), `WithholdingTaxEvent`, and `FeeEvent`:**
-       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.gross_amount_foreign_currency, event.event_id)`
+       - Sort Key Tuple: `(event.ibkr_transaction_id, asset.asset_category, event.gross_amount_foreign_currency, event.creation_sequence)`
        - `event.ibkr_transaction_id` and `asset.asset_category` as above.
        - `event.gross_amount_foreign_currency`: The gross amount of the event. This helps differentiate multiple cash-related events that might share the same `ibkr_transaction_id` and `asset_category` on the same day.
-       - `event.event_id`: The unique UUID of the event.
+       - `event.creation_sequence`: The event's construction counter.
      - **For `CorporateActionEvent` subtypes:**
-       - Sort Key Tuple: `(asset.ibkr_symbol, event.ca_action_id_ibkr, event.description, event.event_id)`
+       - Sort Key Tuple: `(asset.ibkr_symbol, event.ca_action_id_ibkr, event.description, event.creation_sequence)`
        - `asset.ibkr_symbol`: The IBKR symbol of the `Asset` associated with the corporate action.
        - `event.ca_action_id_ibkr`: The IBKR Action ID for the corporate action, if available.
        - `event.description`: The description of the corporate action event (e.g., from the `corpact*.csv`) can provide further differentiation for CAs on the same asset and date if `ca_action_id_ibkr` is missing or identical.
-       - `event.event_id`: The unique UUID of the event.
+       - `event.creation_sequence`: The event's construction counter.
    - **Null/None Handling:** Placeholders for missing optional key components (like `ibkr_transaction_id` or `ca_action_id_ibkr`) must be handled consistently to ensure correct sort order (e.g., `None` typically sorts before strings/numbers, or a specific sentinel value can be used).
-   - **Ensuring Determinism:** The inclusion of `event.event_id` as the final component in each sort key tuple guarantees that the overall sorting order is strictly deterministic, as each `FinancialEvent` object has a unique `event_id`.
+   - **Ensuring Determinism:** The inclusion of `event.creation_sequence` as the final component in each sort key tuple makes the overall sorting order strictly deterministic *and reproducible across runs*: every `FinancialEvent` receives a distinct counter value at construction, and the construction order is fixed by the order rows are read out of the concatenated input. A per-run identifier such as `event_id` satisfies only the first half and must not be substituted here.
 
 10. Enrich data (`enrich_financial_events`): Convert all financial amounts in the filtered (current tax year) `FinancialEvent` objects to EUR using `Decimal` arithmetic (with `INTERNAL_CALCULATION_PRECISION`) and ECB rates, storing results in EUR-specific fields (e.g., `gross_amount_eur`, `commission_eur`). Enhanced asset information formatting in log messages.
 
@@ -634,7 +635,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
     - **`CorporateActionEvent` subtypes:** Adjust FIFO lots for the affected `Asset` or trigger taxable events (e.g., taxable stock dividend income contributes to `kap_other_income_positive`).
     - **`TradeEvent` (Sell/Cover types):** Calculate gross G/L (FIFO) for the relevant `Asset`. Generate `RealizedGainLoss` record with the appropriate `RealizationType`.
       - For `STOCK` sales/covers, G/L contributes to `stock_gains_gross` or `stock_losses_abs`.
-      - For `BOND` sales/covers, G/L contributes to `kap_other_income_positive` or `kap_other_losses_abs`.
+      - For `BOND` and `SONSTIGE_KAPITALFORDERUNG` sales/covers, G/L contributes to `kap_other_income_positive` or `kap_other_losses_abs`.
       - For `INVESTMENT_FUND` sales, calculate Teilfreistellung on G/L. The `net_gain_loss_after_teilfreistellung_eur` contributes to `fund_income_net_taxable` (for internal calculations only, not included in Anlage KAP Zeile 19).
       - For `PRIVATE_SALE_ASSET`, check holding period for taxability and G/L contributes to Anlage SO.
       - Stock trades linked to option events will have their economics adjusted by the option premium before FIFO processing (using the `related_option_event_id` link).

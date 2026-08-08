@@ -79,40 +79,10 @@ def parse_ibkr_date(date_str: Optional[str], default: Optional[date] = None) -> 
         # print(f"Warning: Could not parse date from '{s_date_str}' using multiple formats.")
         return default
 
-def parse_ibkr_datetime(datetime_str: Optional[str], default: Optional[datetime] = None) -> Optional[datetime]:
-    """
-    Parses various datetime formats IBKR might use.
-    Returns a naive datetime.datetime object or None.
-    """
-    if not datetime_str or not str(datetime_str).strip():
-        return default
-
-    s_datetime_str = str(datetime_str).strip()
-
-    formats_to_try = [
-        "%Y-%m-%d %H:%M:%S",
-        "%Y%m%d %H:%M:%S",
-        "%Y-%m-%d, %H:%M:%S", # Seen in some IBKR reports (e.g. Trades file 'TradeTime')
-        "%Y%m%d, %H:%M:%S",
-        # Add other common datetime formats if encountered
-    ]
-    
-    # Try specific formats first
-    for fmt in formats_to_try:
-        try:
-            return datetime.strptime(s_datetime_str, fmt)
-        except ValueError:
-            continue
-
-    # Fallback to dateutil.parser (might be slower but more flexible)
-    try:
-        from dateutil import parser as dateutil_parser
-        # Make naive by default, IBKR reports usually don't have consistent TZ info
-        return dateutil_parser.parse(s_datetime_str).replace(tzinfo=None)
-    except (ValueError, TypeError, ImportError):
-        # print(f"Warning: Could not parse datetime from '{s_datetime_str}' using multiple formats.")
-        # If a date only string was passed, try parsing as date and return as datetime at midnight
-        parsed_date = parse_ibkr_date(s_datetime_str)
-        if parsed_date:
-            return datetime.combine(parsed_date, datetime.min.time())
-        return default
+# There is deliberately no `parse_ibkr_datetime`. It was removed in August 2026 with its
+# last two call sites (issue #64): both were reading `TradeTime` and a cash transaction's
+# `DateTime`, neither of which any Flex Query in this repo requests. Its one distinguishing
+# behaviour was a `dateutil` fallback on the *whole* string rather than on the date part,
+# which is more lenient than anything a date column here should get. `parse_ibkr_date`
+# already splits a time component off, so a value that does arrive with one still resolves;
+# see `DomainEventFactory._trade_contract_date`.

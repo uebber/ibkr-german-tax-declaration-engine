@@ -6,9 +6,9 @@ Guards for the unified historical replayer's ordering contract
 Why this needs its own test. The refactor replaced three separate machines --
 per-asset batch simulation, a dedicated merger pass and a per-currency replay
 loop -- with ONE stream whose only guarantee is the order it replays items in:
-`Phase.LEDGER_EVENTS` chronologically, then `Phase.MERGERS`, then
-`Phase.RECONCILE`, with the insertion sequence as the final tie-breaker. That
-ordering IS the behaviour; everything else in `replay.py` is a list and a sort.
+`Phase.LEDGER_EVENTS` chronologically, then `Phase.RECONCILE`, with the
+insertion sequence as the final tie-breaker. That ordering IS the behaviour;
+everything else in `replay.py` is a list and a sort.
 
 It shipped without a test, and the suite could not see it. Probed by mutating
 `ReplayStream.run()` and running all 466 tests:
@@ -22,6 +22,16 @@ It shipped without a test, and the suite could not see it. Probed by mutating
     reverse every historical SECURITY event                    1
     run MERGERS before LEDGER_EVENTS                           1
     run RECONCILE before MERGERS                               1
+
+> **The table records what was measured when this file was written, against a
+> contract that has since changed.** `Phase.MERGERS` was removed in August 2026
+> (issue #56): a merger delivered its lots after every ledger event in the
+> window, so a disposal of merged-in shares occurring *inside* the window
+> oversold. Mergers are now ordinary `LEDGER_EVENTS` placed at their own date,
+> and the last two rows describe a phase that no longer exists. The mutation
+> that replaces them is covered by
+> `test_stock_merger_fifo.py::test_merged_in_shares_sold_inside_the_historical_window`.
+> The measurements above are left as recorded rather than restated.
 
 The first three are green because insertion order happens to reproduce the old
 three-pass order, so they are weak mutations. The fourth is not: the entire
@@ -58,16 +68,15 @@ class TestReplayStreamOrdering:
         return lambda: log.append(name)
 
     def test_phases_run_in_ascending_order_regardless_of_insertion(self):
-        """RECONCILE after MERGERS after LEDGER_EVENTS, even inserted backwards."""
+        """RECONCILE after LEDGER_EVENTS, even inserted backwards."""
         log: List[str] = []
         stream = ReplayStream()
         stream.add(Phase.RECONCILE, (0,), self._recorder(log, "reconcile"))
-        stream.add(Phase.MERGERS, ("2020-01-01",), self._recorder(log, "merger"))
         stream.add(Phase.LEDGER_EVENTS, ("2021-01-01",), self._recorder(log, "event"))
 
         stream.run()
 
-        assert log == ["event", "merger", "reconcile"]
+        assert log == ["event", "reconcile"]
 
     def test_items_within_a_phase_run_in_sort_key_order(self):
         """Chronology, not insertion order, decides within a phase."""
@@ -205,7 +214,7 @@ class TestHistoricalCurrencyReplayOrder(FifoTestCaseBase):
     Phase ordering itself is pinned by `TestReplayStreamOrdering` above, not by
     this scenario: running RECONCILE first only adds an unconsumed 100 USD
     fallback lot dated 2022-12-31, which sorts *after* the September lot and so
-    leaves this disposal's cost basis untouched. That is Pass 3's SoY masking
+    leaves this disposal's cost basis untouched. That is the reconcile phase's SoY masking
     again -- a reconciliation that can paper over a broken replay with a
     plausible number.
     """

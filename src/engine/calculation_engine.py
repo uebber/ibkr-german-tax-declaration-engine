@@ -4,6 +4,7 @@ from typing import List, Tuple, Dict, DefaultDict, Optional, Any
 import uuid
 from decimal import Decimal, getcontext, Context
 from collections import defaultdict
+from dataclasses import dataclass, replace
 from datetime import datetime, date
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
@@ -16,10 +17,14 @@ from src.domain.events import (
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
     WithholdingTaxEvent, CurrencyConversionEvent
 )
-from src.domain.assets import Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance
+from src.domain.assets import (
+    Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance, MarkPosition,
+)
 from src.identification.asset_resolver import AssetResolver
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.domain.enums import FinancialEventType, InvestmentFundType 
+from src.utils.snapshot_dates import (
+    first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
 from src.domain.exceptions import ProcessingError
 from src.utils.type_utils import parse_ibkr_date
@@ -130,12 +135,104 @@ def _format_asset_info(asset_obj) -> str:
     symbol = asset_obj.ibkr_symbol or "N/A"
     return f"'{desc}' (Symbol: {symbol})"
 
+def _grade_mark_outcomes(mark_outcomes, data_gap_collector) -> None:
+    """Report every checkpoint mark where the reconstruction was discarded.
+
+    The severity turns on what the interval *started* from, not on which mark it
+    ended at:
+
+    * **Started at a confirmed snapshot** — ground truth at both ends, and the
+      replay in between is the engine's own work over events the input actually
+      contains. A disagreement is a defect in the engine or in the input, and it
+      stops the run.
+    * **Started unconfirmed** — in practice the earliest interval, before any
+      snapshot exists. Its ledger begins empty while the real holding did not,
+      so it is *expected* to disagree by whatever was held before the input
+      window opened. That is the ordinary condition of a partial history, it is
+      recorded, and the run continues from the snapshot.
+
+    Both kinds discard real acquisition dates and cost bases for the asset
+    concerned, so neither is silent. Every case is collected before anything
+    raises, so one run names the whole problem.
+    """
+    if not mark_outcomes:
+        return
+
+    discarded = [(asset, outcome) for asset, outcome in mark_outcomes if not outcome.kept]
+    if not discarded:
+        logger.info("Every ledger agreed with the reported snapshot at every checkpoint mark.")
+        return
+
+    def _describe(asset, outcome) -> str:
+        return (f"{asset.get_classification_key()} @ {outcome.mark_label}: "
+                f"reconstructed {outcome.reconstructed_quantity}, "
+                f"broker reported {outcome.reported_quantity}"
+                + (" (an event could not be applied during the interval)"
+                   if outcome.oversell_observed else "")
+                + (" (the reconstruction holds a long AND a short position in the same "
+                   "instrument, which is not a holding: the input's open/close indicators "
+                   "contradict each other)"
+                   if outcome.offsetting_long_and_short else ""))
+
+    expected = [(a, o) for a, o in discarded if not o.started_confirmed]
+    defects = [(a, o) for a, o in discarded if o.started_confirmed]
+
+    for asset, outcome in expected:
+        cause = (
+            "The broker's own open/close indicators disagree with each other here, so the "
+            "reconstruction is not short of history -- it is contradictory. "
+            if outcome.offsetting_long_and_short else
+            "This interval did not start from a reported snapshot, so the reconstruction is "
+            "missing whatever was held before the input window opened. ")
+        detail = (
+            f"{_describe(asset, outcome)}. {cause}The broker's figure has been taken and the "
+            f"replay continues from it. The quantity carried forward is the broker's; the acquisition date and cost "
+            f"basis of those units were never observed, so the lot is flagged as undated and "
+            f"consumers that need a real date must refuse it."
+        )
+        if data_gap_collector is not None:
+            data_gap_collector.record(
+                code="REPLAY_MARK_UNCONFIRMED_START",
+                subject=f"{asset.get_classification_key()} @ {outcome.mark_label}",
+                detail=detail,
+                severity=GapSeverity.WARNING,
+            )
+        else:
+            logger.warning("[REPLAY_MARK_UNCONFIRMED_START] %s", detail)
+
+    if not defects:
+        return
+
+    named = "; ".join(_describe(asset, outcome) for asset, outcome in defects)
+    detail = (
+        f"The historical replay disagrees with the broker over an interval that began at a "
+        f"reported snapshot and ended at one. Both ends are ground truth and every event in "
+        f"between is present in the input, so the disagreement is in the engine's handling of "
+        f"those events or in the input itself — it is not a consequence of a short trade "
+        f"history. Real acquisition dates and cost bases would be discarded and replaced by a "
+        f"synthesised lot, which no downstream consumer can tell from a measured one. "
+        f"{len(defects)} case(s): {named}"
+    )
+    if data_gap_collector is not None:
+        data_gap_collector.record(
+            code="REPLAY_MARK_MISMATCH",
+            subject=f"{len(defects)} ledger(s) disagree with a confirmed interval",
+            detail=detail,
+            severity=GapSeverity.FAIL_FAST,
+        )  # records, logs CRITICAL and raises DataGapError
+    else:
+        raise DataGapError(f"[REPLAY_MARK_MISMATCH] {detail}")
+
+
 def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
     """Apply ONE historical stock-for-stock merger — the per-event unit the
-    unified replayer streams in the MERGERS phase. Tax-neutral under §20
-    Abs. 4a Satz 1-2 EStG (the new shares step into the tax position of the
-    old ones), so the lots transfer with their acquisition date and cost
-    basis: reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"."""
+    unified replayer streams chronologically in Phase.LEDGER_EVENTS, at the
+    merger's own date. Tax-neutral under §20 Abs. 4a Satz 1-2 EStG (the new
+    shares step into the tax position of the old ones), so the lots transfer
+    with their acquisition date and cost basis, and Satz 6 places the transfer
+    at the Einbuchung date so that day's disposals can consume it:
+    reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"
+    (GT-ESTG20-015, GT-ESTG20-018)."""
     source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
     target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
 
@@ -187,7 +284,11 @@ def run_main_calculations(
     # declared in VZ `tax_year` is the one for calendar `tax_year - 1` (18 Abs. 3 InvStG), so
     # their absence is a gap rather than an empty portfolio. Defaults False so a caller that
     # has not been updated fails loudly instead of silently dropping deemed income.
-    prior_year_positions_available: bool = False
+    prior_year_positions_available: bool = False,
+    # Checkpoint marks: {year: {asset_id: MarkPosition}} from Positions-{year}-EoY.csv, for
+    # every year strictly below the opening snapshot. Empty means the historical window is
+    # replayed as one uninterrupted interval — the behaviour before checkpointing.
+    mark_positions: Optional[Dict[int, Dict[uuid.UUID, "MarkPosition"]]] = None
 ) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]: 
     """
     Runs the main calculation logic:
@@ -204,6 +305,7 @@ def run_main_calculations(
        any other value would have raised.
     """
     logger.info(f"Starting main calculation engine for tax year {tax_year} with {len(financial_events)} events.")
+    mark_positions = mark_positions or {}
     ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode) # Renamed internal_working_precision
 
     realized_gains_losses: List[RealizedGainLoss] = []
@@ -241,7 +343,15 @@ def run_main_calculations(
         if event_date_obj < tax_year_start_date_obj:
             if isinstance(event, CorpActionMergerStock):
                 historical_merger_events.append(event)
-            elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend)):
+            elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend,
+                                    OptionLifecycleEvent, CorpActionMergerCash,
+                                    CorpActionExpireDividendRights)):
+                # OptionLifecycleEvent joined this bucket when checkpointing exposed what its
+                # absence cost: an option opened and closed inside the historical window kept
+                # its lots forever, because nothing removed them. Nine option ledgers on the
+                # maintainer's 2022 data carried a phantom holding into every later year. The
+                # ledger effect is applied by FifoLedger._close_option_lots_historically; no
+                # realised gain is produced, because the historical replay declares nothing.
                 historical_events_by_asset[event.asset_internal_id].append(event)
             elif isinstance(event, CurrencyConversionEvent):
                 # CurrencyConversionEvents need to be associated with the non-EUR currency's asset ID
@@ -279,9 +389,17 @@ def run_main_calculations(
     # === Unified historical replay (AR5) ===
     # ONE ordered stream rebuilds all pre-tax-year ledger state — securities
     # AND currencies — under the documented phase contract (see engine/replay.py):
-    # LEDGER_EVENTS (chronological) -> MERGERS (chronological) -> RECONCILE.
+    # LEDGER_EVENTS (chronological, mergers included) -> RECONCILE.
     from src.engine.replay import ReplayStream, Phase
-    stream = ReplayStream()
+
+    # Ledger-event work is COLLECTED first, not streamed straight away: the historical window is
+    # cut into intervals at the checkpoint marks, and each interval is replayed and reconciled
+    # before the next one begins. Items keep their (phase, sort_key) and their insertion order,
+    # so within an interval the ordering contract is exactly what a single stream would give.
+    deferred_items: List[Tuple[Any, Any, Any, str]] = []
+
+    def _defer(phase, sort_key, apply_fn, label: str = "") -> None:
+        deferred_items.append((phase, sort_key, apply_fn, label))
 
     logger.info("Building unified historical replay stream (securities, mergers, currencies)...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
@@ -321,7 +439,7 @@ def run_main_calculations(
             ledger.begin_historical_simulation(asset_obj)
             ledger.announce_historical_simulation(asset_obj, len(sorted_hist_keys_and_events))
             for hist_key, hist_event in sorted_hist_keys_and_events:
-                stream.add(
+                _defer(
                     Phase.LEDGER_EVENTS, hist_key,
                     (lambda l=ledger, a=asset_obj, e=hist_event:
                         l.apply_historical_event(a, e, tax_year)),
@@ -331,40 +449,56 @@ def run_main_calculations(
             fifo_ledgers[(DEFAULT_ACCOUNT, asset_id)] = ledger
     securities_ledger_count = len(fifo_ledgers)
 
+    # Mergers join the chronological stream at their own date, not a phase of
+    # their own: §20 Abs. 4a Satz 6 EStG fixes the moment a Kapitalmassnahme
+    # takes effect at the Einbuchung into the depot (GT-ESTG20-018), so the
+    # transferred lots must exist for that day's disposals. Ordering them after
+    # the whole window instead was issue #56.
     if historical_merger_events:
-        logger.info(f"Pass 2: Replaying {len(historical_merger_events)} historical stock merger(s)...")
+        logger.info(f"Streaming {len(historical_merger_events)} historical stock merger(s) chronologically...")
         for merger_event in historical_merger_events:
             try:
                 merger_key = get_event_sort_key(merger_event, asset_resolver)
             except ValueError as e:
                 logger.critical(f"Fatal error sorting historical merger events: {e}. Aborting.")
                 raise e
-            stream.add(
-                Phase.MERGERS, merger_key,
+            _defer(
+                Phase.LEDGER_EVENTS, merger_key,
                 (lambda m=merger_event: _replay_historical_merger(m, fifo_ledgers)),
                 label="merger",
             )
     else:
-        logger.info("Pass 2: No historical stock mergers to replay.")
+        logger.info("No historical stock mergers to replay.")
 
-    # Reconcile phase: securities ledgers against SoY positions (after merger
-    # lots are in place). Items are added for the SECURITIES ledgers existing
-    # now — currency ledgers reconcile against cash balances separately below.
-    logger.info("Pass 3: Reconciling ledgers with SoY positions...")
+    # Reconcile: securities ledgers against the reported snapshot at each mark, after every
+    # ledger event of that interval (mergers included) has been applied. Currency ledgers
+    # reconcile against cash balances at the final mark only — see below.
+    mark_outcomes: List[Tuple[Asset, "MarkReconciliation"]] = []
+    currency_reconcilers: List[Any] = []
+
     def _reconcile_security_soy(ledger, asset_obj):
         try:
-            ledger.reconcile_with_soy_position(asset_obj, tax_year)
+            mark_outcomes.append((asset_obj, ledger.reconcile_with_soy_position(asset_obj, tax_year)))
         except ValueError as e:
             logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_obj.internal_asset_id}): {e}. Aborting.")
             raise e
-    for (ledger_account, asset_id), ledger in fifo_ledgers.items():
-        asset_obj = asset_resolver.get_asset_by_id(asset_id)
-        if asset_obj:
-            stream.add(
-                Phase.RECONCILE, (0,),
-                (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
-                label=f"reconcile-sec:{asset_obj.get_classification_key()}",
-            )
+
+    def _reconcile_security_mark(ledger, asset_obj, mark_year: int, reported):
+        try:
+            mark_outcomes.append((asset_obj, ledger.reconcile_with_mark(
+                asset_obj,
+                reported_quantity=reported.quantity if reported else Decimal(0),
+                reported_cost_basis=reported.cost_basis_amount if reported else None,
+                reported_cost_basis_currency=reported.cost_basis_currency if reported else None,
+                mark_label=f"{mark_year}-12-31",
+                fallback_acquisition_date=f"{mark_year}-12-31",
+                # Same rule the final mark uses: the first day after the mark.
+                fx_conversion_date=date(mark_year + 1, 1, 1),
+            )))
+        except ValueError as e:
+            logger.critical(f"Fatal error reconciling the {mark_year}-12-31 mark for asset "
+                            f"{asset_obj.get_classification_key()}: {e}. Aborting.")
+            raise e
 
     # Initialize currency FIFO ledgers with comprehensive historical replay
     logger.info("Initializing currency FIFO ledgers for foreign currency positions...")
@@ -429,7 +563,7 @@ def run_main_calculations(
                                     f"for {currency_code}: {e}. Cannot guarantee deterministic order "
                                     f"for FIFO init. Aborting.")
                     raise
-                stream.add(
+                _defer(
                     Phase.LEDGER_EVENTS, hist_key,
                     (lambda e=hist_event, f=_apply_ccy_event: f(e)),
                     label=f"ccy:{currency_code}",
@@ -438,16 +572,135 @@ def run_main_calculations(
         # SOY quantity is authoritative - always reconcile to match it.
         # Historical replay provides accurate lot-level cost basis,
         # but the total quantity MUST match the reported SOY balance.
+        # Currencies reconcile at the FINAL mark only: the intermediate marks come from the
+        # Positions files, which report securities, and no per-year cash-balance snapshot is
+        # loaded. Currency events still replay in strict chronological order across the whole
+        # window, because the intervals are contiguous and ordered.
         if isinstance(currency_asset, CashBalance):
-            stream.add(
-                Phase.RECONCILE, (0,),
-                (lambda l=currency_ledger, a=currency_asset:
-                    _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx)),
-                label=f"reconcile-ccy:{currency_code}",
+            currency_reconcilers.append(
+                (lambda l=currency_ledger, a=currency_asset, c=currency_code:
+                    (f"reconcile-ccy:{c}",
+                     _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx)))
             )
 
-    # === Run the unified historical replay ===
-    stream.run()
+    # === Run the historical replay, one interval per checkpoint mark ===
+    #
+    # A partial ledger is the normal starting condition, not a defect: the transaction files
+    # reach back only so far. The position snapshots are the ground truth to recover from, and
+    # there is one at the close of every year. So the window is cut at each mark; the interval
+    # is replayed; the reconstruction is compared and either kept or replaced by the snapshot;
+    # and the next interval starts from a state the broker vouches for.
+    #
+    # The consequence that matters: a defect can no longer propagate past the next mark. Before
+    # this, one oversell in 2021 offset a ledger for every year that followed.
+    mark_years = sorted(y for y in mark_positions if y < tax_year - 1)
+    interval_ends = [date(y, 12, 31) for y in mark_years] + [date(tax_year - 1, 12, 31)]
+
+    def _interval_of(event_date) -> int:
+        for index, end in enumerate(interval_ends):
+            if event_date <= end:
+                return index
+        # Unreachable: every deferred item is a historical event, so it predates the tax year
+        # and therefore the final interval's end. Kept so a future caller cannot drop work.
+        return len(interval_ends) - 1
+
+    buckets: List[List[Tuple[Any, Any, Any, str]]] = [[] for _ in interval_ends]
+    for phase, sort_key, apply_fn, label in deferred_items:
+        buckets[_interval_of(sort_key[0])].append((phase, sort_key, apply_fn, label))
+
+    logger.info("Historical replay in %d interval(s), marks at %s.",
+                len(interval_ends), ", ".join(str(e) for e in interval_ends))
+
+    for index, interval_end in enumerate(interval_ends):
+        is_final_mark = index == len(interval_ends) - 1
+        stream = ReplayStream()
+        for phase, sort_key, apply_fn, label in buckets[index]:
+            stream.add(phase, sort_key, apply_fn, label=label)
+
+        for (ledger_account, asset_id), ledger in fifo_ledgers.items():
+            asset_obj = asset_resolver.get_asset_by_id(asset_id)
+            if not asset_obj:
+                continue
+            # `_ensure_currency_ledger_exists` registers each currency ledger in BOTH
+            # `currency_fifo_ledgers` and `fifo_ledgers`. Currencies reconcile against cash
+            # balances through `_reconcile_currency_soy`, never against a Positions snapshot,
+            # so they must be excluded here. Before checkpointing this held only because the
+            # securities reconcile items were built before the currency ledgers existed —
+            # an ordering accident, and one the interval loop would otherwise have inherited.
+            if asset_obj.asset_category == AssetCategory.CASH_BALANCE:
+                continue
+            if is_final_mark:
+                stream.add(
+                    Phase.RECONCILE, (0,),
+                    (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
+                    label=f"reconcile-sec:{asset_obj.get_classification_key()}",
+                )
+            else:
+                mark_year = mark_years[index]
+                reported = mark_positions.get(mark_year, {}).get(asset_id)
+                stream.add(
+                    Phase.RECONCILE, (0,),
+                    (lambda l=ledger, a=asset_obj, y=mark_year, r=reported:
+                        _reconcile_security_mark(l, a, y, r)),
+                    label=f"reconcile-mark{mark_year}:{asset_obj.get_classification_key()}",
+                )
+
+        if is_final_mark:
+            for reconciler in currency_reconcilers:
+                stream.add(Phase.RECONCILE, (0,), reconciler, label="reconcile-ccy")
+
+        logger.info("Interval %d/%d (through %s): %d stream item(s).",
+                    index + 1, len(interval_ends), interval_end, len(stream))
+        stream.run()
+
+    _grade_mark_outcomes(mark_outcomes, data_gap_collector)
+
+    # Placing the merger ahead of its day's trades (see engine/replay.py) is
+    # right for the target — the delivered shares exist before that day's
+    # disposals — and is the wrong end of the day for the source: a purchase of
+    # the old instrument booked on the merger date lands in the source ledger
+    # *after* the drain and can never transfer. The source then reconciles
+    # against a reported zero and the lots are dropped, cost basis and all,
+    # with nothing in the output to say so.
+    #
+    # It is a narrow case (a trade in an instrument on the day its ISIN is
+    # replaced) and no input here exhibits it, but it is the price of a single
+    # intra-day slot and it must not be silent. Every offender is collected
+    # before raising, so one run names the whole problem.
+    if historical_merger_events:
+        orphaned: List[str] = []
+        for merger_event in historical_merger_events:
+            source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
+            if source_ledger is None:
+                continue
+            leftover = (sum(lot.quantity for lot in source_ledger.lots)
+                        + sum(lot.quantity_shorted for lot in source_ledger.short_lots))
+            if leftover:
+                source_asset = asset_resolver.get_asset_by_id(merger_event.asset_internal_id)
+                name = (source_asset.get_classification_key() if source_asset
+                        else str(merger_event.asset_internal_id))
+                orphaned.append(
+                    f"{name}: {leftover} unit(s) remain after the merger on "
+                    f"{merger_event.event_date} transferred its holding away")
+        if orphaned:
+            raise ProcessingError(
+                "Historical replay: a merged-away instrument still holds lots after the "
+                "replay. The merger is applied before that day's trades, so an acquisition "
+                "of the old instrument booked on or after the merger date cannot transfer "
+                "and would be discarded silently at reconciliation. "
+                + "; ".join(orphaned))
+
+    # The lots as they stand right here are the holding at the close of the
+    # preceding calendar year: the historical replay has run and been reconciled
+    # against the opening snapshot, and not one event of the tax year has been
+    # applied yet. That is precisely the count Rz. 18.4 multiplies by for the
+    # Vorabpauschale of calendar `tax_year - 1`, and each lot carries the
+    # acquisition date § 18 Abs. 2 reduces by.
+    #
+    # It has to be taken now. The Vorabpauschale is computed far below, after
+    # the tax year's own trades have consumed and created lots, by which point
+    # the ledgers describe the end of the tax year and the moment is gone.
+    vorabpauschale_opening_lots = _snapshot_fund_lots(fifo_ledgers, asset_resolver)
 
     logger.info(f"Initialized {securities_ledger_count} FIFO ledgers (unified replay).")
     for ccy, (done, total) in currency_replay_counts.items():
@@ -864,7 +1117,9 @@ def run_main_calculations(
         distributions_by_asset=prior_year_distributions_by_asset,
         currency_converter=currency_converter,
         vorabpauschale_year=vorabpauschale_year,
+        opening_lots_by_asset=vorabpauschale_opening_lots,
         ctx=ctx,
+        data_gap_collector=data_gap_collector,
     )
     logger.info(
         f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records "
@@ -931,12 +1186,107 @@ def _collect_fund_distributions_for_year(
     return dict(totals)
 
 
+@dataclass(frozen=True)
+class FundUnitTranche:
+    """
+    Units of one fund held at a moment, and when they were acquired.
+
+    `acquisition_date_is_known` is False where the historical replay could not
+    reconstruct the lot and the opening snapshot supplied only the quantity.
+    The date is then a placeholder, and § 18 Abs. 2 must not be applied to it.
+    """
+    quantity: Decimal
+    acquisition_date: date
+    acquisition_date_is_known: bool = True
+
+    def abs2_retained_twelfths(self, calendar_year: int) -> int:
+        """
+        Twelfths of the Vorabpauschale these units keep, per § 18 Abs. 2.
+
+        *"Im Jahr des Erwerbs der Investmentanteile vermindert sich die
+        Vorabpauschale um ein Zwoelftel fuer jeden vollen Monat, der dem Monat
+        des Erwerbs vorangeht."* Units acquired before the calendar year are not
+        in their year of acquisition and keep all twelve; units acquired in it
+        keep twelve less one for each full month that preceded the month of
+        acquisition, so a January purchase keeps twelve and a December purchase
+        keeps one.
+
+        Units acquired *after* the year cannot be in a holding counted at its
+        close, so that case is a programming error rather than a tax one.
+        """
+        if not self.acquisition_date_is_known:
+            raise ProcessingError(
+                "Vorabpauschale: § 18 Abs. 2 was asked for the acquisition month "
+                "of units whose acquisition date the engine invented. The caller "
+                "must drop the fund before reaching here.")
+        if self.acquisition_date.year < calendar_year:
+            return 12
+        if self.acquisition_date.year > calendar_year:
+            raise ProcessingError(
+                f"Vorabpauschale {calendar_year}: a lot acquired "
+                f"{self.acquisition_date} cannot be part of the holding at the "
+                "close of that year. The snapshot was taken at the wrong point "
+                "in the pipeline.")
+        return 12 - (self.acquisition_date.month - 1)
+
+
+def _snapshot_fund_lots(fifo_ledgers, asset_resolver) -> Dict[uuid.UUID, List[FundUnitTranche]]:
+    """
+    Take the investment-fund lots as they stand, with their acquisition dates.
+
+    Called once, at the only moment the ledgers describe the close of the
+    preceding calendar year. Short lots are ignored: a short fund position is
+    not a holding of Investmentanteile and Rz. 18.4 counts units *verwahrt oder
+    verwaltet*.
+    """
+    snapshot: Dict[uuid.UUID, List[FundUnitTranche]] = {}
+    for (_account, asset_id), ledger in fifo_ledgers.items():
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
+        if not isinstance(asset_obj, InvestmentFund):
+            continue
+        for lot in ledger.lots:
+            try:
+                acquired = date.fromisoformat(lot.acquisition_date)
+            except (TypeError, ValueError) as e:
+                raise ProcessingError(
+                    f"Vorabpauschale: lot of {asset_obj.get_classification_key()} "
+                    f"carries an unreadable acquisition date {lot.acquisition_date!r}. "
+                    "§ 18 Abs. 2 reduces by the month of acquisition, so it cannot "
+                    "be guessed.") from e
+            snapshot.setdefault(asset_id, []).append(
+                FundUnitTranche(
+                    quantity=lot.quantity, acquisition_date=acquired,
+                    acquisition_date_is_known=getattr(
+                        lot, "acquisition_date_is_known", True)))
+    return snapshot
+
+
+def _price_stichtag(recorded: Optional[date], by_convention: date) -> date:
+    """The day a price was set: the one recorded with it, else the convention.
+
+    `recorded` is set by the parsing layer wherever it knows the day -- always
+    for a price read from a snapshot, and in particular for a price substituted
+    from the close of the preceding year, which is the case no rule keyed on the
+    Vorabpauschale year can derive.
+
+    Falling back is not a substituted *value*: `by_convention` is the same
+    naming rule the file was selected by (`Positions-{X}-SoY.csv` is X's first
+    trading day; see src/data_preparation.py and src/utils/snapshot_dates.py),
+    so it restates an assumption already made rather than inventing a new one.
+    Issue #59 replaces the convention with a report date the export carries, at
+    which point the fallback becomes unreachable on real input.
+    """
+    return recorded if recorded is not None else by_convention
+
+
 def _calculate_vorabpauschale(
     asset_resolver: AssetResolver,
     distributions_by_asset: Dict[uuid.UUID, Decimal],
     currency_converter: CurrencyConverter,
     vorabpauschale_year: int,
+    opening_lots_by_asset: Dict[uuid.UUID, List[FundUnitTranche]],
     ctx: Context,
+    data_gap_collector: Optional[DataGapCollector] = None,
 ) -> List[VorabpauschaleData]:
     """
     Calculate the Vorabpauschale FOR calendar year `vorabpauschale_year`.
@@ -947,18 +1297,42 @@ def _calculate_vorabpauschale(
     values and distributions read here are therefore those of `vorabpauschale_year`, taken from
     the `Asset.prior_year_*` fields, not the tax year's own SoY/EoY snapshot.
 
-    Formula per 18 InvStG, sentence by sentence:
-      Abs. 1 S. 2  Basisertrag = Ruecknahmepreis_Jahresbeginn * basiszins * 0.7
-      Abs. 1 S. 3  Basisertrag capped at (last price of year - first price) + distributions
-      Abs. 1 S. 1  VP = max(0, Basisertrag - distributions)
+    **Everything up to the last step is per Investmentanteil**, because that is how Abs. 1 is
+    written -- every quantity in Saetze 1 to 3 is a Ruecknahmepreis or a distribution *of one
+    unit*. The unit count enters once, at the end, through Rz. 18.4. Working in position values
+    instead conflated a price change with a quantity change in the Satz 3 cap, whose two sides
+    were measured over different holdings.
+
+      Abs. 1 S. 2  basisertrag_je_anteil = preis_jahresbeginn * basiszins * 0.7
+      Abs. 1 S. 3  basisertrag_je_anteil <= (preis_letzt - preis_erst) + ausschuettung_je_anteil
+      Rz. 18.4     Basisertrag = SUM over tranches of basisertrag_je_anteil * units * Abs. 2
+      Abs. 1 S. 1  VP = max(0, Basisertrag - Ausschuettungen)
       Abs. 4       basiszins from the published BMF table for `vorabpauschale_year`
+
+    The unit count is the holding at the close of 31 December of the Vorabpauschale year
+    (Rz. 18.4), taken from `opening_lots_by_asset` -- the ledger's own lots at that moment,
+    which is also where each tranche's acquisition date comes from. § 18 Abs. 2 then reduces
+    each tranche by one twelfth for every full month before its month of acquisition.
+
+    Applying Abs. 2 per tranche is what Rz. 18.11 does: its worked example reduces the
+    *per-Anteil* Vorabpauschale, at a point before any unit count has entered, so the factor
+    belongs to the units acquired rather than to the position. Settled 2026-08-07 and recorded
+    against GT-INVSTG-011 in docs/legal-implementation-map.md; it is no longer a choice under
+    uncertainty. The one part no source works through is summing the factor tranche by tranche
+    for a holding acquired in several instalments.
+
     Teilfreistellung (20 InvStG) is applied to derive the net figure; the gross figure is what
     goes on the form.
 
-    Not implemented, and deliberately so rather than silently approximated -- see
-    reference/investment-tax-law/invstg-18-vorabpauschale.md, "Known deviations":
-    Abs. 2 (pro-rata reduction in the acquisition year) and Abs. 1 S. 4 (Boersen- oder
-    Marktpreis only where no Ruecknahmepreis was set).
+    Still not implemented, rather than silently approximated: Abs. 1 S. 4 (Boersen- oder
+    Marktpreis only where no Ruecknahmepreis was set) -- GT-INVSTG-036.
+
+    **A fund whose Satz 2 or Satz 3 price cannot be used is not skipped.** It is
+    collected and reported as one `VORABPAUSCHALE_PRICE_UNUSABLE` FAIL_FAST gap naming
+    every affected fund, at the foot of this function -- see the comment there for the
+    two boundaries on that. Four separate `continue`s did it silently until 2026-08-09
+    (issue #55). Passing no `data_gap_collector` restores the silent skip, which is why
+    the pipeline always passes one.
     """
     from src.utils.tax_utils import get_teilfreistellung_rate_for_fund_type
 
@@ -970,72 +1344,177 @@ def _calculate_vorabpauschale(
     base_return_rate = ctx.multiply(basiszins, Decimal("0.01"))  # Convert percentage to factor
     factor_70 = Decimal("0.7")
 
-    # Conversion dates within the Vorabpauschale year: Jan 2 for the year-start price
-    # (Jan 1 is never a business day), Dec 31 for the last price set in the year.
-    soy_conversion_date = date(vorabpauschale_year, 1, 2)
-    eoy_conversion_date = date(vorabpauschale_year, 12, 31)
+    # Rz. 18.6 converts each input at the ECB reference rate of its OWN Stichtag
+    # (GT-INVSTG-018), and a Stichtag is the day a price was set -- never a fixed
+    # calendar date. These were hardcoded to 2 January and 31 December until
+    # 2026-08-08. Measured against the first/last-business-day convention, 2 January
+    # is the year's first trading day in only two of 2021-2025, and in 2021 and 2022
+    # it is a Saturday and a Sunday -- days the ECB publishes no rate for, so the
+    # converter's fallback quietly supplied one from another day. 31 December falls
+    # on a weekend in 2022 and 2023 and had the same defect, unrecorded until then.
+    #
+    # The day travels with the price, on Asset.prior_year_*_mark_price_date, because
+    # the substitution path takes its price from the close of the PRECEDING year and
+    # no rule keyed on `vorabpauschale_year` can know that.
+    eoy_conversion_date_default = last_business_day_of_year(vorabpauschale_year)
 
     results: List[VorabpauschaleData] = []
+    funds_without_acquisition_dates: List[Tuple[str, str]] = []
+    # Every fund dropped for want of a usable Satz 2 or Satz 3 price, with the
+    # reason. Collected rather than recorded on the spot for the same reason as
+    # the list above: the gap is FAIL_FAST and raises as it is recorded, so one
+    # entry per fund would stop at the first and hide the rest.
+    funds_without_a_usable_price: List[Tuple[str, str, str]] = []
 
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
         if not isinstance(asset_obj, InvestmentFund):
             continue
-        # Held at the start of the Vorabpauschale year? Units acquired later get no VP here;
-        # Abs. 2's pro-rata reduction is not implemented (see the docstring).
-        if asset_obj.prior_year_soy_quantity is None or asset_obj.prior_year_soy_quantity <= Decimal('0'):
+        # Rz. 18.4: the units held at the close of 31 December of the Vorabpauschale
+        # year. Nothing held then means no Vorabpauschale -- which is also how a fund
+        # disposed of during the year drops out (GT-INVSTG-016). That follows from this
+        # count alone: the statute has no disposal counterpart to Abs. 2, so units gone
+        # by 31 December are simply not multiplied. Do not reason it from the Abs. 3
+        # Zuflussfiktion, which fixes when income is received, not whether it arises.
+        tranches = opening_lots_by_asset.get(asset_id, [])
+
+        # § 18 Abs. 2 turns on the month each tranche was acquired. Where the
+        # historical replay could not reconstruct a lot, the opening snapshot
+        # gave the quantity and the engine invented the date. No Vorabpauschale
+        # is computed from an invented date -- not reduced by it, and not
+        # quietly treated as though the units had always been held.
+        undated = [t for t in tranches if not t.acquisition_date_is_known]
+        if undated:
+            # Abs. 2 asks one thing of a tranche: was it acquired *during* this
+            # calendar year? A date is one way to answer that and not the only
+            # one. Units the reconstruction could not place, but which the
+            # broker already reported at the close of the year before, were
+            # demonstrably acquired before this year began -- the snapshot is
+            # the evidence, and no reduction applies to them. That is a
+            # derivation from a report actually held, not a guess at a date.
+            held_before_the_year = asset_obj.prior_year_opening_quantity or Decimal(0)
+            undated_units = sum((t.quantity for t in undated), Decimal(0))
+            if undated_units > held_before_the_year:
+                funds_without_acquisition_dates.append(
+                    (asset_obj.get_classification_key(), asset_obj.description or "",
+                     undated_units, held_before_the_year))
+                logger.warning(
+                    "Fund %s: %s units held at the close of %d cannot be placed in "
+                    "time -- the reconstruction has no date for them and the close "
+                    "of %d accounts for only %s. No Vorabpauschale computed.",
+                    asset_obj.get_classification_key(), undated_units,
+                    vorabpauschale_year, vorabpauschale_year - 1, held_before_the_year)
+                continue
+
+            tranches = [t if t.acquisition_date_is_known
+                        else replace(t, acquisition_date=date(vorabpauschale_year - 1, 12, 31))
+                        for t in tranches]
+            logger.info(
+                "Fund %s: %s undated units were already held at the close of %d, "
+                "so 18 Abs. 2 does not reduce them.",
+                asset_obj.get_classification_key(), undated_units,
+                vorabpauschale_year - 1)
+
+        units_at_year_end = sum((t.quantity for t in tranches), Decimal(0))
+        if units_at_year_end <= Decimal('0'):
+            logger.debug(f"Fund {asset_obj.description}: nothing held at the close of "
+                         f"{vorabpauschale_year}. No VP.")
             continue
 
-        # Ruecknahmepreis at the start of the Vorabpauschale year (Abs. 1 S. 2)
-        soy_value_foreign = asset_obj.prior_year_soy_position_value
+        # Abs. 1 S. 2: the Ruecknahmepreis at the start of the year, PER UNIT.
+        soy_conversion_date = _price_stichtag(
+            asset_obj.prior_year_soy_mark_price_date,
+            first_business_day_of_year(vorabpauschale_year))
+        soy_price_foreign = asset_obj.prior_year_soy_mark_price
         soy_currency = asset_obj.prior_year_soy_mark_price_currency or asset_obj.currency
-        if soy_value_foreign is None or soy_currency is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Missing start-of-{vorabpauschale_year} position value or currency. Skipping VP.")
+        if soy_price_foreign is None or soy_currency is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No start-of-{vorabpauschale_year} price. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"kein Ruecknahmepreis zum Jahresbeginn {vorabpauschale_year} "
+                "(§ 18 Abs. 1 Satz 2 InvStG)"))
             continue
 
-        fund_value_soy_eur = currency_converter.convert_to_eur(soy_value_foreign, soy_currency, soy_conversion_date)
-        if fund_value_soy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} value to EUR. Skipping VP.")
+        soy_price_eur = currency_converter.convert_to_eur(soy_price_foreign, soy_currency, soy_conversion_date)
+        if soy_price_eur is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert start-of-{vorabpauschale_year} price to EUR. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"der Preis zum Jahresbeginn ({soy_price_foreign} {soy_currency} zum "
+                f"{soy_conversion_date.isoformat()}) konnte nicht in EUR umgerechnet "
+                "werden -- kein EZB-Referenzkurs fuer diesen Stichtag (Rz. 18.6)"))
             continue
 
-        # Last Ruecknahmepreis set in the Vorabpauschale year (Abs. 1 S. 3 cap)
-        eoy_value_foreign = asset_obj.prior_year_eoy_position_value
+        # Abs. 1 S. 3: the last Ruecknahmepreis set in the year, PER UNIT.
+        eoy_conversion_date = _price_stichtag(
+            asset_obj.prior_year_eoy_mark_price_date, eoy_conversion_date_default)
+        eoy_price_foreign = asset_obj.prior_year_eoy_mark_price
         eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
-        if eoy_value_foreign is None or eoy_currency is None:
-            # Fund fully disposed of during the year. The Abs. 3 Zufluss then falls after the
-            # disposal, so no VP arises. This is inferred from Abs. 3, not stated by a located
-            # Tier 1/2 source: see reference/research/open-legal-questions.md Q5 for both
-            # readings, and docs/legal-implementation-map.md GT-INVSTG-016 for this choice.
-            logger.debug(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} position value. Skipping VP.")
+        if eoy_price_foreign is None or eoy_currency is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} price though units were held at the close. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"kein Ruecknahmepreis zum Jahresende {vorabpauschale_year}, obwohl "
+                "zum 31.12. Anteile gehalten wurden -- die Deckelung nach § 18 "
+                "Abs. 1 Satz 3 InvStG ist damit nicht berechenbar"))
             continue
 
-        fund_value_eoy_eur = currency_converter.convert_to_eur(eoy_value_foreign, eoy_currency, eoy_conversion_date)
-        if fund_value_eoy_eur is None:
-            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert EoY value to EUR. Skipping VP.")
+        eoy_price_eur = currency_converter.convert_to_eur(eoy_price_foreign, eoy_currency, eoy_conversion_date)
+        if eoy_price_eur is None:
+            logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): Failed to convert end-of-{vorabpauschale_year} price to EUR. No VP; collected for the gap report.")
+            funds_without_a_usable_price.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                f"der Preis zum Jahresende ({eoy_price_foreign} {eoy_currency} zum "
+                f"{eoy_conversion_date.isoformat()}) konnte nicht in EUR umgerechnet "
+                "werden -- kein EZB-Referenzkurs fuer diesen Stichtag (Rz. 18.6)"))
             continue
 
-        # 1. Basisertrag = fund_value_soy_eur * basiszins_rate * 0.7
-        basisertrag = ctx.multiply(ctx.multiply(fund_value_soy_eur, base_return_rate), factor_70)
+        distributions_eur = distributions_by_asset.get(asset_id, Decimal('0'))
+        distribution_per_unit = ctx.divide(distributions_eur, units_at_year_end)
 
-        # 2. If Basisertrag <= 0, VP = 0
+        # Abs. 1 S. 2, per unit.
+        basisertrag_per_unit = ctx.multiply(
+            ctx.multiply(soy_price_eur, base_return_rate), factor_70)
+
+        # Abs. 1 S. 3, per unit: capped at the year's price gain plus what was
+        # distributed on one unit. The cap is a ceiling, and a fund that lost value
+        # has a negative one, so the floor at zero is the cap's own doing.
+        cap_per_unit = ctx.add(
+            ctx.subtract(eoy_price_eur, soy_price_eur), distribution_per_unit)
+        basisertrag_per_unit = min(basisertrag_per_unit, cap_per_unit)
+        if basisertrag_per_unit <= Decimal('0'):
+            logger.debug(f"Fund {asset_obj.description}: per-unit Basisertrag "
+                         f"{basisertrag_per_unit} <= 0 after the Satz 3 cap. VP=0.")
+            continue
+
+        # Rz. 18.4 with Abs. 2: multiply by the units, tranche by tranche, each
+        # reduced by a twelfth for every full month before its month of acquisition.
+        basisertrag = Decimal(0)
+        for tranche in tranches:
+            twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
+            tranche_basisertrag = ctx.multiply(basisertrag_per_unit, tranche.quantity)
+            if twelfths != 12:
+                tranche_basisertrag = ctx.divide(
+                    ctx.multiply(tranche_basisertrag, Decimal(twelfths)), Decimal(12))
+                logger.debug(
+                    "Fund %s: tranche of %s acquired %s keeps %d/12 (18 Abs. 2).",
+                    asset_obj.description, tranche.quantity,
+                    tranche.acquisition_date, twelfths)
+            basisertrag = ctx.add(basisertrag, tranche_basisertrag)
+
         if basisertrag <= Decimal('0'):
             logger.debug(f"Fund {asset_obj.description}: Basisertrag={basisertrag} <= 0, VP=0.")
             continue
 
-        # 3. VP = Basisertrag - distributions (but not below 0)
-        distributions_eur = distributions_by_asset.get(asset_id, Decimal('0'))
-        vp_after_dist = ctx.subtract(basisertrag, distributions_eur)
-        if vp_after_dist <= Decimal('0'):
+        # Abs. 1 S. 1: the Vorabpauschale is what the distributions fell short of.
+        gross_vp = ctx.subtract(basisertrag, distributions_eur)
+        if gross_vp <= Decimal('0'):
             logger.debug(f"Fund {asset_obj.description}: Distributions ({distributions_eur}) >= Basisertrag ({basisertrag}), VP=0.")
             continue
 
-        # 4. Cap: VP <= max(0, fund_value_eoy_eur - fund_value_soy_eur)
-        value_gain = ctx.subtract(fund_value_eoy_eur, fund_value_soy_eur)
-        cap = max(Decimal('0'), value_gain)
-        gross_vp = min(vp_after_dist, cap)
-
-        if gross_vp <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Value gain cap applied, VP=0.")
-            continue
+        # Kept for the report: the holding's value at each end of the year, on the
+        # Rz. 18.4 count, so both sides describe the same units.
+        fund_value_soy_eur = ctx.multiply(soy_price_eur, units_at_year_end)
+        fund_value_eoy_eur = ctx.multiply(eoy_price_eur, units_at_year_end)
 
         # 5. Apply Teilfreistellung
         fund_type = asset_obj.fund_type or InvestmentFundType.NONE
@@ -1064,6 +1543,82 @@ def _calculate_vorabpauschale(
         logger.info(
             f"Fund {asset_obj.description}: VP gross={gross_vp.quantize(TWO_PLACES, context=ctx)}, "
             f"TF={tf_amount.quantize(TWO_PLACES, context=ctx)}, net={net_vp.quantize(TWO_PLACES, context=ctx)}"
+        )
+
+    # One report naming every fund. A FAIL_FAST gap raises as it is recorded, so
+    # recording them one by one would stop at the first and hide the rest.
+    if funds_without_acquisition_dates and data_gap_collector is not None:
+        named = "; ".join(
+            f"{key} ({description}): {undated} Anteile ohne Datum, "
+            f"Bestand zum Vorjahresende {held}"
+            for key, description, undated, held in funds_without_acquisition_dates)
+        data_gap_collector.record(
+            code="VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN",
+            subject=f"{len(funds_without_acquisition_dates)} Fonds: {named}",
+            detail=(
+                f"Fuer Anteile, die zum Ende des Kalenderjahres {vorabpauschale_year} "
+                "gehalten wurden, konnte die historische Wiedergabe kein "
+                "Anschaffungsdatum rekonstruieren; die Menge stammt aus dem "
+                "Positions-Snapshot. § 18 Abs. 2 InvStG mindert die Vorabpauschale um "
+                "ein Zwoelftel je vollem Monat vor dem Anschaffungsmonat; ob diese "
+                "Anteile ueberhaupt unterjaehrig erworben wurden, ist nicht "
+                "feststellbar, weil sie auch im Bestand zum Ende des Vorjahres nicht "
+                "enthalten sind. Es wurde daher KEINE Vorabpauschale angesetzt, was "
+                "die Einkuenfte untererfasst. Die historische Rekonstruktion "
+                "widerspricht hier dem Positionsbericht des Brokers -- die Ursache "
+                "liegt in den Transaktionsdateien, nicht in fehlenden Preisen."
+            ),
+            severity=GapSeverity.FAIL_FAST,
+        )
+
+    # The same report for a fund whose Satz 2 or Satz 3 price could not be used.
+    # Until 2026-08-08 each of these four conditions was a log line and a
+    # `continue`, so a fund the engine had itself classified as an investment
+    # fund contributed no deemed income and nothing said so -- measured live on
+    # 2026-08-07, four funds across VZ 2024 and VZ 2025, with Zeilen 9-13 at
+    # 0.00 and an empty gap section (issue #55).
+    #
+    # FAIL_FAST, for the reason `VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING`
+    # already is at whole-year scale: the figure is not zero, it is
+    # un-computable, and a zero on Zeile 9 is indistinguishable from a real one.
+    #
+    # Recorded after the block above so that a tree missing both keeps aborting
+    # on the acquisition dates, as it did before this existed -- a FAIL_FAST
+    # raises where it is recorded, so only the first of the two is ever seen.
+    #
+    # One code for all four, with the reason per fund in the detail. #55 asked
+    # for the year-start path to be split so that a fund *not held* when the
+    # year opened would not abort next to one whose price is genuinely missing;
+    # that split now exists a layer up, in `resolve_year_start_prices()`, which
+    # prices every fund owing a Vorabpauschale before the engine runs. A second
+    # code here would separate nothing and would cost the single report.
+    #
+    # Guarded on the Basiszins: a year whose rate is not positive yields no
+    # Vorabpauschale for any fund, because Abs. 1 Satz 2 multiplies by it, so a
+    # price nobody could obtain removed nothing from the declaration. Calendar
+    # 2021 and 2022 are such years -- without this, VZ 2023 would start aborting
+    # over a zero that is lawful. Same reasoning as the early return in
+    # `src/processing/fund_prices.py`.
+    if (funds_without_a_usable_price and basiszins > Decimal(0)
+            and data_gap_collector is not None):
+        named = "; ".join(
+            f"{key} ({description}): {reason}"
+            for key, description, reason in funds_without_a_usable_price)
+        data_gap_collector.record(
+            code="VORABPAUSCHALE_PRICE_UNUSABLE",
+            subject=f"{len(funds_without_a_usable_price)} Fonds: {named}",
+            detail=(
+                f"Fuer diese Fonds wurden zum Ende des Kalenderjahres "
+                f"{vorabpauschale_year} Anteile gehalten, sodass nach § 18 Abs. 1 "
+                "InvStG eine -- gegebenenfalls nach Abs. 2 zeitanteilig geminderte "
+                "-- Vorabpauschale anzusetzen waere. Der dafuer benoetigte "
+                "Ruecknahmepreis liess sich nicht verwenden; der Grund steht je "
+                "Fonds oben. Es wurde daher KEINE Vorabpauschale angesetzt, was die "
+                "Einkuenfte untererfasst. Eine Null in den Zeilen 9-13 der Anlage "
+                "KAP-INV waere von einer zutreffenden Null nicht zu unterscheiden, "
+                "deshalb bricht der Lauf ab."
+            ),
+            severity=GapSeverity.FAIL_FAST,
         )
 
     return results

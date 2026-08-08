@@ -4,6 +4,17 @@ from enum import Enum, auto
 class AssetCategory(Enum):
     STOCK = auto()
     BOND = auto()
+    # A sonstige Kapitalforderung under 20 Abs. 2 Satz 1 Nr. 7 that is NOT a bond:
+    # an unbacked gold or commodity ETC (BMF 14.05.2025 Rz. 57, [GT-ESTG23-011]), a
+    # Zertifikat (expressly not a Termingeschaeft, Rz. 9, [GT-ESTG20-038]), an
+    # unallocated spot metal position at the broker (Q11, Reading C).
+    #
+    # It lands on the same Anlage KAP lines as BOND -- Zeile 19 / Zeile 22 -- but it is a
+    # separate member on purpose: BOND used to carry both meanings, so nothing could
+    # distinguish "this is a bond" from "this is something else on 19/22", and the
+    # bond-only handling (percentage-of-nominal prices, Stueckzinsen, BM maturity) would
+    # have applied to instruments that have none of those properties.
+    SONSTIGE_KAPITALFORDERUNG = auto()
     INVESTMENT_FUND = auto()
     OPTION = auto()
     CFD = auto()
@@ -75,8 +86,10 @@ class TaxReportingCategory(Enum):
     ANLAGE_KAP_AKTIEN_VERLUST = auto()
     ANLAGE_KAP_TERMIN_GEWINN = auto()
     ANLAGE_KAP_TERMIN_VERLUST = auto()
-    ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE = auto() # Interest, non-fund dividends, bond gains, stückzinsen
-    ANLAGE_KAP_SONSTIGE_VERLUSTE = auto() # Bond losses, etc.
+    # Zeile 19 / Zeile 22. Interest, non-fund dividends, stückzinsen, and disposals of
+    # both AssetCategory.BOND and AssetCategory.SONSTIGE_KAPITALFORDERUNG.
+    ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE = auto()
+    ANLAGE_KAP_SONSTIGE_VERLUSTE = auto()
     ANLAGE_KAP_AUSLAENDISCHE_KAPITALERTRAEGE_GESAMT = auto() # Added for Zeile 19 as per PRD
     ANLAGE_KAP_FOREIGN_TAX_PAID = auto() # Zeile 41 - Anrechenbare ausländische Steuern
 

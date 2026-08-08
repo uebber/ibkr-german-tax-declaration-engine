@@ -18,6 +18,8 @@ from src.processing.enrichment import enrich_financial_events
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider, ExchangeRateProvider # Added base for custom provider
 from src.processing.data_gaps import DataGap, DataGapCollector
+from src.processing.fund_prices import (
+    FundPriceStore, make_price_prompt, resolve_year_start_prices)
 from src.engine.calculation_engine import run_main_calculations
 from src.identification.asset_resolver import AssetResolver
 
@@ -67,7 +69,13 @@ def run_core_processing_pipeline(
     # this boundary: the engine decides what a missing snapshot means once it knows whether any
     # fund is held. See reference/investment-tax-law/invstg-18-vorabpauschale.md.
     positions_prior_start_file_path: Optional[str] = None,
-    positions_prior_end_file_path: Optional[str] = None
+    positions_prior_end_file_path: Optional[str] = None,
+    positions_prior_opening_file_path: Optional[str] = None,
+    # Checkpoint marks for the historical replay: {year: Positions-{year}-EoY.csv}. Each is a
+    # point where the reconstruction is compared against the broker and, on disagreement,
+    # replaced by it. Absent (or empty) means the replay runs as one uninterrupted interval,
+    # which is what it did before checkpointing.
+    positions_mark_file_paths: Optional[Dict[int, str]] = None
 ) -> ProcessingOutput:
     """
     Runs the core data processing pipeline: parsing, enrichment, and calculations.
@@ -93,9 +101,11 @@ def run_core_processing_pipeline(
             positions_end_file=positions_end_file_path,
             positions_prior_start_file=positions_prior_start_file_path,
             positions_prior_end_file=positions_prior_end_file_path,
+            positions_prior_opening_file=positions_prior_opening_file_path,
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
+            positions_mark_files=positions_mark_file_paths,
             tax_year=tax_year_to_process
         )
     except ValueError as e:
@@ -142,6 +152,43 @@ def run_core_processing_pipeline(
     try:
         # Ensure run_main_calculations uses the passed tax_year_to_process
         data_gap_collector = DataGapCollector()
+        for key, description in orchestrator.vorabpauschale_price_substitutions:
+            data_gap_collector.record(
+                code="VORABPAUSCHALE_PRICE_WRONG_DAY",
+                subject=f"{key} ({description})" if description else key,
+                detail=(
+                    "Der Ruecknahmepreis zu Beginn des Kalenderjahres fehlt im Positions-"
+                    "Snapshot, obwohl der Fonds zu Jahresbeginn gehalten wurde. Fuer die "
+                    "Vorabpauschale wurde ersatzweise der letzte vor Jahresbeginn "
+                    "festgesetzte Preis verwendet -- einen Boersentag zu frueh statt ein "
+                    "Jahr zu spaet; der Basisertrag stammt damit vom falschen Tag und ist "
+                    "bei gestiegenem Kurs zu niedrig."
+                ),
+            )
+
+        # A fund bought during the Vorabpauschale year is absent from that year's
+        # start-of-year snapshot, so no price reached it above. That is ordinary and
+        # the figure is still due (18 Abs. 1 Satz 2 with Abs. 2), so the price is
+        # asked for and remembered rather than skipped or invented. Runs here, after
+        # classification has settled which assets are funds and before the engine,
+        # which then sees a price like any other. See src/processing/fund_prices.py.
+        resolve_year_start_prices(
+            assets=list(orchestrator.asset_resolver.assets_by_internal_id.values()),
+            vorabpauschale_year=tax_year_to_process - 1,
+            store=FundPriceStore(),
+            # The resolved run setting, not config.IS_INTERACTIVE_CLASSIFICATION:
+            # --no-interactive overrides the config, and reading the global here
+            # meant a --no-interactive run still tried to prompt and died on EOF.
+            interactive=interactive_classification_mode,
+            data_gap_collector=data_gap_collector,
+            # The events go in so the prompt can show what the account paid per
+            # unit beside the price being asked for; the issuer lookup fills in
+            # the default. Both are aids to a person answering, and neither
+            # answers for them -- see src/processing/fund_price_sources.py.
+            ask=make_price_prompt(financial_events_enriched),
+            auto_fetch=getattr(config, "FUND_PRICE_AUTO_FETCH", True),
+        )
+
         realized_gains_losses, vorabpauschale_items, processed_income_events, eoy_mismatch_error_count_calc = run_main_calculations(
             financial_events=financial_events_enriched,
             asset_resolver=orchestrator.asset_resolver, # Use the resolver from the orchestrator
@@ -151,6 +198,7 @@ def run_core_processing_pipeline(
             internal_calculation_precision=config.INTERNAL_CALCULATION_PRECISION, # Renamed parameter
             decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
             data_gap_collector=data_gap_collector,
+            mark_positions=orchestrator.mark_positions,
             prior_year_positions_available=bool(
                 positions_prior_start_file_path and positions_prior_end_file_path
             ),

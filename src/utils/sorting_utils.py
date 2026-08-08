@@ -1,6 +1,5 @@
 # src/utils/sorting_utils.py
 import logging
-import uuid
 from datetime import date
 from decimal import Decimal
 from typing import Tuple, Any 
@@ -31,7 +30,15 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     Generates a deterministic sort key tuple for FinancialEvent as per PRD 5.8.
     Primary key: event_date.
     Secondary key: Tuple starting with an intra-day sort order, then PRD-specified fields,
-                   ending with event.event_id for ultimate tie-breaking.
+                   ending with event.creation_sequence for ultimate tie-breaking.
+
+    The tail element is `creation_sequence`, not `event_id`. `event_id` is a `uuid4`
+    redrawn on every run, so using it made the order of two events that tie on every
+    earlier element random run to run — the opposite of what this docstring and PRD 5.8
+    both claimed. See `FinancialEvent.creation_sequence` and issue #71.
+
+    The tie is reached whenever `ibkr_transaction_id` is absent, since every branch below
+    substitutes `""` for it.
     """
     parsed_date = parse_ibkr_date(event.event_date)
     if not parsed_date:
@@ -47,38 +54,38 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     # Determine intra-day sort order and the specific PRD-defined tuple part
     if isinstance(event, CorporateActionEvent):
         intra_day_order = _INTRA_DAY_SORT_ORDER_CORP_ACTION
-        # PRD: (asset.ibkr_symbol, event.ca_action_id_ibkr, event.description, event.event_id)
+        # PRD: (asset.ibkr_symbol, event.ca_action_id_ibkr, event.description, event.creation_sequence)
         if not asset.ibkr_symbol:
             logger.warning(f"Asset {asset.internal_asset_id} for CA Event {event.event_id} on {parsed_date} lacks ibkr_symbol. Using placeholder.")
         specific_secondary_elements = (
             asset.ibkr_symbol or "", 
             event.ca_action_id_ibkr or "", 
             event.ibkr_activity_description or "", # PRD's event.description (FinancialEvent.ibkr_activity_description)
-            event.event_id
+            event.creation_sequence
         )
     elif isinstance(event, OptionLifecycleEvent): # Option Lifecycles before regular trades
         intra_day_order = _INTRA_DAY_SORT_ORDER_OPTION_LIFECYCLE
-        # PRD: (event.ibkr_transaction_id, asset.asset_category, event.event_id)
+        # PRD: (event.ibkr_transaction_id, asset.asset_category, event.creation_sequence)
         if not event.ibkr_transaction_id:
              logger.warning(f"OptionLifecycle Event {event.event_id} on {parsed_date} lacks ibkr_transaction_id. Using placeholder.")
         specific_secondary_elements = (
             event.ibkr_transaction_id or "", 
             asset.asset_category, 
-            event.event_id
+            event.creation_sequence
         )
     elif isinstance(event, (TradeEvent, CurrencyConversionEvent)): # Trade and Currency Conversion share structure
         intra_day_order = _INTRA_DAY_SORT_ORDER_TRADE
-        # PRD: (event.ibkr_transaction_id, asset.asset_category, event.event_id)
+        # PRD: (event.ibkr_transaction_id, asset.asset_category, event.creation_sequence)
         if not event.ibkr_transaction_id:
              logger.warning(f"Trade/CurrencyConversion Event {event.event_id} on {parsed_date} lacks ibkr_transaction_id. Using placeholder.")
         specific_secondary_elements = (
             event.ibkr_transaction_id or "", 
             asset.asset_category, 
-            event.event_id
+            event.creation_sequence
         )
     elif isinstance(event, (CashFlowEvent, WithholdingTaxEvent, FeeEvent)):
         intra_day_order = _INTRA_DAY_SORT_ORDER_CASH
-        # PRD: (event.ibkr_transaction_id, asset.asset_category, event.gross_amount_foreign_currency, event.event_id)
+        # PRD: (event.ibkr_transaction_id, asset.asset_category, event.gross_amount_foreign_currency, event.creation_sequence)
         if not event.ibkr_transaction_id:
             logger.warning(f"Cash-like Event {event.event_id} on {parsed_date} lacks ibkr_transaction_id. Using placeholder.")
         gross_amount_for_sort = event.gross_amount_foreign_currency if event.gross_amount_foreign_currency is not None else Decimal('0')
@@ -86,7 +93,7 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.ibkr_transaction_id or "", 
             asset.asset_category,
             gross_amount_for_sort,
-            event.event_id
+            event.creation_sequence
         )
     else:
         logger.error(f"Event {event.event_id} of unrecognized type {type(event).__name__} encountered. Using fallback sort order.")
@@ -94,7 +101,7 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
         specific_secondary_elements = ( # Minimal structure for unknown
             event.ibkr_transaction_id or "", 
             asset.asset_category, 
-            event.event_id
+            event.creation_sequence
         )
     
     # For events on the same date, prioritize transaction ID over event type
@@ -102,7 +109,7 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     transaction_id_for_sort = event.ibkr_transaction_id or ""
 
     # The final secondary key tuple: (transaction_id, intra_day_order_integer, then PRD elements)
-    # The PRD elements ALREADY end with event.event_id.
+    # The PRD elements ALREADY end with event.creation_sequence.
     secondary_key_tuple = (transaction_id_for_sort, intra_day_order) + specific_secondary_elements
 
     return (parsed_date, secondary_key_tuple)

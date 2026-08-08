@@ -1,4 +1,5 @@
 # src/domain/events.py
+import itertools
 from dataclasses import dataclass, field, KW_ONLY
 from decimal import Decimal
 import uuid
@@ -8,16 +9,57 @@ from .enums import FinancialEventType
 # Removed AssetCategory, InvestmentFundType, TaxReportingCategory imports as they are not directly used in event fields
 # Asset information will be linked via asset_internal_id, and classification is on the Asset object itself.
 
+# Hands out `FinancialEvent.creation_sequence`. See the field for why this exists and
+# why `event_id` cannot do its job.
+_creation_sequence_counter = itertools.count()
+
+
+def _next_creation_sequence() -> int:
+    return next(_creation_sequence_counter)
+
 @dataclass
 class FinancialEvent:
     # Positional, non-default arguments
     asset_internal_id: uuid.UUID # Links to the Asset this event pertains to
-    event_date: str # YYYY-MM-DD string representing the primary date of the event (e.g., trade date, payment date, settlement date)
+    # YYYY-MM-DD. The date the law attaches to this event, which differs by event kind and is
+    # never a matter of which field the broker happened to populate:
+    #   trade      -> the contract date, the obligatorisches Rechtsgeschaeft. BMF 14.05.2025
+    #                 Rn. 317 for Erwerb and Rn. 85 for Veraeusserung/Einloesung; it fixes the
+    #                 FX rate, the gain, the assessment year and the Section 23 Jahresfrist.
+    #                 Built by DomainEventFactory._trade_contract_date, which accepts no
+    #                 settlement or report date. [GT-ESTG20-039], [GT-ESTG20-040]
+    #   cash flow  -> the Zufluss: settlement for a cash transaction, pay date for a corporate
+    #                 action. Built by DomainEventFactory._zufluss_date.
+    # A settlement date is never the date of a trade here, and the Trades import carries no
+    # settlement column at all.
+    event_date: str
 
     # Keyword-only arguments, can have defaults
     _: KW_ONLY
     event_type: FinancialEventType # The type of financial event
     event_id: uuid.UUID = field(default_factory=uuid.uuid4) # Unique ID for this event instance
+
+    # The final tie-break of `get_event_sort_key`, and the only element of it that is
+    # guaranteed to differ between two distinct events.
+    #
+    # `event_id` used to hold that position. It is unique *within* a run and redrawn on the
+    # next one, so two events tying on every earlier element were ordered at random,
+    # differently each run — while the PRD and the sort key's own docstring called the
+    # result deterministic. Measured on VZ 2025 (issue #71): 14 OptionEAE cash settlements,
+    # the one input carrying no `TransactionID`, reordered freely between two captures of
+    # the same tree. No figure moved there, but only because those 14 fell on distinct
+    # option ledgers and all but two were EUR — properties of that year's data, not of this
+    # code.
+    #
+    # A construction counter rather than a source row index because it cannot be missed:
+    # every event gets one at __init__, including the ones the engine synthesises after
+    # parsing (`calculation_engine._create_excess_dividend_event`, the sub-events
+    # `fifo_manager.split_position_flip_event` builds at dispatch), which have no source
+    # row to index. Construction order follows the order rows are read out of the
+    # concatenated input, so the tie-break also tracks the order IBKR reported — but
+    # determinism is the property being bought here, and it holds whatever the
+    # construction order happens to be.
+    creation_sequence: int = field(default_factory=_next_creation_sequence)
 
     # Monetary amounts related to the event
     # These are typically in the original currency of the transaction/event

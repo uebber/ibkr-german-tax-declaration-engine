@@ -267,7 +267,7 @@ here rather than resolved.
 - Investment Funds (Investmentfonds) — InvStG 2018
 - Options/Derivatives (Termingeschäfte) — EStG 20
 - CFDs — EStG 20
-- Private Sale Assets (Gold ETCs, Crypto ETPs) — EStG 23
+- Private Sale Assets (Gold and commodity ETCs) — EStG 23
 - Foreign Currency (Fremdwährung) — EStG 20 / EStG 23
 
 ### Taxable events
@@ -344,6 +344,23 @@ only how to get at one.
   Internet Archive snapshots of the original BMF PDF, or occasionally an industry-body mirror.
 - **WebFetch is blocked for `web.archive.org`.** Use `curl` and the CDX API to find and fetch a
   snapshot.
+- **A dead BMF PDF path returns HTML with HTTP 200, not a 404.** `curl -o out.pdf` therefore
+  "succeeds" and leaves a landing page on disk. Check `file out.pdf` before parsing anything;
+  `pdftotext` on the HTML fails in ways that read like a broken PDF rather than a wrong URL.
+- **For the InvStG Anwendungsschreiben, the archive route is not the first thing to try.** Working
+  as of 2026-08-07: the 21.05.2019 base letter in full from the BVL mirror under
+  `bvl-verband.de/fileadmin/steuerpolitik/bmf-schreiben/2019/`, authenticated by its PDF metadata
+  (`Author: BMF`, created 28.05.2019); and the **amendment letters from BZSt**, which mirrors them
+  officially at
+  `bzst.de/SharedDocs/BMF/DE/Downloads/bmf_schreiben_<YYYYMMDD>_InvStG_18_anwendung.pdf?__blob=publicationFile&v=1`
+  — confirmed for 20201029, 20210118, 20210429 and 20220315. An official mirror beats an archive
+  snapshot, and this pattern is guessable from a date, which the archive is not.
+- **A BEZUG line is not the amendment chain.** The note below on annual notices holds for a series
+  of *annual* letters; an amendment series is different, and conflating the two put a wrong link
+  in this library. The InvStG letter of 24.11.2025 lists 17.10.2025 in its BEZUG line but says in
+  its body *"zuletzt geändert durch BMF-Schreiben vom 18. November 2024"* — 17.10.2025 amends
+  nothing. Take the chain from the operative *"zuletzt geändert durch"* sentence and treat BEZUG
+  as context.
 - **WebFetch cannot read PDFs.** Download and use `pdftotext -layout`, which preserves the column
   structure that form and table extraction depends on.
 - **A BMF download that returns empty is often a User-Agent block, not a dead link.** The

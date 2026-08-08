@@ -6,6 +6,15 @@
 - **With version history:** [buzer.de -- 18 InvStG](https://www.buzer.de/18_InvStG.htm)
 - **Regime start:** 56 Abs. 1 Satz 1 InvStG -- the InvStG 2018 provisions apply from 01.01.2018,
   so the first Vorabpauschale is the one for calendar 2018.
+- **Amendment history (checked 2026-08-06, buzer.de version tracking).** The text below is that of
+  Artikel 18 des Gesetzes zur Umsetzung der Aenderungen der EU-Amtshilferichtlinie und von
+  weiteren Massnahmen gegen Gewinnkuerzungen und -verlagerungen, G. v. 20.12.2016, BGBl. I
+  S. 3000, in force from 24.12.2016. § 18 carries exactly **one** earlier version -- the original
+  Artikel 1 G. v. 19.07.2016, BGBl. I S. 1730 -- which was superseded on 24.12.2016, before the
+  regime began to apply. **§ 18 has therefore been unchanged in every tax year in which it has
+  had effect**, 2018 onward, and no year-by-year differentiation of its wording is needed. The
+  InvStG as a whole has been amended since, most recently by Artikel 28 G. v. 04.02.2026,
+  BGBl. 2026 I Nr. 33, but not in this paragraph.
 - **Basiszins values and their per-year provenance:** `bmf-guidance/basiszins-vorabpauschale.md`
   is the **single authoritative table**. Do not duplicate it here; an earlier revision of this
   file carried a second copy that drifted from it (Validation Protocol item 5).
@@ -41,11 +50,26 @@ Basisertrag lives in Abs. 1; Abs. 2 is the pro-rata rule; Abs. 3 is the Zuflussf
 - **Satz 4:** *"Wird kein Ruecknahmepreis festgesetzt, so tritt der Boersen- oder Marktpreis an
   die Stelle des Ruecknahmepreises."*
 
+**Abs. 1 is written per Investmentanteil, not per holding.** Every quantity in Saetze 1 to 3 is a
+Ruecknahmepreis or a distribution *of one unit*; the number of units enters only through Rz. 18.4
+of the BMF-Schreiben, which multiplies at the end and fixes the count as the one held at the close
+of 31 December:
+
 ```
-Basisertrag = Ruecknahmepreis_Jahresbeginn x Basiszins x 0.70        (Satz 2)
-Basisertrag <= (Ruecknahmepreis_letzt - Ruecknahmepreis_erst) + Ausschuettungen   (Satz 3)
-Vorabpauschale = max(0, Basisertrag - Ausschuettungen)               (Satz 1)
+per Anteil:
+  Basisertrag_je_Anteil = Ruecknahmepreis_Jahresbeginn x Basiszins x 0.70          (Satz 2)
+  Basisertrag_je_Anteil <= (Ruecknahmepreis_letzt - Ruecknahmepreis_erst)
+                             + Ausschuettungen_je_Anteil                           (Satz 3)
+
+per Bestand:
+  Basisertrag = Basisertrag_je_Anteil x Anzahl Anteile am 31.12.                   (Rz. 18.4)
+  Vorabpauschale = max(0, Basisertrag - Ausschuettungen)                           (Satz 1)
 ```
+
+The price and the unit count are therefore taken at different moments: the price is the first
+Ruecknahmepreis set in the calendar year, the count is the holding at the close of 31 December.
+The Satz 3 cap is bounded by the first and last price set in the calendar year, so its lower bound
+is the same first price Satz 2 uses.
 
 Note Satz 3 is expressed in **Ruecknahmepreise festgesetzt im Kalenderjahr**, not in calendar
 boundaries: the first and last price *set during the year*.
@@ -64,11 +88,57 @@ So units bought during the year carry a **reduced** Vorabpauschale, not none: on
 dropped for each full month before the month of acquisition. Units bought in December still
 attract one twelfth.
 
+**Rz. 18.11 restates the Absatz and works it, and the example fixes what the reduction operates
+on:**
+
+> *"Abwandlung des Beispiels aus Rz. 18.3: Anleger A hat den Investmentanteil erst am 10.7.01
+> erworben. Die fuer das gesamte Jahr 01 berechnete Vorabpauschale i. H. v. 0,50 € mindert sich um
+> 6/12 auf 0,25 €."*
+
+That 0,50 € is the figure Rz. 18.3 derives **per Anteil**, from a Ruecknahmepreis of 100 € and an
+Ausschuettung of *"0,10 € pro Anteil"*. So the reduction is applied to the per-unit amount, at a
+point where no unit count has yet entered — Rz. 18.4 multiplies by the count only afterwards. The
+factor is therefore an attribute of the units acquired, not of the position.
+
+**The reduction applies per acquisition.** Units of one fund held at the close of 31 December that
+were acquired at different times each carry their own factor: units already held when the year
+opened are not in their year of acquisition and keep twelve twelfths; units acquired in the year
+keep twelve less one for each full month preceding their month of acquisition. The Vorabpauschale
+for the holding is the sum over those groups.
+
+Three further administrative statements support this and none contradicts it: the reduction turns
+on *Anschaffungsdaten* attaching to units ([GT-INVSTG-055], Rz. 18.9); the Anschaffungsdaten of a
+fund holding are recorded per acquisition point, *"die Anzahl der zum jeweiligen
+Anschaffungszeitpunkt erworbenen Investmentanteile"* ([GT-ESTG20-041]); and *"Erwerb"* in Abs. 2
+means an actual acquisition, since a deemed one leaves the full year in place ([GT-INVSTG-054],
+Rz. 20.4).
+
+**The limit of what is quoted.** No located source works an example on a holding acquired in more
+than one instalment. Summing the per-unit factor group by group joins two quoted rules — the
+per-unit reduction here and the 31 December count in [GT-INVSTG-017] — rather than quoting a
+third. Recorded because the step is a construction, not because a competing reading survives:
+the rival reading, that *"die Vorabpauschale"* denotes one amount for the whole position, is
+contradicted by the Rz. 18.11 example above and leaves *"der Monat des Erwerbs"* without a
+referent for a holding bought in two months of the same year.
+
+> **Closed 2026-08-07, formerly open question Q13.** See the retirement note in
+> `../research/open-legal-questions.md`.
+
 ### [GT-INVSTG-012] Abs. 3 -- Zuflussfiktion (decides the declaration year)
 
 *"Die Vorabpauschale gilt am ersten Werktag des folgenden Kalenderjahres als zugeflossen."*
 
 This is the provision that decides **which return the figure belongs on**. See the next section.
+
+Rz. 18.12 restates it and gives the reason: *"Nach § 18 Absatz 3 InvStG fliesst die Vorabpauschale
+nicht in dem Kalenderjahr zu, fuer das sie berechnet wird, sondern sie gilt am ersten Werktag des
+folgenden Kalenderjahres als zugeflossen. Hierdurch soll das Steuerabzugsverfahren erleichtert
+werden, da in vielen Faellen noch ein voller Sparer-Pauschbetrag zur Verfuegung steht, mit dem die
+Vorabpauschale verrechnet werden kann."*
+
+The stated purpose is a Steuerabzug convenience. It is **not** a holding test: what the amount is
+computed on is fixed by Abs. 1 and by the unit count in [GT-INVSTG-017], not by who holds the
+units on the Zufluss date — see [GT-INVSTG-016].
 
 ### [GT-INVSTG-013] Abs. 4 -- Basiszins (three Saetze)
 
@@ -77,7 +147,129 @@ Dabei ist auf den Zinssatz abzustellen, den die Deutsche Bundesbank anhand der Z
 jeweils auf den ersten Boersentag des Jahres errechnet. Das Bundesministerium der Finanzen
 veroeffentlicht den massgebenden Zinssatz im Bundessteuerblatt."*
 
+Rz. 18.13 names the underlying series -- *"die Zinsstruktur der Renditen fuer Bundeswertpapiere mit
+jaehrlicher Kuponzahlung und 15-jaehriger Restlaufzeit"*, computed by the Bundesbank
+*"boersentaeglich"*. Rz. 18.14 fixes **which day's value is the Basiszins**:
+
+> *"Als Basiszins fuer die Ermittlung der Vorabpauschale ist auf den Wert abzustellen, der fuer den
+> ersten Boersentag eines Kalenderjahres ermittelt wird (§ 18 Absatz 4 Satz 2 InvStG). Dieser Wert
+> wird vom BMF im Bundessteuerblatt (§ 18 Absatz 4 Satz 3 InvStG) und - fuer einen
+> voruebergehenden Zeitraum - auch auf der Internetseite des BMF veroeffentlicht."*
+
+The day is the **erster Boersentag** of the calendar year, which is 2 January only in years whose
+first exchange day falls on it. Note this is the Basiszins day and is a different question from
+the Stichtag at which a foreign-currency figure is converted, which is [GT-INVSTG-018].
+
 Published values, with per-year provenance: `bmf-guidance/basiszins-vorabpauschale.md`.
+
+---
+
+## Administrative guidance (Tier 2)
+
+- **Source:** BMF-Schreiben of 21.05.2019, *Anwendungsfragen zum Investmentsteuergesetz in der ab
+  dem 1. Januar 2018 geltenden Fassung*, BStBl I 2019 S. 527. **Section 18 runs Rz. 18.1 to
+  18.14.**
+- **Amendment chain.** The current letter of 24.11.2025 (GZ IV C 1 - S 1980/00206/032/046) states
+  its own chain: *"wird das BMF-Schreiben vom 21. Mai 2019, BStBl I S. 527, zuletzt geaendert
+  durch BMF-Schreiben vom 18. November 2024, BStBl I S. 1547, wie folgt geaendert"*. The letter of
+  17.10.2025 (GZ IV C 1 - S 1980/00206/032/029) appears **only in its BEZUG line** and is not
+  named as an amending letter, so it is not a link in the chain.
+- **Which letters were checked for a change to section 18, and how.** Retrieved and read in full
+  on 2026-08-07: 29.10.2020, 18.01.2021, 29.04.2021, 18.06.2021, 15.03.2022 and 24.11.2025.
+  **None amends any Randziffer of section 18**; their amendments run to §§ 2, 6, 9, 16, 17, 19,
+  20, 31, 33, 48 and others. Section 18 therefore stands as issued in 2019. Not individually
+  retrieved: 06.09.2022, 30.12.2022, 18.11.2024 — BMF serves only the two most recent letters of
+  a recurring series and no official mirror of these three was located; each is described by
+  Tier 5 summaries as touching Rz. 31.x only, which is **not** verification and is recorded here
+  as the residual gap.
+  **One amendment outside section 18 does reach the Vorabpauschale:** 29.04.2021 appended three
+  Saetze to Rz. 20.4 — see [GT-INVSTG-054] in `invstg-22-teilfreistellungssatz-aenderung.md`.
+- **Retrieved 2026-08-07.** Base letter of 21.05.2019, full text, from the industry-body mirror
+  https://www.bvl-verband.de/fileadmin/steuerpolitik/bmf-schreiben/2019/2019-05-21-anwendungsfragen-zum-investmentsteuergesetz-in-der-am-1-januar-2018-geltenden-fassung-InvStG-2018.pdf
+  — PDF metadata `Author: BMF`, `Title: Anwendungsfragen zum Investmentsteuergesetz in der ab dem
+  1. Januar 2018 geltenden Fassung (InvStG)`, created 28.05.2019. Amendment letters of 29.10.2020,
+  18.01.2021, 29.04.2021 and 15.03.2022 from the official BZSt mirror
+  (`https://www.bzst.de/SharedDocs/BMF/DE/Downloads/bmf_schreiben_<YYYYMMDD>_InvStG_18_anwendung.pdf`);
+  18.06.2021 from the BVL mirror; 24.11.2025 from
+  https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Investmentsteuer/2025-11-24-anwendungsfragen-InvStG.pdf
+- **Applicable tax years:** 2018 onward; regime floor as above.
+
+**What else section 18 contains**, beyond the claims recorded below (Validation Protocol item 2):
+Rz. 18.1 is introductory; Rz. 18.2 restates Abs. 1 Saetze 1 to 3 without adding to them; Rz. 18.3
+is a worked example, whose figures Rz. 18.5 and Rz. 18.11 both continue; Rz. 18.5 governs
+balance-sheet treatment for bilanzierende Anleger, which is outside this library's
+Privatvermoegen scope; Rz. 18.10 provides that no Vorabpauschale is set on units a domestic
+depotfuehrende Stelle holds for a foreign credit institution.
+
+> **Correction, 2026-08-07.** The previous revision of this file gave the range as *"Rz. 18.1 to
+> 18.11"* and described Rz. 18.11 as restating Abs. 2 and nothing more. Both are wrong. The
+> section has three further Randziffern — 18.12 (Zuflussfiktion), 18.13 and 18.14 (Basiszins) —
+> and Rz. 18.11 carries a worked example that decides how Abs. 2 is applied, together with a
+> cross-reference to Rz. 20.4. All four are now recorded below. The range was stated without the
+> document open; the missing Randziffern are exactly the *"unstated unit"* Validation Protocol
+> item 2 exists to catch.
+
+### [GT-INVSTG-017] Rz. 18.4 -- computation precision
+
+*"Fuer die Ermittlung der Vorabpauschale ist ein Rechnungszins mit (mindestens) drei
+Nachkommastellen zu verwenden. ... Der Basisertrag ist mit mindestens vier Nachkommastellen
+anzusetzen und erst nach der Multiplikation mit der Anzahl der mit Ablauf des 31. Dezember des
+Kalenderjahres verwahrten oder verwalteten Anteile an dem Investmentfonds ist eine kaufmaennische
+Rundung auf zwei Nachkommastellen vorzunehmen."*
+
+Three requirements: the rate carries at least three decimal places, the Basisertrag at least
+four, and rounding to two happens **once, after** multiplying by the unit count -- and the unit
+count is the one held at the end of 31 December of the calendar year.
+
+**The count is the general rule, not a Steuerabzug convention.** Rz. 18.4 sits in Textziffer 18.1
+*"Ermittlung der Vorabpauschale"* and is unqualified; where a Randziffer of this section is
+confined to the withholding procedure it says so, as Rz. 18.9 and Rz. 18.10 do
+(*"im Steuerabzugsverfahren"*). The count therefore governs the amount itself, which is what
+decides [GT-INVSTG-016].
+
+### [GT-INVSTG-018] Rz. 18.6 -- currency conversion of a foreign-currency fund
+
+*"Bei in fremden Waehrungen notierenden Investmentanteilen sind fuer die Umrechnung in Euro die
+am jeweiligen Stichtag (Jahresanfang, Ausschuettungstermin, Jahresende) geltenden Referenzkurse
+der Europaeischen Zentralbank (EZB) zu Grunde zu legen."*
+
+Each of the three inputs is converted at the ECB reference rate **of its own Stichtag**, not at a
+single rate for the year. The three Stichtage named are the start of the year, the distribution
+date, and the end of the year.
+
+### [GT-INVSTG-035] Rz. 18.7 -- fund launched during the year
+
+*"Bei unterjaehriger Neuauflage eines Investmentfonds ist der erste festgesetzte Ruecknahmepreis
+oder falls dieser nicht vorhanden ist, der erste fuer diesen Investmentfonds ermittelte Boersen-
+oder Marktpreis bei der Ermittlung der Vorabpauschale zu Grunde zu legen. Darueber hinaus ist die
+Vorabpauschale gemaess § 18 Absatz 2 InvStG zeitanteilig anzusetzen."*
+
+For a fund that did not exist at the start of the year the base is the first price actually set,
+and Abs. 2's pro-rata reduction applies on top.
+
+### [GT-INVSTG-036] Rz. 18.8 -- fund without a monthly price
+
+*"Wenn der Investmentfonds nicht mindestens monatlich fortlaufend einen Ruecknahmepreis festsetzt,
+ist fuer die Zwecke der Vorabpauschale auf den Boersen- oder Marktpreis abzustellen."*
+
+This is the administration's threshold for Abs. 1 Satz 4: a Ruecknahmepreis set less often than
+monthly does not count as one being set, and the market price takes its place.
+
+### [GT-INVSTG-055] Rz. 18.9 -- a transfer arriving without acquisition data
+
+*"Bei einem Depotuebertrag aus dem In- oder Ausland, bei dem keine Anschaffungsdaten mitgeteilt
+wurden, ist im Steuerabzugsverfahren die Vorabpauschale fuer das gesamte Kalenderjahr anzusetzen.
+Wenn der Anleger im Veranlagungsverfahren einen unterjaehrigen Anschaffungszeitpunkt nachweist,
+ist die zu viel erhobene Kapitalertragsteuer zu erstatten."*
+
+Two statements, and the second is the one that reaches an assessment. The Abs. 2 reduction is a
+function of *Anschaffungsdaten*; where those are unknown the withholding agent sets the **full**
+year, and the full year is therefore the administration's fallback for missing data, not its
+answer for units acquired in an earlier year. What restores the reduction is the holder proving
+*"einen unterjaehrigen Anschaffungszeitpunkt"* -- an acquisition date attaching to units.
+
+The first sentence is confined to the Steuerabzugsverfahren, which a foreign custodian does not
+perform. What the cited unit also contains: nothing further; Rz. 18.9 is two Saetze.
 
 ---
 
@@ -87,9 +279,9 @@ Published values, with per-year provenance: `bmf-guidance/basiszins-vorabpauscha
 year and the declaration year are three different things, and only two of them coincide.
 
 ```
-Basiszins as of 02.01.X  ->  Vorabpauschale FOR calendar year X
-                         ->  deemed to flow first working day of X+1  (18 Abs. 3 InvStG)
-                         ->  declared on Anlage KAP-INV Zeilen 9-13 in VZ X+1
+Basiszins of the first Boersentag of X  ->  Vorabpauschale FOR calendar year X   (Rz. 18.14)
+                                        ->  deemed to flow first working day of X+1  (18 Abs. 3)
+                                        ->  declared on Anlage KAP-INV Zeilen 9-13 in VZ X+1
 ```
 
 Tier 3 confirmation, `reference/Anltg_KAP_INV_24.md` (Zeilen 9 bis 13), verbatim:
@@ -112,14 +304,17 @@ For the Vorabpauschale declared in VZ `Y` -- that is, the one computed for calen
 
 | Input | Which year it is taken from |
 |-------|------------------------------|
-| Basiszins | `Y-1` (the rate published for 02.01. of `Y-1`) |
-| Ruecknahmepreis at the start of the year (Abs. 1 Satz 2) | first of `Y-1` |
+| Basiszins | `Y-1` (the rate determined for the first Boersentag of `Y-1`; Rz. 18.14) |
+| Ruecknahmepreis at the start of the year (Abs. 1 Satz 2) | first set in `Y-1` |
 | Ruecknahmepreis at the end of the year (the Abs. 1 Satz 3 cap) | last set in `Y-1` |
 | Ausschuettungen deducted (Abs. 1 Satz 1) | those made during `Y-1` |
 
-Every input is a `Y-1` figure. The one that is easy to get wrong is the first: the start-of-`Y-1`
-price is *not* the start-of-`Y` position snapshot, and using the latter computes a different
-year's Vorabpauschale with a different Basiszins.
+Every input is a `Y-1` figure: a price taken from `Y` computes a different year's Vorabpauschale,
+against a different Basiszins.
+
+**The day is the first Ruecknahmepreis set in the calendar year.** Rz. 18.3 of the BMF-Schreiben
+demonstrates it: the same figure serves as the Satz 2 base and as the Satz 3 cap's lower bound,
+which Satz 3 defines as *"dem ersten ... im Kalenderjahr festgesetzten Ruecknahmepreis"*.
 
 ---
 
@@ -129,17 +324,39 @@ The Vorabpauschale is an Investmentertrag under 16 Abs. 1 Nr. 2 InvStG and is su
 Teilfreistellung of 20 InvStG. It is nevertheless declared **gross** on Zeilen 9-13; the
 Finanzamt applies the Teilfreistellung. See `invstg-20-teilfreistellung.md`.
 
-## [GT-INVSTG-016] Disposal during the calendar year -- unresolved
+## [GT-INVSTG-016] Units disposed of during the calendar year
 
-Whether a fund disposed of during calendar `X`, and therefore not held on the first working day
-of `X+1`, gives rise to a Vorabpauschale for `X` at all.
+**The question is decided by the multiplier, not by the disposal.** Rz. 18.4 ([GT-INVSTG-017])
+states what the per-unit Basisertrag is multiplied by: *"die Anzahl der mit Ablauf des
+31. Dezember des Kalenderjahres verwahrten oder verwalteten Anteile an dem Investmentfonds"*.
+Units disposed of before that moment are not in the count. So:
 
-- **For "no Vorabpauschale":** Abs. 3 deems the inflow to occur on the first working day of the
-  following year. On that date the units are gone, so there is no holder to whom the deemed
-  income can flow.
-- **Against:** Abs. 1 defines the Vorabpauschale by reference to the calendar year's prices and
-  distributions, and states no holding requirement at the year's end. The Zuflussfiktion fixes
-  *when* income is received, which is not obviously the same as whether it arises.
+- a holding disposed of in full during calendar `X` is multiplied by nothing and produces **no**
+  Vorabpauschale for `X`;
+- a **partial** disposal drops the units sold out of the count entirely, with no time
+  apportionment for the months they were held -- Abs. 2 apportions on acquisition, and the statute
+  has no counterpart on disposal;
+- a disposal that is only **deemed** leaves the units in the count, and the full year stands. Rz.
+  20.4 says so in terms for a § 22 Abs. 1 Anschaffungs- und Veraeusserungsfiktion
+  ([GT-INVSTG-054]), and distinguishes it from *"einer tatsaechlichen Veraeusserung der
+  Investmentanteile"*.
 
-No Tier 1 or Tier 2 source stating the point directly has been located. Registered in
-`../research/open-legal-questions.md`.
+The test is therefore what is held at the close of 31 December, not whether a disposal occurred.
+
+**Two further provisions point the same way and neither is the ground of the rule.** Abs. 3
+defers the Zufluss to the first working day of the following year, by which time disposed units
+are gone ([GT-INVSTG-012]). And § 19 Abs. 1 Satz 3 InvStG deducts from a disposal gain only the
+Vorabpauschalen *"waehrend der Besitzzeit angesetzten"*, which Rz. 19.4 explains as *"Um eine
+doppelte Besteuerung auszuschliessen"* -- a Vorabpauschale arising for the year of disposal would
+be deemed to flow after the Besitzzeit ended and so could never be deducted, defeating that
+purpose.
+
+**What is not quoted.** No located source states *"im Jahr der Veraeusserung faellt keine
+Vorabpauschale an"* in those words; the answer follows from the computation rule. No Tier 4
+decision on the point has been located.
+
+> **Closed 2026-08-07, formerly open question Q5.** The library had grounded this in the
+> Zuflussfiktion alone and recorded it as unresolved, because a fiction about *when* income is
+> received does not settle whether it arises. Rz. 18.4 settles it on the other side of the
+> equation and was already in this file. See the retirement note in
+> `../research/open-legal-questions.md`.

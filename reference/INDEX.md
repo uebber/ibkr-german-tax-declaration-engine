@@ -14,7 +14,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 - [EStG 20 -- Kapitalvermoegen](tax-law/estg-20-kapitalvermoegen.md) -- Central statute for all capital income (dividends, gains, options, corporate actions)
 - [EStG 20 Abs. 6 -- Verlustverrechnung](tax-law/estg-20-abs6-verlustverrechnung.md) -- Loss offsetting rules, stock ring-fencing, abolished derivative cap
-- [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold ETCs, Crypto ETPs), 1-year speculation period
+- [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold and commodity ETCs), 1-year speculation period
 - [EStG 32d -- Abgeltungsteuer](tax-law/estg-32d-abgeltungsteuer.md) -- Flat tax rate (25%), Veranlagungspflicht (Abs. 3), foreign tax credit (Abs. 5), Guenstigerpruefung (Abs. 6)
 - [EStG 34d -- Auslaendische Einkuenfte](tax-law/estg-34d-auslaendische-einkuenfte.md) -- Schuldner-domicile test for foreign-source income; distinct from the Z18/Z19 form split
 - [EStG 36 / 45a -- Anrechnung inlaendischer KESt](tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md) -- German KESt on German dividends held via a foreign broker: Zeile 7/37/38/39 (NOT Zeile 41), Steuerbescheinigung requirement
@@ -22,10 +22,10 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 ## Investment Tax Law (InvStG)
 
 - [InvStG 16 -- Investmentertraege](investment-tax-law/invstg-16-investmentertraege.md) -- Definition of taxable fund income
-- [InvStG 18 -- Vorabpauschale](investment-tax-law/invstg-18-vorabpauschale.md) -- Deemed minimum income, Basiszins, calculation formula
+- [InvStG 18 -- Vorabpauschale](investment-tax-law/invstg-18-vorabpauschale.md) -- Deemed minimum income, Basiszins, calculation formula; BMF 21.05.2019 section 18 in full, Rz. 18.1-18.14 (precision and the 31 December unit count, currency Stichtage, mid-year launch, funds without a monthly price, transfers without acquisition data, the Basiszins day)
 - [InvStG 19 -- Veraeusserungsgewinne](investment-tax-law/invstg-19-veraeusserungsgewinne.md) -- Fund sale gain calculation, VP deduction
 - [InvStG 20 -- Teilfreistellung](investment-tax-law/invstg-20-teilfreistellung.md) -- Partial exemption rates by fund type (30%/15%/60%/80%); fund type definitions and their thresholds
-- [InvStG 22 -- Aenderung des Teilfreistellungssatzes](investment-tax-law/invstg-22-teilfreistellungssatz-aenderung.md) -- fiktive Veraeusserung when the applicable rate changes or its conditions lapse
+- [InvStG 22 -- Aenderung des Teilfreistellungssatzes](investment-tax-law/invstg-22-teilfreistellungssatz-aenderung.md) -- fiktive Veraeusserung when the applicable rate changes or its conditions lapse; BMF Rz. 20.4 as amended 29.04.2021, on the Vorabpauschale in such a year
 
 ## Tax Forms (Zeilen-Referenz)
 
@@ -35,7 +35,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 ## BMF Guidance (Administrative Circulars)
 
-- [Einzelfragen Abgeltungsteuer](bmf-guidance/abgeltungsteuer-einzelfragen.md) -- Central BMF guidance (14.05.2025, Rz. 1-325); retrieved in full 2026-08-03. Index into the document, plus its version history and application rule
+- [Einzelfragen Abgeltungsteuer](bmf-guidance/abgeltungsteuer-einzelfragen.md) -- Central BMF guidance (14.05.2025, Rz. 1-325); retrieved in full 2026-08-03. Index into the document, plus its version history and application rule; the day that fixes Anschaffung and Veraeusserung (Rn. 85, Rn. 317) and the acquisition data of fund units (Rn. 184a)
 - [Basiszins Vorabpauschale](bmf-guidance/basiszins-vorabpauschale.md) -- Published rates 2018-2026, one BMF-Schreiben cited per row
 - [Fremdwaehrung Konten](bmf-guidance/fremdwaehrung-konten.md) -- FX gain classification (20 vs. 23 EStG); BMF 14.05.2025 Rz. 131 verbatim
 

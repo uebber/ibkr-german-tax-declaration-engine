@@ -1,12 +1,12 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, Context, getcontext as get_global_context
 from typing import List, Optional, Tuple
 import uuid
 from datetime import date as date_obj, datetime
 
 from src.domain.assets import Asset, Option 
-from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock
+from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError, ProcessingError
@@ -26,6 +26,13 @@ class FifoLot:
     unit_cost_basis_eur: Decimal # Renamed from cost_basis_eur_per_unit
     total_cost_basis_eur: Decimal # Stored with high precision
     source_transaction_id: str # IBKR Transaction ID (or fallback string like "SOY_FALLBACK")
+    # False on a lot the historical replay could not reconstruct, where the
+    # opening snapshot gave the quantity and the date above is a placeholder
+    # standing for "already held when the tax year opened". Nothing may read
+    # that date as a fact: § 18 Abs. 2 InvStG reduces the Vorabpauschale by a
+    # twelfth for each month before acquisition, so believing a placeholder of
+    # 31 December would cut a whole year's deemed income to one twelfth.
+    acquisition_date_is_known: bool = True
 
     def __post_init__(self):
         if not isinstance(self.quantity, Decimal) or not self.quantity.is_finite() or self.quantity <= Decimal(0):
@@ -84,6 +91,53 @@ class ShortFifoLot:
                 f"differs significantly from (quantity {self.quantity_shorted} * unit_sale_proceeds_eur {self.unit_sale_proceeds_eur} = {expected_total}). " # Renamed
                 f"Difference: {self.total_sale_proceeds_eur - expected_total}. Using provided total_sale_proceeds_eur."
             )
+
+def _take_newest(lots, wanted: Decimal, size_of, resize):
+    """Keep `wanted` units from the NEWEST end of a FIFO lot list.
+
+    Used where the reconstruction covers more than the broker reports. The
+    excess is a disposal the input does not contain; FIFO consumed oldest-first,
+    so the survivors are at the newest end. Lots arrive oldest-first, so this
+    walks backwards and returns them oldest-first again.
+    """
+    kept = []
+    remaining = wanted
+    for lot in reversed(lots):
+        if remaining <= Decimal(0):
+            break
+        size = size_of(lot)
+        if size <= remaining:
+            kept.append(lot)
+            remaining -= size
+        else:
+            kept.append(resize(lot, remaining))
+            remaining = Decimal(0)
+    kept.reverse()
+    return kept
+
+
+@dataclass(frozen=True)
+class MarkReconciliation:
+    """What happened when a ledger met one checkpoint mark.
+
+    Returned so the engine can grade a disagreement without re-deriving it.
+    `started_confirmed` is the grading input: an interval that began at a
+    reported snapshot and ends at one has ground truth at both ends, so a
+    disagreement is a defect. An interval that began from nothing is expected
+    to disagree by whatever was held before the input window opened.
+    """
+    kept: bool                      # True: reconstruction survived. False: snapshot replaced it.
+    started_confirmed: bool
+    reconstructed_quantity: Decimal
+    reported_quantity: Decimal
+    oversell_observed: bool
+    mark_label: str
+    # The reconstruction held long AND short lots of the same instrument at once. Not a
+    # position anyone can hold; it means the input's open/close indicators contradict each
+    # other. Distinguished because it has nothing to do with a short trade history, which is
+    # what a first-interval disagreement otherwise means.
+    offsetting_long_and_short: bool = False
+
 
 @dataclass
 class ConsumedLotDetail:
@@ -211,6 +265,13 @@ class FifoLedger:
         self.ctx = Context(prec=internal_working_precision, rounding=decimal_rounding_mode)
         self.soy_fallback_lot_source_tx_id = f"SOY_FALLBACK_{asset_internal_id}"
         self.soy_fallback_short_lot_source_tx_id = f"SOY_FALLBACK_SHORT_{asset_internal_id}"
+        # Has this ledger ever been pinned to a reported snapshot? False until the first
+        # checkpoint mark is processed. It decides how a disagreement is graded: an interval
+        # that began at a confirmed snapshot and ends at one has ground truth at both ends, so
+        # a mismatch there is the engine's or the input's fault. An interval that began from
+        # nothing -- the earliest one, before any snapshot exists -- is expected to disagree by
+        # whatever was held before the window opened.
+        self._mark_anchor_confirmed = False
 
 
     def initialize_lots_from_soy(self,
@@ -250,7 +311,9 @@ class FifoLedger:
         """Apply ONE historical (pre-tax-year) event to the ledger — the
         per-event unit the unified replayer streams. Mutates lot state only;
         emits no current-year RGLs. Inconsistencies (e.g. selling more than
-        reconstructed) set the flag consumed by reconcile_with_soy_position."""
+        reconstructed) set a flag that reconcile_with_mark REPORTS but does not
+        act on: the reported snapshot is the sole arbiter of which lots survive.
+        The flag deciding was what discarded exactly-matching reconstructions."""
         event_date_obj = parse_ibkr_date(hist_event.event_date)
         if not event_date_obj or event_date_obj >= date_obj(tax_year, 1, 1):
             logger.warning(f"Historical event {hist_event.event_id} for asset {asset.internal_asset_id} "
@@ -280,9 +343,94 @@ class FifoLedger:
                 self.adjust_lots_for_split(hist_event)
             elif isinstance(hist_event, CorpActionStockDividend):
                  self.add_lot_for_stock_dividend(hist_event)
+            elif isinstance(hist_event, OptionLifecycleEvent):
+                self._close_position_lots_historically(
+                    asset, hist_event, hist_event.quantity_contracts)
+            elif isinstance(hist_event, CorpActionMergerCash):
+                # Bought out for cash: the holding is disposed of and the shares leave the
+                # depot. Only the lot effect is applied -- the gain belongs to the year the
+                # merger fell in, which the historical replay does not declare.
+                self._close_position_lots_historically(
+                    asset, hist_event, hist_event.quantity_disposed)
+            elif isinstance(hist_event, CorpActionExpireDividendRights):
+                # Rights lapse; whatever the ledger holds of them ceases to exist.
+                self._close_position_lots_historically(
+                    asset, hist_event,
+                    sum((lot.quantity for lot in self.lots), Decimal(0)))
+            elif isinstance(hist_event, CorporateActionEvent):
+                # Every corporate-action kind with a ledger effect must have a branch above.
+                # Falling through used to be silent, and silence is how a cash merger left 200
+                # ATVI shares in the ledger for every year after 2023 (found by the checkpoint
+                # marks, not by the suite). A new kind should stop the run, not vanish.
+                raise ProcessingError(
+                    f"Historical replay has no handler for {type(hist_event).__name__} "
+                    f"({hist_event.event_type.name}) on {asset.get_classification_key()} at "
+                    f"{hist_event.event_date}. It was routed into the historical bucket, so it "
+                    f"is expected to affect the ledger; leaving it unapplied would carry a "
+                    f"phantom holding into every later year.")
         except UserWarning as uw:
             logger.warning(f"Historical simulation warning for asset {asset.internal_asset_id} processing event {hist_event.event_id}: {uw}")
             self._historical_simulation_inconsistent = True
+
+    def _close_position_lots_historically(self, asset: Asset, hist_event,
+                                          contracts: Optional[Decimal]) -> None:
+        """Remove `contracts` units of this asset's lots for a closing event in the window.
+
+        Expiration, exercise, assignment and cash settlement all end the option
+        position; only their tax treatment differs, and no realised gain is
+        computed here because the historical replay declares nothing. What the
+        replay needs is the lot effect, and without it an option opened and
+        closed inside the window leaves a phantom holding that offsets the
+        ledger for every year that follows.
+
+        The share leg of an exercise or assignment is NOT handled here: IBKR
+        books it as an ordinary stock trade in the Trades file, and that already
+        replays against the underlying's own ledger. Touching the underlying
+        here would double it.
+
+        Consuming from the oldest end matches the current-year processors, which
+        run FIFO over the same lots.
+        """
+        if contracts is None:
+            raise ProcessingError(
+                f"Historical option lifecycle event {hist_event.event_id} for asset "
+                f"{asset.get_classification_key()} carries no contract count, so the lots it "
+                f"closes cannot be determined.")
+        remaining = contracts.copy_abs()
+        if remaining == Decimal(0):
+            return
+
+        closed_long = closed_short = Decimal(0)
+        while remaining > Decimal(0) and self.lots:
+            lot = self.lots[0]
+            take = min(lot.quantity, remaining)
+            lot.quantity -= take
+            remaining -= take
+            closed_long += take
+            if lot.quantity == Decimal(0):
+                self.lots.pop(0)
+        while remaining > Decimal(0) and self.short_lots:
+            lot = self.short_lots[0]
+            take = min(lot.quantity_shorted, remaining)
+            lot.quantity_shorted -= take
+            remaining -= take
+            closed_short += take
+            if lot.quantity_shorted == Decimal(0):
+                self.short_lots.pop(0)
+
+        if remaining > Decimal(0):
+            # Same treatment as an oversell: the replay could not apply the whole event, which
+            # the mark grading then sees. Not fatal here -- a later snapshot may still agree.
+            logger.warning(
+                f"Historical simulation: option lifecycle event {hist_event.event_id} "
+                f"({hist_event.event_type.name}) for {asset.get_classification_key()} wanted to "
+                f"close {contracts.copy_abs()} contract(s) but the ledger held "
+                f"{closed_long + closed_short}. {remaining} unaccounted for.")
+            self._historical_simulation_inconsistent = True
+        else:
+            logger.debug(
+                f"Historical {hist_event.event_type.name} closed {closed_long} long / "
+                f"{closed_short} short contract(s) of {asset.get_classification_key()}.")
 
     def simulate_historical_events(self,
                                     asset: Asset,
@@ -295,9 +443,61 @@ class FifoLedger:
         for hist_event in all_historical_events_for_asset:
             self.apply_historical_event(asset, hist_event, tax_year)
 
-    def reconcile_with_soy_position(self, asset: Asset, tax_year: int):
-        """Pass 3: Compare reconstructed lots against SoY position and apply fallback if needed."""
-        historical_simulation_inconsistent = getattr(self, '_historical_simulation_inconsistent', False)
+    def reconcile_with_soy_position(self, asset: Asset, tax_year: int) -> "MarkReconciliation":
+        """Reconcile against the tax year's opening snapshot -- the final mark.
+
+        The SoY *record* (`asset.soy_quantity` and friends) is read from
+        `Positions-{tax_year-1}-EoY.csv`, not from any SoY file. Thin wrapper
+        over `reconcile_with_mark`, which every checkpoint uses.
+        """
+        return self.reconcile_with_mark(
+            asset,
+            reported_quantity=asset.soy_quantity,
+            reported_cost_basis=asset.soy_cost_basis_amount,
+            reported_cost_basis_currency=asset.soy_cost_basis_currency,
+            mark_label=f"{tax_year - 1}-12-31 (opening snapshot)",
+            fallback_acquisition_date=f"{tax_year-1}-12-31",
+            fx_conversion_date=date_obj(tax_year, 1, 1),
+        )
+
+    def reconcile_with_mark(self, asset: Asset, *,
+                            reported_quantity: Optional[Decimal],
+                            reported_cost_basis: Optional[Decimal],
+                            reported_cost_basis_currency: Optional[str],
+                            mark_label: str,
+                            fallback_acquisition_date: str,
+                            fx_conversion_date) -> "MarkReconciliation":
+        """Compare the reconstruction against one reported snapshot; on disagreement,
+        discard it and take the snapshot.
+
+        The snapshot is ground truth and the reconstruction is not, so the
+        comparison is the sole arbiter. In particular the oversell flag does NOT
+        force the fallback: an oversell says the replay could not apply
+        something, and if the quantity still lands exactly on the broker's
+        figure the reconstructed lots -- with their real acquisition dates and
+        real cost bases -- are worth more than a synthesised one. Discarding an
+        exactly-matching reconstruction because of the flag is what destroyed
+        `DE0006766504`'s 2022-12-29 lots (issue #56 investigation).
+
+        A reconstruction that *exceeds* the report is still usable, and is used:
+        the excess means a disposal the input does not contain, and FIFO
+        consumes oldest-first, so the units that survived to the mark are the
+        NEWEST. Real dated lots beat a synthesised one, which is what
+        `SOY_H_001` and `SOY_H_002` pin.
+
+        Taking them from the newest end is the correction. The previous version
+        filled from the oldest, which those two scenarios cannot distinguish --
+        they hold a single lot, so either end returns it. It matters the moment
+        the excess is a *phantom acquisition* rather than a missing disposal:
+        a ledger holding [130 merged-in units dated 2022, 100 bought 2023]
+        against a reported 100 yields the real 2023 lot from the newest end and
+        the phantom from the oldest.
+
+        A reconstruction that *falls short* cannot say which units the broker
+        means, so there the snapshot replaces it.
+        """
+        started_confirmed = self._mark_anchor_confirmed
+        inconsistent = getattr(self, '_historical_simulation_inconsistent', False)
 
         reconstructed_long_lots_snapshot = list(self.lots)
         reconstructed_short_lots_snapshot = list(self.short_lots)
@@ -308,118 +508,152 @@ class FifoLedger:
         reconstructed_total_short_qty_abs = sum(lot.quantity_shorted for lot in reconstructed_short_lots_snapshot)
         reconstructed_net_qty = self.ctx.subtract(reconstructed_total_long_qty, reconstructed_total_short_qty_abs)
 
-        reported_soy_qty = asset.soy_quantity
-        if reported_soy_qty is None:
-            logger.warning(f"Asset {asset.get_classification_key()}: SOY quantity from positions report is None. Assuming 0 for ledger initialization.")
-            reported_soy_qty = Decimal(0)
+        if reported_quantity is None:
+            logger.warning(f"Asset {asset.get_classification_key()}: reported quantity at mark "
+                           f"{mark_label} is None. Treating as 0 for ledger initialization.")
+            reported_quantity = Decimal(0)
         else:
-            reported_soy_qty = reported_soy_qty.quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
+            reported_quantity = reported_quantity.quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
 
-        logger.info(f"Asset {asset.get_classification_key()}: Reconstructed SOY Qty: {reconstructed_net_qty}. Reported SOY Qty: {reported_soy_qty}. Historical Sim Inconsistent: {historical_simulation_inconsistent}")
+        logger.info(f"Asset {asset.get_classification_key()} @ {mark_label}: Reconstructed Qty: "
+                    f"{reconstructed_net_qty}. Reported Qty: {reported_quantity}. "
+                    f"Historical Sim Inconsistent: {inconsistent}")
 
-        if reported_soy_qty == Decimal(0):
-            logger.info(f"Asset {asset.get_classification_key()}: Reported SOY quantity is 0. Initializing with no lots.")
-            return
+        # Sign structure must be consistent with the report, not merely the net: a securities
+        # ledger holding long and short lots at once that happen to net to the reported figure
+        # is not a reconstruction anyone should carry forward.
+        covers_long = (reported_quantity > Decimal(0)
+                       and reconstructed_total_long_qty >= reported_quantity
+                       and reconstructed_total_short_qty_abs == Decimal(0))
+        covers_short = (reported_quantity < Decimal(0)
+                        and reconstructed_total_short_qty_abs >= reported_quantity.copy_abs()
+                        and reconstructed_total_long_qty == Decimal(0))
+        covers_flat = (reported_quantity == Decimal(0)
+                       and reconstructed_total_long_qty == Decimal(0)
+                       and reconstructed_total_short_qty_abs == Decimal(0))
+        keeps_reconstruction = covers_long or covers_short or covers_flat
 
-        use_fallback = historical_simulation_inconsistent
-
-        if not use_fallback:
-            if reported_soy_qty > Decimal(0):
-                if reconstructed_total_long_qty >= reported_soy_qty and reconstructed_total_short_qty_abs == Decimal(0):
-                    logger.info(f"Asset {asset.get_classification_key()}: Using reconstructed FIFO long lots and costs.")
-                    qty_to_assign = reported_soy_qty
-                    for lot in reconstructed_long_lots_snapshot:
-                        if qty_to_assign <= Decimal(0): break
-                        qty_from_this_lot = min(lot.quantity, qty_to_assign)
-                        final_lot = FifoLot(
-                            acquisition_date=lot.acquisition_date, quantity=qty_from_this_lot,
-                            unit_cost_basis_eur=lot.unit_cost_basis_eur,
-                            total_cost_basis_eur=self.ctx.multiply(qty_from_this_lot, lot.unit_cost_basis_eur),
-                            source_transaction_id=lot.source_transaction_id
-                        )
-                        self.lots.append(final_lot)
-                        qty_to_assign -= qty_from_this_lot
-                    if qty_to_assign.copy_abs() > Decimal('1e-8'):
-                         logger.error(f"Asset {asset.get_classification_key()}: Mismatch after assigning sufficient long lots. Rem: {qty_to_assign}")
-                         use_fallback = True
-                else:
-                    use_fallback = True
-
-            elif reported_soy_qty < Decimal(0):
-                reported_soy_qty_abs = reported_soy_qty.copy_abs()
-                if reconstructed_total_short_qty_abs >= reported_soy_qty_abs and reconstructed_total_long_qty == Decimal(0):
-                    logger.info(f"Asset {asset.get_classification_key()}: Using reconstructed FIFO short lots and proceeds.")
-                    qty_to_assign = reported_soy_qty_abs
-                    for lot in reconstructed_short_lots_snapshot:
-                        if qty_to_assign <= Decimal(0): break
-                        qty_from_this_lot = min(lot.quantity_shorted, qty_to_assign)
-                        final_short_lot = ShortFifoLot(
-                            opening_date=lot.opening_date, quantity_shorted=qty_from_this_lot,
-                            unit_sale_proceeds_eur=lot.unit_sale_proceeds_eur,
-                            total_sale_proceeds_eur=self.ctx.multiply(qty_from_this_lot, lot.unit_sale_proceeds_eur),
-                            source_transaction_id=lot.source_transaction_id
-                        )
-                        self.short_lots.append(final_short_lot)
-                        qty_to_assign -= qty_from_this_lot
-                    if qty_to_assign.copy_abs() > Decimal('1e-8'):
-                         logger.error(f"Asset {asset.get_classification_key()}: Mismatch after assigning sufficient short lots. Rem: {qty_to_assign}")
-                         use_fallback = True
-                else:
-                    use_fallback = True
-            else:
-                 use_fallback = True
-
-
-        if use_fallback:
-            self.lots.clear()
-            self.short_lots.clear()
-            logger.warning(f"Asset {asset.get_classification_key()}: Historical FIFO reconstruction "
-                           f"(Long: {reconstructed_total_long_qty}, Short: {reconstructed_total_short_qty_abs}, Inconsistent: {historical_simulation_inconsistent}) "
-                           f"is insufficient or mismatched for reported SOY Qty ({reported_soy_qty}). Using SOY fallback cost/proceeds for entire quantity.")
-            if reported_soy_qty > Decimal(0):
-                self._create_fallback_long_lot(asset, reported_soy_qty, tax_year)
-            elif reported_soy_qty < Decimal(0):
-                self._create_fallback_short_lot(asset, reported_soy_qty.copy_abs(), tax_year)
+        if keeps_reconstruction:
+            if covers_long:
+                self.lots.extend(_take_newest(
+                    reconstructed_long_lots_snapshot, reported_quantity,
+                    lambda lot: lot.quantity,
+                    lambda lot, qty: replace(
+                        lot, quantity=qty,
+                        total_cost_basis_eur=self.ctx.multiply(qty, lot.unit_cost_basis_eur))))
+            elif covers_short:
+                self.short_lots.extend(_take_newest(
+                    reconstructed_short_lots_snapshot, reported_quantity.copy_abs(),
+                    lambda lot: lot.quantity_shorted,
+                    lambda lot, qty: replace(
+                        lot, quantity_shorted=qty,
+                        total_sale_proceeds_eur=self.ctx.multiply(qty, lot.unit_sale_proceeds_eur))))
+            if reported_quantity != Decimal(0):
+                logger.info(
+                    f"Asset {asset.get_classification_key()} @ {mark_label}: keeping the "
+                    f"reconstruction's real lots"
+                    + ("." if reconstructed_net_qty == reported_quantity else
+                       f"; it exceeds the report by "
+                       f"{(reconstructed_net_qty - reported_quantity).copy_abs()}, attributed to "
+                       f"disposals the input does not contain, so the oldest units are dropped."))
+        else:
+            logger.warning(
+                f"Asset {asset.get_classification_key()} @ {mark_label}: reconstruction "
+                f"(Long: {reconstructed_total_long_qty}, Short: {reconstructed_total_short_qty_abs}, "
+                f"Inconsistent: {inconsistent}) disagrees with the reported quantity "
+                f"({reported_quantity}). Discarding it and taking the snapshot.")
+            if reported_quantity > Decimal(0):
+                self._create_fallback_long_lot(
+                    asset, reported_quantity, reported_cost_basis,
+                    reported_cost_basis_currency, fallback_acquisition_date, fx_conversion_date)
+            elif reported_quantity < Decimal(0):
+                self._create_fallback_short_lot(
+                    asset, reported_quantity.copy_abs(), reported_cost_basis,
+                    reported_cost_basis_currency, fallback_acquisition_date, fx_conversion_date)
 
         if self.lots:
             self.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
             if any((parse_ibkr_date(lot.acquisition_date) is None) for lot in self.lots):
-                 raise ValueError(f"Unparseable acquisition date found in final SOY lots for asset {self.asset_internal_id}.")
+                 raise ValueError(f"Unparseable acquisition date found in final lots for asset {self.asset_internal_id}.")
         if self.short_lots:
             self.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
             if any((parse_ibkr_date(lot.opening_date) is None) for lot in self.short_lots):
-                 raise ValueError(f"Unparseable opening date found in final SOY short lots for asset {self.asset_internal_id}.")
+                 raise ValueError(f"Unparseable opening date found in final short lots for asset {self.asset_internal_id}.")
 
-    def _create_fallback_long_lot(self, asset: Asset, quantity: Decimal, tax_year: int):
+        # From here on this ledger sits on ground truth, whichever branch ran: either the
+        # reconstruction was confirmed by the snapshot, or the snapshot replaced it.
+        self._mark_anchor_confirmed = True
+        # The flag describes one interval. Reset it so the next interval's grading is its own.
+        self._historical_simulation_inconsistent = False
+
+        return MarkReconciliation(
+            kept=keeps_reconstruction,
+            started_confirmed=started_confirmed,
+            reconstructed_quantity=reconstructed_net_qty,
+            reported_quantity=reported_quantity,
+            oversell_observed=inconsistent,
+            mark_label=mark_label,
+            offsetting_long_and_short=(reconstructed_total_long_qty > Decimal(0)
+                                       and reconstructed_total_short_qty_abs > Decimal(0)),
+        )
+
+    def _create_fallback_long_lot(self, asset: Asset, quantity: Decimal,
+                                  reported_cost_basis: Optional[Decimal],
+                                  reported_cost_basis_currency: Optional[str],
+                                  acquisition_date_str: str, fx_conversion_date):
+        """Build the one lot that stands in for a discarded reconstruction at a mark.
+
+        The snapshot supplies a quantity and a cost basis. It supplies no acquisition
+        date, so the lot carries `acquisition_date_is_known=False`.
+
+        **Exactly one consumer honours that flag: § 18 Abs. 2, which raises rather than
+        read the placeholder. § 23 does not.** The holding period is computed straight
+        from `acquisition_date`, so a placeholder would decide the Spekulationsfrist
+        with no signal either way. This docstring claimed both refused until 2026-08-09;
+        it now says what the code does. The assumption the gap rests on, measured over
+        2021-2025: two undated lots exist, neither is a `PRIVATE_SALE_ASSET` -- the only
+        category § 23 reaches -- and neither has been disposed of. It becomes live the
+        day an undated lot is crypto, a metal ETP or a currency balance.
+
+        **A cost basis this cannot use stops the run; it is never replaced by zero.**
+        Three substitutions stood here until 2026-08-09 -- an absent basis, one that
+        would not convert, and a negative one -- each logged and each making the whole
+        of a later disposal a gain. Measured over `Positions-*.csv`, 2021-2025:
+        `CostBasisMoney` is blank in 0 of 87 rows, and negative in 21 of 87 which are
+        the 21 short rows, none of them long. So the sign carries information rather
+        than marking an anomaly, and none of the three was reachable on a long lot.
+        """
         if quantity <= Decimal(0): return
-        total_cost_basis_eur: Decimal
-        if asset.soy_cost_basis_amount is None or asset.soy_cost_basis_currency is None: # Renamed
-            logger.error(f"Asset {asset.get_classification_key()} fallback SOY: Missing SOY cost basis. Creating zero-cost lot for Qty {quantity}.")
-            total_cost_basis_eur = self.ctx.create_decimal(Decimal(0))
-        else:
-            total_cost_basis_soy_curr = self.ctx.create_decimal(asset.soy_cost_basis_amount) # Renamed
-            cost_basis_currency = asset.soy_cost_basis_currency # Renamed
-            if cost_basis_currency.upper() == "EUR":
-                total_cost_basis_eur = total_cost_basis_soy_curr
-            else:
-                conversion_date_obj = date_obj(tax_year, 1, 1) 
-                converted_eur = self.currency_converter.convert_to_eur(
-                    original_amount=total_cost_basis_soy_curr, original_currency=cost_basis_currency, date_of_conversion=conversion_date_obj
-                )
-                if converted_eur is None:
-                    logger.error(f"Asset {asset.get_classification_key()} fallback SOY: Failed to convert SOY cost basis. Creating zero-cost lot for Qty {quantity}.")
-                    total_cost_basis_eur = self.ctx.create_decimal(Decimal(0))
-                else:
-                    total_cost_basis_eur = self.ctx.create_decimal(converted_eur)
-            if total_cost_basis_eur < Decimal(0):
-                logger.warning(f"Asset {asset.get_classification_key()} fallback SOY: Reported total cost basis {total_cost_basis_eur} EUR is negative. Using 0 for Qty {quantity}.")
-                total_cost_basis_eur = self.ctx.create_decimal(Decimal(0))
+        if reported_cost_basis is None or reported_cost_basis_currency is None:
+            raise ProcessingError(
+                f"Asset {asset.get_classification_key()}: the position snapshot supplies "
+                f"{quantity} units with no cost basis, so the gain on their disposal cannot "
+                f"be computed. A zero basis would declare the whole proceeds as gain.")
+        total_cost_basis_eur = self.ctx.create_decimal(reported_cost_basis)
+        if reported_cost_basis_currency.upper() != "EUR":
+            converted_eur = self.currency_converter.convert_to_eur(
+                original_amount=total_cost_basis_eur,
+                original_currency=reported_cost_basis_currency,
+                date_of_conversion=fx_conversion_date,
+            )
+            if converted_eur is None:
+                raise ProcessingError(
+                    f"Asset {asset.get_classification_key()}: no rate to convert the "
+                    f"{reported_cost_basis_currency} cost basis of {quantity} units at "
+                    f"{fx_conversion_date}, so their gain on disposal cannot be computed.")
+            total_cost_basis_eur = self.ctx.create_decimal(converted_eur)
+        if total_cost_basis_eur < Decimal(0):
+            raise ProcessingError(
+                f"Asset {asset.get_classification_key()}: the snapshot reports a negative "
+                f"cost basis {total_cost_basis_eur} EUR for a LONG position of {quantity} "
+                f"units. In this broker's exports a negative basis marks a short, so this "
+                f"is a contradiction rather than a value to floor at zero.")
         cost_per_unit = self.ctx.divide(total_cost_basis_eur, quantity) if quantity != Decimal(0) else Decimal(0)
-        acquisition_date_str = f"{tax_year-1}-12-31" 
         fallback_lot = FifoLot(
             acquisition_date=acquisition_date_str, quantity=quantity,
             unit_cost_basis_eur=cost_per_unit, total_cost_basis_eur=total_cost_basis_eur, # Renamed
-            source_transaction_id=self.soy_fallback_lot_source_tx_id
+            source_transaction_id=self.soy_fallback_lot_source_tx_id,
+            acquisition_date_is_known=False,
         )
         self.lots.append(fallback_lot)
         logger.info(
@@ -427,29 +661,39 @@ class FifoLedger:
             f"Qty: {fallback_lot.quantity}, Cost/Unit EUR: {fallback_lot.unit_cost_basis_eur}, Acq. Date: {fallback_lot.acquisition_date}" # Renamed
         )
 
-    def _create_fallback_short_lot(self, asset: Asset, quantity_abs: Decimal, tax_year: int):
+    def _create_fallback_short_lot(self, asset: Asset, quantity_abs: Decimal,
+                                   reported_cost_basis: Optional[Decimal],
+                                   reported_cost_basis_currency: Optional[str],
+                                   opening_date_str: str, fx_conversion_date):
+        """Short-side counterpart of `_create_fallback_long_lot`. IBKR reports the
+        opening proceeds of a short position in the cost-basis column.
+
+        Proceeds this cannot use stop the run, for the reason given on the long side:
+        a zero here makes the entire cover cost a loss. The `copy_abs()` is why there is
+        no negative branch to match the long one -- on a short, a negative
+        `CostBasisMoney` is the normal sign and carries the meaning.
+        """
         if quantity_abs <= Decimal(0): return
-        total_proceeds_eur: Decimal
-        if asset.soy_cost_basis_amount is None or asset.soy_cost_basis_currency is None: # Renamed (using cost basis field for proceeds as per IBKR convention for short SOY)
-            logger.error(f"Asset {asset.get_classification_key()} fallback SOY SHORT: Missing SOY proceeds. Creating zero-proceeds lot for Qty {quantity_abs}.")
-            total_proceeds_eur = self.ctx.create_decimal(Decimal(0))
-        else:
-            total_proceeds_soy_curr = self.ctx.create_decimal(asset.soy_cost_basis_amount).copy_abs() # Renamed
-            proceeds_currency = asset.soy_cost_basis_currency # Renamed
-            if proceeds_currency.upper() == "EUR":
-                total_proceeds_eur = total_proceeds_soy_curr
-            else:
-                conversion_date_obj = date_obj(tax_year, 1, 1) 
-                converted_eur = self.currency_converter.convert_to_eur(
-                    original_amount=total_proceeds_soy_curr, original_currency=proceeds_currency, date_of_conversion=conversion_date_obj
-                )
-                if converted_eur is None:
-                    logger.error(f"Asset {asset.get_classification_key()} fallback SOY SHORT: Failed to convert SOY proceeds. Creating zero-proceeds lot for Qty {quantity_abs}.")
-                    total_proceeds_eur = self.ctx.create_decimal(Decimal(0))
-                else:
-                    total_proceeds_eur = self.ctx.create_decimal(converted_eur)
+        if reported_cost_basis is None or reported_cost_basis_currency is None:
+            raise ProcessingError(
+                f"Asset {asset.get_classification_key()}: the position snapshot reports a "
+                f"short of {quantity_abs} units with no opening proceeds, so the gain on "
+                f"covering them cannot be computed. Zero proceeds would declare the whole "
+                f"cover cost as a loss.")
+        total_proceeds_eur = self.ctx.create_decimal(reported_cost_basis).copy_abs()
+        if reported_cost_basis_currency.upper() != "EUR":
+            converted_eur = self.currency_converter.convert_to_eur(
+                original_amount=total_proceeds_eur,
+                original_currency=reported_cost_basis_currency,
+                date_of_conversion=fx_conversion_date,
+            )
+            if converted_eur is None:
+                raise ProcessingError(
+                    f"Asset {asset.get_classification_key()}: no rate to convert the "
+                    f"{reported_cost_basis_currency} opening proceeds of {quantity_abs} "
+                    f"short units at {fx_conversion_date}.")
+            total_proceeds_eur = self.ctx.create_decimal(converted_eur)
         proceeds_per_unit = self.ctx.divide(total_proceeds_eur, quantity_abs) if quantity_abs != Decimal(0) else Decimal(0)
-        opening_date_str = f"{tax_year-1}-12-31" 
         fallback_short_lot = ShortFifoLot(
             opening_date=opening_date_str, quantity_shorted=quantity_abs,
             unit_sale_proceeds_eur=proceeds_per_unit, total_sale_proceeds_eur=total_proceeds_eur, # Renamed
@@ -629,7 +873,9 @@ class FifoLedger:
 
                 if self.asset_category == AssetCategory.STOCK:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
-                elif self.asset_category == AssetCategory.BOND:
+                elif self.asset_category in [AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG]:
+                    # Both are 20 Abs. 2 Satz 1 Nr. 7 income and share Zeile 19 / Zeile 22.
+                    # They stay distinct categories so the report can name them apart.
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
                 elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
@@ -766,7 +1012,9 @@ class FifoLedger:
 
                 if self.asset_category == AssetCategory.STOCK:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
-                elif self.asset_category == AssetCategory.BOND:
+                elif self.asset_category in [AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG]:
+                    # Both are 20 Abs. 2 Satz 1 Nr. 7 income and share Zeile 19 / Zeile 22.
+                    # They stay distinct categories so the report can name them apart.
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
                 elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                     tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST
@@ -927,7 +1175,8 @@ class FifoLedger:
 
             if self.asset_category == AssetCategory.STOCK:
                 tax_cat = TaxReportingCategory.ANLAGE_KAP_AKTIEN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_AKTIEN_VERLUST
-            elif self.asset_category == AssetCategory.BOND:
+            elif self.asset_category in [AssetCategory.BOND, AssetCategory.SONSTIGE_KAPITALFORDERUNG]:
+                 # Both are 20 Abs. 2 Satz 1 Nr. 7 income and share Zeile 19 / Zeile 22.
                  tax_cat = TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_SONSTIGE_VERLUSTE
             elif self.asset_category in [AssetCategory.OPTION, AssetCategory.CFD, AssetCategory.FUTURE]:
                  tax_cat = TaxReportingCategory.ANLAGE_KAP_TERMIN_GEWINN if gross_gain_loss >= Decimal(0) else TaxReportingCategory.ANLAGE_KAP_TERMIN_VERLUST

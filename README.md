@@ -258,7 +258,7 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "positions": 123458,         # Your Positions query ID (used for both SOY/EOY)
     "corporate_actions": 123459, # Your Corporate Actions query ID
     "cash_balance": 123460,      # Your Cash Balance query ID
-    "options_eae": None,         # Your Options EAE query ID (or None if not needed)
+    "options_eae": None,         # Your Options EAE query ID (None if you never traded index options)
 }
 ```
 
@@ -271,7 +271,7 @@ Trades-{YYYY}.csv               # One file per year
 Cash_Transactions-{YYYY}.csv    # One file per year
 Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
-Options_EAE-{YYYY}.csv          # One file per year (optional, for cash-settled index options)
+Options_EAE-{YYYY}.csv          # One file per year (only if you trade index options — see below)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
@@ -279,6 +279,8 @@ Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 The `data_import/` directory is **read-only** and never modified by the application.
 
 **History concatenation:** Transaction files (Trades, Cash_Transactions, Corporate_Actions, Options_EAE) for all available years up to the tax year are automatically concatenated to provide full FIFO history. Position and Cash Balance files are used only for the selected tax year.
+
+**When Options_EAE is actually needed:** only once a cash-settled index option (SPX, ESTX50, …) has been assigned or exercised. That settlement's proceeds are the entire realised gain on the position and appear in no other export, so the run cannot compute a figure without them. You do not have to work out whether that applies to you: the engine derives it from the trades, and a run that needs a settlement it does not have stops and names the contract, the date and the file to export. An account that never traded index options needs no file, and one that only ever took physical delivery needs none either — those rows duplicate the Trades export.
 
 ### Automatic Download
 
@@ -298,11 +300,78 @@ The download uses a two-step API workflow:
 
 Date ranges are overridden per query to cover the exact calendar year.
 
-**Important limitation:** The IBKR Flex Web Service API only retains approximately the last 2 calendar years of data. Requests for older years return error 1003 ("Statement is not available"). This means the automatic download can only fetch recent data -- it cannot retrieve the full trading history needed for accurate FIFO cost basis calculations. For older years, you must download data manually (see below).
+**Important limitation:** The IBKR Flex Web Service API only retains approximately the last 2 calendar years of data. Requests for older years return error 1003 ("Statement is not available"). This means the automatic download can only fetch recent data -- it cannot retrieve the full trading history needed for accurate FIFO cost basis calculations. For older years, use the [Client Portal download](#client-portal-download-for-older-years) below, which has no such limit.
 
-### Manual Download (Required for Older Years)
+### Client Portal Download (For Older Years)
 
-Since the Flex Web Service API only serves ~2 years of history, you need to manually export older years from the IBKR Client Portal using Activity Statements, which have a longer retention window.
+The Client Portal runs the same Flex Queries over any date range, with no
+two-year limit. `src/web_portal/` drives it in a real browser, so older years
+can be fetched without clicking through the portal by hand.
+
+```bash
+uv sync --extra web                                              # one-off: installs Playwright
+uv run python -m src.web_portal.download --years 2021-2023
+```
+
+A browser window opens. **You log in yourself, including two-factor.** The tool
+never asks for, stores, or records your password; the browser profile it uses
+has Chrome's password manager disabled so the browser cannot save it either.
+Your username can be remembered with `--username`, which writes it to the
+gitignored `private/portal_username`.
+
+Once the portal answers as a logged-in user, every query is asked for over
+every requested year, and the reports are then collected as the portal
+finishes them. Small ones come back immediately; larger ones are queued for
+batch processing, and the portal runs those in parallel — so nothing waits its
+turn, and a slow report does not hold up the ones behind it. Each result is
+written to `data_import/` the moment it arrives, under the naming scheme below.
+**Existing files are never replaced** unless you pass `--overwrite`; a file
+already present is not requested from the portal at all.
+
+**Leave the browser window open and do not log out in it.** The portal ends a
+session after about fifteen minutes without user activity, and neither its own
+keep-alive nor the downloader's polling counts — a run was seen losing
+twenty-four reports to it. The downloader now moves the pointer in the window
+periodically to keep the session awake. Whatever it has already written is
+kept, and anything the portal has finished generating is collected from the
+batch list on the next run without being generated again.
+
+Useful options:
+
+| Option | Effect |
+|--------|--------|
+| `--years 2021 2023` or `--years 2021-2023` | Which years to fetch |
+| `--queries trades positions` | Only some reports (default: all configured) |
+| `--query-name-prefix MyTax` | Resolve query IDs from the portal by name instead of `FLEX_QUERY_IDS` |
+| `--overwrite` | Replace files already in `data_import/` |
+| `--timeout-seconds` | How long to wait for one report (default 900). A report that outlives it keeps generating; re-run to collect it |
+| `--reset-profile` | Delete the saved browser profile and log in fresh. Use if the portal keeps saying "Your Session Has Expired" |
+
+**Positions snapshot dates.** Two snapshots are fetched per year:
+`Positions-{YYYY}-SoY.csv` as of that year's **first trading day**, and
+`Positions-{YYYY}-EoY.csv` as of its **last**. Choosing those two dates is the
+whole of the downloader's involvement — how the engine reads the files is
+decided in `src/data_preparation.py`, and is deliberately not restated here.
+
+A run for tax year `Y` needs `Positions-{Y-1}-EoY.csv`: it is required, not
+optional, and the run stops with an explanation if it is missing.
+
+**Resolving queries by name.** If you gave your six Flex Queries a common
+naming prefix — `MyTax Trades`, `MyTax_Cash_Transactions`, and so on — set
+`FLEX_QUERY_NAME_PREFIX` in `src/config.py` and the downloader looks the IDs up
+in the portal. Case and separators do not matter. This survives recreating a
+query, which changes its numeric ID but not its name; a stale ID in
+`FLEX_QUERY_IDS` would otherwise download the wrong report shape without
+complaining.
+
+**If the portal changes.** `python -m src.web_portal.discover` opens a recorded
+session: you drive the portal by hand while it logs what it does, redacted, to
+the gitignored `private/portal_discovery/`. That recording is how the protocol
+above was established, and re-running it is how to re-establish it.
+
+### Manual Download (Fallback)
+
+The same thing by hand, if you prefer it or the automated path breaks.
 
 **Step-by-step:**
 
@@ -320,13 +389,13 @@ Since the Flex Web Service API only serves ~2 years of history, you need to manu
    | Corporate Actions | `Corporate_Actions-{YYYY}.csv` |
    | Cash Balance | `Cash_Balance-{YYYY}.csv` |
    | Options EAE | `Options_EAE-{YYYY}.csv` |
-   | Positions (Jan 1) | `Positions-{YYYY}-SoY.csv` |
-   | Positions (Dec 31) | `Positions-{YYYY}-EoY.csv` |
+   | Positions (first trading day) | `Positions-{YYYY}-SoY.csv` |
+   | Positions (last trading day) | `Positions-{YYYY}-EoY.csv` |
 
-7. For **Positions**, run the same query twice per year: once with the date set to **January 1** (SoY) and once with **December 31** (EoY).
+7. For **Positions**, run the same query twice per year: once dated to the year's **first trading day** (SoY) and once to its **last** (EoY) — the same two dates `src/web_portal/download.py` uses. Not 1 January: a snapshot is taken at the close of the day it names, and no exchange is open on 1 January, so a file dated there holds the *previous* year's closing prices. Doing it by hand is how three such files reached `data_import/` and had to be re-fetched.
 8. Repeat for each historical year back to your first year of trading at IBKR.
 
-**Example:** If your tax year is 2025 and you started trading in 2021, you need files for 2021-2025. The automatic download may cover 2024-2025, so you must manually export 2021-2023.
+**Example:** If your tax year is 2025 and you started trading in 2021, you need files for 2021-2025. The Flex Web Service download may cover 2024-2025; 2021-2023 come from the Client Portal.
 
 ## Configuration
 
@@ -373,8 +442,13 @@ uv run python validate_ledgers.py --year 2024
 uv run python validate_ledgers.py --verbose --quiet
 ```
 
-**A securities EoY mismatch aborts the run.** The start-of-year quantity is taken from the
-`Positions-{YYYY}-SoY.csv` snapshot, not reconstructed from earlier years, so the end-of-year
+**Validate assessment year 2023 and later only.** Earlier years are imported to build the
+historical FIFO ledger, but their own figures rest on lots acquired before the data window and
+are not a result to measure anything against. The bare sweep does not know this — it selects on
+`Positions-{Y}-SoY.csv`, which is not the file the pipeline opens from — so pass `--year`.
+
+**A securities EoY mismatch aborts the run.** The quantity the tax year starts from is taken
+from the `Positions-{Y-1}-EoY.csv` snapshot, not reconstructed from earlier years, so the end-of-year
 quantity is determined by that snapshot plus the tax year's own events and has exactly one
 correct answer. If the engine's answer differs from the broker's, an event is missing or was
 processed incorrectly — an absent trade or corporate action, an option exercise that was not
@@ -396,7 +470,47 @@ the note above). They are reported as `CURRENCY_EOY_MISMATCH` in the console and
 
 1.  **Console:** Processing logs and, with `--report-tax-declaration`, a summary of figures for direct tax form entry.
 2.  **PDF Report:** Detailed report with taxpayer info, Anlage KAP/KAP-INV/SO summaries, income events, realized gains/losses, and corporate actions.
-3.  **Cache Files:** `cache/user_classifications.json` and `cache/ecb_exchange_rates.json`.
+3.  **Cache Files:** `cache/user_classifications.json`, `cache/ecb_exchange_rates.json` and
+    `cache/user_fund_prices.json`.
+
+### `cache/user_fund_prices.json` -- year-start fund prices you supply
+
+A fund you bought *during* a year is not in that year's start-of-year positions report, because
+the report lists what you held. The Vorabpauschale nevertheless needs the fund's Ruecknahmepreis
+at the **start of that calendar year** (§ 18 Abs. 1 Satz 2 InvStG) -- a property of the fund, not
+of your holding -- and then reduces the result by a twelfth for each full month before the month
+you bought (§ 18 Abs. 2). A July purchase owes six twelfths, not nothing.
+
+No IBKR export carries that price, and neither does the IBKR API: its historical endpoints serve
+market prices, and its ETF NAV ticks reach only one session back. So an interactive run asks you
+for it, once per fund per year, and remembers the answer here.
+
+**The year-start price is looked up at the fund provider, for every fund.** § 18 Abs. 1 Satz 2
+InvStG asks for the *Rücknahmepreis*, and Satz 4 allows a stock-exchange or market price only where
+no Rücknahmepreis was set. A fund that redeems units at its NAV sets one -- so the run fetches that
+NAV by ISIN (iShares, SPDR and VanEck, in Europe and the US, then Swiss Fund Data for everything
+else) rather than reaching for the closing mark in your positions report.
+
+A price once obtained is cached in `cache/user_fund_prices.json`, and a past year's first NAV never
+changes, so only the first run for a given year does any lookups.
+
+**Where no Rücknahmepreis can be had**, in this order:
+
+1. you are asked, and offered the positions report's price as the default if the report has one --
+   press Enter to take it;
+2. in a `--no-interactive` run the report's price is used automatically, if there is one;
+3. otherwise the run **stops**, naming every fund it needs a price for, so one run tells you the
+   whole list.
+
+Cases 1 and 2 record `VORABPAUSCHALE_PRICE_MARKET_FALLBACK` against the fund, because the figure
+then rests on Satz 4's substitute rather than on the Rücknahmepreis. That difference is an ETF's
+premium or discount to NAV, and it is deducted again from the gain when you sell
+(§ 19 Abs. 1 Satz 3, Anlage KAP-INV Zeile 53) -- but you can see which funds it applies to.
+
+Set `FUND_PRICE_AUTO_FETCH = False` in `src/config.py` to keep the run offline entirely; funds your
+report prices then use that price, and funds it does not price stop the run.
+
+Like `user_classifications.json`, nothing recomputes the price cache. Back it up.
 
 ## German Tax Form Mapping
 
@@ -455,7 +569,7 @@ uv run pytest tests/test_group7_currency_fifo.py -v   # Currency FIFO
 
 ## Known Limitations
 
-*   **IBKR API history:** The Flex Web Service API only retains ~2 calendar years of data. Older years must be exported manually from the IBKR Client Portal (see [Manual Download](#manual-download-required-for-older-years)).
+*   **IBKR API history:** The Flex Web Service API only retains ~2 calendar years of data. Older years come from the Client Portal instead, either with the browser downloader or by hand (see [Client Portal Download](#client-portal-download-for-older-years)).
 *   **No "Alt-Anteile":** Assumes all investment fund shares were acquired on or after January 1, 2018.
 *   **Foreign WHT:** Aggregates WHT paid (Anlage KAP Zeile 41) but does not calculate creditable WHT.
 *   **No loss carry-forward/backward:** Calculations are limited to the specified tax year.

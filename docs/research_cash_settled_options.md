@@ -2,21 +2,21 @@
 
 ## Problem
 
-Cash-settled index options (SPX, ESTX50) are traded in the account but never produce proper RealizedGainLoss entries. The engine was built entirely for physically-delivered options, where an exercise/assignment results in a stock trade. For cash-settled index options, no stock trade ever occurs — the settlement is a cash payment equal to the intrinsic value.
+Cash-settled index options (IDX, ESTX50) are traded in the account but never produce proper RealizedGainLoss entries. The engine was built entirely for physically-delivered options, where an exercise/assignment results in a stock trade. For cash-settled index options, no stock trade ever occurs — the settlement is a cash payment equal to the intrinsic value.
 
 ## Findings
 
 ### 1. Cash-settled options ARE in the CSV data
 
 The Trades-2025.csv contains:
-- **168 SPX trades** (multiplier 100, USD)
+- **168 IDX trades** (multiplier 100, USD)
 - **136 ESTX50 trades** (multiplier 10, EUR)
 
 Exercises and assignments appear as regular trade rows with `TradePrice=0` and `Notes/Codes` = "A" (assignment) or "Ex" (exercise). Example:
 
 ```
-AssetClass=OPT, Symbol="SPX 251219C05200000", TradeDate=2025-12-19,
-Quantity=40, TradePrice=0, Notes/Codes=A, UnderlyingSymbol=SPX
+AssetClass=OPT, Symbol="IDX  260116C05000000", TradeDate=2025-12-19,
+Quantity=40, TradePrice=0, Notes/Codes=A, UnderlyingSymbol=IDX
 ```
 
 ### 2. The settlement cash amount is NOT captured anywhere
@@ -27,7 +27,7 @@ Quantity=40, TradePrice=0, Notes/Codes=A, UnderlyingSymbol=SPX
 
 ### 3. The code fails on these options
 
-The engine requires `underlying_asset_internal_id` for exercises/assignments (to link to a stock trade). For index options like SPX/ESTX50, no underlying stock trade exists, causing a `ValueError`. This is the 2025 validation failure documented in `docs/research_option_underlying_link_failure.md`.
+The engine requires `underlying_asset_internal_id` for exercises/assignments (to link to a stock trade). For index options like IDX/ESTX50, no underlying stock trade exists, causing a `ValueError`. This is the 2025 validation failure documented in `docs/research_option_underlying_link_failure.md`.
 
 ### 4. IBKR has a dedicated Flex Query section for this
 
@@ -54,9 +54,10 @@ Sources:
 - [Activity Flex Query Reference](https://www.ibkrguides.com/reportingreference/reportguide/activity%20flex%20query%20reference.htm)
 - [Cash Settlement Definition](https://www.interactivebrokers.com/campus/glossary-terms/cash-settlement-amount/)
 
-## OptionEAE Data Analysis (from `Gemini_Options_EAE-*.csv`)
+## OptionEAE Data Analysis (from `Options_EAE-*.csv`)
 
-The OptionEAE Flex Query data has been downloaded. Files: `data_import/Gemini_Options_EAE-{2021..2025}.csv`
+The OptionEAE Flex Query data is read from `data_import/Options_EAE-{YYYY}.csv`, one file per
+year. Every figure below is illustrative: the shapes are real, the numbers are not.
 
 ### CSV Header (22 columns)
 
@@ -71,38 +72,38 @@ Basis, RealizedPnl
 
 Each option lifecycle event produces **different row patterns** depending on settlement type:
 
-#### 1. Cash-Settled Options (SPX, ESTX50) — TWO rows per event
+#### 1. Cash-Settled Options (IDX, ESTX50) — TWO rows per event
 
 **Row 1: Assignment/Exercise** — closes the option position
 ```
-TransactionType=Assignment, Quantity=40, TradePrice=0, Proceeds=0, Comm/Tax=0, Basis=0
+TransactionType=Assignment, Quantity=10, TradePrice=0, Proceeds=0, Comm/Tax=0, Basis=0
 ```
 
 **Row 2: Cash Settlement** — records the actual cash payout
 ```
-TransactionType="Cash Settlement", Quantity=0, TradePrice=0, Proceeds=-6386160, Comm/Tax=0
+TransactionType="Cash Settlement", Quantity=0, TradePrice=0, Proceeds=-25000, Comm/Tax=0
 ```
 
 The Proceeds in the "Cash Settlement" row is the cash amount paid/received. Negative = paid out (short position was assigned), positive = received (long position was exercised).
 
-**Example — SPX 5200 Call assigned (short 40 contracts):**
-- Row 1: `Assignment, Qty=40, Proceeds=0`
-- Row 2: `Cash Settlement, Qty=0, Proceeds=-6,386,160` (paid out: settlement value above strike × 100 × 40)
+**Example — index Call assigned (short 10 contracts, multiplier 100):**
+- Row 1: `Assignment, Qty=10, Proceeds=0`
+- Row 2: `Cash Settlement, Qty=0, Proceeds=-25,000` (paid out: settlement value above strike × 100 × 10)
 
-**Example — ESTX50 4950 Call exercised (long 2 contracts):**
+**Example — index Call exercised (long 2 contracts, multiplier 10):**
 - Row 1: `Exercise, Qty=-2, Proceeds=0`
-- Row 2: `Cash Settlement, Qty=0, Proceeds=8,982.80` (received: settlement value above strike × 10 × 2)
+- Row 2: `Cash Settlement, Qty=0, Proceeds=1,500.00` (received: settlement value above strike × 10 × 2)
 
 #### 2. Physically-Settled Options (IBIT, MU, TLT, GME, LEG, etc.) — TWO rows per event
 
 **Row 1: Assignment/Exercise** — closes the option position
 ```
-TransactionType=Assignment, Qty=3, TradePrice=0, Proceeds=0
+TransactionType=Assignment, Qty=1, TradePrice=0, Proceeds=0
 ```
 
 **Row 2: Stock Buy/Sell** — the underlying stock delivery
 ```
-AssetClass=STK, TransactionType=Buy/Sell, Qty=300, TradePrice=64, Proceeds=-19200
+AssetClass=STK, TransactionType=Buy/Sell, Qty=100, TradePrice=50, Proceeds=-5000
 ```
 
 The stock delivery row has `AssetClass=STK` and includes the strike as `TradePrice` with proper Proceeds.
@@ -144,7 +145,7 @@ Positive quantity = long position expired worthless. Negative = short position e
 Once parsing is implemented, the following code areas need updates:
 - `src/config.py` — add query ID to `FLEX_QUERY_IDS`
 - `src/flex_downloader.py` — add to download list
-- `src/data_preparation.py` — add file handling for `Gemini_Options_EAE-{YYYY}.csv`
+- `src/data_preparation.py` — add file handling for `Options_EAE-{YYYY}.csv`
 - `src/parsers/` — new parser for OptionEAE CSV format, extracting "Cash Settlement" rows
 - `src/engine/event_processors/option_processor.py` — handle cash-settled exercises: generate RGL from Cash Settlement Proceeds instead of requiring underlying stock trade
 - `src/processing/option_trade_linker.py` — skip linking for cash-settled options

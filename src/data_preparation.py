@@ -17,6 +17,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 IMPORT_DIR = Path("data_import")
+
 WORKING_DIR = Path("data")
 
 # Naming scheme for data_import/ files
@@ -35,6 +36,28 @@ def _find_import_file(pattern_prefix: str, year: int, suffix: str = ".csv") -> O
     if path.exists():
         return path
     return None
+
+
+def _earliest_import_year() -> int:
+    """The first calendar year any input file covers.
+
+    Used to bound the checkpoint marks. Reads the year out of every
+    `<Prefix>-<YYYY>...csv` in the import directory rather than assuming a start
+    year, so a user whose history begins later gets marks only where snapshots
+    actually exist.
+    """
+    years = []
+    for f in IMPORT_DIR.glob("*-*.csv"):
+        for part in f.stem.split("-"):
+            if len(part) == 4 and part.isdigit():
+                years.append(int(part))
+                break
+    if not years:
+        raise FileNotFoundError(
+            f"No year-stamped input files found in {IMPORT_DIR}/. Expected the naming scheme "
+            f"Trades-YYYY.csv, Positions-YYYY-EoY.csv, etc."
+        )
+    return min(years)
 
 
 def _find_years_available(pattern_prefix: str) -> list[int]:
@@ -138,7 +161,13 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         "corporate_actions": "Corporate_Actions",
     }
 
-    # Optional transaction types (no error if missing)
+    # Optional here because whether the file is needed cannot be decided from its name:
+    # an account that never traded options needs none, and one that only ever took
+    # physical delivery needs none either -- those OptionEAE rows duplicate the Trades
+    # export. Only a cash settlement carries information found nowhere else, and only the
+    # trades say whether one happened. So the requirement is decided after parsing, in
+    # `ParsingOrchestrator._require_option_cash_settlements`, not by a missing-file check
+    # here. Absent means absent; it does not mean unnecessary.
     optional_transaction_types = {
         "options_eae": "Options_EAE",
     }
@@ -192,16 +221,30 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         logger.info("%s: %d year(s) included (%s)", file_key, len(years_to_include),
                     ", ".join(str(y) for y in years_to_include))
 
-    # --- Positions: copy SoY and EoY for the tax year ---
-    soy_file = _find_import_file("Positions", tax_year, "-SoY.csv")
-    if soy_file:
+    # --- Opening position: the PRECEDING year's end-of-year snapshot ---
+    # The ledger's opening lots and the end-of-year reconciliation baseline must be the holding
+    # as it stood before the tax year's first trade. That is the close of the preceding year,
+    # not this year's own start-of-year file: a start-of-year snapshot is taken at the close of
+    # the day it names, so if it names a trading day it already contains that day's trades and
+    # the same trades arrive again from the Trades file. A VZ 2024 run failed exactly so.
+    #
+    # This year's Positions-{tax_year}-SoY.csv is deliberately not read here. It carries the
+    # Ruecknahmepreis at the start of this calendar year, which belongs to the Vorabpauschale
+    # declared one year later, and it is picked up then as the prior year's start snapshot.
+    opening_file = _find_import_file("Positions", tax_year - 1, "-EoY.csv")
+    if opening_file:
         soy_output = WORKING_DIR / "positions_start_of_year.csv"
-        _copy_file(soy_file, soy_output)
+        _copy_file(opening_file, soy_output)
         result["positions_start"] = str(soy_output)
     else:
-        # SoY may not exist for the first year of trading
-        logger.warning("No Positions-%d-SoY.csv found. This is expected for the first year of trading.", tax_year)
-        result["positions_start"] = ""
+        raise FileNotFoundError(
+            f"Positions-{tax_year - 1}-EoY.csv not found in {IMPORT_DIR}/. It is the opening "
+            f"position for tax year {tax_year}: the lots the year starts with, and the baseline "
+            f"the end-of-year reconciliation is measured against. Without it the run would "
+            f"begin from an empty portfolio and every carried-in holding would reconcile "
+            f"wrongly. If {tax_year} is genuinely the first year with holdings, an empty file "
+            f"with only a header row states that explicitly."
+        )
 
     eoy_file = _find_import_file("Positions", tax_year, "-EoY.csv")
     if eoy_file:
@@ -212,6 +255,36 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         logger.warning("No Positions-%d-EoY.csv found.", tax_year)
         result["positions_end"] = ""
 
+    # --- Intermediate checkpoint marks for the historical replay ---
+    # A partial ledger is the normal starting condition: the transaction files reach back only so
+    # far, so the reconstruction of the earliest interval is missing whatever was held before the
+    # window opened. The position snapshots are the ground truth to recover from, and there is one
+    # at the close of every year, not just at the tax year's own boundary.
+    #
+    # Each `Positions-{Y}-EoY.csv` below the opening snapshot becomes a mark: the replay stops
+    # there, compares, and either keeps the reconstruction or takes the snapshot and carries on.
+    # `Positions-{tax_year-1}-EoY.csv` is NOT included -- it is the opening snapshot loaded above
+    # and reconciled as the final mark by the existing path.
+    #
+    # EoY files only. A `Positions-{Y}-SoY.csv` names the close of the day it names, so on a
+    # trading day it already contains that day's trades, and the same trades arrive again from the
+    # Trades file (see the opening-position comment above). Those files feed the Vorabpauschale
+    # reference prices and nothing else.
+    mark_years = sorted(
+        y for y in range(_earliest_import_year(), tax_year - 1)
+        if _find_import_file("Positions", y, "-EoY.csv")
+    )
+    for year in mark_years:
+        mark_file = _find_import_file("Positions", year, "-EoY.csv")
+        mark_output = WORKING_DIR / f"positions_mark_{year}.csv"
+        _copy_file(mark_file, mark_output)
+        result[f"positions_mark_{year}"] = str(mark_output)
+    if mark_years:
+        logger.info("Historical replay checkpoint marks: %s",
+                    ", ".join(f"{y}-12-31" for y in mark_years))
+    else:
+        logger.info("No intermediate checkpoint marks below %d-12-31.", tax_year - 1)
+
     # --- Positions for the preceding year: needed for the Vorabpauschale ---
     # The VP declared in VZ Y is the one computed FOR calendar Y-1 (18 Abs. 3 InvStG; Anleitung
     # zur Anlage KAP-INV, Zeilen 9-13). Its Basisertrag uses the Ruecknahmepreis at the start of
@@ -219,12 +292,20 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
     # required. Absence is not an error here -- the engine decides what to do about a missing
     # snapshot at the point it knows whether any fund is actually held
     # (src/engine/calculation_engine.py).
+    # Three snapshots, because the Basisertrag's price and its unit count are taken at
+    # different moments. For the Vorabpauschale of calendar X (= tax_year - 1):
+    #   positions_prior_start  X's first trading day    -> the Satz 2 price
+    #   positions_prior_opening  close of X-1           -> the unit count, and the price
+    #                                                      fallback when a fund was sold on
+    #                                                      X's first trading day
+    #   positions_prior_end    close of X               -> the Satz 3 cap's upper bound
     prior_year = tax_year - 1
-    for file_key, suffix, label in (
-        ("positions_prior_start", "-SoY.csv", "start"),
-        ("positions_prior_end", "-EoY.csv", "end"),
+    for file_key, suffix, label, year in (
+        ("positions_prior_start", "-SoY.csv", "start", prior_year),
+        ("positions_prior_end", "-EoY.csv", "end", prior_year),
+        ("positions_prior_opening", "-EoY.csv", "opening", prior_year - 1),
     ):
-        prior_file = _find_import_file("Positions", prior_year, suffix)
+        prior_file = _find_import_file("Positions", year, suffix)
         if prior_file:
             prior_output = WORKING_DIR / f"positions_prior_year_{label}.csv"
             _copy_file(prior_file, prior_output)
@@ -233,7 +314,7 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
             logger.info(
                 "No Positions-%d%s found. The Vorabpauschale for calendar %d cannot be "
                 "computed from it; the engine will report this as a data gap if funds are held.",
-                prior_year, suffix, prior_year,
+                year, suffix, prior_year,
             )
             result[file_key] = ""
 

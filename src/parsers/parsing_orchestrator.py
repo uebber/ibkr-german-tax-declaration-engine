@@ -7,16 +7,22 @@ import logging
 import sys 
 
 from src.domain.assets import (
-    Asset, InvestmentFund, Option, CashBalance, Derivative, Stock, Bond, PrivateSaleAsset, Cfd # Changed Section23EstgAsset to PrivateSaleAsset
+    Asset, InvestmentFund, Option, CashBalance, Derivative, Stock, Bond, PrivateSaleAsset, Cfd, # Changed Section23EstgAsset to PrivateSaleAsset
+    MarkPosition,
 )
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
-from src.domain.events import FinancialEvent, OptionLifecycleEvent, TradeEvent
+from src.domain.events import (
+    FinancialEvent, OptionLifecycleEvent, TradeEvent,
+    OptionAssignmentEvent, OptionExerciseEvent, OptionCashSettlementEvent,
+)
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
-from src.domain.exceptions import DataIntegrityError
+from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
+from src.utils.snapshot_dates import (
+    first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
-from src.utils.type_utils import parse_ibkr_date, parse_ibkr_datetime, safe_decimal
+from src.utils.type_utils import parse_ibkr_date
 import src.config as global_config 
 
 from .raw_models import (
@@ -37,6 +43,85 @@ from src.processing.withholding_tax_linker import WithholdingTaxLinker
 
 logger = logging.getLogger(__name__)
 
+
+def _drop_cancelled_trade_pairs(raw_trades: List[RawTradeRecord]) -> List[RawTradeRecord]:
+    """Remove every cancelled booking and the row that cancelled it.
+
+    IBKR books a cancellation as its own row: ``Buy/Sell`` carries the ORIGINAL
+    trade's direction word with a ``(Ca.)`` suffix, the quantity is the
+    original's negated, ``Notes/Codes`` is ``Ca``, and the transaction id is
+    later than the original's. A rebooked row normally follows and stands on its
+    own. A cancelled trade did not happen, so the pair is a no-op and neither
+    half should reach the ledger.
+
+    Removing the pair is preferred over interpreting the cancellation row,
+    because that row carries no ``Open/CloseIndicator``: nothing in it says
+    whether the booking it reverses opened a long or closed a short, and the
+    rebooked row is not a reliable guide -- on the one instance in this
+    repository's input the original was ``oc=C`` and the rebook ``oc=O``.
+
+    Until August 2026 these rows were not recognised at all. ``"BUY (Ca.)"``
+    matches neither ``"BUY"`` nor ``"SELL"``, so ``_determine_trade_event_type``
+    fell through to inferring direction from the quantity sign and logged
+    "Buy/Sell indicator missing" -- which was false, the indicator was present
+    and unrecognised. A cancelled BUY became a SELL. In a declared year that
+    produces a disposal that never happened, consuming the oldest lots FIFO and
+    emitting a realised gain, while the end-of-year quantity still reconciles
+    because the rebooked row restores the count.
+
+    An unmatched cancellation raises: it means the input contradicts itself, or
+    the booking it reverses lies before the earliest file loaded. Every case is
+    collected before raising.
+    """
+    cancellations = [r for r in raw_trades if "(CA.)" in (r.buy_sell or "").upper()]
+    if not cancellations:
+        return raw_trades
+
+    def _key(record) -> Tuple[Any, ...]:
+        return (record.isin or "", record.conid or "", record.symbol or "",
+                record.trade_date or "")
+
+    removed: Set[int] = set()
+    unmatched: List[str] = []
+    for cancellation in cancellations:
+        word = (cancellation.buy_sell or "").upper().replace("(CA.)", "").strip()
+        quantity = cancellation.quantity
+        candidates = [
+            r for r in raw_trades
+            if id(r) not in removed
+            and r is not cancellation
+            and _key(r) == _key(cancellation)
+            and (r.buy_sell or "").strip().upper() == word
+            and r.quantity == -quantity
+            and (r.transaction_id or "") < (cancellation.transaction_id or "")
+        ]
+        if not candidates:
+            unmatched.append(
+                f"{cancellation.buy_sell} {cancellation.quantity} of "
+                f"{cancellation.isin or cancellation.symbol} on {cancellation.trade_date} "
+                f"(transaction {cancellation.transaction_id})")
+            continue
+        # The nearest preceding booking, where the broker has reused a quantity.
+        original = max(candidates, key=lambda r: (r.transaction_id or ""))
+        removed.add(id(original))
+        removed.add(id(cancellation))
+        logger.info(
+            "Cancelled trade dropped with its cancellation: %s %s of %s on %s "
+            "(original transaction %s, cancellation %s).",
+            original.buy_sell, original.quantity,
+            original.isin or original.symbol, original.trade_date,
+            original.transaction_id, cancellation.transaction_id)
+
+    if unmatched:
+        raise DataIntegrityError(
+            "Trade cancellation rows with no booking to cancel. A '(Ca.)' row reverses an "
+            "earlier trade of the same instrument, date, direction and quantity; without it "
+            "the row cannot be applied, and guessing its direction from the quantity sign is "
+            "how a cancelled purchase becomes a phantom disposal. "
+            f"{len(unmatched)} case(s): " + "; ".join(unmatched))
+
+    return [r for r in raw_trades if id(r) not in removed]
+
 class ParsingOrchestrator:
     def __init__(self, asset_resolver: AssetResolver, asset_classifier: AssetClassifier, interactive_classification: bool = True):
         self.asset_resolver = asset_resolver
@@ -50,13 +135,25 @@ class ParsingOrchestrator:
         # Preceding calendar year's snapshots -- Vorabpauschale only. See Asset.prior_year_*.
         self.raw_positions_prior_start: List[RawPositionRecord] = []
         self.raw_positions_prior_end: List[RawPositionRecord] = []
+        self.raw_positions_prior_opening: List[RawPositionRecord] = []
+        # Checkpoint marks for the historical replay: {year: rows of Positions-{year}-EoY.csv}.
+        # Resolved into `mark_positions` (keyed by asset) once assets exist.
+        self.raw_positions_marks: Dict[int, List[RawPositionRecord]] = {}
+        self.mark_positions: Dict[int, Dict[uuid.UUID, MarkPosition]] = {}
         # Which prior-year snapshot fields were read onto which asset, so the pipeline can
         # verify they are still there once classification has run. See
         # _verify_prior_year_snapshot_survived_classification.
         self._prior_year_snapshot_fields: Dict[uuid.UUID, Dict[str, Any]] = {}
+        # Funds whose Satz 2 price had to be taken from the wrong day. Drained into the
+        # data-gap channel by the pipeline, so it reaches the report rather than the log.
+        self.vorabpauschale_price_substitutions: List[Tuple[str, str]] = []
         self.raw_corporate_actions: List[RawCorporateActionRecord] = []
         self.raw_cash_balances: List[RawCashBalanceRecord] = []
         self.raw_options_eae: List[RawOptionsEAERecord] = []
+        # Whether an OptionEAE file was offered at all, as opposed to offered and empty.
+        # Only the wording of _require_option_cash_settlements' error depends on it: the
+        # requirement itself comes from the trades, never from the file's presence.
+        self.options_eae_file_supplied: bool = False
 
         self.domain_financial_events: List[FinancialEvent] = []
         # NEW: Store collections for linking
@@ -73,12 +170,14 @@ class ParsingOrchestrator:
                            positions_end_file: Optional[str] = None,
                            positions_prior_start_file: Optional[str] = None,
                            positions_prior_end_file: Optional[str] = None,
+                             positions_prior_opening_file: Optional[str] = None,
                            corporate_actions_file: Optional[str] = None,
                            cash_balance_file: Optional[str] = None,
-                           options_eae_file: Optional[str] = None):
+                           options_eae_file: Optional[str] = None,
+                           positions_mark_files: Optional[Dict[int, str]] = None):
         # ... (implementation is the same)
         if trades_file:
-            self.raw_trades = parse_trades_csv(trades_file)
+            self.raw_trades = _drop_cancelled_trade_pairs(parse_trades_csv(trades_file))
             logger.info(f"Loaded {len(self.raw_trades)} raw trade records.")
         if cash_transactions_file:
             self.raw_cash_transactions = parse_cash_transactions_csv(cash_transactions_file)
@@ -95,6 +194,9 @@ class ParsingOrchestrator:
         if positions_prior_end_file:
             self.raw_positions_prior_end = parse_positions_csv(positions_prior_end_file)
             logger.info(f"Loaded {len(self.raw_positions_prior_end)} raw prior-year end-of-year position records (Vorabpauschale).")
+        if positions_prior_opening_file:
+            self.raw_positions_prior_opening = parse_positions_csv(positions_prior_opening_file)
+            logger.info(f"Loaded {len(self.raw_positions_prior_opening)} raw opening position records (Vorabpauschale unit count).")
         if corporate_actions_file:
             self.raw_corporate_actions = parse_corporate_actions_csv(corporate_actions_file)
             logger.info(f"Loaded {len(self.raw_corporate_actions)} raw corporate action records.")
@@ -102,10 +204,15 @@ class ParsingOrchestrator:
             self.raw_cash_balances = parse_cash_balance_csv(cash_balance_file)
             logger.info(f"Loaded {len(self.raw_cash_balances)} raw cash balance records.")
         if options_eae_file:
+            self.options_eae_file_supplied = True
             self.raw_options_eae = parse_options_eae_csv(options_eae_file)
             logger.info(f"Loaded {len(self.raw_options_eae)} raw OptionEAE records.")
+        for mark_year, mark_file in sorted((positions_mark_files or {}).items()):
+            self.raw_positions_marks[mark_year] = parse_positions_csv(mark_file)
+            logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
+                        f"for the {mark_year}-12-31 checkpoint mark.")
 
-    def process_positions(self):
+    def process_positions(self, tax_year: Optional[int] = None):
         # ... (implementation is the same)
         logger.info("Processing start-of-year positions...")
         for raw_pos in self.raw_positions_start:
@@ -114,16 +221,14 @@ class ParsingOrchestrator:
                 raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
                 raw_description=raw_pos.description,
                 description_source_type="position",
-                raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-                raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+                raw_multiplier=raw_pos.multiplier,
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0)) # Changed from initial_quantity_soy
-            asset.soy_cost_basis_amount = safe_decimal(raw_pos.cost_basis_money) # Changed from initial_cost_basis_money_soy
+            asset.soy_quantity = raw_pos.position # Changed from initial_quantity_soy
+            asset.soy_cost_basis_amount = raw_pos.cost_basis_money # Changed from initial_cost_basis_money_soy
             asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
-            asset.soy_market_price = safe_decimal(raw_pos.mark_price)
-            asset.soy_position_value = safe_decimal(raw_pos.position_value)
+            asset.soy_position_value = raw_pos.position_value
             asset.soy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
 
@@ -134,14 +239,13 @@ class ParsingOrchestrator:
                 raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
                 raw_description=raw_pos.description,
                 description_source_type="position",
-                raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-                raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+                raw_multiplier=raw_pos.multiplier,
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.eoy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.eoy_market_price = safe_decimal(raw_pos.mark_price) # Changed from eoy_mark_price
-            asset.eoy_position_value = safe_decimal(raw_pos.position_value)
+            asset.eoy_quantity = raw_pos.position
+            asset.eoy_market_price = raw_pos.mark_price # Changed from eoy_mark_price
+            asset.eoy_position_value = raw_pos.position_value
             asset.eoy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
 
@@ -149,23 +253,136 @@ class ParsingOrchestrator:
         # declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). These must not
         # feed cost basis, reconciliation or any other consumer.
         logger.info("Processing prior-year positions (Vorabpauschale reference prices)...")
+        # The day each snapshot describes. The files carry no date column, so it is the
+        # naming convention they were selected by -- Positions-{X}-SoY.csv is X's first
+        # trading day, Positions-{X}-EoY.csv the close of X (src/data_preparation.py).
+        # Recorded here, next to the price, because Rz. 18.6 converts each price at the
+        # ECB rate of the day it was set (GT-INVSTG-018) and by the time the engine sees
+        # a price it can no longer tell which file it came from. Issue #59 replaces the
+        # convention with a report date the export itself carries.
+        # Left unset when no tax year is given: the engine then derives the day from
+        # the Vorabpauschale year, which is the same rule. What it cannot derive is
+        # the substituted price's day, and that is set explicitly below.
+        vorabpauschale_year = tax_year - 1 if tax_year is not None else None
+        soy_snapshot_date = (first_business_day_of_year(vorabpauschale_year)
+                             if vorabpauschale_year is not None else None)
+        eoy_snapshot_date = (last_business_day_of_year(vorabpauschale_year)
+                             if vorabpauschale_year is not None else None)
+
         for raw_pos in self.raw_positions_prior_start:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_soy_quantity = raw_pos.position
+            asset.prior_year_soy_position_value = raw_pos.position_value
+            asset.prior_year_soy_mark_price = raw_pos.mark_price
             asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
+            asset.prior_year_soy_mark_price_date = soy_snapshot_date
             self._record_prior_year_snapshot_fields(asset, (
                 "prior_year_soy_quantity", "prior_year_soy_position_value",
-                "prior_year_soy_mark_price_currency",
+                "prior_year_soy_mark_price", "prior_year_soy_mark_price_currency",
+                "prior_year_soy_mark_price_date",
             ))
 
         for raw_pos in self.raw_positions_prior_end:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
+            asset.prior_year_eoy_quantity = raw_pos.position
+            asset.prior_year_eoy_position_value = raw_pos.position_value
+            asset.prior_year_eoy_mark_price = raw_pos.mark_price
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
+            asset.prior_year_eoy_mark_price_date = eoy_snapshot_date
             self._record_prior_year_snapshot_fields(asset, (
-                "prior_year_eoy_position_value", "prior_year_eoy_mark_price_currency",
+                "prior_year_eoy_quantity", "prior_year_eoy_position_value",
+                "prior_year_eoy_mark_price", "prior_year_eoy_mark_price_currency",
+                "prior_year_eoy_mark_price_date",
             ))
+
+        # Checkpoint marks. Resolved to asset-keyed MarkPositions rather than written onto
+        # Asset: there is one of these per year in the window, and the SoY record on Asset is a
+        # single opening snapshot for the tax year. Keeping them apart is deliberate -- conflating
+        # a mark with the SoY record is how a mid-window snapshot would end up feeding the tax
+        # year's cost basis.
+        for mark_year, raw_rows in sorted(self.raw_positions_marks.items()):
+            by_asset: Dict[uuid.UUID, MarkPosition] = {}
+            for raw_pos in raw_rows:
+                asset = self._resolve_asset_from_position(raw_pos)
+                quantity = raw_pos.position
+                existing = by_asset.get(asset.internal_asset_id)
+                if existing is not None:
+                    # Same instrument reported on more than one row at the same mark.
+                    quantity += existing.quantity
+                by_asset[asset.internal_asset_id] = MarkPosition(
+                    quantity=quantity,
+                    cost_basis_amount=raw_pos.cost_basis_money,
+                    cost_basis_currency=raw_pos.currency_primary,
+                )
+            self.mark_positions[mark_year] = by_asset
+            logger.info("Checkpoint mark %d-12-31: %d instrument(s) reported.",
+                        mark_year, len(by_asset))
+
+        for raw_pos in self.raw_positions_prior_opening:
+            asset = self._resolve_asset_from_position(raw_pos)
+            asset.prior_year_opening_quantity = raw_pos.position
+            asset.prior_year_opening_mark_price = raw_pos.mark_price
+            asset.prior_year_opening_mark_price_currency = raw_pos.currency_primary
+            self._record_prior_year_snapshot_fields(asset, (
+                "prior_year_opening_quantity", "prior_year_opening_mark_price",
+                "prior_year_opening_mark_price_currency",
+            ))
+
+        self._resolve_vorabpauschale_start_price(vorabpauschale_year)
+
+    def _resolve_vorabpauschale_start_price(
+            self, vorabpauschale_year: Optional[int] = None) -> None:
+        """
+        Settle the per-unit price the Vorabpauschale year opens at.
+
+        For calendar X the Ruecknahmepreis is the first one set in X, which is
+        what X's own start-of-year report carries (18 Abs. 1 Satz 2 InvStG).
+        Where a fund has no price in that report -- it was sold on X's first
+        trading day, so the snapshot taken at that day's close does not list it
+        -- the last price set before the year began stands in: one trading day
+        early rather than a year late. Every substitution is recorded so the
+        report can say it happened.
+
+        Only the price is settled here. The unit count is not this layer's
+        business: it comes from the lots held at the close of 31 December
+        (Rz. 18.4), which only the ledger knows.
+
+        The substituted price carries the day it was set with it, which is in
+        the year BEFORE the Vorabpauschale year. Rz. 18.6 converts at the ECB
+        rate of that day (GT-INVSTG-018); converting at a day inside the
+        Vorabpauschale year would take the price from one year and the rate
+        from another.
+        """
+        opening_price_date = (last_business_day_of_year(vorabpauschale_year - 1)
+                              if vorabpauschale_year is not None else None)
+
+        for asset in self.asset_resolver.assets_by_internal_id.values():
+            if getattr(asset, "prior_year_soy_mark_price", None) is not None:
+                continue
+
+            fallback = getattr(asset, "prior_year_opening_mark_price", None)
+            if fallback is None:
+                continue
+
+            # Only funds held when the year opened can have lost their price
+            # this way; anything else never had one to begin with, and
+            # inventing one would be a plausible wrong number.
+            units_at_open = getattr(asset, "prior_year_opening_quantity", None)
+            if units_at_open is None or units_at_open <= Decimal(0):
+                continue
+
+            asset.prior_year_soy_mark_price = fallback
+            asset.prior_year_soy_mark_price_currency = getattr(
+                asset, "prior_year_opening_mark_price_currency", None)
+            asset.prior_year_soy_mark_price_date = opening_price_date
+            self.vorabpauschale_price_substitutions.append(
+                (asset.get_classification_key(), asset.description or ""))
+            logger.warning(
+                "Vorabpauschale for %s: no price on the first trading day of the year "
+                "though the fund was held when it opened; using the last price set "
+                "before the year began.",
+                asset.get_classification_key(),
+            )
 
     def _record_prior_year_snapshot_fields(self, asset: Asset, field_names: Tuple[str, ...]) -> None:
         """Note which prior-year snapshot values this asset now carries.
@@ -246,8 +463,7 @@ class ParsingOrchestrator:
             raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
             raw_description=raw_pos.description,
             description_source_type="position",
-            raw_multiplier=raw_pos.multiplier, raw_strike=raw_pos.strike,
-            raw_expiry=raw_pos.expiry, raw_put_call=raw_pos.put_call,
+            raw_multiplier=raw_pos.multiplier,
             raw_underlying_conid=raw_pos.underlying_conid,
             raw_underlying_symbol=raw_pos.underlying_symbol
         )
@@ -257,7 +473,7 @@ class ParsingOrchestrator:
         logger.info("Discovering assets from trades, cash transactions, and corporate actions...")
         for rt in self.raw_trades:
             self.asset_resolver.get_or_create_asset(
-                raw_isin=rt.isin or rt.security_id if rt.security_id_type == "ISIN" else rt.isin,
+                raw_isin=rt.isin,
                 raw_conid=rt.conid, raw_symbol=rt.symbol, raw_currency=rt.currency_primary,
                 raw_ibkr_asset_class=rt.asset_class, raw_description=rt.description,
                 description_source_type="trade",
@@ -275,7 +491,7 @@ class ParsingOrchestrator:
 
             if is_instrument_specific:
                 self.asset_resolver.get_or_create_asset(
-                    raw_isin=rct.isin or rct.security_id if rct.security_id_type == "ISIN" else rct.isin,
+                    raw_isin=rct.isin,
                     raw_conid=rct.conid, raw_symbol=rct.symbol, raw_currency=rct.currency_primary,
                     raw_ibkr_asset_class=rct.asset_class, raw_description=rct.description,
                     description_source_type="cash_tx",
@@ -292,9 +508,10 @@ class ParsingOrchestrator:
 
         for rca in self.raw_corporate_actions:
             self.asset_resolver.get_or_create_asset(
-                raw_isin=rca.isin or rca.security_id if rca.security_id_type == "ISIN" else rca.isin,
+                raw_isin=rca.isin,
                 raw_conid=rca.conid, raw_symbol=rca.symbol, raw_currency=rca.currency_primary,
-                raw_ibkr_asset_class=rca.asset_class, raw_description=rca.description,
+                raw_ibkr_asset_class=None,  # AssetClass is not exported for CAs
+                raw_description=rca.description,
                 description_source_type="corp_act_asset"
             )
         logger.info(f"Asset discovery complete. Total unique assets identified: {len(self.asset_resolver.assets_by_internal_id)}")
@@ -484,12 +701,12 @@ class ParsingOrchestrator:
     def _extract_underlying_isin_from_description(self, description: str) -> Optional[str]:
         """Extract the underlying asset ISIN from corporate action description.
         
-        Example: 'LEG(DE000LEG1110) DIVIDEND RIGHTS ISSUE...' -> 'DE000LEG1110'
+        Example: 'ABC(DE0001234567) DIVIDEND RIGHTS ISSUE...' -> 'DE0001234567'
         """
         if not description:
             return None
         
-        # Look for ISIN pattern in parentheses: (DE000LEG1110)
+        # Look for ISIN pattern in parentheses: (DE0001234567)
         import re
         isin_match = re.search(r'\(([A-Z]{2}[A-Z0-9]{10})\)', description)
         return isin_match.group(1) if isin_match else None
@@ -587,13 +804,17 @@ class ParsingOrchestrator:
                         f"Set soy_quantity to 0, soy_cost_basis_amount to 0."
                     )
                     assets_updated_count +=1
-                elif asset_obj.soy_quantity != Decimal(0) and asset_obj.soy_cost_basis_amount is None: # Changed from initial_quantity_soy and initial_cost_basis_money_soy
-                     logger.warning(f"Asset {asset_obj.get_classification_key()} (ID: {asset_id}) had non-zero SOY quantity ({asset_obj.soy_quantity}) but missing cost basis. Setting SOY cost basis to 0.")
-                     asset_obj.soy_cost_basis_amount = Decimal(0) # Changed from initial_cost_basis_money_soy
-                     asset_obj.soy_cost_basis_currency = None # Changed from initial_cost_basis_currency_soy
-                elif not isinstance(asset_obj.soy_quantity, Decimal): # Changed from initial_quantity_soy
-                    logger.warning(f"Asset {asset_obj.get_classification_key()} (ID: {asset_id}) had non-Decimal SOY quantity ({asset_obj.soy_quantity}, type {type(asset_obj.soy_quantity)}). Converting to Decimal.")
-                    asset_obj.soy_quantity = safe_decimal(asset_obj.soy_quantity, default=Decimal(0)) # Changed from initial_quantity_soy
+                elif asset_obj.soy_quantity != Decimal(0) and asset_obj.soy_cost_basis_amount is None:
+                    # Held at the start of the year with no reported cost basis. This used to
+                    # set the basis to zero, which makes the whole of a later disposal a gain.
+                    # `CostBasisMoney` is blank in 0 of 87 position rows across 2021-2025, so
+                    # nothing was ever floored -- but a zero here is an invented figure, not a
+                    # missing one, and the run must not carry it.
+                    raise ProcessingError(
+                        f"Asset {asset_obj.get_classification_key()}: the start-of-year "
+                        f"snapshot reports {asset_obj.soy_quantity} units with no cost basis. "
+                        f"Their gain on disposal cannot be computed, and a zero basis would "
+                        f"declare the whole proceeds as gain.")
 
         if assets_updated_count > 0:
             logger.info(f"Initialized SOY quantity to 0 for {assets_updated_count} assets not found in the SOY position report.")
@@ -626,9 +847,94 @@ class ParsingOrchestrator:
         self.domain_financial_events.extend(ca_events)
         self.domain_financial_events.extend(options_eae_events)
 
+        self._require_option_cash_settlements(all_trade_events, options_eae_events)
+
         logger.info(f"DomainEventFactory created {len(self.domain_financial_events)} total financial events initially.")
         logger.info(f"Collected {len(self.candidate_option_lifecycle_events)} candidate option lifecycle events for linking.")
         logger.info(f"Collected {len(self.candidate_stock_trades_for_linking)} candidate stock trades for linking.")
+
+    def _require_option_cash_settlements(self,
+                                         trade_derived_events: List[FinancialEvent],
+                                         options_eae_events: List[FinancialEvent]) -> None:
+        """A cash-settled option's assignment/exercise must have its OptionEAE row.
+
+        The OptionEAE export is optional *as a file* -- an account that never traded
+        options needs none, and one that only ever took physical delivery needs none
+        either, because those rows duplicate the Trades export. What is not optional is
+        the `Cash Settlement` row behind a settlement that actually happened: it is the
+        sole carrier of the settlement proceeds, and without it the realised gain of an
+        index-option position is the premium alone.
+
+        **The requirement is derivable from the Trades export by itself**, which is what
+        makes checking it possible at all. `OptionExerciseProcessor` and
+        `OptionAssignmentProcessor` both step aside for an option with no underlying
+        link -- an index option, whose underlying is not an instrument the account can
+        hold -- on the stated ground that `OptionCashSettlementProcessor` handles it.
+        That was an assumption with nothing behind it. Here it becomes a contract:
+        every A/EX event those two hand on must have a settlement event to be handed to.
+
+        Unmatched cases are collected and reported together, so one run names every
+        contract rather than the first.
+
+        Without this the failure is real but reads as something else. The option lot is
+        never consumed, so the calculated end-of-year quantity stands against a contract
+        the broker no longer reports and EOY validation aborts on a position mismatch --
+        whose own message lists missing trades, corporate actions, option exercises and
+        double-identified instruments as the causes to go looking for, and not the file.
+        Measured 2026-08-08: a VZ 2025 run against the real import with
+        `Options_EAE-2025.csv` withheld produced `EOY_RECONCILIATION_FAILED` naming 14
+        index-option positions; with this check it stops at parse time naming the same
+        14 and the file to export.
+
+        For a settlement in a *prior* year there is no signal at all:
+        `reconcile_with_mark` discards a reconstruction that disagrees with the snapshot
+        and takes the snapshot, so the phantom lot is absorbed in silence. Hence the
+        whole replay window is checked, not only the assessment year.
+        """
+        settled_keys = {
+            (ev.asset_internal_id, ev.event_date)
+            for ev in options_eae_events
+            if isinstance(ev, OptionCashSettlementEvent)
+        }
+
+        unpaired: List[str] = []
+        for event in trade_derived_events:
+            if not isinstance(event, (OptionAssignmentEvent, OptionExerciseEvent)):
+                continue
+            option_asset = self.asset_resolver.get_asset_by_id(event.asset_internal_id)
+            if not isinstance(option_asset, Option):
+                continue
+            if option_asset.underlying_asset_internal_id is not None:
+                continue  # Physically settled: the delivery leg is in the Trades export.
+            if (event.asset_internal_id, event.event_date) in settled_keys:
+                continue
+            unpaired.append(
+                f"{option_asset.description or option_asset.get_classification_key()} "
+                f"(Conid: {option_asset.ibkr_conid}) {event.event_type.name} on "
+                f"{event.event_date}, {event.quantity_contracts} contract(s)"
+            )
+
+        if not unpaired:
+            return
+
+        if self.options_eae_file_supplied:
+            cause = (
+                "An OptionEAE file was read, but it carries no 'Cash Settlement' row for "
+                "these contracts on these dates. A row whose Proceeds are exactly zero is "
+                "skipped at parse time and counts as absent here."
+            )
+        else:
+            cause = (
+                "No OptionEAE file was supplied. Export it as Options_EAE-YYYY.csv into "
+                "data_import/ for every year listed below (see input_data_spec.md)."
+            )
+
+        raise DataIntegrityError(
+            f"{len(unpaired)} cash-settled option assignment(s)/exercise(s) have no "
+            f"matching OptionEAE Cash Settlement. The settlement proceeds are the whole "
+            f"gain on these positions, so the run cannot produce a figure for them.\n"
+            f"  {cause}\n  " + "\n  ".join(unpaired)
+        )
 
 
     def get_all_financial_events(self) -> List[FinancialEvent]:
@@ -699,9 +1005,11 @@ class ParsingOrchestrator:
                              positions_end_file: Optional[str] = None,
                              positions_prior_start_file: Optional[str] = None,
                              positions_prior_end_file: Optional[str] = None,
+                             positions_prior_opening_file: Optional[str] = None,
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
+                             positions_mark_files: Optional[Dict[int, str]] = None,
                              tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
         logger.info("Starting parsing pipeline...")
@@ -713,11 +1021,13 @@ class ParsingOrchestrator:
                 positions_end_file=positions_end_file,
                 positions_prior_start_file=positions_prior_start_file,
                 positions_prior_end_file=positions_prior_end_file,
+                positions_prior_opening_file=positions_prior_opening_file,
                 corporate_actions_file=corporate_actions_file,
                 cash_balance_file=cash_balance_file,
-                options_eae_file=options_eae_file
+                options_eae_file=options_eae_file,
+                positions_mark_files=positions_mark_files,
             )
-            self.process_positions()
+            self.process_positions(tax_year=tax_year)
             self._process_cash_balance_positions(tax_year=tax_year)
             self.discover_assets_from_transactions()
             self.asset_resolver.link_derivatives()

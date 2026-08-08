@@ -46,11 +46,11 @@ The form line values (Z24) are unaffected -- they always report gross uncapped a
 **Legal basis:** Options/stocks/bonds/funds are taxed under EStG 20, not EStG 23
 **Reference file:** `reference/tax-law/estg-20-kapitalvermoegen.md`
 
-In `src/engine/fifo_manager.py`, the `is_taxable_under_section_23_flag` defaults to `True` at three locations (lines 608, 732, 879) and is only corrected for `AssetCategory.PRIVATE_SALE_ASSET`. For all other categories (STOCK, BOND, OPTION, CFD, INVESTMENT_FUND), the flag remains `True` -- semantically wrong.
+In `src/engine/fifo_manager.py`, the `is_taxable_under_section_23_flag` defaults to `True` in each of the three realization paths (long sale, short cover, cash merger) and is only corrected for `AssetCategory.PRIVATE_SALE_ASSET`. For all other categories (STOCK, BOND, SONSTIGE_KAPITALFORDERUNG, OPTION, CFD, FUTURE, INVESTMENT_FUND), the flag remains `True` -- semantically wrong. (The line numbers this entry used to give had drifted; the paths are named instead, since they move with every edit to the file.)
 
 Additionally, `src/engine/event_processors/option_processor.py:223` explicitly sets `is_taxable_under_section_23=True` for option expiration RGLs, with a comment acknowledging the contradiction: "Options are Termingeschaefte, not 23".
 
-**Why low impact:** The loss offsetting engine (`src/engine/loss_offsetting.py:99-101`) only checks this flag when `asset_category_at_realization == AssetCategory.PRIVATE_SALE_ASSET`, so the incorrect default does not affect tax calculations. However, it would cause incorrect behavior if the guard logic changes in the future.
+**Why low impact:** The loss offsetting engine only checks this flag when `asset_category_at_realization == AssetCategory.PRIVATE_SALE_ASSET`, so the incorrect default does not affect tax calculations. However, it would cause incorrect behavior if the guard logic changes in the future.
 
 ---
 
@@ -210,6 +210,89 @@ All 28 loss offsetting test cases (LO_ALL_001 through LO_FUND_MISCH_002) were sp
 
 Ledger reconciliation and output parity against the maintainer's own IBKR export. Instance data —
 holdings, identifiers, amounts — stays in gitignored working copies; only outcomes are recorded here.
+
+## 2026-08-07
+
+**Supersedes the 2026-08-06 row reading "2024 | aborts on
+`VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN`".** Issue #56 — the root cause recorded below — is
+fixed on this branch by `efb0d97` (a historical merger applies at its own date) and `13f6b6d`
+(reconcile at every yearly snapshot). **VZ 2024 no longer aborts there.**
+
+| VZ | Result |
+|---|---|
+| 2023 | **runs clean**, and declares **no Vorabpauschale**: it carries calendar 2022, whose Basiszins was −0.05 % — negative, so none arises. Zeilen 9–13 all zero. |
+| 2024 | aborts **earlier than before**, during classification |
+| 2025 | aborts during classification |
+
+**Both remaining runs stop on the same instrument** — `CONID:69067924` / `XAUUSD` / `CMDTY` has
+category `UNKNOWN` and cannot be auto-classified, so `DataIntegrityError` fires before any figure
+is produced. The classification it needs is Q11 Reading C, a sonstige Kapitalforderung under
+§ 20 Abs. 2 Satz 1 Nr. 7, and no such category exists: **issue #53.** VZ 2024 and VZ 2025 are also
+the first two years in which a Vorabpauschale can be non-zero at all.
+
+**But #53 is not the only thing between here and those two declarations, and an earlier version of
+this entry said it was.** The classification cache was rebuilt on 2026-08-07 against a VZ 2023 run,
+so it covers that year's instruments and no others. Measured by comparing cache keys against the
+instruments each year's window contains:
+
+| VZ | instrument keys in window | not in cache | composition of the uncached |
+|---|---|---|---|
+| 2023 | 169 | **0** | — |
+| 2024 | 265 | **96** | 68 `OPT`, 24 `STK`, 1 `CMDTY`, 1 `CASH`, 2 blank |
+| 2025 | 408 | **239** | 175 `OPT`, 58 `STK`, 1 `CMDTY`, 3 `CASH`, 2 blank |
+
+Only about three per year refuse outright and stop the run. **The quieter risk is the `STK`
+rows:** they auto-classify to `STOCK` without prompting, and this account's fund descriptions
+contain no "ETF" marker, so a fund among them is silently declared as a share — wrong form lines
+and no Teilfreistellung, with nothing failing. Both years therefore need an interactive
+classification pass, not just #53.
+
+**Not re-verified, and not claimed:** whether the Swiss Gold Vorabpauschale chain is now clean.
+The run stops before reaching it.
+
+**The input carries no duplicate trade rows.** Measured across `Trades-2021.csv` …
+`Trades-2025.csv`: 6 976 rows, 6 976 distinct `TransactionID`s, none repeated within a file or
+across files. A working note had described the VZ 2024 failure as caused by "duplicated 2022 trade
+rows"; that is wrong, and the 2026-08-06 entry below already states the correct mechanism —
+phantom units from replay *ordering*, not from the input.
+
+**Classification cache.** Destroyed on this date by the clean-clone protocol
+(`rm -rf cache`, see issue #51) and rebuilt by the maintainer. `XAUUSD` was not reclassified,
+which is why the two aborts above are reachable. No other run state was lost.
+
+## 2026-08-06
+
+**Supersedes the 2026-08-05 statement that "VZ 2023 cannot be computed and VZ 2022 cannot be run
+at all."** The snapshots called absent that day are present in `data_import/` now, and the
+picture has moved. Measured by running the full pipeline for each year and reading the logs; the
+working tree carried unrelated in-flight Vorabpauschale changes at the time.
+
+| VZ | Result |
+|---|---|
+| 2021 | cannot be run — `Positions-2020-EoY.csv` absent, and it is the opening position |
+| 2022 | aborts on `VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING` (needs `Positions-2021-SoY.csv`) |
+| 2023 | **runs clean** |
+| 2024 | aborts on `VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN` |
+| 2025 | **runs clean** |
+
+**How far back the ledger depends on data we do not have.** The 2021-01-01 opening quantities
+were derived (EoY-2021 snapshot minus every 2021 trade, corporate action and option
+exercise/expiry) and real FIFO replayed over every observed event. Five securities carried a
+pre-2021 tranche; four clear during 2021, the last on **2022-04-07**. Sixteen option contracts
+open at 2021-01-01 all expired by 2021-07-23. From 2022-04-07 every lot in every securities
+ledger traces to a recorded trade, so **VZ 2023 is the first assessment year whose opening lots
+are all observed** — which is the measurement behind the VZ 2023 floor now stated in `CLAUDE.md`.
+
+Currency ledgers are a separate matter: they take a `SOY_RECONCILIATION_*` plug lot dated
+`{tax_year-1}-12-31` whenever cash FIFO disagrees with the reported balance, by design and every
+year. Two currencies still carry a constant residual in VZ 2025.
+
+**The VZ 2024 abort is a defect, not a data gap.** A stock-for-stock merger delivers its lots
+after every trade in the historical window, so shares sold on the merger date oversell against a
+ledger that does not hold them yet; the reconstruction ends up over the reported SoY by exactly
+the transferred quantity, reconciliation discards it, and the synthesised lot has no real
+acquisition date for § 18 Abs. 2 InvStG. Filed as issue #56. This one is independent of the
+pre-2021 gap and would fire on any merger whose shares are disposed of inside the replay window.
 
 ## 2026-08-05
 

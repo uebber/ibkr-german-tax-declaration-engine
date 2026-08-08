@@ -1,5 +1,6 @@
 # src/domain/assets.py
 from dataclasses import dataclass, field, KW_ONLY
+from datetime import date
 from decimal import Decimal
 import uuid
 from typing import Set, Optional
@@ -28,8 +29,7 @@ class Asset:
     soy_cost_basis_amount: Optional[Decimal] = None # Renamed from initial_cost_basis_money_soy
     soy_cost_basis_currency: Optional[str] = None # Renamed from initial_cost_basis_currency_soy
 
-    # Start of Year (SOY) market price data (from IBKR positions_start_file, for Vorabpauschale)
-    soy_market_price: Optional[Decimal] = None
+    # Start of Year (SOY) market value (from the opening positions snapshot)
     soy_position_value: Optional[Decimal] = None
     soy_mark_price_currency: Optional[str] = None
 
@@ -48,11 +48,32 @@ class Asset:
     # reference/tax-forms/anlage-kap-inv-zeilen.md. The Basisertrag therefore needs the
     # Ruecknahmepreis at the START of Y-1 and the cap needs the last price set IN Y-1 --
     # neither of which is the tax year's own SoY/EoY snapshot.
+    # Abs. 1 is written per Investmentanteil: the prices below are PER UNIT and the
+    # unit count enters separately, at the close of 31 December (Rz. 18.4). A single
+    # position value carrying both cannot be right for both -- see
+    # reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    # Each price carries the day it was set. Rz. 18.6 converts a foreign-currency
+    # figure at the ECB rate of its OWN Stichtag (GT-INVSTG-018), and a Stichtag is
+    # a day a price was set -- never a fixed calendar date. Without this field the
+    # engine had to assume one, and assumed 2 January: a Saturday in 2021 and a
+    # Sunday in 2022. It matters most on the substitution path, where the price
+    # comes from the close of the PRECEDING year and a date derived from the
+    # Vorabpauschale year would put price and rate in different years.
     prior_year_soy_quantity: Optional[Decimal] = None
     prior_year_soy_position_value: Optional[Decimal] = None
+    prior_year_soy_mark_price: Optional[Decimal] = None
     prior_year_soy_mark_price_currency: Optional[str] = None
+    prior_year_soy_mark_price_date: Optional[date] = None
+    prior_year_eoy_quantity: Optional[Decimal] = None
     prior_year_eoy_position_value: Optional[Decimal] = None
+    prior_year_eoy_mark_price: Optional[Decimal] = None
     prior_year_eoy_mark_price_currency: Optional[str] = None
+    prior_year_eoy_mark_price_date: Optional[date] = None
+    # Close of the year BEFORE the Vorabpauschale year: the units the year opened with,
+    # and the last price set before it began.
+    prior_year_opening_quantity: Optional[Decimal] = None
+    prior_year_opening_mark_price: Optional[Decimal] = None
+    prior_year_opening_mark_price_currency: Optional[str] = None
 
 
     def __post_init__(self):
@@ -129,6 +150,28 @@ class Bond(Asset):
     def __post_init__(self):
         super().__post_init__()
         self.asset_category = AssetCategory.BOND
+
+
+@dataclass(eq=False) # Inherit __eq__ and __hash__ from Asset
+class SonstigeKapitalforderung(Asset):
+    """A sonstige Kapitalforderung under 20 Abs. 2 Satz 1 Nr. 7 that is not a bond.
+
+    Unbacked gold and commodity ETCs ([GT-ESTG23-011], BMF 14.05.2025 Rz. 57),
+    Zertifikate ([GT-ESTG20-038], Rz. 9 excludes them from the Termingeschaefte), and
+    unallocated spot precious metal at the broker (Q11, Reading C). Disposals go to
+    Anlage KAP Zeile 19/22, the same lines as a bond, but this is deliberately not
+    ``Bond``: none of the bond-specific handling (percentage-of-nominal trade prices,
+    Stueckzinsen, BM maturity) applies to these instruments.
+
+    Which instrument is routed here is a per-instrument determination that cannot be read
+    off an IBKR asset class ([GT-ESTG23-011]); it comes from classification only.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(asset_category=kwargs.pop('asset_category', AssetCategory.SONSTIGE_KAPITALFORDERUNG), **kwargs)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.asset_category = AssetCategory.SONSTIGE_KAPITALFORDERUNG
 
 
 @dataclass(eq=False) # Inherit __eq__ and __hash__ from Asset
@@ -242,3 +285,23 @@ class CashBalance(Asset):
             self.ibkr_symbol = self.currency
         if self.description is None and self.currency:
             self.description = f"Cash Balance {self.currency}"
+
+
+@dataclass(frozen=True)
+class MarkPosition:
+    """One asset's holding as the broker reported it at a checkpoint mark.
+
+    A *mark* is the close of a calendar year inside the historical replay
+    window, taken from `Positions-{Y}-EoY.csv`. The replay stops at each mark
+    and compares; where it disagrees with the broker the reconstruction is
+    replaced by this. Distinct from the SoY record on `Asset` (`soy_quantity`
+    and friends), which is the single opening snapshot for the tax year --
+    itself read from `Positions-{tax_year-1}-EoY.csv`, not from any SoY file.
+
+    Only what reconciliation needs: quantity and the reported cost basis. A
+    mark supplies no acquisition date, which is why a lot built from one is
+    flagged `acquisition_date_is_known=False`.
+    """
+    quantity: Decimal
+    cost_basis_amount: Optional[Decimal]
+    cost_basis_currency: Optional[str]

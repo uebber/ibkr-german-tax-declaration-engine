@@ -12,6 +12,13 @@ dependencies = [
     "reportlab>=3.5.0",
 ]
 
+[project.optional-dependencies]
+# Browser automation for the IBKR Client Portal downloader (src/web_portal/).
+# Not needed by the engine itself: `uv sync` alone keeps a clean clone light.
+web = [
+    "playwright>=1.40",
+]
+
 [dependency-groups]
 dev = [
     "pymupdf>=1.24.11",

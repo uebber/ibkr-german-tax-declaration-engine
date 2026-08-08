@@ -94,6 +94,79 @@ def _make_merger_event(source_id: uuid.UUID, target_id: uuid.UUID,
     )
 
 
+class TestMergerIntraDayOrdering:
+    """
+    Pin the one intra-day rule the chronological merger replay depends on.
+
+    Since issue #56 a merger is an ordinary `Phase.LEDGER_EVENTS` item placed at
+    its own date (§20 Abs. 4a Satz 6 EStG, GT-ESTG20-018: the measure takes
+    effect at the Einbuchung into the depot). For that to be worth anything, the
+    merger has to be applied BEFORE the same day's trades -- otherwise a
+    disposal of the delivered shares still oversells.
+
+    **That ordering currently holds by accident.** `sorting_utils.py` puts the
+    transaction id ahead of `intra_day_order` in the secondary key, so
+    `_INTRA_DAY_SORT_ORDER_CORP_ACTION` decides nothing between events with
+    different ids. A corporate action sorts first only because
+    `Corporate_Actions-*.csv` carries no `TransactionID` column, so
+    `ibkr_transaction_id` is None and the key element is `""`, which precedes
+    every real id. If IBKR ever supplies that column the order flips and the
+    integration tests break with no explanation. This test is the explanation.
+    """
+
+    @staticmethod
+    def _resolver():
+        asset = MagicMock()
+        asset.ibkr_symbol = "BETA"
+        asset.asset_category = AssetCategory.STOCK
+        resolver = MagicMock()
+        resolver.get_asset_by_id.return_value = asset
+        return resolver
+
+    def test_merger_sorts_before_same_day_trades(self):
+        from src.utils.sorting_utils import get_event_sort_key
+
+        resolver = self._resolver()
+        source_id, target_id = uuid.uuid4(), uuid.uuid4()
+
+        merger = _make_merger_event(source_id, target_id, event_date="2022-06-15")
+        sale = TradeEvent(
+            asset_internal_id=target_id,
+            event_date="2022-06-15",
+            quantity=Decimal("-40"),
+            price_foreign_currency=Decimal("52.00"),
+            event_type=FinancialEventType.TRADE_SELL_LONG,
+            ibkr_transaction_id="1322551221",
+        )
+
+        assert get_event_sort_key(merger, resolver) < get_event_sort_key(sale, resolver)
+
+    def test_a_transaction_id_on_the_merger_would_break_it(self):
+        """
+        The failure mode above, made visible: give the merger an id and the
+        ordering is decided by a lexicographic string comparison instead. Not a
+        wish for different behaviour -- a record of what the guarantee rests on,
+        so that whoever adds the column knows what they have to fix.
+        """
+        from src.utils.sorting_utils import get_event_sort_key
+
+        resolver = self._resolver()
+        source_id, target_id = uuid.uuid4(), uuid.uuid4()
+
+        merger = _make_merger_event(source_id, target_id, event_date="2022-06-15")
+        merger.ibkr_transaction_id = "9999999999"  # would sort after the sale
+        sale = TradeEvent(
+            asset_internal_id=target_id,
+            event_date="2022-06-15",
+            quantity=Decimal("-40"),
+            price_foreign_currency=Decimal("52.00"),
+            event_type=FinancialEventType.TRADE_SELL_LONG,
+            ibkr_transaction_id="1322551221",
+        )
+
+        assert get_event_sort_key(merger, resolver) > get_event_sort_key(sale, resolver)
+
+
 # =============================================================================
 # Group 1: FifoLedger drain/receive methods
 # =============================================================================
@@ -429,11 +502,11 @@ class TestMergerIntegration(FifoTestCaseBase):
         # Trades: BUY 130 GZUR on 2023-03-01, SELL 130 SGBS on 2023-08-22
         trades_data = [
             # BUY 130 GZUR @ 167.56 EUR
-            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE000A1DCTL3",
+            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE0000000015",
              "", "", "", "2023-03-01", "130", "167.56", "-2.00", "EUR",
              "BUY", "TX_BUY_GZUR", "", "", "CON_GZUR", "", "1", "O"],
             # SELL 130 SGBS @ 168.00 EUR (after merger)
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "", "", "", "2023-08-22", "-130", "168.00", "-2.00", "EUR",
              "SELL", "TX_SELL_SGBS", "", "", "CON_SGBS", "", "1", "C"],
         ]
@@ -441,8 +514,8 @@ class TestMergerIntegration(FifoTestCaseBase):
         # Corporate action: GZUR merged into SGBS on 2023-08-22
         # Dispose row (qty=-130)
         corp_actions_data = [
-            [account, "GZUR", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "DE000A1DCTL3", "2023-08-22", "TC", "TC", "110634406",
+            [account, "GZUR", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "DE0000000015", "2023-08-22", "TC", "TC", "900034051",
              "CON_GZUR", "", "", "EUR", "0", "0", "-21782.80", "-130"],
         ]
 
@@ -498,25 +571,25 @@ class TestMergerIntegration(FifoTestCaseBase):
         # Historical trades (BUY in 2022) + current year SELL
         trades_data = [
             # Historical BUY 130 GZUR @ 167.56 EUR in 2022
-            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE000A1DCTL3",
+            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE0000000015",
              "", "", "", "2022-03-01", "130", "167.56", "-2.00", "EUR",
              "BUY", "TX_BUY_GZUR", "", "", "CON_GZUR", "", "1", "O"],
             # Current-year SELL 130 SGBS @ 168.00 EUR
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "", "", "", "2023-08-22", "-130", "168.00", "-2.00", "EUR",
              "SELL", "TX_SELL_SGBS", "", "", "CON_SGBS", "", "1", "C"],
         ]
 
         # Historical corporate action (2022) - dispose row only
         corp_actions_data = [
-            [account, "GZUR", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "DE000A1DCTL3", "2022-08-22", "TC", "TC", "110634406",
+            [account, "GZUR", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "DE0000000015", "2022-08-22", "TC", "TC", "900034051",
              "CON_GZUR", "", "", "EUR", "0", "0", "-21782.80", "-130"],
         ]
 
         # SOY positions: SGBS has 130 shares at start of 2023
         positions_start = [
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "130", "21800.00", "167.69", "21784.80", "", "CON_SGBS", "", "1"],
         ]
 
@@ -646,11 +719,11 @@ class TestMergerIntegration(FifoTestCaseBase):
 
         trades_data = [
             # BUY 130 GZUR
-            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE000A1DCTL3",
+            [account, "EUR", "STK", "", "GZUR", "GZUR Stock", "DE0000000015",
              "", "", "", "2023-03-01", "130", "167.56", "-2.00", "EUR",
              "BUY", "TX_BUY_GZUR", "", "", "CON_GZUR", "", "1", "O"],
             # SELL 130 SGBS
-            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE00B588CD74",
+            [account, "EUR", "STK", "", "SGBS", "SGBS Stock", "JE0000000014",
              "", "", "", "2023-08-22", "-130", "168.00", "-2.00", "EUR",
              "SELL", "TX_SELL_SGBS", "", "", "CON_SGBS", "", "1", "C"],
         ]
@@ -658,12 +731,12 @@ class TestMergerIntegration(FifoTestCaseBase):
         # BOTH dispose and receive rows present (like real IBKR data)
         corp_actions_data = [
             # Dispose row (qty=-130)
-            [account, "GZUR", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "DE000A1DCTL3", "2023-08-22", "TC", "TC", "110634406",
+            [account, "GZUR", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "DE0000000015", "2023-08-22", "TC", "TC", "900034051",
              "CON_GZUR", "", "", "EUR", "0", "0", "-21782.80", "-130"],
             # Receive row (qty=+130) - should be skipped
-            [account, "SGBS", "GZUR(DE000A1DCTL3) MERGED(Acquisition) WITH SGBS 1 FOR 1",
-             "JE00B588CD74", "2023-08-22", "TC", "TC", "110634406",
+            [account, "SGBS", "GZUR(DE0000000015) MERGED(Acquisition) WITH SGBS 1 FOR 1",
+             "JE0000000014", "2023-08-22", "TC", "TC", "900034051",
              "CON_SGBS", "", "", "EUR", "0", "0", "21837.40", "130"],
         ]
 
@@ -741,6 +814,98 @@ class TestMergerIntegration(FifoTestCaseBase):
             trades_data=trades_data,
             corporate_actions_data=corp_actions_data,
             positions_end_data=positions_end,
+            custom_rate_provider=mock_provider,
+            tax_year=tax_year,
+        )
+
+        self.assert_results(results, expected)
+
+    def test_merged_in_shares_sold_inside_the_historical_window(self, mock_config_paths):
+        """
+        The merger delivers shares that are disposed of *within* the historical
+        window, and more of the target is bought later in that window.
+
+        2022-03-01  BUY  40 ACME
+        2022-06-15  merger ACME -> BETA 1:1        <- delivers 40 BETA
+        2022-06-15  SELL 40 BETA                   <- same day, consumes them
+        2023-04-10  BUY  25 BETA                   <- still held at SoY 2024
+        2024-05-20  SELL 25 BETA
+
+        Abs. 4a Satz 6 (GT-ESTG20-018) fixes the moment a Kapitalmassnahme takes
+        effect at the Einbuchung into the depot, so the 40 BETA exist from
+        2022-06-15 and that day's sale consumes them. The 25 units left at SoY
+        2024 are then the 2023-04-10 purchase, and GT-ESTG20-015 requires the
+        2024 disposal to be measured against it.
+
+        **This test is deliberately blind to quantity, cost basis, proceeds and
+        gain.** The SoY snapshot below reports a cost basis equal to the real
+        2023-04-10 purchase cost, because that is what the broker reports, so a
+        synthesised fallback lot reproduces all four figures exactly. Only the
+        acquisition date separates a real reconstruction from a fabricated one
+        -- the same discriminator, and the same reason, as
+        `test_historical_merger_replay_guard.py`.
+        """
+        tax_year = 2024
+        account = "U_MERGE_SELL_IN_WINDOW"
+        mock_provider = MockECBExchangeRateProvider(foreign_to_eur_init_value=Decimal("1.0"))
+
+        trades_data = [
+            # 2022-03-01 BUY 40 ACME @ 50.00, commission 1.00 -> basis 2001.00
+            [account, "EUR", "STK", "", "ACME", "ACME Stock", "DE0000000021",
+             "", "", "", "2022-03-01", "40", "50.00", "-1.00", "EUR",
+             "BUY", "TX_BUY_ACME", "", "", "CON_ACME", "", "1", "O"],
+            # 2022-06-15 SELL 40 BETA -- same day as the merger that delivers them
+            [account, "EUR", "STK", "", "BETA", "BETA Stock", "DE0000000022",
+             "", "", "", "2022-06-15", "-40", "52.00", "-1.00", "EUR",
+             "SELL", "TX_SELL_BETA_2022", "", "", "CON_BETA", "", "1", "C"],
+            # 2023-04-10 BUY 25 BETA @ 60.00, commission 1.00 -> basis 1501.00
+            [account, "EUR", "STK", "", "BETA", "BETA Stock", "DE0000000022",
+             "", "", "", "2023-04-10", "25", "60.00", "-1.00", "EUR",
+             "BUY", "TX_BUY_BETA_2023", "", "", "CON_BETA", "", "1", "O"],
+            # 2024-05-20 SELL 25 BETA @ 64.00, commission 1.00 -> proceeds 1599.00
+            [account, "EUR", "STK", "", "BETA", "BETA Stock", "DE0000000022",
+             "", "", "", "2024-05-20", "-25", "64.00", "-1.00", "EUR",
+             "SELL", "TX_SELL_BETA_2024", "", "", "CON_BETA", "", "1", "C"],
+        ]
+
+        corp_actions_data = [
+            [account, "ACME", "ACME(DE0000000021) MERGED(Acquisition) WITH BETA 1 FOR 1",
+             "DE0000000021", "2022-06-15", "TC", "TC", "900000021",
+             "CON_ACME", "", "", "EUR", "0", "0", "-2001.00", "-40"],
+        ]
+
+        # SoY 2024: the 25 BETA bought on 2023-04-10, at their real cost.
+        positions_start = [
+            [account, "EUR", "STK", "", "BETA", "BETA Stock", "DE0000000022",
+             "25", "1550.00", "62.00", "1501.00", "", "CON_BETA", "", "1"],
+        ]
+
+        expected = ScenarioExpectedOutput(
+            test_description="Merged-in shares disposed of inside the historical window",
+            expected_rgls=[
+                ExpectedRealizedGainLoss(
+                    asset_identifier="BETA",
+                    realization_date="2024-05-20",
+                    quantity_realized=Decimal("25"),
+                    total_cost_basis_eur=Decimal("1501.00"),
+                    total_realization_value_eur=Decimal("1599.00"),
+                    gross_gain_loss_eur=Decimal("98.00"),
+                    realization_type=RealizationType.LONG_POSITION_SALE.name,
+                    # The discriminator. A fallback lot would say 2023-12-31.
+                    acquisition_date="2023-04-10",
+                ),
+            ],
+            expected_eoy_states=[
+                ExpectedAssetEoyState(asset_identifier="BETA", eoy_quantity=Decimal("0")),
+            ],
+            expected_eoy_mismatch_error_count=0,
+        )
+
+        results = self._run_pipeline(
+            trades_data=trades_data,
+            corporate_actions_data=corp_actions_data,
+            positions_start_data=positions_start,
+            positions_end_data=[],
             custom_rate_provider=mock_provider,
             tax_year=tax_year,
         )

@@ -45,10 +45,18 @@ is an implementation act; it does not belong in the store.
 
 **GT-ESTG20-004, open question Q4 — reading chosen: payment date, in every year.** The paid
 Glattstellungsprämie is booked as negative income when paid. Reason: it matches the JStG-2024
-statutory wording and the administration's practice before it (BMF 18.01.2016 Rz. 25 ff.). It is
-contrary to BFH VIII R 27/21 for any VZ before the amendment took effect, and no § 52 EStG
-application rule for Nr. 11 has been located. **A Stillhalter/Glattstellung pair straddling a year
-end in VZ 2024 or earlier should be reviewed by hand.**
+statutory wording *and* the administration's practice before it (BMF 18.01.2016 Rz. 25 ff., carried
+into 19.05.2022 and 14.05.2025), so the amendment's first year of application cannot change the
+result and does not need to be established.
+
+It remains contrary to **BFH VIII R 27/21**, which puts the cost in the year the Stillhalterprämie
+was received, as a rückwirkendes Ereignis. That route can be the better outcome or the worse one
+depending on which year has losses to absorb, so it is a per-case election rather than a rule the
+engine should take. **A Stillhalter/Glattstellung pair straddling a year end should be reviewed by
+hand**, and the BFH route considered where the earlier year would use the loss.
+
+*Rescoped 2026-08-07 with Q4 itself: this row previously rested part of its reasoning on "no § 52
+EStG application rule for Nr. 11 has been located", which was true and beside the point.*
 
 ### Abs. 2 — disposals
 
@@ -56,26 +64,84 @@ end in VZ 2024 or earlier should be reviewed by hand.**
 |---|---|---|---|---|
 | GT-ESTG20-005 | implements | `LONG_POSITION_SALE` / `SHORT_POSITION_COVER` on `STOCK` → `ANLAGE_KAP_AKTIEN_GEWINN` / `_VERLUST` | `test_fifo_groups.py`, `test_group6_loss_offsetting.py` | Zeilen 20 and 23. |
 | GT-ESTG20-006 | not reached | — | — | Sale of a Dividenden-/Zinsschein detached from the Stammrecht. No event kind, and no broker input produces one. |
-| GT-ESTG20-038 | **not yet reached** | — | — | Rz. 9's definition is what would let an IBKR asset class be mapped to a Termingeschaeft without an analogy. Nothing consumes it yet: `FXCFD` and `CMDTY` still fall through to UNKNOWN. **`CMDTY` is not covered by this claim — see Q11.** The two exclusions Rz. 9 states (Zertifikate, Optionsscheine) have no IBKR asset class of their own and are not distinguished — a Zertifikat arrives as `STK` and is treated as a share. Recorded as a known limit. |
+| GT-ESTG20-038 | **not yet reached** (the positive definition) / **implements** (the exclusion) | `AssetCategory.SONSTIGE_KAPITALFORDERUNG`; `src/engine/loss_offsetting.py`, `src/engine/fifo_manager.py` route it to Zeile 19/22 | `test_sonstige_kapitalforderung.py::test_gain_feeds_zeile_19`, `::test_loss_feeds_zeile_22` | **Re-decided 2026-08-07 with issue #53.** Rz. 9's *definition* is still unconsumed: `FXCFD` and `CMDTY` fall through to UNKNOWN and no asset class is mapped to a Termingeschaeft by it. Its *exclusion* — *"Zertifikate und Optionsscheine gehören nicht zu den Termingeschäften"* — has moved from **relied on** to **implements**: a Zertifikat or an unallocated spot metal position can now be classified into a category that lands on Zeile 19/22 and is asserted *not* to reach the Termingeschaeft lines. Two limits stand, and neither is closed by #53: the exclusions still have no IBKR asset class of their own, so **a Zertifikat arriving as `STK` is auto-classified `STOCK` and taxed as a share unless the taxpayer classifies it by hand** — see the note on the interactive pass under Q11 — and the positive definition remains unimplemented. **Re-decided 2026-08-08 by the issue #66 audit; position unchanged.** Rn. 8 f., the cross-reference this Randziffer makes for both exclusions, is now recorded: an Optionsschein is a Kapitalforderung under Satz 1 Nr. 7, the same destination as a Zertifikat. **No warrant has ever been traded on this account**, so nothing is implemented for one and nothing needs to be: a warrant arriving as `OPT` would be declared a Termingeschaeft and would not be put to the taxpayer, which is a defect to fix if one is ever bought, not before. |
 | GT-ESTG20-007 | implements | option and CFD close/expiry/settlement paths | `test_options_lifecycle.py`, `test_futures.py`, `test_console_reporter_derivatives.py` | Routed by `get_form_rules(tax_year)` — Zeile 21/24 up to VZ 2024, merged into 19/22 from VZ 2025. |
-| GT-ESTG20-008 | implements | bond disposals; currency disposals via `FX_*` realization types | `test_bond_maturity.py`, `test_group7_currency_fifo.py` | |
+| GT-ESTG20-008 | implements | bond disposals; currency disposals via `FX_*` realization types | `test_bond_maturity.py`, `test_group7_currency_fifo.py` | **Re-decided unchanged 2026-08-08 by the issue #66 audit**, which reached this row only because Rn. 9's Zertifikat exclusion points here and its Optionsschein exclusion now points here too. Nothing about the claim moved. |
 | GT-ESTG20-009 | implements | IBKR corporate action `BM` → synthetic sell → `LONG_POSITION_SALE` | `test_bond_maturity.py::TestBondMaturity` | The Einlösung fiction is what makes a redemption at maturity a disposal at all. |
 
 
-**Q11 — reading chosen: Termingeschaeft (Reading A).** An unallocated spot precious-metal position
-held at the broker ("London Gold", no expiry, no underlying, monthly carrying fee) is classified
-as a derivative and declared on the Termingeschaeft lines. Chosen by the taxpayer, not derived:
-`reference/research/open-legal-questions.md` Q11 records three readings and no Tier 1/2 source
-chooses between them. The reason given is that § 23 requires physical backing with an exclusive
-delivery or proceeds claim (BMF 14.05.2025 Rz. 57, [GT-ESTG23-011]) and the broker evidences
-neither, so the § 23 route is unavailable; between the two remaining readings the Termingeschaeft
-one was taken.
+**Q11 — reading chosen: sonstige Kapitalforderung (Reading C), § 20 Abs. 2 Satz 1 Nr. 7 →
+Zeile 19/22.** An unallocated spot precious-metal position held at the broker (no expiry, no
+underlying, monthly carrying fee) is **not** a Termingeschaeft. It is treated like a Zertifikat.
+Chosen by the taxpayer, 2026-08-07; `reference/research/open-legal-questions.md` Q11 records three
+readings and no Tier 1/2 source chooses between them.
 
-**This choice lives in a gitignored classification cache and nowhere else in the repository.** It
-is recorded here because that is the only public record of it. If the cache is rebuilt and the
-instrument classified differently, this row is wrong and the declared figures move. Reading C
-(sonstige Kapitalforderung, § 20 Abs. 2 Satz 1 Nr. 7 → Zeile 19/22) is not currently expressible
-at all — see the missing-category gap.
+What supports it, all already in the store:
+
+- **Rz. 9 excludes it from the Termingeschaeft route expressly** — *"Zertifikate und Optionsscheine
+  gehören nicht zu den Termingeschäften, vgl. Rn. 8 f."* ([GT-ESTG20-038]). The same Randziffer
+  opens by requiring an Options- or Festgeschaeft *"die zeitlich verzögert zu erfüllen sind"*,
+  which a rolling position with no maturity does not obviously satisfy.
+- **§ 23 is unavailable**: Rz. 57 requires physical backing with an exclusive delivery or proceeds
+  claim ([GT-ESTG23-011]) and the broker evidences neither.
+- **Nothing located argues against Reading C.** Q11 records that the BFH line cutting against it
+  presupposes a delivery claim, which is absent here, so it neither supports nor excludes it.
+
+It is also the taxpayer-favourable reading against Reading A — no derivative ring-fencing, so
+losses offset against all capital income rather than sitting in the Termingeschaeft pot with the
+pre-2025 cap. **Checked against every condition of the grey-area rule in CLAUDE.md**, since the
+rule is unavailable if any one fails: no Tier 1 or Tier 2 source contradicts Reading C, and Rz. 9
+positively excludes the alternative; the BMF has not addressed unallocated spot metal at a broker
+in any located passage, directly or by implication; the ambiguity is documented rather than
+constructed, as three readings each constrained by Tier 4 and none chosen by Tier 1 or Tier 2; and
+the taxpayer was asked and decided, on 2026-08-07.
+
+**Superseded, and why it is recorded rather than deleted.** This row previously read *"reading
+chosen: Termingeschaeft (Reading A)"*, reasoned as "§ 23 is out, and between the two remaining
+readings the Termingeschaeft one was taken" — which treated Reading C as unavailable because the
+engine could not express it. That is an implementation constraint standing in for a legal
+conclusion, and Rz. 9 points the other way.
+
+**The engine can now express the chosen reading. Issue #53 landed on 2026-08-07**, adding
+`AssetCategory.SONSTIGE_KAPITALFORDERUNG` and the dialog option that reaches it, so an
+unallocated spot metal position is classifiable as a sonstige Kapitalforderung and its disposals
+go to Zeile 19/22 under its own name. `BOND` would have landed the same figures on the same lines
+and was **declined as a workaround**: it makes one category mean two unrelated things, and it does
+not merely mislabel — a bond's trade price is a percentage of nominal and its gross is divided by
+100, which on a metal position understates cost and proceeds by two orders of magnitude. Measured
+2026-08-07 on the test scenario in `tests/test_sonstige_kapitalforderung.py`: the same trades give
+cost 2000.00 / proceeds 2300.00 / gain 300.00 under the new category and 20.00 / 23.00 / 3.00
+under `BOND`.
+
+**What #53 did not do is reclassify anything.** No holding was moved into the new category, and
+`preliminary_classify` never returns it — Rz. 57's test is not readable off an IBKR asset class,
+so it is asked, never inferred. Recording the answer is the follow-up work, and the sequence is
+deliberate: the option had to exist before the interactive pass, or the pass would have forced a
+choice among options that were all wrong and written it into the gitignored cache, where a wrong
+entry cannot be seen afterwards.
+
+**Which instruments are routed here, and why.** One so far, and it is not yet recorded in any
+cache:
+
+| Instrument | Why | Authority |
+|---|---|---|
+| `CONID:69067924` — `XAUUSD`, IBKR AssetClass `CMDTY`, unallocated spot gold at the broker | Not a Termingeschaeft, not a § 23 asset: no expiry and no delayed settlement, no physical backing and no delivery or proceeds claim | Rz. 9 [GT-ESTG20-038]; Rz. 57 [GT-ESTG23-011]; Q11 Reading C, chosen by the taxpayer 2026-08-07 |
+
+Nothing else in the maintainer's data has been assessed against Rz. 57. **The population that
+needs assessing is larger than this row**, and it is not the `CMDTY` rows: a Zertifikat and an
+unbacked ETC both arrive as `STK` and auto-classify to `STOCK` with no prompt. VZ 2024 and VZ 2025
+have 96 and 239 instruments not in the cache respectively (measured 2026-08-07, issue #53), and
+the interactive pass over them is where any further entry to this table will come from.
+
+**Blocker status, measured 2026-08-07.** VZ 2024 no longer stops on `XAUUSD`: with that
+classification supplied, the run reaches the next uncached instrument (`ISIN:SG1L1701REC0`) and
+stops there. So #53 removed this instrument as a blocker and did not, on its own, unblock the
+year — the interactive pass is the remaining step.
+
+**A previous version of this note said the choice lived only in a gitignored cache and that this
+row was its sole public record.** That was true, and it was tested the hard way on 2026-08-07 when
+the cache was destroyed by the clean-clone protocol: the classification was lost and this row was
+what survived. Keep it current for that reason.
 
 ### Abs. 4 — gain calculation and lot identification
 
@@ -85,9 +151,33 @@ at all — see the missing-category gap.
 | GT-ESTG20-022 | implements | `src/processing/` EUR conversion at ECB rates; `src/engine/fifo_manager.py` stores per-lot EUR basis | `test_group7_currency_fifo.py`, `test_group9_variable_fx.py`, `test_precision.py` | Abs. 4 Satz 1 Hs. 2 — each leg at its own date. **The statute names no rate source**; the engine uses ECB reference rates, which is a choice no located Tier 1/2 source prescribes for the Veranlagung. BMF 14.05.2025 Rz. 247 prescribes the Devisenbriefkurs only for the Steuerabzug by an inländische Zahlstelle, which does not apply here. |
 | GT-ESTG20-023 | implements | derivative close/expiry/settlement paths in `src/engine/event_processors/` | `test_options_lifecycle.py`, `test_futures.py` | Abs. 4 Satz 5 — Differenzausgleich less directly related costs, and the same Satz governs a worthless expiry (BMF Rz. 27). Newly stated in the store; the engine already computed derivative results this way, but the store had only the Abs. 4 Satz 1 formula. |
 | GT-ESTG20-024 | out of scope | — | — | Sparer-Pauschbetrag (Abs. 9). Applied by the Finanzamt; the engine reports gross figures and has no representation of Zeilen 16/17. The Satz 1 exclusion of actual Werbungskosten is nonetheless why only directly-related disposal costs reduce a gain — that part *is* how the engine computes. |
-| GT-ESTG20-012 | implements | `src/engine/fifo_manager.py` — FIFO lot consumption | `test_fifo_groups.py`, `tests/docs/spec_fifo.md` | Mandatory fiction; no specific-identification alternative is offered. |
+| GT-ESTG20-012 | implements | `src/engine/fifo_manager.py` — FIFO lot consumption; `reconcile_with_mark` decides which lots survive each checkpoint | `test_fifo_groups.py`, `test_replay_checkpoint_marks.py`, `tests/docs/spec_fifo.md` | Mandatory fiction; no specific-identification alternative is offered. Which lots a reconciliation keeps is part of it: where the reconstruction exceeds the reported holding the survivors are the **newest**, because FIFO consumed the oldest. Filling from the oldest end (the behaviour before August 2026) returned the wrong lot whenever a ledger held more than one, and the oversell flag previously discarded even an exactly-matching reconstruction. |
 | GT-ESTG20-013 | **deviates** | `src/engine/ledger_views.py`, `src/utils/account_utils.py` | `test_ledger_views.py`, `test_multi_account_harness.py` | See below. |
 | GT-ESTG20-014 | not reached | — | — | Own-depot transfer is not a disposal. No input represents one; a per-depot implementation would have to relocate lots rather than close and reopen them. |
+| GT-ESTG20-039 | implements | `DomainEventFactory._trade_contract_date()` in `src/parsers/domain_event_factory.py`, feeding `FinancialEvent.event_date` | `test_trade_event_date.py` — the rule, the signature, the absent-date case, and the wiring through `create_events_from_trades` | Rn. 85: the obligatorisches Rechtsgeschäft fixes the FX rate and the gain computation, so the trade date governs and settlement does not. **By rule since 2026-08-07**, not by fallback: the trade path has its own helper, which takes no settlement or report parameter, and `RawTradeRecord` no longer declares a settlement field. Previously the trades path used the general helper, which orders settlement first, and was right only because IBKR's Trades export omits `SettleDateTarget` — measured that day, 0 of 6,976 rows across `Trades-2021.csv`…`Trades-2025.csv`. |
+| GT-ESTG20-040 | implements | as above | as above. The § 23 tests (`test_section23_holding_period.py`, `test_section23_holding_period_guards.py`) build lots directly and do not reach the parser's choice of date, which is why `test_trade_event_date.py` exists | Rn. 317 defines *Erwerb* as the rechtswirksam abgeschlossener obligatorischer Vertrag; BFH IX R 18/13 (BStBl II 2014, 826, Rz 29) is to the same effect for § 23 and does not stand alone. Acquisition dates are therefore trade dates, which is what the ledger holds. The claim reaches past the Vorabpauschale: it also fixes the § 23 Jahresfrist and the month for § 18 Abs. 2. |
+| GT-ESTG20-041 | implements | `FifoLedger.receive_all_lots_from_merger()` in `src/engine/fifo_manager.py` carries `acquisition_date` across to the replacement lots | `test_stock_merger_fifo.py` asserts the carry-over (four separate assertions on the surviving lot's `acquisition_date`) | Rn. 184a: a steuerneutrale Fondsverschmelzung restates the count *"unter Berücksichtigung des Umtauschverhältnisses"* and does not create a new Anschaffungszeitpunkt. **What the guarding test does not cover:** every case it exercises is a stock merger. The path is shared, but no test merges an `InvestmentFund`, so the § 18 Abs. 2 consequence — a merged fund keeping its acquisition month — is unguarded. The per-acquisition half of Rn. 184a is what grounds GT-INVSTG-011. |
+
+**GT-ESTG20-039 and GT-ESTG20-040 — done, 2026-08-07.** The follow-up recorded here was to make
+the trade date the stated rule rather than the third fallback behind settlement. It landed in two
+steps: the trade path got its own helper, and then the concept was made unambiguous end to end —
+`event_date` now documents which date each event kind carries and why, the general helper is named
+`_zufluss_date` and says never to call it for a trade, `RawTradeRecord` no longer declares a
+settlement field, and `input_data_spec.md` says not to add the column.
+
+**What the pre-fix state actually risked, corrected twice on the day.** It was first written here
+as one Flex Query checkbox away from silently misdating every lot. It is not: the trades parser
+validates with `allow_extra=False`, so that column alone aborts the run. The silent path needed
+two edits — the column added to the query *and* to `TRADES_COLUMNS` — or no CSV at all, since the
+raw model declared the field and a record built in code never meets the validator. Removing the
+field closes the second route; the validator closes the first.
+
+> **Two corrections to this block, both on 2026-08-07, kept because the pattern matters.** It
+> first claimed the hazard was one Flex Query checkbox — asserted from the shape of the helper
+> without reading `validate_csv_columns`. Restated as a two-step hazard, it then stood as an open
+> follow-up for an hour after the first half had already been fixed, because the commit that fixed
+> it did not update the row. Both are the same failure: writing about code from what it looks like
+> it does rather than from what it does.
 
 **GT-ESTG20-013 — known deviation.** The ledger registries are keyed by `(account_key, asset_id)`,
 but every write uses a single `DEFAULT_ACCOUNT` constant and no account identifier is read
@@ -105,10 +195,10 @@ that question: pooling is wrong under both readings.
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-ESTG20-015 | implements | `CORP_MERGER_STOCK` → tax-neutral basis transfer (FIFO drain/receive) | `test_stock_merger_fifo.py`, `test_historical_merger_replay_guard.py` | Cash consideration is handled separately as `CORP_MERGER_CASH` → `CASH_MERGER_PROCEEDS`. |
+| GT-ESTG20-015 | implements | `CORP_MERGER_STOCK` → tax-neutral basis transfer (FIFO drain/receive) | `test_stock_merger_fifo.py` (incl. `test_merged_in_shares_sold_inside_the_historical_window`), `test_historical_merger_replay_guard.py` | Cash consideration is handled separately as `CORP_MERGER_CASH` → `CASH_MERGER_PROCEEDS`. Until issue #56 the transfer did not survive a disposal of the merged-in shares *inside* the historical window: the replay applied mergers after every ledger event, so the reconstruction overshot, reconcile discarded it and substituted a lot with a fabricated acquisition date. Basis and date now transfer in that case too. |
 | GT-ESTG20-016 | **deviates** | `CORP_STOCK_DIVIDEND` → new shares at EUR 0 basis | `test_stock_merger_fifo.py` (adjacent coverage only) | Satz 5 is the *residual* case, conditional on Sätze 3, 4 and 7 not applying. The engine applies the EUR 0 treatment without testing those three conditions. |
 | GT-ESTG20-017 | not reached | — | — | Abspaltung. No corporate-action type maps to it. |
-| GT-ESTG20-018 | not reached | — | — | Timing by Einbuchung date. The engine uses the corporate action's reported date; no input distinguishes the two. Note Satz 6 governs Sätze 1–5 only, not the Satz 7 Abspaltung. |
+| GT-ESTG20-018 | implements | Merger streamed chronologically at its own date (`engine/replay.py` `Phase.LEDGER_EVENTS`, `calculation_engine._replay_historical_merger`) | `test_stock_merger_fifo.py::TestMergerIntraDayOrdering`, `test_merged_in_shares_sold_inside_the_historical_window` | Satz 6 has two consequences and the engine reaches one. **Reached:** the measure takes effect at that moment, so the same day's disposals can consume the delivered lots — this is what fixed issue #56, and the intra-day rule is merger-before-trades. **Not reached:** *which* date is the Einbuchung. The engine uses the corporate action's reported date as a proxy; no input distinguishes the two. Note Satz 6 governs Sätze 1–5 only, not the Satz 7 Abspaltung. |
 | GT-ESTG20-019 | not reached | — | — | Wandel-/Umtauschanleihen. |
 | GT-ESTG20-020 | not reached | — | — | Bezugsrechte. |
 
@@ -136,7 +226,7 @@ that question: pooling is wrong under both readings.
 | GT-FORM-002 | implements | `src/engine/loss_offsetting.py:249-275` | `test_group6_loss_offsetting.py` | Zeile 19 is a net figure; Zeilen 20/21/22/23 restate parts of it, Zeilen 24/25 do not (*ausschließlich*). The engine gets the Zeile 24 half right and the Zeile 25 half wrong — next row. |
 | GT-FORM-003 | **deviates** | — | — | **Zeile 25 has no representation.** Forderungsausfall and wertlose Ausbuchung losses fall into `ANLAGE_KAP_SONSTIGE_VERLUSTE` (Zeile 22), which the 2024 Anleitung expressly forbids — *"ausschließlich in Zeile 25"*. Because *ausschließlich* also excludes them from Zeilen 18/19, the same defect **understates nothing but misplaces twice**: the loss appears in Zeile 22 where it may not, and inside the Zeile 19 net figure where it may not. No input in the maintainer's data produces such a loss today, so the path is unexercised, but nothing detects one if it appears. |
 | GT-FORM-004 | **deviates** | — | — | Same shape: a worthless-share write-off should go to Zeile 23 in VZ 2025, and there is no event kind for it. |
-| GT-FORM-005 | not reached | — | — | Nothing is written to Zeilen 21/24 for VZ 2025 under either reading, so no figure turns on the open question. See Q3. |
+| GT-FORM-005 | implements | `src/reporting/form_rules.py` — the 2025 rules write nothing to Zeilen 21/24/25 | `test_group6_loss_offsetting.py` | Nothing is entered on the separate derivative lines for VZ 2025, which is what the claim asserts and what the engine does. Whether the form still prints those numbers is a layout point that decides no figure; it was carried as open question Q3 until 2026-08-07 and is now a note in `reference/tax-forms/anlage-kap-zeilen.md`. |
 | GT-FORM-006 | implements | `ANLAGE_KAP_FOREIGN_TAX_PAID` — sum of withholding events | `test_withholding_tax_linker.py` | Neither ceiling is applied; the Finanzamt applies § 32d Abs. 5 Sätze 1 and 3. See GT-CREDIT-005/006. |
 | GT-FORM-007 | **partially implements** | `src/engine/loss_offsetting.py` | `test_german_kest_detection.py`, `test_withholding_tax_linker.py` | The negative half is implemented: German KESt is off Zeile 41. The positive half (Zeilen 7/37/38/39) is not computable — see GT-CREDIT-021. |
 | GT-FORM-008 | out of scope | — | — | Zeile 4 (Günstigerprüfung) and Zeile 5 (Überprüfung des Steuereinbehalts) are taxpayer elections, not computed figures. |
@@ -169,13 +259,18 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-010 | implements | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale_reclassification.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04 — see below. |
-| GT-INVSTG-011 | **deviates** | — | — | **Abs. 2 pro-rata is not implemented.** The engine computes only for units held at the start of the calendar year, so units acquired during the year produce *nothing* where Abs. 2 gives up to eleven twelfths. Understates deemed income in an acquisition year. |
-| GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. |
-| GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | |
-| GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
+| GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py`; the Satz 2 price for a fund bought mid-year comes from `src/processing/fund_prices.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale.py::TestAFundTheEngineCannotPrice`, `test_vorabpauschale_reclassification.py`, `test_fund_price_store.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04, and a fund it could not price dropped out silently until 2026-08-09 — see below. |
+| GT-INVSTG-011 | implements | `_calculate_vorabpauschale()` and `FundUnitTranche.abs2_retained_twelfths()` in `src/engine/calculation_engine.py` | `test_vorabpauschale_abs2.py` | Abs. 2 reduces each acquisition by one twelfth per full month before its month of acquisition; units held before the year keep twelve. **No longer a choice under uncertainty** — the 2026-08-07 audit closed Q13 in favour of exactly this reading, on Rz. 18.11's worked example applying the reduction to the *per-Anteil* amount, with Rz. 18.9 and Rn. 184a alongside. The one residual is recorded in the store, not here: no source works a mixed holding, so summing per acquisition joins two quoted rules. Superseded text: *"implements (Q13 Reading A: per acquisition) … a choice under uncertainty"*; and before that, **Abs. 2 pro-rata was not implemented** at all. |
+| GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. Re-decided 2026-08-07 on Rz. 18.12, now recorded: the Zuflussfiktion is stated there as a Steuerabzug convenience so that a full Sparer-Pauschbetrag is available, **not** as a holding test — which is why it could not carry GT-INVSTG-016 and no longer has to. |
+| GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | Re-decided 2026-08-07 on Rz. 18.13 and 18.14, now recorded. Rz. 18.14 fixes the rate as the value determined for the **erster Börsentag** of the calendar year, which is 2 January only in years whose first exchange day falls on it. This does not reach the engine: it looks up the value the BMF published for the year, and choosing the day is the BMF's step, not the engine's. It bore on GT-INVSTG-018, where a 2 January date *was* used as a Stichtag; that was closed on 2026-08-08 and the two now read the same way. |
+| GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Records which *year* each input is drawn from; the day within it is GT-INVSTG-010. Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
 | GT-INVSTG-015 | implements | gross on Zeilen 9–13 | `test_vorabpauschale.py::TestTeilfreistellungNegativeDistribution` | |
-| GT-INVSTG-016 | **choice under uncertainty** | funds with no end-of-year position are skipped | `test_vorabpauschale.py` | See below. |
+| GT-INVSTG-016 | implements | the unit count at the close of 31 December, from the ledger's own lots — see GT-INVSTG-017 | `test_vorabpauschale.py`, `test_vorabpauschale_price_and_units.py` | **No longer a choice under uncertainty.** The 2026-08-07 audit closed Q5 on Rz. 18.4: the multiplier is the holding at the close of 31 December, so a fund disposed of in full produces nothing without any rule about disposal being needed. The engine already computed it that way. Superseded position: **choice under uncertainty**, reasoned from the Abs. 3 Zuflussfiktion — see below. |
+| GT-INVSTG-017 | implements | the unit count is taken from the ledger's own lots at the close of 31 December, snapshotted immediately after the historical replay reconciles | `test_vorabpauschale_price_and_units.py` | Rz. 18.4 multiplies by the units held at the **close of 31 December** of the calendar year, and the engine does exactly that. Rounding is compliant: full precision throughout, quantised to two places once, after every multiplication. See below for what it replaced and why the moment of the snapshot matters. |
+| GT-INVSTG-018 | implements | ECB conversion at the day each price was set, carried on `Asset.prior_year_*_mark_price_date` and applied in `_calculate_vorabpauschale()`; the days themselves come from `src/utils/snapshot_dates.py` | `test_vorabpauschale_stichtag.py`, `test_vorabpauschale.py::TestVorabpauschaleCalculation` | Rz. 18.6 converts each input at the ECB rate of its own Stichtag, and a Stichtag is a day a price was set, never a fixed calendar date — the reading Rz. 18.14 confirms by anchoring the year on its **erster Börsentag**. **Re-decided 2026-08-08, and the imprecision is closed.** Superseded position: *"implements, with a known imprecision"* — the Jahresanfang Stichtag was hardcoded to 2 January and the Jahresende to 31 December. Measured over 2021–2025, 2 January is the first trading day in only 2024 and 2025, and in 2021 and 2022 it is a Saturday and a Sunday, so the ECB had no rate and `MAX_FALLBACK_DAYS_EXCHANGE_RATES` silently supplied one from another day. The 31 December instance was in neither this row nor issue #60 and was found by measurement: it is a weekend in 2022 and 2023. **What remains, and is not this claim's:** the day is derived from the snapshot naming convention, not read from the export, because the Positions report carries no date — issue #59. |
+| GT-INVSTG-035 | **implements** where a price can be fetched, re-decided 2026-08-08 | `_first_price_set_in_year()` in `src/processing/fund_price_sources.py`; `src/processing/fund_prices.py` otherwise | `test_fund_price_sources.py::TestFirstPriceSetInYear`, `test_fund_price_store.py` | Rz. 18.7: a fund launched during the year takes its first set price, with Abs. 2 pro-rata on top. **No launch date is needed** — a provider's published series begins at launch, so the first new publication in the calendar year is Rz. 18.7's base for a launch year and the ordinary Satz 2 base otherwise, by one rule. Measured 2026-08-08 on a fund with an 18 April 2018 inception: calendar 2018 resolves to 19 April 2018, calendar 2019 to 2 January. Superseded positions: **deviates** — first *"skips any fund without a start-of-year position outright"*, then *"the launch date is still unknown"*. The second was written the same day and was wrong. |
+| GT-INVSTG-036 | **not reached**, re-decided 2026-08-08 | — | — | Rz. 18.8: where a fund does not set a Rücknahmepreis at least monthly, the market price takes its place. **Both branches land on a price the engine already uses** — the Rücknahmepreis where one is set, the broker's market price where none is — so the determination cannot change a figure here and no behaviour follows from it. Superseded position: **deviates**, on the ground that the engine *"has no notion of whether a Rücknahmepreis exists and always uses the broker's mark price"*. Both halves were wrong: the second stopped being true on 2026-08-08, and the first described a distinction with no consequence. Which price is used, and why, is GT-INVSTG-010 Satz 4 below. |
+| GT-INVSTG-055 | **not reached** (Satz 1) / **out of scope** (Satz 2) | — | — | Rz. 18.9. Satz 1 is confined to the Steuerabzugsverfahren, which a foreign custodian does not perform. Satz 2 is a refund route in the assessment for tax over-withheld by a domestic agent — there is none here. Recorded because it is the administrative statement that the Abs. 2 reduction turns on *Anschaffungsdaten* attaching to units, which is part of what closed Q13 (GT-INVSTG-011). No behaviour follows from it. |
 
 **GT-INVSTG-010 and GT-INVSTG-014 — reached only for some funds until 2026-08-04.** A positions
 row is resolved without its `SubCategory`, so the description is the only fund signal that
@@ -197,15 +292,135 @@ itemisation is exercised with a record present (`test_pdf_vorabpauschale.py`) �
 pre-rename `tax_year` field and would have raised `AttributeError` on the first run that
 produced one.
 
-**GT-INVSTG-010, Satz 4 — partial.** The Rücknahmepreis is the primary measure and a market price
-substitutes only where none was set. The engine uses the broker's position mark price
-unconditionally, without establishing that no Rücknahmepreis exists for the instrument. Correct
-wherever the fund publishes no Rücknahmepreis; **not verified per instrument.**
+**GT-INVSTG-010, Satz 4 — closed for any fund a provider publishes, 2026-08-08.** The
+Ruecknahmepreis is the primary measure and a market price substitutes only where none was set. An
+open-ended fund that redeems units at its NAV sets one — *Rücknahme* plus *Preis*, the price it
+takes the share back at.
 
-**GT-INVSTG-016, open question Q5 — reading chosen: no Vorabpauschale in the year of disposal.**
-Reason: § 18 Abs. 3 deems the inflow to fall on the first working day of the following year, by
-which time the units are gone. This is inferred from the Zuflussfiktion, not stated by any located
-Tier 1 or Tier 2 source, and the opposite reading is defensible.
+The engine therefore looks that price up, by ISIN, **for every fund held across the year end** —
+not only for one the start-of-year position report cannot price. Until 2026-08-08 it used the
+report's mark wherever it had one and only went looking when it did not, which put Satz 4's
+substitute ahead of the primary measure for every fund held on 1 January. Superseded positions:
+first *"uses the broker's position mark price unconditionally"*; then, for one day, a
+`--vorabpauschale-strict-nav` switch that made the NAV opt-in. The switch is gone — an opt-in
+default is still the substitute for everyone who does not know to ask for it.
+
+**What remains is the fallback, and it is recorded.** Where no Ruecknahmepreis can be obtained the
+taxpayer is asked and offered the report's price, and in a non-interactive run that price is used
+outright; both record `VORABPAUSCHALE_PRICE_MARKET_FALLBACK` against the fund, so a reader can see
+which figures rest on the substitute. A fund that nothing can price stops the run.
+
+**GT-INVSTG-010 — the Satz 2 price.** *Ruecknahmepreis zu Beginn des Kalenderjahres* is the
+first Rücknahmepreis set in the calendar year. Rz. 18.3 of the BMF-Schreiben demonstrates it: one
+figure serves as both the Satz 2 base and the Satz 3 cap's lower bound, which Satz 3 defines as
+the first price set in the year. Rz. 18.7 anchors a mid-year fund on the first price actually set.
+
+The engine takes it from the calendar year's own start-of-year position report; where a fund was
+sold on that day and so has no price there, the last price set before the year began is used and a
+`VORABPAUSCHALE_PRICE_WRONG_DAY` data gap is recorded. How the stored reports are read into a
+position history is described in `src/data_preparation.py` and
+`src/parsers/parsing_orchestrator.py`.
+
+**A third source, for the fund the export cannot price at all.** A fund bought during the year has
+no row in that year's start-of-year report, because the report lists what was held. The price
+nevertheless exists — it is a property of the fund, not of the holding — so the figure is due and
+buying mid-year is an ordinary event, not a data gap. `src/processing/fund_prices.py` asks the
+taxpayer for the price and caches it under the asset's classification key and the calendar year,
+the same shape as the classification cache; each supplied price is recorded as a
+`VORABPAUSCHALE_PRICE_USER_SUPPLIED` gap at WARNING so the report states what the Basisertrag rests
+on and where it came from. **Nothing is invented:** a run that cannot obtain a price stops on a
+`VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN` FAIL_FAST naming every affected fund. Neither IBKR nor
+any broker export can supply this price — measured 2026-08-08: IBKR's historical endpoints serve
+market prices only, and its ETF NAV ticks (92–99) reach one session back.
+
+The conversion of this price is no longer pinned to 2 January; the follow-up that stood here is
+closed under GT-INVSTG-018 below.
+
+**A price the engine cannot use no longer removes the figure quietly, 2026-08-09.** Four paths in
+`_calculate_vorabpauschale()` dropped a single fund and let the run finish: no Satz 2 price, that
+price not convertible to EUR, no Satz 3 price though units were held at the close, that price not
+convertible. Each was a log line and a `continue`, so an instrument the engine had itself
+classified as an investment fund contributed no deemed income and the report said nothing —
+measured on 2026-08-07, four funds across VZ 2024 and VZ 2025 with Anlage KAP-INV Zeilen 9–13 at
+0.00 and an empty gap section. All four now collect and record one `VORABPAUSCHALE_PRICE_UNUSABLE`
+FAIL_FAST naming every affected fund with its reason. The figure in these cases is not zero, it is
+un-computable, and a zero on Zeile 9 is indistinguishable from a lawful one (issue #55).
+
+Two boundaries on that gap. It is **not** recorded for a calendar year whose Basiszins is not
+positive — Satz 2 multiplies by it, so no fund owes anything whatever its price was, and calendar
+2021 and 2022 are such years; without the guard VZ 2023's lawful zero would start aborting. And it
+is recorded **after** `VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN`, so a tree missing both keeps
+aborting on the acquisition dates as it did before: a FAIL_FAST raises where it is recorded, so
+only the first of two ever reaches the report.
+
+**GT-INVSTG-017 — the unit count. Closed.** Rz. 18.4 multiplies the per-unit Basisertrag by the
+units held at the close of 31 December of the calendar year, and the engine now does exactly that,
+taking them from the ledger's own lots at that moment. It previously multiplied by the units held
+when the year opened. The two coincide for an unchanged holding; on VZ 2024 real data they give Anlage
+KAP-INV Zeile 13 393.27 against 491.59.
+
+Bearing on the choice: § 18 Abs. 2 reduces the Vorabpauschale pro rata for units *acquired during
+the year*, which presupposes those units are counted; and GT-INVSTG-016 — no longer a reading but
+a consequence of this very Randziffer — gives no Vorabpauschale for a fund fully disposed of
+during the year.
+
+**Re-decided 2026-08-07 and strengthened.** Rz. 18.4 is not a Steuerabzug convention: it sits in
+Textziffer 18.1 *"Ermittlung der Vorabpauschale"* and is unqualified, where the Randziffern of
+this section that *are* confined to withholding say so (Rz. 18.9, Rz. 18.10, both *"im
+Steuerabzugsverfahren"*). It therefore governs the amount itself, which is what lets it carry
+GT-INVSTG-016 as well as the count.
+
+Done. The lots are snapshotted immediately after the historical replay reconciles, which is the
+one moment they describe the close of the preceding calendar year and still carry their
+acquisition dates.
+
+**GT-INVSTG-035 — partly closed, and re-decided 2026-08-08.** The Abs. 2 pro-rata applies to units
+acquired during the year (`e70099b`), and the price is no longer unobtainable: a fund with no
+start-of-year row is asked about rather than skipped, so a taxpayer who has the first price the
+fund actually set can enter it and Rz. 18.7's base is used.
+
+**It does not need to tell the two apart.** The engine cannot distinguish a fund *newly launched*
+mid-year from one merely *bought* mid-year, and that turns out not to matter: it asks the provider
+for the first value published in the calendar year, and a series that starts at launch answers
+Rz. 18.7 without anyone establishing a launch date. The earlier note here said closing this
+*"needs the launch date, which no input this pipeline holds supplies"*; that was wrong.
+
+**The manual path proposes no day it was not given.** Where no provider can be reached the
+taxpayer is asked, and where the fund has no start-of-year row the prompt offers no default date:
+the year's first trading day is wrong for a fund launched in April, and a proposed date is the
+kind of thing that gets accepted with Enter. An empty answer is a refusal, not a guess
+(`test_fund_price_store.py::TestThePromptDefaults::test_with_no_report_row_no_day_is_proposed`).
+Superseded position, written 2026-08-08 in the same commit that fixed it: *"What is still open is
+the manual path … the prompt offers the year's first trading day as the default date."* It
+described the behaviour the code half of `366f832` had already removed.
+
+**GT-INVSTG-036 — follow-up withdrawn 2026-08-08.** It named a `fix-func(engine)` to distinguish a
+fund that sets a Rücknahmepreis at least monthly from one that does not. There is nothing for it to
+close: both branches of Rz. 18.8 land on a price the engine already uses, so the distinction cannot
+move a figure. The Satz 4 choice it also claimed to close is a separate matter and is decided under
+GT-INVSTG-010 above.
+
+**GT-INVSTG-016 — settled 2026-08-07, formerly open question Q5.** The engine's behaviour is
+unchanged; its justification is not. The reading was previously *chosen* from the Abs. 3
+Zuflussfiktion — the units are gone by the first working day of the following year — and recorded
+as a defensible guess. It now rests on Rz. 18.4, which states the multiplier as the units held
+*"mit Ablauf des 31. Dezember des Kalenderjahres"*. A fund disposed of in full is multiplied by
+nothing; no rule about disposal is needed, and none exists. Rz. 20.4 confirms the direction: a
+merely deemed disposal under § 22 Abs. 1 leaves the units in the count and the full year stands
+(GT-INVSTG-054).
+
+This is the same Randziffer the engine already implements for the unit count (GT-INVSTG-017), so
+Q5 was never a separate decision — it was a consequence of one already taken. Recording it as an
+open question, and reasoning it from the wrong Absatz, is the defect the audit corrected.
+
+**Follow-up from closing Q5 and Q13:** `fix-nonfunc(engine)` — three comments now assert something
+false and a reader would trust them. `src/engine/calculation_engine.py:1299` says *"Both readings
+are in reference/research/open-legal-questions.md Q13"*; there are no longer two readings there,
+only a retirement note. Line 1331 attributes the disposal-year result to *"Q5 Reading A: the
+Abs. 3 Zufluss falls after the disposal"*, which is the reasoning this audit replaced — the ground
+is Rz. 18.4. And `tests/test_vorabpauschale_abs2.py:12` describes Q13 as an open question. None
+changes behaviour, which is why they are not in this `ks-maint`; a comment that misstates why a
+figure is correct is how the next reader reopens a settled point or, worse, "fixes" it.
 
 ### § 19 — disposal gains
 
@@ -257,6 +472,7 @@ someone to classify a fund at 50.5 % as Sonstiger Fonds (0 %) when it is an Akti
 | GT-INVSTG-041 | out of scope | — | — | Lapse of a § 20 Abs. 4 proof. |
 | GT-INVSTG-042 | not reached | — | — | The Rücknahmepreis to use for the fiction. |
 | GT-INVSTG-043 | not reached | — | — | Abs. 3 Satz 1 — the fiktive-Veräußerung gain is deemed to flow only on the **actual** disposal. Nothing reaches it because GT-INVSTG-040 is not reached either, but it changes what a fix would have to do: see below. |
+| GT-INVSTG-054 | **not reached** | — | — | Rz. 20.4, as amended 29.04.2021: in a year the § 22 Abs. 1 fiction bites, the Vorabpauschale is set for the **whole** calendar year — a deemed acquisition triggers no Abs. 2 reduction — and the Teilfreistellung follows the rate at the Abs. 3 Zuflusszeitpunkt. Not reached for the same reason as GT-INVSTG-040: nothing detects a rate change. **It constrains the eventual § 22 fix**, which must not pro-rate the Vorabpauschale of the fiction year. Its Sätze 3–5 are a 2018/2019 Steuerabzug Nichtbeanstandung and are out of scope by their own wording. Recorded now because the audit found the 29.04.2021 amendment, which no file in this repository had. |
 
 **GT-INVSTG-043 changes the shape of the GT-INVSTG-040 gap.** Implementing § 22 is not "emit a
 disposal in the year the rate changes". Abs. 3 Satz 1 defers the Zufluss to the actual disposal, so
@@ -290,13 +506,13 @@ and nothing distinguishes them.
 | GT-ESTG23-002 | implements | the broker's trade date is used, never the settlement date | `test_section23_holding_period.py` | Trade date is when the contract became binding — the obligatorisches Geschäft the rule points at. |
 | GT-ESTG23-003 | implements | `is_within_section23_speculation_period()` in `src/tax_law/holding_period.py` | `test_section23_holding_period.py::TestSpeculationPeriodRule`, `test_section23_holding_period_guards.py` | Anniversary arithmetic per §§ 187/188 BGB, implemented once and called from the three `FifoLedger` disposal paths. A `days <= 365` shortcut is wrong across a 29 February and is not used. |
 | GT-ESTG23-004 | **choice under uncertainty** | `src/tax_law/holding_period.py` | `test_section23_holding_period.py::TestSpeculationPeriodRule` | See below. |
-| GT-ESTG23-005 | **deviates** | — | — | **The ten-year period is not implemented**; one year is applied unconditionally. Idle for the instruments currently classified `PRIVATE_SALE_ASSET`, which produce no income from the asset itself — but that is a property of those instruments, not a safeguard. Adding an income-producing "anderes Wirtschaftsgut" makes this wrong. |
+| GT-ESTG23-005 | **deviates** | — | — | **The ten-year period is not implemented**; one year is applied unconditionally. Idle for the instruments currently classified `PRIVATE_SALE_ASSET`, which produce no income from the asset itself — but that is a property of those instruments, not a safeguard. Adding an income-producing "anderes Wirtschaftsgut" makes this wrong. **Re-decided unchanged by the issue #66 audit, 2026-08-08:** the claim's text lost its reference to Crypto ETPs, but the instruments the taxpayer has classified `PRIVATE_SALE_ASSET` are the same set and none of them produces income from the asset itself, so the deviation's scope and its idleness are both where they were. |
 | GT-ESTG23-006 | **deviates** | `consume_short_lots_for_cover` in `src/engine/fifo_manager.py` | — | Nr. 3 has **no holding period**. The engine applies the Nr. 2 Jahresfrist to a short cover, so a short held longer than a year would be reported exempt where Nr. 3 makes it taxable. Unexercised — no sell-to-open on any `PRIVATE_SALE_ASSET` in the maintainer's data (checked 2026-08-02) — and wrong if reached. |
 | GT-ESTG23-007 | not reached | — | — | Inherited or gifted assets carry the predecessor's acquisition date. No input represents an unentgeltlicher Erwerb. |
 | GT-ESTG23-008 | implements | `src/engine/fifo_manager.py` | `test_section23_holding_period.py` | |
 | GT-ESTG23-009 | out of scope (deliberate) | — | — | The Freigrenze applies to the taxpayer's *total* private-sale gain for the year, which one portfolio cannot establish. The engine reports the gross figure and leaves the threshold to the taxpayer and the Finanzamt. |
 | GT-ESTG23-010 | implements | `src/engine/loss_offsetting.py` — § 23 pool separate from § 20 | `test_group6_loss_offsetting.py` | Carryback and carryforward are the Finanzamt's step. |
-| GT-ESTG23-011 | **not implemented — human input** | `src/classification/asset_classifier.py:30` | — | Whether an instrument is a § 23 asset comes from classification, not from any property the engine reads. A cash-settled ETC may well be a Kapitalforderung under § 20 instead. |
+| GT-ESTG23-011 | **deviates** (crypto ETPs) / **implements — as a question, not an inference** (Rohstoff ETCs) | `src/classification/asset_classifier.py` — the two dialog options that are Rz. 57's two outcomes; `AssetCategory.SONSTIGE_KAPITALFORDERUNG` | `test_sonstige_kapitalforderung.py::TestSonstigeKapitalforderungIsClassifiable` | **Re-decided 2026-08-08 by the issue #66 audit; the Rohstoff half is unchanged from the 2026-08-07 re-decision under issue #53.** Rz. 57's test — physical backing plus an exclusive delivery-or-proceeds claim — turns on the Emissionsbedingungen, which no input carries, so the engine asks. Both of Rz. 57's outcomes have had a dialog option since #53; before it, an unbacked ETC had nowhere to go but `BOND` or a wrong category. `test_it_is_never_a_preliminary_classification` holds the store's own conclusion in place: no heuristic may infer this from an asset class label. **What the #66 audit changed:** the claim no longer lists Crypto ETPs, because Rz. 57 reaches Gold und andere Rohstoffe only and the crypto row never had an authority. The `deviates` this opened — the engine answering the crypto question in three places, the `preliminary_classify` branch, the dialog default it produced, and the § 23 option label naming *Krypto-ETP* — **is closed**: `preliminary_classify` returns `UNKNOWN` for a crypto product, which is the one category that suppresses the dialog default and raises in a non-interactive run, and the label names no instrument the Randziffer does not reach. Guarded by `test_crypto_etp_is_not_pre_answered.py`, 19 tests. The category a crypto ETP belongs in is now the taxpayer's determination alone, recorded in the classification cache; the engine holds no position and states none. |
 | GT-ESTG23-012 | implements | `SECTION_23_ESTG_TAXABLE_GAIN` / `_TAXABLE_LOSS` / `_EXEMPT_HOLDING_PERIOD_MET` | `test_section23_holding_period_guards.py::TestSpeculationPeriodFlagIsTruthful` | Dates that cannot decide the question raise `ProcessingError` rather than defaulting to exempt — an undecidable § 23 case is unreported income, not tax-free income. |
 | GT-ESTG23-013 | implements | `src/engine/fifo_manager.py` — currency ledgers consume lots first-in-first-out | `test_group7_currency_fifo.py` | Nr. 2 Satz 3, the statutory FIFO fiction for *gleichartige Fremdwährungsbeträge*. **This is the Tier 1 grounding the currency FIFO always needed and never had.** Until this audit the store cited § 20 Abs. 4 Satz 7, which is confined to vertretbare Wertpapiere in Sammelverwahrung and cannot reach a currency balance. The engine's behaviour is unchanged and was already right; what changes is that it is now sourced. Applies from 31.07.2014 (Art. 2 G. v. 25.07.2014, BGBl. I S. 1266) — earlier assessment years have no statutory ordering for currency. |
 
@@ -315,7 +531,7 @@ anniversary and the next working day should be reviewed by hand.
 | GT-FORM-020 | implements | § 23 gains and losses → Zeile 54 | `test_section23_holding_period.py` | |
 | GT-FORM-021 | out of scope | — | — | Same as GT-ESTG23-009. |
 | GT-FORM-022 | implements | separate § 23 pool | `test_group6_loss_offsetting.py` | |
-| GT-FORM-023 | **choice under uncertainty** | `src/engine/fifo_manager.py` applies FIFO to § 23 assets | `test_section23_holding_period.py` | See below. |
+| GT-FORM-023 | **choice under uncertainty** | `src/engine/fifo_manager.py` applies FIFO to § 23 assets | `test_section23_holding_period.py` | See below. **Re-decided unchanged by the issue #66 audit, 2026-08-08:** the claim's text no longer offers Crypto ETPs as an example of the *anderes Wirtschaftsgut* the gap bites on. The gap itself is unmoved — it is defined by § 23 Abs. 1 Satz 1 Nr. 2 Satz 3 covering currency and nothing else, not by which instruments are listed beside it. |
 
 **GT-FORM-023, open question Q6 — reading chosen: FIFO.** § 23 contains no lot-identification
 rule, and § 20 Abs. 4 Satz 7 is confined by its wording to *vertretbare Wertpapiere* in
@@ -411,11 +627,11 @@ German custodian through the broker.
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-FX-001 | implements | `FX_CONVERSION_SALE`, `FX_CONVERSION_SHORT_COVER`, `FX_IMPLICIT_SECURITY_PURCHASE`, `FX_IMPLICIT_SECURITY_SALE`, `FX_IMPLICIT_CASHFLOW_EXPENSE`, `FX_IMPLICIT_CASHFLOW_INCOME` → `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE` / `_VERLUSTE` | `test_group7_currency_fifo.py`, `test_group9_variable_fx.py`, `test_group11_cashflow_currency.py`, `test_fx_rgl_hardening.py` | All currency balances are treated as § 20; see Q7. **The cash-flow debit case (`FX_IMPLICIT_CASHFLOW_EXPENSE`/`_INCOME`) is an extension of this claim, not one of the disposing events Rz. 131 enumerates — see Q10.** |
+| GT-FX-001 | implements | `FX_CONVERSION_SALE`, `FX_CONVERSION_SHORT_COVER`, `FX_IMPLICIT_SECURITY_PURCHASE`, `FX_IMPLICIT_SECURITY_SALE`, `FX_IMPLICIT_CASHFLOW_EXPENSE`, `FX_IMPLICIT_CASHFLOW_INCOME` → `ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE` / `_VERLUSTE` | `test_group7_currency_fifo.py`, `test_group9_variable_fx.py`, `test_group11_cashflow_currency.py`, `test_fx_rgl_hardening.py` | All currency balances are treated as § 20; see Q7. **The cash-flow debit case (`FX_IMPLICIT_CASHFLOW_EXPENSE`/`_INCOME`) is an extension of this claim, not one of the disposing events Rz. 131 enumerates — see Q9, instance (b).** |
 | GT-FX-002 | not reached | — | — | Non-interest-bearing accounts. A margin brokerage account pays or charges interest on balances, so the § 23 branch is not exercised — **but nothing tests the account's actual character.** |
 | GT-FX-003 | not reached | — | — | Pure payment accounts. |
 | GT-FX-004 | not reached | — | — | Retroactivity to VZ 2009 and the 2025 bank withholding duty both concern German Zahlstellen. |
-| GT-FX-005 | **choice under uncertainty** | as GT-FX-001 | same | § 20 throughout. Reason: the administrative position, and a margin account's balances bear interest. The § 23 reading would make gains after a year tax-free, so the choice is not conservative in the taxpayer's favour — it is the one that follows the administration. |
+| GT-FX-005 | implements | as GT-FX-001 | same | § 20 throughout. Reason: the administrative position, and a margin account's balances bear interest. The § 23 reading would make gains after a year tax-free, so this is **not** the taxpayer-favourable choice — and under the grey-area rule in CLAUDE.md it is not a choice at all. BMF 14.05.2025 Rz. 131 states the § 20 treatment at Tier 2, verbatim and verified, drawn on the verzinslich/unverzinslich line; the rule's first condition bars implementing against it, whichever way it falls. **Do not reopen this on the ground that the favourable reading exists.** What remains genuinely open is whether the administration's position is correct, which is Q7 and is not something a generated figure should take a side on. Position changed from *"choice under uncertainty"* on 2026-08-07: Rz. 131 having been verified, following it is compliance, not a selection. |
 | GT-FX-006 | **choice under uncertainty** | short currency positions tracked and taxed symmetrically with long ones | `test_group7_currency_fifo.py` | No guidance addresses a negative balance in Privatvermögen. Symmetry is an assumption. |
 | GT-FX-007 | **choice under uncertainty — now unsourced outright** | currency legs of securities trades measured separately (`FX_IMPLICIT_*`) | `test_group9_variable_fx.py`, `test_group10_options_variable_fx.py` | See below. |
 | GT-FX-008 | implements | `src/engine/fifo_manager.py` — currency lots consumed FIFO | `test_group7_currency_fifo.py` | FIFO for currency, now sourced on both branches: BMF 14.05.2025 Rz. 131 for § 20, § 23 Abs. 1 S. 1 Nr. 2 S. 3 for § 23 ([GT-ESTG23-013]). Same ordering either way, so the unresolved classification in GT-FX-005 does not put the lot order in doubt. |

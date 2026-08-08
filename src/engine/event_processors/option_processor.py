@@ -44,8 +44,16 @@ class OptionExerciseProcessor(EventProcessor):
             raise ProcessingError(f"OptionExerciseProcessor: event {event.event_id} references asset {event.asset_internal_id} which is {type(option_asset).__name__}, not Option.")
 
         if option_asset.underlying_asset_internal_id is None:
+            # Cash-settled: no underlying the account can hold, so there is no delivery
+            # leg and nothing to consume here. The settlement event that does consume the
+            # lot is guaranteed to exist by
+            # `ParsingOrchestrator._require_option_cash_settlements`, which pairs every
+            # event reaching this branch with its OptionEAE row before the engine runs.
+            # Stepping aside was an unchecked assumption until August 2026; an OptionEAE
+            # file that was absent or incomplete left the lot open and surfaced as an EOY
+            # position mismatch, or in a prior year as nothing at all.
             logger.info(f"Option asset {option_asset.get_classification_key()} (ID: {option_asset.internal_asset_id}) "
-                        f"has no underlying link — likely a cash-settled index option. "
+                        f"has no underlying link — cash-settled index option. "
                         f"Skipping exercise event {event.event_id} (handled by OptionCashSettlementProcessor).")
             return []
 
@@ -97,8 +105,11 @@ class OptionAssignmentProcessor(EventProcessor):
             raise ProcessingError(f"OptionAssignmentProcessor: event {event.event_id} references asset {event.asset_internal_id} which is {type(option_asset).__name__}, not Option.")
 
         if option_asset.underlying_asset_internal_id is None:
+            # Cash-settled — see the identical branch in OptionExerciseProcessor. The
+            # pairing that makes stepping aside safe is enforced in
+            # `ParsingOrchestrator._require_option_cash_settlements`.
             logger.info(f"Option asset {option_asset.get_classification_key()} (ID: {option_asset.internal_asset_id}) "
-                        f"has no underlying link — likely a cash-settled index option. "
+                        f"has no underlying link — cash-settled index option. "
                         f"Skipping assignment event {event.event_id} (handled by OptionCashSettlementProcessor).")
             return []
 
