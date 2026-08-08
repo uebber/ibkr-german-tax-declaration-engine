@@ -2,7 +2,8 @@
 - **CSV Encoding:** All input CSV files are expected to be `utf-8-sig` encoded.
 - **Decimal Parsing:** Numerical monetary values and quantities are parsed into Python's `Decimal` type, preserving precision from the string representation. Empty strings or unparsable numeric values typically default to `None` or `Decimal("1.0")` based on field definition and parsing logic (`safe_decimal` utility).
 - **Date Parsing:** Date strings are parsed from various common formats (e.g., YYYY-MM-DD, YYYYMMDD) into Python `datetime.date` or `datetime.datetime` objects.
-- **Column Validation:** Each parser validates that the CSV header row contains exactly the columns defined in `src/parsers/column_validator.py`. Missing or unexpected columns cause a `ValueError` before any rows are parsed. This ensures the IBKR Flex Query export configuration matches what the engine expects.
+- **Column Validation:** Each parser validates that the CSV header row contains exactly the columns defined in `src/parsers/column_validator.py`. Missing or unexpected columns cause a `ValueError` before any rows are parsed. This ensures the IBKR Flex Query export configuration matches what the engine expects. This sentence was true of `validate_csv_columns` and false of the parsers until August 2026: each caught the `ValueError` one frame later, printed it and returned an empty record list.
+- **Row failures are fatal, and reported together.** A row that fails model validation is not skipped. `src/parsers/csv_reader.py` collects every such row in a file and raises `DataIntegrityError` naming each one — its line number, its `TransactionID`/`ActionID` where the export carries one, and the columns that failed with the values they contained. A missing file raises `FileNotFoundError` rather than reading as empty.
 
 ---
 
