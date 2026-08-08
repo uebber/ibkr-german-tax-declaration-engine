@@ -267,7 +267,7 @@ here rather than resolved.
 - Investment Funds (Investmentfonds) — InvStG 2018
 - Options/Derivatives (Termingeschäfte) — EStG 20
 - CFDs — EStG 20
-- Private Sale Assets (Gold ETCs, Crypto ETPs) — EStG 23
+- Private Sale Assets (Gold and commodity ETCs) — EStG 23
 - Foreign Currency (Fremdwährung) — EStG 20 / EStG 23
 
 ### Taxable events

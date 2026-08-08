@@ -14,7 +14,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 - [EStG 20 -- Kapitalvermoegen](tax-law/estg-20-kapitalvermoegen.md) -- Central statute for all capital income (dividends, gains, options, corporate actions)
 - [EStG 20 Abs. 6 -- Verlustverrechnung](tax-law/estg-20-abs6-verlustverrechnung.md) -- Loss offsetting rules, stock ring-fencing, abolished derivative cap
-- [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold ETCs, Crypto ETPs), 1-year speculation period
+- [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold and commodity ETCs), 1-year speculation period
 - [EStG 32d -- Abgeltungsteuer](tax-law/estg-32d-abgeltungsteuer.md) -- Flat tax rate (25%), Veranlagungspflicht (Abs. 3), foreign tax credit (Abs. 5), Guenstigerpruefung (Abs. 6)
 - [EStG 34d -- Auslaendische Einkuenfte](tax-law/estg-34d-auslaendische-einkuenfte.md) -- Schuldner-domicile test for foreign-source income; distinct from the Z18/Z19 form split
 - [EStG 36 / 45a -- Anrechnung inlaendischer KESt](tax-law/estg-36-45a-kapitalertragsteuer-anrechnung.md) -- German KESt on German dividends held via a foreign broker: Zeile 7/37/38/39 (NOT Zeile 41), Steuerbescheinigung requirement

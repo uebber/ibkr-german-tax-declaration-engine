@@ -116,7 +116,7 @@ EStG contains no lot-identification rule"*. **It contains one**: § 23 Abs. 1 Sa
 fixes FIFO for *gleichartige Fremdwaehrungsbetraege* ([GT-ESTG23-013]), inserted by Art. 2 des
 Gesetzes vom 25.07.2014 (BGBl. I S. 1266). The library had never recorded that Satz. **Currency is
 therefore settled at Tier 1 and is out of this question.** What remains open is every *other*
-"anderes Wirtschaftsgut" -- Gold and commodity ETCs, Crypto ETPs.
+"anderes Wirtschaftsgut" -- Gold and commodity ETCs.
 
 The FIFO fiction of § 20 Abs. 4 Satz 7 EStG does not reach them either: it is confined by its own
 wording to *vertretbare Wertpapiere* in Sammelverwahrung.

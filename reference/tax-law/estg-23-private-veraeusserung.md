@@ -16,8 +16,9 @@ Period arithmetic pulls in three further Tier 1 provisions, cited verbatim below
 ## Scope
 
 Taxation of *andere Wirtschaftsgueter* disposed of within the one-year Jahresfrist -- in a
-brokerage portfolio typically Gold and commodity ETCs and Crypto ETPs, which are claims on a
-physical commodity or a crypto asset rather than securities under 20 EStG.
+brokerage portfolio typically Gold and commodity ETCs that meet the physical-backing test of
+BMF 14.05.2025 Rz. 57, which are claims on a physical commodity rather than securities under
+20 EStG.
 
 Also reaches foreign currency gains on non-interest-bearing accounts; see
 [`../bmf-guidance/fremdwaehrung-konten.md`](../bmf-guidance/fremdwaehrung-konten.md).
@@ -213,9 +214,9 @@ Two consequences that are easy to miss:
 einem Kalenderjahr Einkuenfte erzielt werden, erhoeht sich der Zeitraum auf zehn Jahre."*
 
 The one-year period is therefore conditional: an "anderes Wirtschaftsgut" that produced income in
-even one calendar year carries a **ten**-year Frist. Gold and commodity ETCs and Crypto ETPs held
-through a broker produce no income from the asset itself, so Satz 4 is idle for them -- but that
-is a property of those instruments, not of the provision.
+even one calendar year carries a **ten**-year Frist. Gold and commodity ETCs held through a broker
+produce no income from the asset itself, so Satz 4 is idle for them -- but that is a property of
+those instruments, not of the provision.
 
 #### [GT-ESTG23-006] Nr. 3 -- disposal before acquisition
 
@@ -284,10 +285,9 @@ produce -- a single portfolio's gains are not necessarily the whole of it.
 |------------|-----------|
 | Gold ETCs (e.g. Xetra-Gold) | A claim to delivery of physical gold, not a security under 20 EStG |
 | Commodity ETCs | A claim on a physical commodity |
-| Crypto ETPs | Tracks a crypto asset; an "anderes Wirtschaftsgut" |
 
-These represent claims on physical commodities or crypto assets -- neither Kapitalforderungen nor
-shares in corporations.
+These represent claims on physical commodities -- neither Kapitalforderungen nor shares in
+corporations.
 
 **Tier 2 authority, BMF-Schreiben vom 14.05.2025 Rz. 57** (verbatim, retrieved 2026-08-03), which
 states the test and the *both* outcomes:
@@ -309,10 +309,33 @@ So the deciding facts are **physical backing** and an **exclusive claim to deliv
 proceeds of the deposited commodity**. Unbacked certificates are § 20 Abs. 2 Satz 1 Nr. 7 income,
 not § 23 assets. The classification is per instrument and cannot be read off an asset class label.
 
+**Rz. 57 reaches Gold und andere Rohstoffe, and nothing else.** Both limbs of its test are worded
+to a Rohstoff -- the Emittent must invest *"nahezu vollstaendig in Gold oder einen anderen
+Rohstoff"*, and the exclusive claim must be to *"Auslieferung des hinterlegten Rohstoffs"* or to
+*"Auszahlung des Erloeses aus der Veraeusserung des Rohstoffs"*. An instrument tracking something
+that is not a Rohstoff satisfies neither limb and fails neither: **the Randziffer does not speak
+to it in either direction**, and no other source in this library does.
+
 > **Corrected 2026-08-03 (Validation Protocol item 1).** This entry previously rested on three BFH
 > decisions alone (VIII R 4/15, VIII R 7/17, VIII R 35/14), cited without dates or Fundstellen.
 > Tier 4 never stands alone; the Tier 2 Randziffer above now carries it, and it states the
 > Kapitalforderung outcome as well, which the entry had only gestured at.
+
+> **Crypto ETPs removed 2026-08-08 (Validation Protocol item 1).** The table carried a third row,
+> *"Crypto ETPs -- tracks a crypto asset; an 'anderes Wirtschaftsgut'"*, and the scope paragraph,
+> the Satz 4 discussion and three further files repeated it. **It never had an authority.** The
+> only Tier 2 source under this claim is Rz. 57, whose subject is Gold und andere Rohstoffe; a
+> crypto asset is not a Rohstoff, so extending the Randziffer to a crypto ETP is an inference this
+> library never licensed, in either direction. The 2026-08-03 correction above repaired the
+> *commodity* rows' provenance and left the crypto row standing on nothing, which is how it
+> survived a protocol re-audit once already.
+>
+> **Removed rather than relocated.** This is not an entry for `open-legal-questions.md`: that file
+> admits a point only on the finding that no Tier 1/2 source settles it, and no search for one was
+> made here. What is recorded is the narrower fact that **this library holds no source on the
+> point** -- which is why the entry is gone rather than restated as unresolved. A BMF-Schreiben on
+> virtuelle Waehrungen und sonstige Token exists (10.05.2022, updated 06.03.2025) and has never
+> been retrieved into this library; whether it reaches an ETP at all is unexamined.
 
 ---
 

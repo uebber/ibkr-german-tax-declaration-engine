@@ -70,9 +70,9 @@ analogously (23 Abs. 3 Saetze 7-8).
 
 **§ 23 EStG contains exactly one lot-identification rule, and it is confined to currency.**
 § 23 Abs. 1 Satz 1 Nr. 2 **Satz 3** EStG fixes FIFO for *gleichartige Fremdwaehrungsbetraege* --
-see [GT-ESTG23-013]. For every other "anderes Wirtschaftsgut" — Gold and commodity ETCs, Crypto
-ETPs, the instruments this form block is actually used for — **no ordering rule has been located at
-Tier 1 or Tier 2.**
+see [GT-ESTG23-013]. For every other "anderes Wirtschaftsgut" — Gold and commodity ETCs, the
+instruments this form block is actually used for — **no ordering rule has been located at Tier 1
+or Tier 2.**
 
 The FIFO fiction of 20 Abs. 4 Satz 7 EStG does not fill the gap: it is confined by its own wording
 to *vertretbare Wertpapiere in Sammelverwahrung nach § 5 DepotG* and does not reach an "anderes
