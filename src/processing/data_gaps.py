@@ -28,12 +28,44 @@ module offers is between a figure and no figure, never between two figures.
 CLAUDE.md, "There is no safe direction to be wrong", states the same rule for
 the engine at large.
 
-Scope, stated precisely because the severity words above are easy to over-read:
-today exactly one condition is routed through this channel — the End-of-Year
-quantity mismatch against the broker's positions report, at WARNING. That
-choice preserves the engine's pre-existing behaviour (log, count, continue),
-which is deliberate: an EoY mismatch here is normally the pre-2021 data-floor
-artefact, and aborting would make early tax years unprocessable.
+Scope, stated precisely because the severity words above are easy to over-read.
+The conditions routed through this channel, as of 2026-08-08:
+
+    ANLAGE_KAP_GERMAN_KEST_NOT_DECLARABLE              WARNING
+    CURRENCY_EOY_MISMATCH                              WARNING
+    EOY_QTY_MISMATCH                                   WARNING
+    KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED  WARNING
+    REPLAY_MARK_UNCONFIRMED_START                      WARNING
+    VORABPAUSCHALE_PRICE_WRONG_DAY                     WARNING
+    EOY_RECONCILIATION_FAILED                          FAIL_FAST
+    REPLAY_MARK_MISMATCH                               FAIL_FAST
+    VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN            FAIL_FAST
+    VORABPAUSCHALE_PRIOR_YEAR_SNAPSHOT_MISSING         FAIL_FAST
+
+This paragraph said "today exactly one condition" until 2026-08-08, by which
+time there were ten. Keep it in step or delete it; a list that undercounts
+the channel invites the next reader to conclude it is barely used and settle
+their condition locally, which is the habit it exists to end. The list above was
+extracted by parsing every `record(` call in `src/`, not written from memory —
+a first attempt at it from memory missed three.
+
+**`EOY_QTY_MISMATCH` being a WARNING does not mean the run continues.** It is
+recorded once per affected position, and after the loop
+`EOY_RECONCILIATION_FAILED` is recorded FAIL_FAST naming all of them, so a
+securities mismatch always aborts — CLAUDE.md's non-negotiable SoY→EoY rule.
+The WARNING entries are the itemisation the fatal one points at, not a policy
+of tolerating the condition. This paragraph said the opposite until 2026-08-08,
+describing the "log, count, continue" behaviour that predates the abort.
+
+`CURRENCY_EOY_MISMATCH` is the one that genuinely does continue: a cash-balance
+divergence is about input completeness rather than a ledger disagreeing about a
+holding, so it is recorded and the run proceeds.
+
+One WARNING entry records something the run then *uses* rather than something it
+lacks: a Vorabpauschale price taken from the wrong day. It is here because a
+figure resting on an input the broker never reported is exactly what the
+taxpayer must check before filing, and the report section is the only place that
+reaches them.
 
 **A WARNING is not a statement that the declared figures are unaffected.** An
 EoY quantity mismatch is the very signature of a disposal the engine did not
