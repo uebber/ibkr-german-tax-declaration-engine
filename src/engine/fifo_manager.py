@@ -606,29 +606,41 @@ class FifoLedger:
         The snapshot supplies a quantity and a cost basis. It supplies no acquisition
         date, so the lot carries `acquisition_date_is_known=False` and consumers that
         need a real date (§ 18 Abs. 2 InvStG, § 23 EStG holding periods) must refuse it
-        rather than read the placeholder."""
+        rather than read the placeholder.
+
+        **A cost basis this cannot use stops the run; it is never replaced by zero.**
+        Three substitutions stood here until 2026-08-09 -- an absent basis, one that
+        would not convert, and a negative one -- each logged and each making the whole
+        of a later disposal a gain. Measured over `Positions-*.csv`, 2021-2025:
+        `CostBasisMoney` is blank in 0 of 87 rows, and negative in 21 of 87 which are
+        the 21 short rows, none of them long. So the sign carries information rather
+        than marking an anomaly, and none of the three was reachable on a long lot.
+        """
         if quantity <= Decimal(0): return
-        total_cost_basis_eur: Decimal
         if reported_cost_basis is None or reported_cost_basis_currency is None:
-            logger.error(f"Asset {asset.get_classification_key()} fallback SOY: Missing SOY cost basis. Creating zero-cost lot for Qty {quantity}.")
-            total_cost_basis_eur = self.ctx.create_decimal(Decimal(0))
-        else:
-            total_cost_basis_soy_curr = self.ctx.create_decimal(reported_cost_basis)
-            cost_basis_currency = reported_cost_basis_currency
-            if cost_basis_currency.upper() == "EUR":
-                total_cost_basis_eur = total_cost_basis_soy_curr
-            else:
-                converted_eur = self.currency_converter.convert_to_eur(
-                    original_amount=total_cost_basis_soy_curr, original_currency=cost_basis_currency, date_of_conversion=fx_conversion_date
-                )
-                if converted_eur is None:
-                    logger.error(f"Asset {asset.get_classification_key()} fallback SOY: Failed to convert SOY cost basis. Creating zero-cost lot for Qty {quantity}.")
-                    total_cost_basis_eur = self.ctx.create_decimal(Decimal(0))
-                else:
-                    total_cost_basis_eur = self.ctx.create_decimal(converted_eur)
-            if total_cost_basis_eur < Decimal(0):
-                logger.warning(f"Asset {asset.get_classification_key()} fallback SOY: Reported total cost basis {total_cost_basis_eur} EUR is negative. Using 0 for Qty {quantity}.")
-                total_cost_basis_eur = self.ctx.create_decimal(Decimal(0))
+            raise ProcessingError(
+                f"Asset {asset.get_classification_key()}: the position snapshot supplies "
+                f"{quantity} units with no cost basis, so the gain on their disposal cannot "
+                f"be computed. A zero basis would declare the whole proceeds as gain.")
+        total_cost_basis_eur = self.ctx.create_decimal(reported_cost_basis)
+        if reported_cost_basis_currency.upper() != "EUR":
+            converted_eur = self.currency_converter.convert_to_eur(
+                original_amount=total_cost_basis_eur,
+                original_currency=reported_cost_basis_currency,
+                date_of_conversion=fx_conversion_date,
+            )
+            if converted_eur is None:
+                raise ProcessingError(
+                    f"Asset {asset.get_classification_key()}: no rate to convert the "
+                    f"{reported_cost_basis_currency} cost basis of {quantity} units at "
+                    f"{fx_conversion_date}, so their gain on disposal cannot be computed.")
+            total_cost_basis_eur = self.ctx.create_decimal(converted_eur)
+        if total_cost_basis_eur < Decimal(0):
+            raise ProcessingError(
+                f"Asset {asset.get_classification_key()}: the snapshot reports a negative "
+                f"cost basis {total_cost_basis_eur} EUR for a LONG position of {quantity} "
+                f"units. In this broker's exports a negative basis marks a short, so this "
+                f"is a contradiction rather than a value to floor at zero.")
         cost_per_unit = self.ctx.divide(total_cost_basis_eur, quantity) if quantity != Decimal(0) else Decimal(0)
         fallback_lot = FifoLot(
             acquisition_date=acquisition_date_str, quantity=quantity,
@@ -647,26 +659,33 @@ class FifoLedger:
                                    reported_cost_basis_currency: Optional[str],
                                    opening_date_str: str, fx_conversion_date):
         """Short-side counterpart of `_create_fallback_long_lot`. IBKR reports the
-        opening proceeds of a short position in the cost-basis column."""
+        opening proceeds of a short position in the cost-basis column.
+
+        Proceeds this cannot use stop the run, for the reason given on the long side:
+        a zero here makes the entire cover cost a loss. The `copy_abs()` is why there is
+        no negative branch to match the long one -- on a short, a negative
+        `CostBasisMoney` is the normal sign and carries the meaning.
+        """
         if quantity_abs <= Decimal(0): return
-        total_proceeds_eur: Decimal
         if reported_cost_basis is None or reported_cost_basis_currency is None:
-            logger.error(f"Asset {asset.get_classification_key()} fallback SOY SHORT: Missing SOY proceeds. Creating zero-proceeds lot for Qty {quantity_abs}.")
-            total_proceeds_eur = self.ctx.create_decimal(Decimal(0))
-        else:
-            total_proceeds_soy_curr = self.ctx.create_decimal(reported_cost_basis).copy_abs()
-            proceeds_currency = reported_cost_basis_currency
-            if proceeds_currency.upper() == "EUR":
-                total_proceeds_eur = total_proceeds_soy_curr
-            else:
-                converted_eur = self.currency_converter.convert_to_eur(
-                    original_amount=total_proceeds_soy_curr, original_currency=proceeds_currency, date_of_conversion=fx_conversion_date
-                )
-                if converted_eur is None:
-                    logger.error(f"Asset {asset.get_classification_key()} fallback SOY SHORT: Failed to convert SOY proceeds. Creating zero-proceeds lot for Qty {quantity_abs}.")
-                    total_proceeds_eur = self.ctx.create_decimal(Decimal(0))
-                else:
-                    total_proceeds_eur = self.ctx.create_decimal(converted_eur)
+            raise ProcessingError(
+                f"Asset {asset.get_classification_key()}: the position snapshot reports a "
+                f"short of {quantity_abs} units with no opening proceeds, so the gain on "
+                f"covering them cannot be computed. Zero proceeds would declare the whole "
+                f"cover cost as a loss.")
+        total_proceeds_eur = self.ctx.create_decimal(reported_cost_basis).copy_abs()
+        if reported_cost_basis_currency.upper() != "EUR":
+            converted_eur = self.currency_converter.convert_to_eur(
+                original_amount=total_proceeds_eur,
+                original_currency=reported_cost_basis_currency,
+                date_of_conversion=fx_conversion_date,
+            )
+            if converted_eur is None:
+                raise ProcessingError(
+                    f"Asset {asset.get_classification_key()}: no rate to convert the "
+                    f"{reported_cost_basis_currency} opening proceeds of {quantity_abs} "
+                    f"short units at {fx_conversion_date}.")
+            total_proceeds_eur = self.ctx.create_decimal(converted_eur)
         proceeds_per_unit = self.ctx.divide(total_proceeds_eur, quantity_abs) if quantity_abs != Decimal(0) else Decimal(0)
         fallback_short_lot = ShortFifoLot(
             opening_date=opening_date_str, quantity_shorted=quantity_abs,

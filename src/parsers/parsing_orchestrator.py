@@ -16,13 +16,13 @@ from src.domain.events import (
     OptionAssignmentEvent, OptionExerciseEvent, OptionCashSettlementEvent,
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
-from src.domain.exceptions import DataIntegrityError
+from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
 from src.utils.snapshot_dates import (
     first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
-from src.utils.type_utils import parse_ibkr_date, safe_decimal
+from src.utils.type_utils import parse_ibkr_date
 import src.config as global_config 
 
 from .raw_models import (
@@ -85,14 +85,14 @@ def _drop_cancelled_trade_pairs(raw_trades: List[RawTradeRecord]) -> List[RawTra
     unmatched: List[str] = []
     for cancellation in cancellations:
         word = (cancellation.buy_sell or "").upper().replace("(CA.)", "").strip()
-        quantity = safe_decimal(cancellation.quantity, default=Decimal(0))
+        quantity = cancellation.quantity
         candidates = [
             r for r in raw_trades
             if id(r) not in removed
             and r is not cancellation
             and _key(r) == _key(cancellation)
             and (r.buy_sell or "").strip().upper() == word
-            and safe_decimal(r.quantity, default=Decimal(0)) == -quantity
+            and r.quantity == -quantity
             and (r.transaction_id or "") < (cancellation.transaction_id or "")
         ]
         if not candidates:
@@ -225,10 +225,10 @@ class ParsingOrchestrator:
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0)) # Changed from initial_quantity_soy
-            asset.soy_cost_basis_amount = safe_decimal(raw_pos.cost_basis_money) # Changed from initial_cost_basis_money_soy
+            asset.soy_quantity = raw_pos.position # Changed from initial_quantity_soy
+            asset.soy_cost_basis_amount = raw_pos.cost_basis_money # Changed from initial_cost_basis_money_soy
             asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
-            asset.soy_position_value = safe_decimal(raw_pos.position_value)
+            asset.soy_position_value = raw_pos.position_value
             asset.soy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
 
@@ -243,9 +243,9 @@ class ParsingOrchestrator:
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.eoy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.eoy_market_price = safe_decimal(raw_pos.mark_price) # Changed from eoy_mark_price
-            asset.eoy_position_value = safe_decimal(raw_pos.position_value)
+            asset.eoy_quantity = raw_pos.position
+            asset.eoy_market_price = raw_pos.mark_price # Changed from eoy_mark_price
+            asset.eoy_position_value = raw_pos.position_value
             asset.eoy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
 
@@ -271,9 +271,9 @@ class ParsingOrchestrator:
 
         for raw_pos in self.raw_positions_prior_start:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
-            asset.prior_year_soy_mark_price = safe_decimal(raw_pos.mark_price)
+            asset.prior_year_soy_quantity = raw_pos.position
+            asset.prior_year_soy_position_value = raw_pos.position_value
+            asset.prior_year_soy_mark_price = raw_pos.mark_price
             asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
             asset.prior_year_soy_mark_price_date = soy_snapshot_date
             self._record_prior_year_snapshot_fields(asset, (
@@ -284,9 +284,9 @@ class ParsingOrchestrator:
 
         for raw_pos in self.raw_positions_prior_end:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_eoy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
-            asset.prior_year_eoy_mark_price = safe_decimal(raw_pos.mark_price)
+            asset.prior_year_eoy_quantity = raw_pos.position
+            asset.prior_year_eoy_position_value = raw_pos.position_value
+            asset.prior_year_eoy_mark_price = raw_pos.mark_price
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
             asset.prior_year_eoy_mark_price_date = eoy_snapshot_date
             self._record_prior_year_snapshot_fields(asset, (
@@ -304,14 +304,14 @@ class ParsingOrchestrator:
             by_asset: Dict[uuid.UUID, MarkPosition] = {}
             for raw_pos in raw_rows:
                 asset = self._resolve_asset_from_position(raw_pos)
-                quantity = safe_decimal(raw_pos.position, default=Decimal(0))
+                quantity = raw_pos.position
                 existing = by_asset.get(asset.internal_asset_id)
                 if existing is not None:
                     # Same instrument reported on more than one row at the same mark.
                     quantity += existing.quantity
                 by_asset[asset.internal_asset_id] = MarkPosition(
                     quantity=quantity,
-                    cost_basis_amount=safe_decimal(raw_pos.cost_basis_money),
+                    cost_basis_amount=raw_pos.cost_basis_money,
                     cost_basis_currency=raw_pos.currency_primary,
                 )
             self.mark_positions[mark_year] = by_asset
@@ -320,8 +320,8 @@ class ParsingOrchestrator:
 
         for raw_pos in self.raw_positions_prior_opening:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_opening_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
-            asset.prior_year_opening_mark_price = safe_decimal(raw_pos.mark_price)
+            asset.prior_year_opening_quantity = raw_pos.position
+            asset.prior_year_opening_mark_price = raw_pos.mark_price
             asset.prior_year_opening_mark_price_currency = raw_pos.currency_primary
             self._record_prior_year_snapshot_fields(asset, (
                 "prior_year_opening_quantity", "prior_year_opening_mark_price",
@@ -804,13 +804,17 @@ class ParsingOrchestrator:
                         f"Set soy_quantity to 0, soy_cost_basis_amount to 0."
                     )
                     assets_updated_count +=1
-                elif asset_obj.soy_quantity != Decimal(0) and asset_obj.soy_cost_basis_amount is None: # Changed from initial_quantity_soy and initial_cost_basis_money_soy
-                     logger.warning(f"Asset {asset_obj.get_classification_key()} (ID: {asset_id}) had non-zero SOY quantity ({asset_obj.soy_quantity}) but missing cost basis. Setting SOY cost basis to 0.")
-                     asset_obj.soy_cost_basis_amount = Decimal(0) # Changed from initial_cost_basis_money_soy
-                     asset_obj.soy_cost_basis_currency = None # Changed from initial_cost_basis_currency_soy
-                elif not isinstance(asset_obj.soy_quantity, Decimal): # Changed from initial_quantity_soy
-                    logger.warning(f"Asset {asset_obj.get_classification_key()} (ID: {asset_id}) had non-Decimal SOY quantity ({asset_obj.soy_quantity}, type {type(asset_obj.soy_quantity)}). Converting to Decimal.")
-                    asset_obj.soy_quantity = safe_decimal(asset_obj.soy_quantity, default=Decimal(0)) # Changed from initial_quantity_soy
+                elif asset_obj.soy_quantity != Decimal(0) and asset_obj.soy_cost_basis_amount is None:
+                    # Held at the start of the year with no reported cost basis. This used to
+                    # set the basis to zero, which makes the whole of a later disposal a gain.
+                    # `CostBasisMoney` is blank in 0 of 87 position rows across 2021-2025, so
+                    # nothing was ever floored -- but a zero here is an invented figure, not a
+                    # missing one, and the run must not carry it.
+                    raise ProcessingError(
+                        f"Asset {asset_obj.get_classification_key()}: the start-of-year "
+                        f"snapshot reports {asset_obj.soy_quantity} units with no cost basis. "
+                        f"Their gain on disposal cannot be computed, and a zero basis would "
+                        f"declare the whole proceeds as gain.")
 
         if assets_updated_count > 0:
             logger.info(f"Initialized SOY quantity to 0 for {assets_updated_count} assets not found in the SOY position report.")

@@ -107,7 +107,7 @@ class DomainEventFactory:
         """
         buy_sell = (raw_trade.buy_sell or "").upper()
         open_close_ind = (raw_trade.open_close_indicator or "").upper()
-        trade_quantity = safe_decimal(raw_trade.quantity, default=Decimal(0))
+        trade_quantity = raw_trade.quantity
 
         # Detect position flip (C;O or O;C)
         is_flip = "C" in open_close_ind and "O" in open_close_ind
@@ -206,7 +206,7 @@ class DomainEventFactory:
             option_event_type = FinancialEventType.OPTION_EXPIRATION_WORTHLESS
 
         if option_event_type:
-            raw_trade_quantity_val = safe_decimal(raw_trade.quantity, default=Decimal(0))
+            raw_trade_quantity_val = raw_trade.quantity
             qty_contracts = raw_trade_quantity_val.copy_abs()
 
             tx_id_for_event = raw_trade.transaction_id
@@ -303,8 +303,8 @@ class DomainEventFactory:
                     from_curr, to_curr = "", ""
                     from_amt_val, to_amt_val = Decimal(0), Decimal(0)
 
-                    rate = safe_decimal(rt.trade_price, default=Decimal(0))
-                    trade_quantity_val = safe_decimal(rt.quantity, default=Decimal(0))
+                    rate = rt.trade_price
+                    trade_quantity_val = rt.quantity
 
                     base_monetary_value = Decimal(0)
                     if trade_quantity_val != Decimal(0) and rate != Decimal(0):
@@ -393,8 +393,8 @@ class DomainEventFactory:
                     data_errors.append(f"Trade {tx_id_primary}: error determining type: {e}")
                     continue
 
-                trade_quantity_val = safe_decimal(rt.quantity, default=Decimal('0'))
-                trade_price = safe_decimal(rt.trade_price, default=Decimal('0.0'))
+                trade_quantity_val = rt.quantity
+                trade_price = rt.trade_price
 
                 # Always derived, never imported. TradeMoney and Proceeds are not exported,
                 # so the branch that preferred them was unreachable; deriving Qty x Price x
@@ -427,7 +427,7 @@ class DomainEventFactory:
                                  f"Calculated gross amount {calculated_gross_amount} from Qty*Price*(Multiplier if applicable).")
 
 
-                commission_val = safe_decimal(rt.ib_commission, default=Decimal('0.0'))
+                commission_val = rt.ib_commission
 
                 trade_event = TradeEvent(
                     asset_internal_id=asset.internal_asset_id,
@@ -517,7 +517,7 @@ class DomainEventFactory:
             event_type_str_upper = (rct.type or "").upper()
             desc_upper = (rct.description or "").upper()
             domain_event_instance: Optional[FinancialEvent] = None
-            raw_amount = safe_decimal(rct.amount, default=Decimal(0))
+            raw_amount = rct.amount
             # Gross amount for events should be absolute for income, or represent the cost if it's an expense.
             # For WithholdingTaxEvent and FeeEvent, raw_amount is typically negative.
             # For CashFlowEvents (Dividend, Interest), raw_amount is typically positive.
@@ -718,8 +718,7 @@ class DomainEventFactory:
             logger.debug(f"CA Record {idx+1}: Parsed CA Type from file: '{ca_type_from_file}', Code: '{ca_code_from_file}', Parsed CA Desc from file (upper): '{ca_desc_from_file[:100]}...'")
 
             domain_ca_event_instance: Optional[CorporateActionEvent] = None
-            quantity_ca = safe_decimal(rca.quantity)
-            logger.debug(f"CA Record {idx+1}: Raw Quantity: {rca.quantity}, Parsed Decimal Quantity: {quantity_ca}")
+            quantity_ca = rca.quantity
 
             gross_amount_ca_raw = None
             if ca_type_from_file == "TC" and "CASH" in ca_desc_from_file: # Merger for cash
