@@ -604,9 +604,16 @@ class FifoLedger:
         """Build the one lot that stands in for a discarded reconstruction at a mark.
 
         The snapshot supplies a quantity and a cost basis. It supplies no acquisition
-        date, so the lot carries `acquisition_date_is_known=False` and consumers that
-        need a real date (§ 18 Abs. 2 InvStG, § 23 EStG holding periods) must refuse it
-        rather than read the placeholder.
+        date, so the lot carries `acquisition_date_is_known=False`.
+
+        **Exactly one consumer honours that flag: § 18 Abs. 2, which raises rather than
+        read the placeholder. § 23 does not.** The holding period is computed straight
+        from `acquisition_date`, so a placeholder would decide the Spekulationsfrist
+        with no signal either way. This docstring claimed both refused until 2026-08-09;
+        it now says what the code does. The assumption the gap rests on, measured over
+        2021-2025: two undated lots exist, neither is a `PRIVATE_SALE_ASSET` -- the only
+        category § 23 reaches -- and neither has been disposed of. It becomes live the
+        day an undated lot is crypto, a metal ETP or a currency balance.
 
         **A cost basis this cannot use stops the run; it is never replaced by zero.**
         Three substitutions stood here until 2026-08-09 -- an absent basis, one that
