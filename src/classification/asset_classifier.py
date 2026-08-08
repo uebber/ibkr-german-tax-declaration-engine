@@ -63,7 +63,14 @@ class AssetClassifier:
             # records that as a deviation: 23 Abs. 1 Satz 1 Nr. 2 Satz 4 extends it to ten
             # years for an asset that produced income in at least one year. Printing the
             # one-year promise on the prompt would make the engine's own defect look like law.
-            ("§23 EStG / Anlage SO — physisch hinterlegter Rohstoff mit ausschließlichem Lieferanspruch (z.B. Xetra-Gold), oder Krypto-ETP", AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE), # Changed from SECTION_23_ESTG_ASSET
+            #
+            # It no longer names Krypto-ETP either -- issue #66. Rz. 57's test is worded to a
+            # Rohstoff throughout, so the label was answering for an instrument the Randziffer
+            # does not reach, and [GT-ESTG23-011] no longer carries a crypto row. Both options
+            # state a criterion rather than an instrument list; a crypto ETP is matched against
+            # them by the taxpayer, on the Emissionsbedingungen, which is where the deciding
+            # facts are and where no input to this engine goes.
+            ("§23 EStG / Anlage SO — physisch hinterlegter Rohstoff mit ausschließlichem Lieferanspruch (z.B. Xetra-Gold)", AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE), # Changed from SECTION_23_ESTG_ASSET
             # Rz. 9 puts the "kein Termingeschäft" half beyond doubt: "Zertifikate und
             # Optionsscheine gehören nicht zu den Termingeschäften" ([GT-ESTG20-038]). That a
             # Zertifikat is instead a sonstige Kapitalforderung is [GT-ESTG20-008].
@@ -158,6 +165,11 @@ class AssetClassifier:
         if "XETRA-GOLD" in desc_upper or "PHYSICAL GOLD" in desc_upper or \
            "GOLD ETC" in desc_upper or symbol_upper in ("4GLD", "XAD5", "GZLD"):
             return True
+        # Redundant while `preliminary_classify` returns UNKNOWN for these, since UNKNOWN
+        # reaches the catch-all at the end of this method anyway. Kept as the second line of
+        # defence, and it is a real one: this test sits ahead of the STOCK/BOND branch below,
+        # so a crypto ETP that someone later lets fall through to STOCK is still put to the
+        # taxpayer rather than silently taxed as a share.
         if "BTCETC" in desc_upper or "BITCOIN ETP" in desc_upper or "CRYPTO ETP" in desc_upper or \
            "ETHEREUM ETP" in desc_upper or symbol_upper in ("BTCE", "ETCZERO", "BITC"):
              return True
@@ -207,10 +219,28 @@ class AssetClassifier:
                 fund_type_guess = InvestmentFundType.IMMOBILIENFONDS
             return AssetCategory.INVESTMENT_FUND, fund_type_guess
 
-        # Handle §23 EStG Assets (Gold, Crypto ETCs/ETPs)
+        # A crypto ETP gets NO preliminary answer -- issue #66. The § 23 branch below used to
+        # claim it, on the strength of [GT-ESTG23-011], whose crypto row had no authority and
+        # was removed by the audit of 2026-08-08. Rz. 57 is worded to a Rohstoff in both of
+        # its limbs -- capital invested "nahezu vollstaendig in Gold oder einen anderen
+        # Rohstoff", an exclusive claim to "Auslieferung des hinterlegten Rohstoffs" or to the
+        # proceeds of its sale -- so it reaches a crypto ETP in neither direction.
+        #
+        # UNKNOWN rather than a fall-through, and the difference is the point: only UNKNOWN
+        # suppresses the dialog default, and only UNKNOWN raises in a non-interactive run
+        # instead of continuing. Allowed to fall through, a crypto ETP arriving as STK would
+        # be classified STOCK and collect the Aktienverlusttopf ([GT-ESTG20-033]) from a
+        # keystroke.
+        if "BTCETC" in desc_upper or "BITCOIN" in desc_upper or "CRYPTO" in desc_upper or \
+           "ETHEREUM" in desc_upper or sym_upper in ("BTCE", "ETCZERO", "BITC"):
+            return AssetCategory.UNKNOWN, InvestmentFundType.NONE
+
+        # Handle §23 EStG Assets (Gold and other commodity ETCs). Rz. 57 is authority for the
+        # Rohstoff case; whether a heuristic should pre-answer even that, when the deciding
+        # facts are in the Emissionsbedingungen, is a separate question this change does not
+        # reopen.
         if "XETRA-GOLD" in desc_upper or "PHYSICAL GOLD" in desc_upper or sym_upper in ("4GLD", "XAD5", "GZLD") or \
-           "BTCETC" in desc_upper or "BITCOIN ETP" in desc_upper or sym_upper == "BTCE" or \
-           ("ETC" in desc_upper and ("GOLD" in desc_upper or "CRYPTO" in desc_upper or "BITCOIN" in desc_upper)):
+           ("ETC" in desc_upper and "GOLD" in desc_upper):
             return AssetCategory.PRIVATE_SALE_ASSET, InvestmentFundType.NONE # Changed from SECTION_23_ESTG_ASSET
         
         # Handle Options and CFDs
