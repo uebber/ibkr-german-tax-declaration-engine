@@ -73,32 +73,51 @@ def test_every_declared_field_maps_to_a_requested_column(model_name, columns, _g
     )
 
 
-@pytest.mark.parametrize("model_name,columns,file_glob",
-                         MODELS, ids=[m[0] for m in MODELS])
-def test_the_column_tuple_matches_the_real_export(model_name, columns, file_glob):
+def test_the_column_tuples_match_the_real_exports():
     """
-    The other half, and the reason the tuple can be trusted as ground truth above:
-    `*_COLUMNS` must be what the files actually carry. If the tuple drifts from the
+    The other half, and the reason the tuples can be trusted as ground truth above:
+    `*_COLUMNS` must be what the files actually carry. If a tuple drifts from the
     export, the test above certifies a set of fields against a fiction.
 
-    Skipped when `data_import/` is absent, since it holds real account data and is not
-    part of a clean clone.
+    **One test over all six, skipping once.** It was six parametrised cases until
+    2026-08-09, which meant six skip lines on any tree without `data_import/` — and
+    six narrow-looking gaps read as six unrelated things when there is one condition:
+    the exports are real account data and a clean clone has none. What a clean clone
+    cannot check is *any* tuple against *any* export, and one line should say so.
 
-    Probed: deleting "TradeDate" from `TRADES_COLUMNS` turns this red for
-    RawTradeRecord (and the parser's own validator red for every trades file).
+    Every mismatch is collected before asserting, so one run names every drifted file
+    rather than the first — CLAUDE.md's report-together rule. A partially populated
+    `data_import/` checks what it has; only a wholly empty one skips.
+
+    Probed: deleting "TradeDate" from `TRADES_COLUMNS` turns this red naming every
+    Trades file (and the parser's own validator red for every trades file). Probed
+    for the skip: with no exports present the suite reports one skip, not six.
     """
-    files = sorted(glob.glob(file_glob))
-    if not files:
-        pytest.skip(f"no exports matching {file_glob}")
+    checked = 0
+    mismatches = []
+    for model_name, columns, file_glob in MODELS:
+        for path in sorted(glob.glob(file_glob)):
+            checked += 1
+            with open(path, newline="", encoding="utf-8-sig") as handle:
+                header = set(next(csv.reader(handle)))
+            if header != set(columns):
+                mismatches.append(
+                    f"{path} ({model_name}): only in the file "
+                    f"{sorted(header - set(columns))}; only in the tuple "
+                    f"{sorted(set(columns) - header)}"
+                )
 
-    for path in files:
-        with open(path, newline="", encoding="utf-8-sig") as handle:
-            header = set(next(csv.reader(handle)))
-        assert header == set(columns), (
-            f"{path} does not match its column tuple. "
-            f"Only in the file: {sorted(header - set(columns))}; "
-            f"only in the tuple: {sorted(set(columns) - header)}"
+    if not checked:
+        pytest.skip(
+            "no exports under data_import/ — no column tuple is checked against a "
+            "real export, so the two tests either side of this one compare the models "
+            "against tuples nothing has anchored"
         )
+
+    assert not mismatches, (
+        f"{len(mismatches)} of {checked} export(s) do not match their column tuple:\n"
+        + "\n".join(mismatches)
+    )
 
 
 def test_the_models_that_deliberately_drop_a_requested_column_are_listed():

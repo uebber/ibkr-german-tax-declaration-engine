@@ -34,48 +34,55 @@ from pydantic import ValidationError
 
 from src.parsers import raw_models as rm
 
-# model, minimal payload that parses, blank-able optional decimals, blank-able required decimals
-CASES = [
-    (
-        "RawTradeRecord",
+# The one thing that has to be written by hand: a minimal payload each model parses.
+# The Decimal fields to exercise are NOT written here -- they are read off the model
+# below, so a field added tomorrow is covered tomorrow. They were two hand-kept lists
+# per model until 2026-08-09, which had two costs. A new optional Decimal landed with
+# no blank-vs-zero coverage and nothing said so (probed: `FXRateToBase` added to
+# `RawTradeRecord` and `TRADES_COLUMNS` with the standard validator, suite green). And
+# where a list was empty the case skipped with a *reason* -- "has no optional Decimal
+# fields" -- that nothing kept true; four of these skipped permanently.
+PAYLOADS = {
+    "RawTradeRecord":
         {"CurrencyPrimary": "EUR", "AssetClass": "STK", "Symbol": "X",
          "Description": "d", "TradeDate": "2024-01-02", "Quantity": "1",
          "TradePrice": "1"},
-        ["Strike", "Multiplier", "IBCommission"],
-        ["Quantity", "TradePrice"],
-    ),
-    (
-        "RawCashTransactionRecord",
+    "RawCashTransactionRecord":
         {"CurrencyPrimary": "EUR", "Description": "d", "SettleDate": "2024-01-02",
          "Type": "Dividends", "Amount": "1"},
-        [],
-        ["Amount"],
-    ),
-    (
-        "RawPositionRecord",
+    "RawPositionRecord":
         {"CurrencyPrimary": "EUR", "AssetClass": "STK", "Symbol": "X",
          "Description": "d", "Quantity": "1"},
-        ["Multiplier", "MarkPrice", "PositionValue", "CostBasisMoney"],
-        ["Quantity"],
-    ),
-    (
-        "RawCorporateActionRecord",
+    "RawCorporateActionRecord":
         {"Symbol": "X", "Description": "d", "Report Date": "2024-01-02", "Type": "FS"},
-        ["Quantity", "Proceeds", "Value"],
-        [],
-    ),
-    (
-        "RawOptionsEAERecord",
+    "RawOptionsEAERecord":
         {"CurrencyPrimary": "EUR", "Symbol": "X", "Description": "d",
          "Date": "2024-01-02", "Transaction Type": "Cash Settlement"},
-        ["FXRateToBase", "Multiplier", "Strike", "Quantity", "Trade Price",
-         "Proceeds", "Comm/Tax", "Basis", "RealizedPnl"],
-        [],
-    ),
-]
-IDS = [c[0] for c in CASES]
+}
 
-ALL_MODELS = IDS + ["RawCashBalanceRecord"]
+# `RawCashBalanceRecord` is deliberately absent above: its validator defaults a blank to
+# zero on purpose, so it would fail both behaviour tests. It is pinned by its own test at
+# the foot of this file, and still carries the every-field-has-a-validator invariant.
+ALL_MODELS = list(PAYLOADS) + ["RawCashBalanceRecord"]
+
+
+def _decimal_aliases(model_name, *, required):
+    """The model's own answer to "which Decimal fields are (not) required"."""
+    model = getattr(rm, model_name)
+    return sorted(
+        (info.alias or name)
+        for name, info in model.__fields__.items()
+        if info.type_ is Decimal and bool(info.required) is required
+    )
+
+
+def _models_having(*, required):
+    """Only models that actually have such a field, so no case is ever vacuous.
+
+    A model with none simply produces no test, rather than a test that skips with a
+    claim about the model that nothing rechecks.
+    """
+    return [m for m in PAYLOADS if _decimal_aliases(m, required=required)]
 
 
 def _alias_to_field(model):
@@ -139,10 +146,8 @@ def test_the_base_record_declares_no_validators_at_all():
 # ------------------------------------------------------------------- per-model behaviour
 
 
-@pytest.mark.parametrize("model_name,payload,optional_decimals,_required", CASES, ids=IDS)
-def test_a_blank_optional_decimal_is_none_not_zero(
-    model_name, payload, optional_decimals, _required
-):
+@pytest.mark.parametrize("model_name", _models_having(required=False))
+def test_a_blank_optional_decimal_is_none_not_zero(model_name):
     """
     The observable half of the defect. `Strike` is blank on 5,293 of 6,976 trade rows in
     the 2021-2025 history — every non-option — and each one arrived as `Decimal("0.0")`.
@@ -152,8 +157,8 @@ def test_a_blank_optional_decimal_is_none_not_zero(
     strike), which is why #47 is Band B. The point is that nothing was arranging for
     that; the distinction the field validator computes was simply thrown away.
     """
-    if not optional_decimals:
-        pytest.skip(f"{model_name} has no optional Decimal fields")
+    payload = PAYLOADS[model_name]
+    optional_decimals = _decimal_aliases(model_name, required=False)
     model = getattr(rm, model_name)
     alias_to_field = _alias_to_field(model)
 
@@ -166,11 +171,11 @@ def test_a_blank_optional_decimal_is_none_not_zero(
         )
 
 
-@pytest.mark.parametrize("model_name,payload,optional_decimals,_required", CASES, ids=IDS)
-def test_a_real_decimal_still_parses(model_name, payload, optional_decimals, _required):
+@pytest.mark.parametrize("model_name", _models_having(required=False))
+def test_a_real_decimal_still_parses(model_name):
     """A validator that rejects everything would also pass the test above."""
-    if not optional_decimals:
-        pytest.skip(f"{model_name} has no optional Decimal fields")
+    payload = PAYLOADS[model_name]
+    optional_decimals = _decimal_aliases(model_name, required=False)
     model = getattr(rm, model_name)
     alias_to_field = _alias_to_field(model)
 
@@ -181,14 +186,28 @@ def test_a_real_decimal_still_parses(model_name, payload, optional_decimals, _re
             f"{model_name}.{alias_to_field[alias]} did not parse a real value: {value!r}")
 
 
-@pytest.mark.parametrize("model_name,payload,_optional,required_decimals", CASES, ids=IDS)
-def test_a_blank_required_decimal_is_rejected(
-    model_name, payload, _optional, required_decimals
-):
+@pytest.mark.parametrize("model_name", _models_having(required=True))
+def test_a_blank_required_decimal_is_rejected(model_name):
     """
     No silent default. A required decimal that arrives blank used to become
     `Decimal("0.0")` — a substituted value standing in for an input the run does not
     have, which `CLAUDE.md` forbids outright. It now fails validation.
+
+    **Two models produce no case here, and that is a decision rather than a gap.**
+    Every Decimal on `RawCorporateActionRecord` and `RawOptionsEAERecord` is optional,
+    so a blank one parses to `None` — right at this layer, since #47 made blank mean
+    absent — and the question moves downstream, where the two are not alike:
+
+    - a blank `Proceeds` on an OptionEAE cash settlement yields no event, and
+      `_require_option_cash_settlements` then stops the run naming the contract;
+    - a blank `Value` on a stock dividend reaches the `HI`/`SD` branch of
+      `DomainEventFactory`, which logs *"Assuming 0 FMV"* and declares the dividend at
+      zero. That is a substituted value understating Kapitalerträge, and no test holds
+      it. **Unreached, not unreachable:** measured 2026-08-09 over the 2021-2025
+      import, 5 rows of that type and no blank cell in any corporate-action decimal.
+      **Issue #72**, and Band A rather than a fix here — what such a row is worth, and
+      whether the `Amount` column #69 leaves unmapped answers it, needs `reference/`
+      before any code.
 
     Note what that failure currently reaches: every parser in `src/parsers/` catches
     `ValidationError`, prints it, and skips the row. So the run does not stop — it loses
@@ -197,8 +216,8 @@ def test_a_blank_required_decimal_is_rejected(
     `data_import/` is affected today — of the 25 `Decimal` fields across the six models,
     only `Strike` is ever blank, and it is optional.
     """
-    if not required_decimals:
-        pytest.skip(f"{model_name} has no blank-able required Decimal fields")
+    payload = PAYLOADS[model_name]
+    required_decimals = _decimal_aliases(model_name, required=True)
     model = getattr(rm, model_name)
 
     for alias in required_decimals:
