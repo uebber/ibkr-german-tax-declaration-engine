@@ -75,10 +75,11 @@ class AssetClassifier:
             # Optionsscheine gehören nicht zu den Termingeschäften" ([GT-ESTG20-038]). That a
             # Zertifikat is instead a sonstige Kapitalforderung is [GT-ESTG20-008].
             #
-            # Optionsscheine are excluded from the Termingeschaefte by the same sentence, and
-            # the store does not say where they DO belong. They are therefore named in no
-            # option here, deliberately: guessing them into this one would be implementing a
-            # position no reference file carries. See the gap noted against [GT-ESTG20-038].
+            # Optionsscheine are excluded by the same sentence and belong here too -- Rn. 8,
+            # "Optionsscheine sind Kapitalforderungen im Sinne des § 20 Absatz 1 Nummer 7
+            # EStG" ([GT-ESTG20-038]). The label does not name them because none has ever
+            # been traded on this account; if one ever is, note that a warrant arriving as
+            # OPT is classified OPTION and never reaches this dialog at all.
             ("Sonstige Kapitalforderung §20 Abs. 2 S. 1 Nr. 7, kein Termingeschäft — ungedeckter Gold-/Rohstoff-ETC, Zertifikat, Spot-Edelmetall (Anlage KAP)", AssetCategory.SONSTIGE_KAPITALFORDERUNG, InvestmentFundType.NONE),
             # The Aktienverlusttopf is the one consequence a taxpayer cannot undo later, and
             # it is still in force after the JStG-2024 repeal of the Termingeschaeft cap:
