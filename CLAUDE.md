@@ -91,6 +91,16 @@ overhead.
 - **The standing constraints below honoured**, any departure explicitly asked for and answered.
 - **Every factual claim in the description says how it was measured.**
   An unmeasured claim reads exactly like a measured one.
+- **What the exports contain is settled in `data_import/`, never assumed.** It is ground truth for
+  input behaviour as `reference/` is for the law, and the same rule applies: look before you
+  claim. Any claim that a column can be absent, blank or malformed is counted there before it
+  becomes work — the condition that would produce the wrong figure, not a precursor of it, as N of
+  M rows across the window. Zero means stop: write the assumption where the code relies on it, and
+  open nothing. Does not reach a `reference/` deviation, a defect at zero incidence because there
+  the law is ground truth and the data is not.
+  Every other gate here points at the harm of a silent substitution and none asked whether the
+  input ever goes missing. On 2026-08-09 that produced two issues (#72, #73) for failures with
+  zero occurrences in five years, in a session whose one costly error sat unread in the report.
 
 **Band A adds:**
 
@@ -104,8 +114,9 @@ overhead.
   A test that was never red proves nothing about the fix. Parity without a year is
   unfalsifiable — a change keyed to a form-year rule is identical for one assessment year and
   different for another.
-- **Every input the figure depends on named, with what the code does when it is absent.** Once, in
-  writing, per figure. Inputs always present need no entry; the ones that matter are where
+- **Every input the figure depends on named, with what the code does when it is absent, and how
+  often it is absent in fact.** Once, in writing, per figure. Inputs always present need no entry
+  — and "always present" is the count above, not an impression. The ones that matter are where
   something is substituted and the run continues, and each is either removed or argued.
 - `ks-maint`: no red-first and no parity — it changes nothing. Instead, **every claim the audit
   touched has its map row re-decided**, and each new `deviates` names the `fix-func` that will
@@ -359,7 +370,8 @@ and downstream it is a well-formed date no consumer can tell from a measured one
 a missing input is a decision about someone's tax return, not an implementation detail — route it
 through `src/processing/data_gaps.py` and let the run stop, or ask, but never both invent it and
 continue. **Never add such a fallback without asking first:** a value missing often enough that you
-are reaching for a default is a finding to report, not a hole to fill.
+are reaching for a default is a finding to report, not a hole to fill — and "often enough" is the
+count under Gates, not an impression.
 
 **There is no safe direction to be wrong.** "This can only overstate, which is the safer side" is
 an argument for putting a number nobody can check on a tax return. Understatement versus
