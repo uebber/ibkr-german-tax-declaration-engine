@@ -1,5 +1,6 @@
 # src/domain/assets.py
 from dataclasses import dataclass, field, KW_ONLY
+from datetime import date
 from decimal import Decimal
 import uuid
 from typing import Set, Optional
@@ -51,14 +52,23 @@ class Asset:
     # unit count enters separately, at the close of 31 December (Rz. 18.4). A single
     # position value carrying both cannot be right for both -- see
     # reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    # Each price carries the day it was set. Rz. 18.6 converts a foreign-currency
+    # figure at the ECB rate of its OWN Stichtag (GT-INVSTG-018), and a Stichtag is
+    # a day a price was set -- never a fixed calendar date. Without this field the
+    # engine had to assume one, and assumed 2 January: a Saturday in 2021 and a
+    # Sunday in 2022. It matters most on the substitution path, where the price
+    # comes from the close of the PRECEDING year and a date derived from the
+    # Vorabpauschale year would put price and rate in different years.
     prior_year_soy_quantity: Optional[Decimal] = None
     prior_year_soy_position_value: Optional[Decimal] = None
     prior_year_soy_mark_price: Optional[Decimal] = None
     prior_year_soy_mark_price_currency: Optional[str] = None
+    prior_year_soy_mark_price_date: Optional[date] = None
     prior_year_eoy_quantity: Optional[Decimal] = None
     prior_year_eoy_position_value: Optional[Decimal] = None
     prior_year_eoy_mark_price: Optional[Decimal] = None
     prior_year_eoy_mark_price_currency: Optional[str] = None
+    prior_year_eoy_mark_price_date: Optional[date] = None
     # Close of the year BEFORE the Vorabpauschale year: the units the year opened with,
     # and the last price set before it began.
     prior_year_opening_quantity: Optional[Decimal] = None

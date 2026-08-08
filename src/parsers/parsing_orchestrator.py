@@ -16,6 +16,8 @@ from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundTy
 from src.domain.exceptions import DataIntegrityError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
+from src.utils.snapshot_dates import (
+    first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
 import src.config as global_config 
@@ -202,7 +204,7 @@ class ParsingOrchestrator:
             logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
                         f"for the {mark_year}-12-31 checkpoint mark.")
 
-    def process_positions(self):
+    def process_positions(self, tax_year: Optional[int] = None):
         # ... (implementation is the same)
         logger.info("Processing start-of-year positions...")
         for raw_pos in self.raw_positions_start:
@@ -243,15 +245,33 @@ class ParsingOrchestrator:
         # declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). These must not
         # feed cost basis, reconciliation or any other consumer.
         logger.info("Processing prior-year positions (Vorabpauschale reference prices)...")
+        # The day each snapshot describes. The files carry no date column, so it is the
+        # naming convention they were selected by -- Positions-{X}-SoY.csv is X's first
+        # trading day, Positions-{X}-EoY.csv the close of X (src/data_preparation.py).
+        # Recorded here, next to the price, because Rz. 18.6 converts each price at the
+        # ECB rate of the day it was set (GT-INVSTG-018) and by the time the engine sees
+        # a price it can no longer tell which file it came from. Issue #59 replaces the
+        # convention with a report date the export itself carries.
+        # Left unset when no tax year is given: the engine then derives the day from
+        # the Vorabpauschale year, which is the same rule. What it cannot derive is
+        # the substituted price's day, and that is set explicitly below.
+        vorabpauschale_year = tax_year - 1 if tax_year is not None else None
+        soy_snapshot_date = (first_business_day_of_year(vorabpauschale_year)
+                             if vorabpauschale_year is not None else None)
+        eoy_snapshot_date = (last_business_day_of_year(vorabpauschale_year)
+                             if vorabpauschale_year is not None else None)
+
         for raw_pos in self.raw_positions_prior_start:
             asset = self._resolve_asset_from_position(raw_pos)
             asset.prior_year_soy_quantity = safe_decimal(raw_pos.position, default=Decimal(0))
             asset.prior_year_soy_position_value = safe_decimal(raw_pos.position_value)
             asset.prior_year_soy_mark_price = safe_decimal(raw_pos.mark_price)
             asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
+            asset.prior_year_soy_mark_price_date = soy_snapshot_date
             self._record_prior_year_snapshot_fields(asset, (
                 "prior_year_soy_quantity", "prior_year_soy_position_value",
                 "prior_year_soy_mark_price", "prior_year_soy_mark_price_currency",
+                "prior_year_soy_mark_price_date",
             ))
 
         for raw_pos in self.raw_positions_prior_end:
@@ -260,9 +280,11 @@ class ParsingOrchestrator:
             asset.prior_year_eoy_position_value = safe_decimal(raw_pos.position_value)
             asset.prior_year_eoy_mark_price = safe_decimal(raw_pos.mark_price)
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
+            asset.prior_year_eoy_mark_price_date = eoy_snapshot_date
             self._record_prior_year_snapshot_fields(asset, (
                 "prior_year_eoy_quantity", "prior_year_eoy_position_value",
                 "prior_year_eoy_mark_price", "prior_year_eoy_mark_price_currency",
+                "prior_year_eoy_mark_price_date",
             ))
 
         # Checkpoint marks. Resolved to asset-keyed MarkPositions rather than written onto
@@ -298,9 +320,10 @@ class ParsingOrchestrator:
                 "prior_year_opening_mark_price_currency",
             ))
 
-        self._resolve_vorabpauschale_start_price()
+        self._resolve_vorabpauschale_start_price(vorabpauschale_year)
 
-    def _resolve_vorabpauschale_start_price(self) -> None:
+    def _resolve_vorabpauschale_start_price(
+            self, vorabpauschale_year: Optional[int] = None) -> None:
         """
         Settle the per-unit price the Vorabpauschale year opens at.
 
@@ -315,7 +338,16 @@ class ParsingOrchestrator:
         Only the price is settled here. The unit count is not this layer's
         business: it comes from the lots held at the close of 31 December
         (Rz. 18.4), which only the ledger knows.
+
+        The substituted price carries the day it was set with it, which is in
+        the year BEFORE the Vorabpauschale year. Rz. 18.6 converts at the ECB
+        rate of that day (GT-INVSTG-018); converting at a day inside the
+        Vorabpauschale year would take the price from one year and the rate
+        from another.
         """
+        opening_price_date = (last_business_day_of_year(vorabpauschale_year - 1)
+                              if vorabpauschale_year is not None else None)
+
         for asset in self.asset_resolver.assets_by_internal_id.values():
             if getattr(asset, "prior_year_soy_mark_price", None) is not None:
                 continue
@@ -334,6 +366,7 @@ class ParsingOrchestrator:
             asset.prior_year_soy_mark_price = fallback
             asset.prior_year_soy_mark_price_currency = getattr(
                 asset, "prior_year_opening_mark_price_currency", None)
+            asset.prior_year_soy_mark_price_date = opening_price_date
             self.vorabpauschale_price_substitutions.append(
                 (asset.get_classification_key(), asset.description or ""))
             logger.warning(
@@ -897,7 +930,7 @@ class ParsingOrchestrator:
                 options_eae_file=options_eae_file,
                 positions_mark_files=positions_mark_files,
             )
-            self.process_positions()
+            self.process_positions(tax_year=tax_year)
             self._process_cash_balance_positions(tax_year=tax_year)
             self.discover_assets_from_transactions()
             self.asset_resolver.link_derivatives()

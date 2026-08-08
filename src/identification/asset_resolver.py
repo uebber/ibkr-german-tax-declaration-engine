@@ -72,10 +72,15 @@ class AssetResolver:
             "prior_year_soy_position_value": asset.prior_year_soy_position_value,
             "prior_year_soy_mark_price": asset.prior_year_soy_mark_price,
             "prior_year_soy_mark_price_currency": asset.prior_year_soy_mark_price_currency,
+            # The Stichtag travels with its price. A retyped fund that kept the price
+            # but lost the day would be converted at a date derived from the year
+            # instead, which is wrong by a year on the substitution path.
+            "prior_year_soy_mark_price_date": asset.prior_year_soy_mark_price_date,
             "prior_year_eoy_quantity": asset.prior_year_eoy_quantity,
             "prior_year_eoy_position_value": asset.prior_year_eoy_position_value,
             "prior_year_eoy_mark_price": asset.prior_year_eoy_mark_price,
             "prior_year_eoy_mark_price_currency": asset.prior_year_eoy_mark_price_currency,
+            "prior_year_eoy_mark_price_date": asset.prior_year_eoy_mark_price_date,
             "prior_year_opening_quantity": asset.prior_year_opening_quantity,
             "prior_year_opening_mark_price": asset.prior_year_opening_mark_price,
             "prior_year_opening_mark_price_currency": asset.prior_year_opening_mark_price_currency,

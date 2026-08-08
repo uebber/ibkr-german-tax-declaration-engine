@@ -28,7 +28,7 @@ import logging
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -115,59 +115,19 @@ class DownloadTarget:
         return f"{self.query_key} {self.from_date.year}"
 
 
-def weekday_on_or_before(day: date) -> date:
-    """
-    `day` itself if it is a weekday, else the Friday before it.
-
-    The portal's date picker accepts weekdays and refuses weekends — it does
-    not know or care about market holidays. 1 January 2025 was a Wednesday and
-    was accepted; the recorded run for it returned a report. So the constraint
-    to respect is Monday-to-Friday, not "a day the exchange was open".
-    """
-    while day.weekday() >= 5:      # 5 = Saturday, 6 = Sunday
-        day -= timedelta(days=1)
-    return day
-
-
-def last_business_day_of_year(year: int) -> date:
-    """31 December, or the Friday before it when it falls on a weekend."""
-    return weekday_on_or_before(date(year, 12, 31))
-
-
-def first_business_day_of_year(year: int) -> date:
-    """
-    The first trading day of a calendar year: the start-of-year snapshot date.
-
-    What that file is later used for is not this module's business. This
-    downloader fetches CSVs over date ranges and nothing else — which report
-    feeds which computation is decided in `src/data_preparation.py` and the
-    parsing layer, and stating it here as well only creates a second place to
-    be wrong. It has already been wrong here once.
-
-    1 January is closed on every exchange IBKR serves whatever weekday it falls
-    on — 1 January 2021 was a Friday — and when it falls on a Sunday the
-    exchanges observe it on Monday 2 January. Corroborated: the 2021 cash report
-    carries FromDate 20210104, and this returns 4 January 2021.
-    """
-    new_year = date(year, 1, 1)
-    closed = {new_year}
-    if new_year.weekday() == 6:          # Sunday -> observed on the Monday
-        closed.add(date(year, 1, 2))
-
-    day = new_year
-    while day.weekday() >= 5 or day in closed:
-        day += timedelta(days=1)
-    return day
-
-
-def positions_snapshot_dates(year: int) -> tuple[date, date]:
-    """
-    The dates to request for a year's start-of-year and end-of-year snapshots.
-
-    Returns:
-        (start_of_year_date, end_of_year_date)
-    """
-    return first_business_day_of_year(year), last_business_day_of_year(year)
+# Which day a snapshot describes is not this module's rule to state. It fetches
+# CSVs over date ranges; which report feeds which computation is decided in
+# src/data_preparation.py and the parsing layer. Stating it here as well created
+# a second place to be wrong, and the Vorabpauschale's Stichtag was wrong in the
+# other one for exactly that reason -- so the rule now lives in one module that
+# both ends import. Re-exported because this module's callers and tests name
+# these functions here.
+from src.utils.snapshot_dates import (  # noqa: E402
+    first_business_day_of_year,
+    last_business_day_of_year,
+    positions_snapshot_dates,
+    weekday_on_or_before,
+)
 
 
 def parse_years(specs: Iterable[str]) -> list[int]:

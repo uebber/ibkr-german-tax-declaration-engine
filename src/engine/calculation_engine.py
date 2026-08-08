@@ -23,6 +23,8 @@ from src.domain.assets import (
 from src.identification.asset_resolver import AssetResolver
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 from src.domain.enums import FinancialEventType, InvestmentFundType 
+from src.utils.snapshot_dates import (
+    first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
 from src.domain.exceptions import ProcessingError
 from src.utils.type_utils import parse_ibkr_date
@@ -1259,6 +1261,24 @@ def _snapshot_fund_lots(fifo_ledgers, asset_resolver) -> Dict[uuid.UUID, List[Fu
     return snapshot
 
 
+def _price_stichtag(recorded: Optional[date], by_convention: date) -> date:
+    """The day a price was set: the one recorded with it, else the convention.
+
+    `recorded` is set by the parsing layer wherever it knows the day -- always
+    for a price read from a snapshot, and in particular for a price substituted
+    from the close of the preceding year, which is the case no rule keyed on the
+    Vorabpauschale year can derive.
+
+    Falling back is not a substituted *value*: `by_convention` is the same
+    naming rule the file was selected by (`Positions-{X}-SoY.csv` is X's first
+    trading day; see src/data_preparation.py and src/utils/snapshot_dates.py),
+    so it restates an assumption already made rather than inventing a new one.
+    Issue #59 replaces the convention with a report date the export carries, at
+    which point the fallback becomes unreachable on real input.
+    """
+    return recorded if recorded is not None else by_convention
+
+
 def _calculate_vorabpauschale(
     asset_resolver: AssetResolver,
     distributions_by_asset: Dict[uuid.UUID, Decimal],
@@ -1317,10 +1337,19 @@ def _calculate_vorabpauschale(
     base_return_rate = ctx.multiply(basiszins, Decimal("0.01"))  # Convert percentage to factor
     factor_70 = Decimal("0.7")
 
-    # Conversion dates within the Vorabpauschale year: Jan 2 for the year-start price
-    # (Jan 1 is never a business day), Dec 31 for the last price set in the year.
-    soy_conversion_date = date(vorabpauschale_year, 1, 2)
-    eoy_conversion_date = date(vorabpauschale_year, 12, 31)
+    # Rz. 18.6 converts each input at the ECB reference rate of its OWN Stichtag
+    # (GT-INVSTG-018), and a Stichtag is the day a price was set -- never a fixed
+    # calendar date. These were hardcoded to 2 January and 31 December until
+    # 2026-08-08. Measured against the first/last-business-day convention, 2 January
+    # is the year's first trading day in only two of 2021-2025, and in 2021 and 2022
+    # it is a Saturday and a Sunday -- days the ECB publishes no rate for, so the
+    # converter's fallback quietly supplied one from another day. 31 December falls
+    # on a weekend in 2022 and 2023 and had the same defect, unrecorded until then.
+    #
+    # The day travels with the price, on Asset.prior_year_*_mark_price_date, because
+    # the substitution path takes its price from the close of the PRECEDING year and
+    # no rule keyed on `vorabpauschale_year` can know that.
+    eoy_conversion_date_default = last_business_day_of_year(vorabpauschale_year)
 
     results: List[VorabpauschaleData] = []
     funds_without_acquisition_dates: List[Tuple[str, str]] = []
@@ -1380,6 +1409,9 @@ def _calculate_vorabpauschale(
             continue
 
         # Abs. 1 S. 2: the Ruecknahmepreis at the start of the year, PER UNIT.
+        soy_conversion_date = _price_stichtag(
+            asset_obj.prior_year_soy_mark_price_date,
+            first_business_day_of_year(vorabpauschale_year))
         soy_price_foreign = asset_obj.prior_year_soy_mark_price
         soy_currency = asset_obj.prior_year_soy_mark_price_currency or asset_obj.currency
         if soy_price_foreign is None or soy_currency is None:
@@ -1392,6 +1424,8 @@ def _calculate_vorabpauschale(
             continue
 
         # Abs. 1 S. 3: the last Ruecknahmepreis set in the year, PER UNIT.
+        eoy_conversion_date = _price_stichtag(
+            asset_obj.prior_year_eoy_mark_price_date, eoy_conversion_date_default)
         eoy_price_foreign = asset_obj.prior_year_eoy_mark_price
         eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
         if eoy_price_foreign is None or eoy_currency is None:
