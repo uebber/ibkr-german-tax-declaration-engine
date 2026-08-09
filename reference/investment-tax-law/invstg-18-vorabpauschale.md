@@ -89,6 +89,14 @@ is the same first price Satz 2 uses.
 Note Satz 3 is expressed in **Ruecknahmepreise festgesetzt im Kalenderjahr**, not in calendar
 boundaries: the first and last price *set during the year*.
 
+**Satz 1 and Satz 3 use one term and it must be read one way.** *Ausschuettungen* appears twice in
+Abs. 1 -- inside the Satz 3 cap, where it raises the ceiling, and in the Satz 1 subtraction, where
+it lowers the result. It is the same word in the same Absatz, and it carries the single legal
+definition of 2 Abs. 11 InvStG, [GT-INVSTG-057]. Rz. 18.3 works both places with the same 0,10 €
+([GT-INVSTG-056]). So an amount that is an Ausschuettung is an Ausschuettung for both purposes,
+and one that is not is neither. **The two sides cannot answer differently**, and no separate
+enquiry is owed for the cap.
+
 Note also the order of precedence in Satz 4. The Ruecknahmepreis is the primary measure; a
 Boersen- oder Marktpreis substitutes for it **only where no Ruecknahmepreis was set**. A market
 price used in place of an existing Ruecknahmepreis is not Satz 4's substitute, and whether a
@@ -381,6 +389,49 @@ which Satz 3 defines as *"dem ersten ... im Kalenderjahr festgesetzten Ruecknahm
 The Vorabpauschale is an Investmentertrag under 16 Abs. 1 Nr. 2 InvStG and is subject to the
 Teilfreistellung of 20 InvStG. It is nevertheless declared **gross** on Zeilen 9-13; the
 Finanzamt applies the Teilfreistellung. See `invstg-20-teilfreistellung.md`.
+
+## [GT-INVSTG-059] A substitute payment on units that were out on loan
+
+Where units are lent under a Wertpapierdarlehen across a distribution date, the fund pays the
+person the units are attributed to, and the lender receives a contractual **Kompensationszahlung**
+from the counterparty instead. Whether that amount is an Ausschuettung for Abs. 1 does not turn on
+what it is called. It turns on the attribution question that 2 Abs. 10 InvStG puts before it,
+[GT-INVSTG-058], and the sources answer it in two branches.
+
+**Branch A -- attribution stayed with the lender** (39 Abs. 2 Nr. 1 AO; the Gesamtschau of
+[GT-ESTG20-044]). The lender remained the Anleger throughout, and *"die Dividende ist
+wirtschaftlich dem Darlehensgeber zuzurechnen und bei diesem zu besteuern"* ([GT-ESTG20-045]).
+Both conditions of [GT-INVSTG-057] are met: the amount is the fund's and it reaches the Anleger.
+It is an Ausschuettung, it is an Investmentertrag under 16 Abs. 1 Nr. 1, and under Abs. 1 it both
+raises the Satz 3 cap and is subtracted under Satz 1.
+
+**Branch B -- attribution passed to the borrower** (39 Abs. 1 AO; the Grundfall of
+[GT-ESTG20-043]). The borrower was the Anleger over the distribution date, so the fund distributed
+nothing *to the lender*, and what the lender received came from the counterparty and not from the
+fund. Neither condition of [GT-INVSTG-057] is met. It is not an Ausschuettung, it is none of the
+three items of the closed list in 16 Abs. 1 ([GT-INVSTG-001]), and it enters Abs. 1 on **neither**
+side -- the Satz 3 cap is then the price movement alone and Satz 1 subtracts nothing.
+
+**What branch B does not decide is what the payment *is*.** That is a question of 20 EStG and is
+recorded at [GT-ESTG20-010]; the only located administrative statement on a consideration paid
+under such a transaction addresses a different payment entirely, [GT-ESTG20-047].
+
+**What is not quoted, and is the honest limit of this section.** No located Tier 1 or Tier 2 source
+addresses a Kompensationszahlung on **Investmentanteile**. Both branches are subsumptions under
+quoted rules -- the definitions in 2 Abs. 10 and Abs. 11, the payer named in 16 Abs. 1 Nr. 1, and
+the attribution rules of the 09.07.2021 letter -- and not a fourth quotation stating the result.
+The InvStG contains no provision on the lending of Investmentanteile by an investor; the only
+Wertpapierdarlehen rules it carries, 6 Abs. 3 Satz 1 Nr. 2 InvStG with Rz. 6.7 to 6.9, are about a
+**fund** as the lender and reach the investor level not at all. They do supply the administration's
+definition of the term, Rz. 6.8: a Kompensationszahlung is *"der Ausgleich fuer die dem Darlehens-
+oder Pensionsgeber entgangenen Dividenden oder sonstigen Beteiligungseinnahmen"*, and 6 Abs. 3
+Satz 1 puts it in a different Nummer from the Beteiligungseinnahme itself -- which is the same
+separation branch B draws, one level up.
+
+**Which branch applies is a question of fact about the loan, not of law.** Rz. 4 of the 09.07.2021
+letter puts the burden of showing attribution to the borrower on the borrower, and its criteria --
+duration across the record date, pricing, liquidity, voting, and how easily the position can be
+withdrawn -- are terms of the lending arrangement.
 
 ## [GT-INVSTG-016] Units disposed of during the calendar year
 

@@ -193,13 +193,113 @@ additionally entered in Zeile 22 as a positive amount (Zeile 23 is reserved for 
 
 ## [GT-ESTG20-010] Abs. 3 -- Special Benefits
 
-**Satz 1:** Special benefits or advantages (*besondere Entgelte oder Vorteile*) granted in addition
-to, or in place of, the income described in Abs. 1 and 2 are also Einkuenfte aus Kapitalvermoegen.
+**Satz 1**, verbatim (retrieved 2026-08-09; the previous revision of this file paraphrased it, and
+the paraphrase lost the words the Absatz turns on):
+
+> *"Zu den Einkuenften aus Kapitalvermoegen gehoeren auch besondere Entgelte oder Vorteile, die
+> neben den in den Absaetzen 1 und 2 bezeichneten Einnahmen oder **an deren Stelle** gewaehrt
+> werden."*
+
+Two alternatives, and the second is the one that does work no other provision does. *Neben* covers
+something granted **alongside** the capital income; *an deren Stelle* covers something granted
+**instead of** it -- that is, in a case where the Abs. 1 or Abs. 2 income does not arise for this
+taxpayer and a payment takes its place.
 
 **Satz 2** (previously unstated -- Validation Protocol item 2): such a benefit also exists *"wenn
 Bestandsprovisionen, Verwaltungsentgelte oder sonstige Aufwendungen durch den Schuldner der
 Kapitalertraege nach Absatz 1 oder 2 oder durch einen Dritten erstattet werden"* -- a rebate of
-trailer fees or management charges is itself taxable capital income.
+trailer fees or management charges is itself taxable capital income. Note *"oder durch einen
+Dritten"*: the payer need not be the debtor of the capital income.
+
+### [GT-ESTG20-048] Tier 2 -- how the administration applies Abs. 3 to a fund holding
+
+BMF-Schreiben vom 14.05.2025, section I.3 *Besondere Entgelte und Vorteile (§ 20 Absatz 3 EStG)*,
+Rn. 83 to 84 (pages 38 to 39 of 137, retrieved 2026-08-09). Both worked cases are **payments by a
+third party** connected with a capital investment, and both are decided the same way.
+
+**Rn. 83 -- compensation for a loss on a capital investment:**
+
+> *"Erhalten Anleger Entschaedigungszahlungen fuer Verluste, die auf Grund von Beratungsfehlern im
+> Zusammenhang mit einer Kapitalanlage geleistet werden, sind diese Zahlungen besondere Entgelte
+> und Vorteile im Sinne des § 20 Absatz 3 in Verbindung mit Absatz 1 oder 2 EStG, wenn ein
+> unmittelbarer Zusammenhang zu einer konkreten einzelnen Transaktion besteht ... **Sofern die
+> Zahlungen in Zusammenhang mit Aktien-, Misch- oder Immobilienfonds erfolgen, findet der zum
+> Zeitpunkt der Zahlung geltende Teilfreistellungssatz Anwendung.**"*
+
+**Rn. 84 -- a rebated Bestandsprovision on fund units:**
+
+> *"Erstatten Kreditinstitute oder Finanzdienstleistungsinstitute ihren Kunden diese
+> Bestandsprovisionen ganz oder teilweise, stellt die Rueckvergütung der Bestandsprovision
+> wirtschaftlich betrachtet einen teilweisen Rueckfluss frueherer Aufwendungen dar. **Es handelt
+> sich daher um Kapitalertraege im Sinne des § 20 Absatz 3 in Verbindung mit § 20 Absatz 1
+> Nummer 3 EStG**, bei denen die Kapitalertragsteuer unter Anwendung der im
+> Rueckvergütungszeitpunkt der Bestandsprovisionen gueltigen Teilfreistellungssaetze einbehalten
+> wird."*
+
+**Three things follow, and the third is not obvious from the statute.**
+
+- Abs. 3 is combined with the **Nummer of Abs. 1 the payment relates to**, and where that relation
+  is to fund units the Nummer is **Nr. 3**, Investmentertraege.
+- The payer may be a third party -- in Rn. 84 the custodian, not the fund.
+- **The Teilfreistellung is applied**, in both Randziffern, although an Abs. 3 payment is not an
+  Investmentertrag within 16 Abs. 1 InvStG and 20 InvStG attaches the Teilfreistellung to
+  Investmentertraege. The administration extends it to Abs. 3 amounts connected with a fund
+  holding. This is stated for the Steuerabzug in Rn. 84 and unqualified in Rn. 83.
+
+**What the cited unit also contains:** Rn. 83a, on a Vergleich under 278 ZPO in which the bank
+assumes the legal costs -- those are *"nicht um Einnahmen des Anlegers im Sinne des § 8 Absatz 1
+EStG"* within 20 EStG at all. Applicable tax years: all open cases, per Rn. 324.
+
+### [GT-ESTG20-049] What Abs. 3 does not reach: the boundary against Nr. 7 and 22 Nr. 3 EStG
+
+Abs. 3 requires the payment to stand *neben* or *an deren Stelle* of Abs. 1 or Abs. 2 income. A
+payment that is the **consideration for a transaction of its own**, rather than an accessory to or
+substitute for the yield of a capital asset, is not within either alternative on the face of the
+words, and then two provisions remain in a fixed order:
+
+- **20 Abs. 1 Nr. 7 EStG** requires a *Kapitalforderung* -- the gate is a claim to money. Satz 2,
+  *"Dies gilt unabhaengig von der Bezeichnung und der zivilrechtlichen Ausgestaltung der
+  Kapitalanlage"*, relaxes the **form** of the investment, which is what admits a Zertifikat
+  ([GT-ESTG20-008]); it does not dispense with the claim being one for money. What a lender holds
+  under a Wertpapierdarlehen is a claim to redelivery of securities, which the administration
+  names a **Sachforderung** ([GT-ESTG20-046]).
+- **22 Nr. 3 EStG** is subsidiary by its own wording -- *"Einkuenfte aus Leistungen, soweit sie
+  weder zu anderen Einkunftsarten (§ 2 Absatz 1 Satz 1 Nummer 1 bis 6) noch zu den Einkuenften im
+  Sinne der Nummern 1, 1a, 2 oder 4 gehoeren"* -- so it is reached only after 20 EStG is exhausted,
+  never alongside it. Satz 2 exempts such income below 256 Euro in the calendar year; Satz 3 and
+  Satz 4 ring-fence a loss to income of the same kind in the adjacent years. Retrieved 2026-08-09
+  from gesetze-im-internet.de/estg/__22.html.
+
+**The order of enquiry is therefore fixed and the sequence matters:** Abs. 3, then Abs. 1 Nr. 7,
+then 22 Nr. 3. For the fee a private lender receives under a Wertpapierdarlehen the third step is
+reached only if the first two fail, and Q14 in `../research/open-legal-questions.md` records what
+is left open. **Nr. 7 is closed**, on the two grounds below.
+
+**Nr. 7's gate is the subject of the sentence, not the condition attached to it.** The Erträge must
+be *"aus sonstigen Kapitalforderungen jeder Art"*; the clause about a Rueckzahlung or an *"Entgelt
+fuer die Ueberlassung des Kapitalvermoegens zur Nutzung"* states when such a claim counts as
+yield-bearing. It is not an independent charging provision for any fee paid for the use of any
+asset. Shares and Investmentanteile are not Kapitalforderungen, and during the loan the lender
+holds a Sachforderung ([GT-ESTG20-046]).
+
+**Tier 4 support, which does not stand alone.** BFH vom 22.10.2024 -- VIII R 7/23,
+ECLI:DE:BFH:2024:U.221024.VIIIR7.23.0, VZ 2017, on 20 Abs. 1 Nr. 7, 20 Abs. 2 Satz 1 Nr. 7 and
+22 Nr. 3 EStG; Vorinstanz FG Muenster vom 29.12.2021 -- 8 K 592/20 E, EFG 2023, 680. **Leitsatz 1:**
+on a paid drittnuetzige Verpfaendung of a bank balance the security provider earns *"Einkuenfte aus
+Leistungen (§ 22 Nr. 3 des Einkommensteuergesetzes -- EStG --) und keine Kapitaleinkuenfte gemaess
+§ 20 Abs. 1 Nr. 7 EStG"*. **Leitsatz 2** says the same of a fee for granting an unused Abrufdarlehen.
+The ground is that no capital was ueberlassen *zur Nutzung* -- and even assuming it had been, the
+fee would be consideration for temporarily assuming liability rather than for the use of capital.
+**Two limits, cutting opposite ways.** The asset there *was* a Kapitalforderung and Nr. 7 still
+failed, which is a fortiori where it is not one; but a pledge transfers nothing where a
+Sachdarlehen transfers full ownership, so the *Nutzung* limb is not answered for a securities loan.
+**20 Abs. 3 is not discussed in the decision** (verified against the text, 2026-08-09), so it
+decides nothing about the first step of the order above.
+
+**An argument from the structure, not a source.** Where the legislator wanted a payment of the
+*Leistung* type inside 20 EStG it said so: Stillhalterpraemien were 22 Nr. 3 income until 2008 and
+were moved by the insertion of Abs. 1 Nr. 11 ([GT-ESTG20-004]). No counterpart was enacted for a
+securities-lending fee.
 
 **Abs. 3a exists and is not Abs. 3.** It directs that corrections within the meaning of § 43a
 Abs. 3 Satz 7 are taken into account only at the time named there (Satz 1), and that where the
