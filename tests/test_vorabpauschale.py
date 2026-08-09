@@ -4,7 +4,7 @@
 legal_basis: GT-INVSTG-010 (Basisertrag and its cap), GT-INVSTG-012 and
 GT-INVSTG-014 (the VZ Y return carries the figure for calendar Y-1),
 GT-INVSTG-015 (declared gross), GT-INVSTG-033 and GT-FORM-033 (the deduction
-on disposal is Zeile 53, and is not computed), GT-INVSTG-050/053 (Basiszins).
+on disposal is Zeile 53), GT-INVSTG-050/053 (Basiszins).
 See reference/investment-tax-law/invstg-18-vorabpauschale.md and
 docs/legal-implementation-map.md.
 """
@@ -143,7 +143,8 @@ def _make_vp_item(vorabpauschale_year: int,
     )
 
 
-def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND) -> RealizedGainLoss:
+def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND,
+                        vorabpauschale_deduction=None) -> RealizedGainLoss:
     """A minimal realised disposal, used to make Zeile 53 relevant."""
     rgl = RealizedGainLoss(
         originating_event_id=uuid.uuid4(),
@@ -158,6 +159,7 @@ def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND) -> RealizedGainL
         total_cost_basis_eur=Decimal("100"),
         total_realization_value_eur=Decimal("150"),
         gross_gain_loss_eur=Decimal("50"),
+        vorabpauschale_deduction_eur=vorabpauschale_deduction,
     )
     if category == AssetCategory.INVESTMENT_FUND:
         rgl.fund_type_at_sale = InvestmentFundType.AKTIENFONDS
@@ -567,6 +569,103 @@ class TestAFundAcquiredDuringTheYear:
 
 
 # ---------------------------------------------------------------------------
+# Tests: what the Abs. 2 twelfths multiply (issue #58, [GT-INVSTG-056])
+# ---------------------------------------------------------------------------
+
+class TestAFundAcquiredDuringTheYearThatAlsoDistributed:
+    """Abs. 2 and a distribution in the same year -- the ordering [GT-INVSTG-056].
+
+    Abs. 2 reduces *"die Vorabpauschale"*, which Abs. 1 Satz 1 defines as the
+    amount by which the distributions fall short of the Basisertrag. So the
+    twelfths multiply `Basisertrag - Ausschuettungen`. Rz. 18.3 shows the
+    administration computing it in that order and Rz. 18.11 taking 6/12 of what
+    remains.
+
+    **Why this class and not two more cases in the one above.** Every case
+    there runs with no distribution, so `B * k/12 - D` and `(B - D) * k/12`
+    agree on all of them and the ordering is unobservable. The class above says
+    of itself that the twelfths' *effect on a declared figure* is guarded
+    nowhere else; that was true of the effect and not of the order. The engine
+    had the two steps the wrong way round from the day pro-rata was added until
+    2026-08-09, understating by `D * (12 - k)/12`.
+
+    The fixture is the one above: 100 units, year-start price 100, year-end 110,
+    Basiszins 2.29%, so the per-unit Basisertrag is 1.603 and the full-year
+    figure 160.30. Adding a distribution raises the Satz 3 cap rather than
+    binding it -- the cap is `(110 - 100) + D/100` per unit and 1.603 stays
+    under it for every D used here, so what these cases move is Satz 1 and
+    nothing else.
+    """
+
+    @pytest.mark.parametrize("month,twelfths,distributions,expected", [
+        # (160.30 - 60) * 6/12
+        (7, 6, Decimal("60"), Decimal("50.15")),
+        # (160.30 - 60) * 3/12 = 25.075, rounded once at the end
+        (10, 3, Decimal("60"), Decimal("25.08")),
+    ])
+    def test_the_twelfths_multiply_what_the_distributions_left(
+            self, month, twelfths, distributions, expected):
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, distributions)]
+
+        results = _run_vp(fund, events=events,
+                          acquisition_date=dt_date(2024, month, 15))
+
+        assert len(results) == 1
+        assert results[0].gross_vorabpauschale_eur == expected
+        # Restates the rule independently of the engine, so a shared arithmetic
+        # slip cannot make both sides agree.
+        assert expected == ((Decimal("160.30") - distributions)
+                            * twelfths / 12).quantize(Decimal("0.01"))
+
+    def test_distributions_above_the_reduced_basisertrag_still_leave_a_figure(self):
+        """The worse of the two failures: an absent figure, not a small one.
+
+        With the twelfths applied first the fund owes 160.30 * 6/12 - 120, which
+        is negative, and the engine's `<= 0` branch drops it and declares
+        nothing. In the statute's order 120 falls short of 160.30 by 40.30 and
+        half of that is due.
+        """
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, Decimal("120"))]
+
+        results = _run_vp(fund, events=events, acquisition_date=dt_date(2024, 7, 15))
+
+        assert len(results) == 1, (
+            "a distribution that exceeds the pro-rata share of the Basisertrag, "
+            "but not the Basisertrag, does not extinguish the Vorabpauschale")
+        assert results[0].gross_vorabpauschale_eur == Decimal("20.15")
+
+    def test_a_distribution_exceeding_the_basisertrag_still_extinguishes_it(self):
+        """The boundary the fix must not cross.
+
+        Satz 1 is what produces nothing here, and it does so before Abs. 2 has
+        anything to reduce. Without this case the fix above could be had by
+        deleting the `<= 0` branch, which would declare a negative figure.
+        """
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, Decimal("200"))]
+
+        results = _run_vp(fund, events=events, acquisition_date=dt_date(2024, 7, 15))
+
+        assert results == []
+
+    def test_the_basisertrag_reported_is_not_reduced_by_the_twelfths(self):
+        """Abs. 2 reduces the Vorabpauschale; the Basisertrag is Abs. 1's.
+
+        `calculated_base_return_eur` carried the twelfths-reduced amount, which
+        is a quantity no provision defines. It is the Rz. 18.4 product: the
+        per-unit Basisertrag times the units held at the close.
+        """
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, Decimal("60"))]
+
+        results = _run_vp(fund, events=events, acquisition_date=dt_date(2024, 7, 15))
+
+        assert results[0].calculated_base_return_eur == Decimal("160.30")
+
+
+# ---------------------------------------------------------------------------
 # Tests: a fund the engine cannot price (issue #55)
 # ---------------------------------------------------------------------------
 
@@ -721,22 +820,33 @@ class TestTeilfreistellungNegativeDistribution:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Z55 in loss offsetting
+# Tests: Zeile 53 in loss offsetting
 # ---------------------------------------------------------------------------
 
 class TestZeile53VorabpauschaleDeduction:
     """Anlage KAP-INV Zeile 53 -- "Waehrend der Besitzzeit angesetzte Vorabpauschalen".
 
-    Until 2026-08-03 the engine emitted the sum of the CURRENT year's gross Vorabpauschalen
-    on a category named `..._Z55`. Both halves were wrong: Zeile 55 is "Gewinne aus der
-    Veraeusserung von bestandsgeschuetzten Alt-Anteilen" (Anleitung zur Anlage KAP-INV 2024
-    and 2025), and the deduction under 19 Abs. 1 S. 3-4 InvStG is the Vorabpauschale
-    accumulated over the holding period of the units actually disposed of, so far as it was
-    brought to tax -- not a current-year total.
+    Two corrections are layered here, and the docstring records both because each
+    produced a plausible figure.
 
-    The engine cannot compute that (no per-lot Vorabpauschale history), so it emits nothing and
-    reports a data gap. These tests hold that line: they fail if a figure reappears, and they
-    fail if the gap stops being reported.
+    Until 2026-08-03 the engine emitted the sum of the CURRENT year's gross
+    Vorabpauschalen on a category named `..._Z55`. Both halves were wrong: Zeile 55 is
+    "Gewinne aus der Veraeusserung von bestandsgeschuetzten Alt-Anteilen" (Anleitung zur
+    Anlage KAP-INV 2024 and 2025), and the deduction under 19 Abs. 1 S. 3-4 InvStG is the
+    Vorabpauschale accumulated over the holding period of the units actually disposed of,
+    so far as it was brought to tax -- not a current-year total.
+
+    From then until issue #63 the line carried nothing and a gap said the engine "does not
+    track per-lot Vorabpauschale history". It now does: the FIFO ledger accumulates the
+    DECLARED Vorabpauschale on each lot year by year and hands each disposal its share, so
+    what this engine does with it is a sum. The tests below hold the two things that sum
+    must get right -- that Zeile 53 is the total of the per-lot deductions, and that the
+    gain lines are net of them, because Zeile 54 subtracts Zeile 53 before the result
+    reaches Zeilen 14/17/20/23/26.
+
+    Where the deduction comes from, and what happens to a holding-period year with no
+    declaration on record, is pinned in `test_vorabpauschale_zeile53.py` and
+    `test_vorabpauschale_zeile53_engine.py`.
     """
 
     def _engine(self, *, rgls=None, vp_items=None, tax_year=2024, collector=None):
@@ -751,38 +861,55 @@ class TestZeile53VorabpauschaleDeduction:
             data_gap_collector=collector,
         )
 
-    def test_no_zeile_53_figure_is_emitted(self):
-        """No amount is placed on Zeile 53, even when the year has Vorabpauschalen."""
+    def test_zeile_53_is_the_sum_of_the_per_lot_deductions(self):
+        engine = self._engine(
+            rgls=[_make_fund_disposal(vorabpauschale_deduction=Decimal("12.50")),
+                  _make_fund_disposal(vorabpauschale_deduction=Decimal("7.50"))],
+            vp_items=[_make_vp_item(vorabpauschale_year=2023)],
+        )
+        result = engine.calculate_reporting_figures()
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53]
+            == Decimal("20.00"))
+
+    def test_a_disposal_that_bore_no_declared_vorabpauschale_leaves_the_line_at_zero(self):
+        """Not an omission: a fund held for less than a year end, or a holding period
+        with nothing declared in it, legitimately deducts nothing."""
         engine = self._engine(
             rgls=[_make_fund_disposal()],
             vp_items=[_make_vp_item(vorabpauschale_year=2023)],
         )
         result = engine.calculate_reporting_figures()
-        assert (
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53
-            not in result.form_line_values
-        )
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53]
+            == Decimal("0.00"))
 
-    def test_gap_recorded_when_fund_units_were_disposed(self):
-        """A disposal makes Zeile 53 relevant, so the un-computable deduction is reported."""
-        collector = DataGapCollector()
-        engine = self._engine(rgls=[_make_fund_disposal()], collector=collector)
-        engine.calculate_reporting_figures()
+    def test_the_current_years_vorabpauschale_is_not_what_lands_on_zeile_53(self):
+        """The pre-2026-08-03 defect, kept as a test: Zeilen 9-13 and Zeile 53 are
+        different quantities, and a year with Vorabpauschalen but no disposal of the
+        units they were computed on deducts nothing."""
+        engine = self._engine(vp_items=[_make_vp_item(vorabpauschale_year=2023)])
+        result = engine.calculate_reporting_figures()
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53]
+            == Decimal("0.00"))
 
-        codes = [g.code for g in collector.gaps]
-        assert "KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED" in codes
-        gap = next(g for g in collector.gaps
-                   if g.code == "KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED")
-        # WARNING, not FAIL_FAST: omitting the deduction OVERSTATES the gain, so the figures
-        # are conservative rather than income-understating.
-        assert gap.severity is GapSeverity.WARNING
-        assert "Zeile 53" in gap.detail
+    def test_the_gain_line_is_net_of_the_deduction(self):
+        engine = self._engine(
+            rgls=[_make_fund_disposal(vorabpauschale_deduction=Decimal("20.00"))])
+        result = engine.calculate_reporting_figures()
+        # _make_fund_disposal is a gain of 50.00.
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS]
+            == Decimal("30.00"))
 
-    def test_no_gap_when_no_fund_units_were_disposed(self):
-        """Zeile 53 is legitimately empty without a fund disposal -- that is not a gap."""
+    def test_no_gap_is_recorded_here_at_all(self):
+        """The un-computable-deduction gap is retired. What replaces it names the fund
+        and the year, and is recorded where the attribution happens -- in the calculation
+        engine, which knows both."""
         collector = DataGapCollector()
         engine = self._engine(
-            rgls=[_make_fund_disposal(category=AssetCategory.STOCK)],
+            rgls=[_make_fund_disposal()],
             vp_items=[_make_vp_item(vorabpauschale_year=2023)],
             collector=collector,
         )

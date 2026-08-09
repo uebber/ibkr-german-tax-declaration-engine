@@ -297,7 +297,9 @@ class PdfReportGenerator:
             "ANLAGE_KAP_INV_ZEILE_11_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z11 (Brutto VOP Immofonds)",
             "ANLAGE_KAP_INV_ZEILE_12_AUSLANDS_IMMOBILIENFONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z12 (Brutto VOP Ausl. Immofonds)",
             "ANLAGE_KAP_INV_ZEILE_13_SONSTIGE_FONDS_VORABPAUSCHALE_BRUTTO": "KAP-INV Z13 (Brutto VOP Sonstige Fonds)",
-            "ANLAGE_KAP_INV_ZEILE_53_VORABPAUSCHALE_ABZUG": "KAP-INV Z53 (Waehrend der Besitzzeit angesetzte Vorabpauschalen)",
+            # A memo figure: the gain lines above are already net of it, because the
+            # form reaches Zeilen 14/17/20/23/26 through Zeile 54, which subtracts Z53.
+            "ANLAGE_KAP_INV_ZEILE_53_VORABPAUSCHALE_ABZUG": "KAP-INV Z53 (Waehrend der Besitzzeit angesetzte Vorabpauschalen; bereits in Z14/17/20/23/26 abgezogen)",
         }
         so_lines_map = {
              "ANLAGE_SO_Z54_NET_GV": "Anlage SO Zeile 54 (G/V §23 EStG)"
@@ -860,13 +862,22 @@ class PdfReportGenerator:
             relevant_rgls = self._filter_rgls_by_fund_type(fund_rgls, trc_enum)
 
             if relevant_rgls:
-                # Create transaction table with expanded columns
-                rgl_data = [["Asset Name", "ISIN", "Verk. Datum", "Menge", "Erlös EUR", "Ansch. Datum", "Kosten EUR", "G/V Brutto EUR"]]
+                # Create transaction table with expanded columns. The Zeile 53 deduction
+                # gets a column of its own because it is per disposal, and because the
+                # last column is then the figure that reaches Zeilen 14/17/20/23/26:
+                # Zeile 54 = Erlös - Anschaffungskosten - Veräußerungskosten - Zeile 53
+                # (19 Abs. 1 S. 3 InvStG, GT-FORM-032/033). Without the column the sum
+                # below would no longer match the KAP-INV line, and the check at the foot
+                # of this block would report a discrepancy that is not one.
+                rgl_data = [["Asset Name", "ISIN", "Verk. Datum", "Menge", "Erlös EUR", "Ansch. Datum", "Kosten EUR", "VP-Abzug Z53", "G/V EUR"]]
                 calculated_total = Decimal('0')
 
                 for rgl in sorted(relevant_rgls, key=lambda x: x.realization_date):
                     asset_name, asset_isin, _ = self._get_asset_details(rgl.asset_internal_id)
-                    gain_loss = rgl.gross_gain_loss_eur
+                    vorabpauschale_deduction = rgl.vorabpauschale_deduction_eur or Decimal('0')
+                    gain_loss = (rgl.gain_after_vorabpauschale_eur
+                                 if rgl.gain_after_vorabpauschale_eur is not None
+                                 else rgl.gross_gain_loss_eur)
                     calculated_total += gain_loss
 
                     rgl_data.append([
@@ -877,17 +888,18 @@ class PdfReportGenerator:
                         self._format_decimal(rgl.total_realization_value_eur).replace('.', ','),
                         format_date_german(rgl.acquisition_date),
                         self._format_decimal(rgl.total_cost_basis_eur).replace('.', ','),
+                        self._format_decimal(vorabpauschale_deduction).replace('.', ','),
                         self._format_decimal(gain_loss).replace('.', ',')
                     ])
 
                 # Add total row
                 rgl_data.append([
                     Paragraph("Summe:", self.styles['TableHeader']),
-                    "", "", "", "", "", "",
+                    "", "", "", "", "", "", "",
                     Paragraph(self._format_decimal(calculated_total).replace('.', ','), self.styles['TableCellRight'])
                 ])
 
-                table = self._create_styled_table(rgl_data, col_widths=[3*cm, 2*cm, 1.8*cm, 1.5*cm, 1.8*cm, 1.8*cm, 1.8*cm, 1.8*cm])
+                table = self._create_styled_table(rgl_data, col_widths=[2.4*cm, 1.9*cm, 1.6*cm, 1.2*cm, 1.7*cm, 1.6*cm, 1.7*cm, 1.7*cm, 1.7*cm])
                 self.story.append(KeepTogether(table))
 
                 # Verification note

@@ -158,6 +158,14 @@ Symmetric application for negative amounts (loss reversal) is tested and correct
 - VP = max(0, Basisertrag - distributions) -- correct (calculation_engine.py:786-790)
 - Negative distributions excluded from reduction -- correct
 - Basiszins 2024 = 2.29% -- correct per BMF 02.01.2024
+- **Incomplete, noted 2026-08-09.** The three lines above check Saetze 1 to 3 against each other
+  and never ask where 18 Abs. 2 enters. It enters between them: Rz. 18.3 subtracts the
+  distributions and Rz. 18.11 takes the twelfths of what remains, so a fund acquired mid-year and
+  distributing in the same year is not covered by *"VP = max(0, Basisertrag - distributions)"*
+  alone. Recorded as [GT-INVSTG-056]; the engine's position is in
+  `docs/legal-implementation-map.md`. Pro-rata was not implemented at all when this audit ran, so
+  the omission was invisible to it -- which is the point: an audit of a formula cannot see a term
+  the formula does not have.
 
 ### Anlage KAP Form Lines Z19-Z24
 **2024 formula** (separate_derivative_lines = True):

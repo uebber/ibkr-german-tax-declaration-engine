@@ -26,9 +26,8 @@ class LossOffsettingEngine:
                  asset_resolver: AssetResolver,
                  tax_year: int,
                  apply_conceptual_derivative_loss_capping: Optional[bool] = None,
-                 # Optional so existing callers keep working. When absent, a Zeile 53 gap is
-                 # logged but not collected into the report -- see
-                 # _record_zeile_53_gap_if_funds_disposed.
+                 # Optional so existing callers keep working. When absent, a gap recorded
+                 # here is logged but not collected into the report.
                  data_gap_collector: Optional["DataGapCollector"] = None):
         # None -> read the user config AT CALL TIME (the previous module-global
         # default was bound at import time — ambient mutable state).
@@ -159,55 +158,6 @@ class LossOffsettingEngine:
                 "Anlage KAP Zeilen 7/37/38 (%d): %s", self.tax_year, detail
             )
 
-    def _record_zeile_53_gap_if_funds_disposed(self) -> None:
-        """Report that Anlage KAP-INV Zeile 53 cannot be filled by the engine.
-
-        Zeile 53 takes the Vorabpauschalen assessed during the holding period of the units
-        disposed of, gross of Teilfreistellung (19 Abs. 1 S. 3-4 InvStG), and only so far as
-        they were actually brought to tax -- for a foreign broker's units the Anleitung makes
-        that condition explicit. Computing it needs per-lot Vorabpauschale history across every
-        year the lot was held, which this engine does not keep.
-
-        Severity is WARNING, not FAIL_FAST, and the direction matters: omitting the deduction
-        leaves the declared fund gain **overstated**, so the figures are complete and
-        conservative rather than income-understating. That is the WARNING contract in
-        src/processing/data_gaps.py. The taxpayer must supply Zeile 53 by hand from their prior
-        returns before filing.
-
-        Nothing is reported when no fund units were disposed of: Zeile 53 is then legitimately
-        empty and there is no gap.
-        """
-        disposed_funds = {
-            rgl.asset_internal_id
-            for rgl in self.realized_gains_losses
-            if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND
-        }
-        if not disposed_funds:
-            return
-
-        detail = (
-            f"{len(disposed_funds)} investment fund position(s) were disposed of in "
-            f"{self.tax_year}. Anlage KAP-INV Zeile 53 ('Waehrend der Besitzzeit angesetzte "
-            f"Vorabpauschalen', before Teilfreistellung) reduces the disposal gain by the "
-            f"Vorabpauschalen assessed over the holding period of those units, so far as they "
-            f"were declared in earlier years (19 Abs. 1 S. 3-4 InvStG). The engine does not "
-            f"track per-lot Vorabpauschale history and leaves the line empty, which OVERSTATES "
-            f"the declared fund gain. Fill Zeile 53 by hand from the Vorabpauschalen reported "
-            f"on Zeilen 9-13 of your earlier returns for these units."
-        )
-        if self.data_gap_collector is not None:
-            self.data_gap_collector.record(
-                code="KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED",
-                subject=f"Anlage KAP-INV Zeile 53 ({self.tax_year})",
-                detail=detail,
-                severity=GapSeverity.WARNING,
-            )
-        else:
-            logger.warning(
-                "Data gap [KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED] "
-                "Anlage KAP-INV Zeile 53 (%d): %s", self.tax_year, detail
-            )
-
     def calculate_reporting_figures(self) -> LossOffsettingResult:
         result = LossOffsettingResult()
 
@@ -316,16 +266,27 @@ class LossOffsettingEngine:
 
         # --- Anlage KAP-INV Zeile 53 ---
         # "Waehrend der Besitzzeit angesetzte Vorabpauschalen", before Teilfreistellung
-        # (19 Abs. 1 S. 3-4 InvStG). This is the Vorabpauschale accumulated over the holding
-        # period OF THE UNITS DISPOSED OF, across every year they were held, and only so far as
-        # it was actually brought to tax.
+        # (19 Abs. 1 S. 3-4 InvStG). The Vorabpauschale accumulated over the holding period OF
+        # THE UNITS DISPOSED OF, across every year they were held, and only so far as it was
+        # actually declared -- which the FIFO ledger has already attributed lot by lot, from
+        # the record of what was declared (src/processing/vorabpauschale_declarations.py).
+        # Summed here, and nothing more: this is a memo figure. The gain lines below are
+        # already net of it, because the form's Zeile 54 subtracts Zeile 53 before the result
+        # is carried to Zeilen 14/17/20/23/26 (GT-FORM-032, GT-FORM-033).
         #
-        # The engine cannot compute it: there is no per-lot Vorabpauschale accumulation, and no
-        # record of which prior years' Vorabpauschalen were declared. Until 2026-08-03 this line
-        # carried the sum of the CURRENT year's gross Vorabpauschalen under the label "Z55" --
-        # wrong line, wrong quantity, and plausible enough to file. It now emits nothing and
-        # says so. See reference/investment-tax-law/invstg-19-veraeusserungsgewinne.md.
-        self._record_zeile_53_gap_if_funds_disposed()
+        # Until 2026-08-03 this line carried the sum of the CURRENT year's gross
+        # Vorabpauschalen under the label "Z55" -- wrong line, wrong quantity, and plausible
+        # enough to file. Between then and #63 it carried nothing and reported a gap.
+        # See reference/investment-tax-law/invstg-19-veraeusserungsgewinne.md.
+        vorabpauschale_deduction_total = self.ctx.create_decimal(Decimal('0'))
+        for rgl in self.realized_gains_losses:
+            if rgl.asset_category_at_realization != AssetCategory.INVESTMENT_FUND:
+                continue
+            if rgl.vorabpauschale_deduction_eur:
+                vorabpauschale_deduction_total = self.ctx.add(
+                    vorabpauschale_deduction_total, rgl.vorabpauschale_deduction_eur)
+        result.form_line_values[TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53] = (
+            vorabpauschale_deduction_total.quantize(self.TWO_PLACES, context=self.ctx))
 
         # Calculate foreign tax paid (Zeile 41). German KESt is not an auslaendische Steuer and
         # is excluded here -- see _is_german_kest and _record_german_kest_gap.
@@ -405,12 +366,18 @@ class LossOffsettingEngine:
             if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND and rgl.gross_gain_loss_eur is not None:
                 from src.reporting.reporting_utils import get_kap_inv_category_for_reporting
                 reporting_cat = get_kap_inv_category_for_reporting(rgl.fund_type_at_sale, is_distribution=False, is_gain=True)
+                # The Veraeusserungsgewinn of Zeile 54, which is what these lines carry: the
+                # gain AFTER the Zeile 53 deduction (19 Abs. 1 S. 3). Identical to the gross
+                # figure wherever no Vorabpauschale was declared over the holding period.
+                gain_for_the_form = rgl.gain_after_vorabpauschale_eur
+                if gain_for_the_form is None:
+                    gain_for_the_form = rgl.gross_gain_loss_eur
                 if reporting_cat:
                      if rgl.tax_reporting_category:
-                         kap_inv_gross_gl_collector[rgl.tax_reporting_category] = self.ctx.add(kap_inv_gross_gl_collector[rgl.tax_reporting_category], rgl.gross_gain_loss_eur)
+                         kap_inv_gross_gl_collector[rgl.tax_reporting_category] = self.ctx.add(kap_inv_gross_gl_collector[rgl.tax_reporting_category], gain_for_the_form)
                      else:
                          logger.warning(f"RGL for fund {rgl.asset_internal_id} missing tax_reporting_category. Using derived category {reporting_cat}.")
-                         kap_inv_gross_gl_collector[reporting_cat] = self.ctx.add(kap_inv_gross_gl_collector[reporting_cat], rgl.gross_gain_loss_eur)
+                         kap_inv_gross_gl_collector[reporting_cat] = self.ctx.add(kap_inv_gross_gl_collector[reporting_cat], gain_for_the_form)
 
 
         for key, val in kap_inv_gross_gl_collector.items():

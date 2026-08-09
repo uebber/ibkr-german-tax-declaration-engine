@@ -31,6 +31,17 @@ def parse_arguments():
     parser.add_argument("--report-stock-trades-details", type=str, metavar="SYMBOL", help="Generate a detailed report of all trades for a given stock symbol in the tax year.")
     parser.add_argument("--pdf-output-file", type=str, default=None, help="Filename for the PDF report. Defaults to tax_report_<tax_year>.pdf if --report-tax-declaration is used.")
 
+    # Filing
+    # The Zeile 53 deduction (19 Abs. 1 Satz 3 InvStG) may rest only on Vorabpauschalen
+    # that were actually declared, so what was declared has to be recorded — and a run
+    # before filing is not a declaration. Hence an explicit flag rather than an
+    # automatic write: it says "this return has been filed with these figures".
+    parser.add_argument(
+        "--commit-vorabpauschale-declaration", action="store_true",
+        help=("Record this run's Anlage KAP-INV Zeilen 9-13 figures as declared, for the "
+              "preceding calendar year. Run it AFTER filing: the record is write-once and "
+              "buys the Zeile 53 deduction when the units are eventually sold."))
+
     # Download options
     download_group = parser.add_argument_group("IBKR Flex Download", "Download CSV data directly from IBKR Flex Web Service")
     download_group.add_argument("--download", action="store_true", help="Download current tax year data from IBKR before processing.")

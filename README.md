@@ -470,8 +470,8 @@ the note above). They are reported as `CURRENCY_EOY_MISMATCH` in the console and
 
 1.  **Console:** Processing logs and, with `--report-tax-declaration`, a summary of figures for direct tax form entry.
 2.  **PDF Report:** Detailed report with taxpayer info, Anlage KAP/KAP-INV/SO summaries, income events, realized gains/losses, and corporate actions.
-3.  **Cache Files:** `cache/user_classifications.json`, `cache/ecb_exchange_rates.json` and
-    `cache/user_fund_prices.json`.
+3.  **Cache Files:** `cache/user_classifications.json`, `cache/ecb_exchange_rates.json`,
+    `cache/user_fund_prices.json` and `cache/vorabpauschale_declarations.json`.
 
 ### `cache/user_fund_prices.json` -- year-start fund prices you supply
 
@@ -511,6 +511,107 @@ Set `FUND_PRICE_AUTO_FETCH = False` in `src/config.py` to keep the run offline e
 report prices then use that price, and funds it does not price stop the run.
 
 Like `user_classifications.json`, nothing recomputes the price cache. Back it up.
+
+### `cache/vorabpauschale_declarations.json` -- what you declared, and why it is worth money
+
+When you sell fund units, § 19 Abs. 1 Satz 3 InvStG reduces the gain by the Vorabpauschalen
+*angesetzt* during the holding period, in full and before Teilfreistellung (Satz 4). That is
+Anlage KAP-INV **Zeile 53**. For units at a foreign broker there is never inländischer
+Steuerabzug, so the Anleitung's condition is always the operative one: they reduce the gain
+*"nur, soweit Sie diese Vorabpauschalen der Besteuerung unterworfen haben (Zeile 9 bis 13)"*, and
+you must be able to show it.
+
+Two consequences follow, and both cost real money:
+
+- a Vorabpauschale you never declared is **not deferred to the sale — it is lost**, and that part
+  of the gain is taxed twice;
+- in a loss year the deduction *enlarges* the loss and the amount you carry forward, so it is
+  worth claiming even with no gain in sight.
+
+So the engine keeps a record of what you declared, and deducts nothing that is not in it. **It
+never assumes an earlier year was declared — it asks.**
+
+### Earlier years: the run asks, once per fund and year
+
+An interactive run stops at every calendar year in the holding period of units you still hold and
+asks what that year's return declared for that fund:
+
+```
+--- Vorabpauschale 2023: was sie erklärt haben ---
+  Fonds:  iShares Core MSCI World [ISIN:IE00B4L5Y983]
+  Anteile dieses Fonds wurden zum Ende von 2023 gehalten und später veräußert.
+  ...
+  Den Betrag, der dort hätte stehen müssen, zeigt Ihnen ein Lauf mit --tax-year 2024.
+  Antworten: Betrag in EUR  |  'n' = nichts erklärt  |  leer = später entscheiden
+```
+
+Three answers, and the middle one is the common one:
+
+- **an amount** — what Zeilen 9-13 of that year's return carried for this fund, gross. You are
+  also asked for a reference to it, because the Anleitung asks you to *darlegen* that the
+  Vorabpauschalen were declared.
+- **`n` — nothing was declared.** Anyone whose returns were filed before this engine could compute
+  a Vorabpauschale is in this position. It is recorded as a non-declaration, not as a zero: the
+  deduction is not available *for now*, and the run tells you how to recover it (below).
+- **empty — decide later.** Nothing is recorded, nothing is deducted, and the run reports the year
+  as unanswered so it is not forgotten.
+
+**The engine's own figure is deliberately not offered as a default.** It answers a different
+question — what that year's Vorabpauschale *should* have been, not what you brought to tax — and a
+number on a prompt line is the kind of thing that gets accepted with Enter.
+
+A `--no-interactive` run cannot ask, so it does not assume: every unanswered year is reported and
+nothing is deducted for it.
+
+### Recovering a year where nothing was declared
+
+This is the case worth the trouble, because the money is real and it is not lost yet:
+
+1. **Find the amount**: `uv run python -m src.main --tax-year 2024 --report-tax-declaration`
+   computes calendar 2023 and shows it on Zeilen 9-13 — what that return should have carried.
+2. **Correct that year's declaration** so the Vorabpauschale is brought to tax. Whether an
+   already-filed return can still be changed is not something this engine decides.
+3. **Record it**: the next interactive run asks again, and the amount you enter replaces the
+   non-declaration. From then on the deduction is available at disposal.
+
+The reverse is refused: a year on record as declared cannot be talked down to "nothing was
+declared" at a prompt.
+
+### The year this return declares
+
+**The current return's own year is not asked about.** Its Zeilen 9-13 figures are on the form
+being produced, so the engine takes them as declared. Record them after filing with:
+
+```bash
+uv run python -m src.main --tax-year YYYY --report-tax-declaration     --commit-vorabpauschale-declaration
+```
+
+That writes this run's Zeilen 9-13 figures — the Vorabpauschale for calendar `YYYY-1` — into the
+store, one entry per fund, including an explicit zero for a fund that owed nothing. It is
+**write-once**: re-committing the same figures is harmless, and a commit that would replace a
+different figure stops instead. If you amend a return, edit the file by hand with the amendment
+in front of you.
+
+What you get back on later runs:
+
+- **the deduction, per lot.** The annual figure is spread over the tranches you held at that
+  year's close, by the same § 18 Abs. 2 weighting the Vorabpauschale itself uses, and travels with
+  the units — so selling half a position deducts half.
+- **a divergence check.** Every run compares its own figure for the preceding calendar year
+  against the entry on record. The engine is corrected over time, and a year it has since changed
+  its mind about shows up while that return is still amendable.
+- **a named gap, never a guess.** Every holding-period year that deducts nothing is reported with
+  the fund, the year and what to do about it: `..._NOT_DECLARED` (nothing was declared — correct
+  that return), `..._DECLARATION_UNKNOWN` (nobody has been asked — run interactively),
+  `..._NOT_ATTRIBUTABLE` (no year-end holding to spread it over). Years whose Basiszins was not
+  positive (2021 and 2022) are not demanded at all: no fund owed a Vorabpauschale for them, so
+  there was nothing to declare.
+
+The gain lines (Zeilen 14/17/20/23/26) are reported **already net of Zeile 53**, because that is
+how the form arrives at them — Zeile 54 subtracts Zeile 53 and is what those lines carry. Do not
+subtract it a second time.
+
+Nothing recomputes this file either. Back it up with the others.
 
 ## German Tax Form Mapping
 

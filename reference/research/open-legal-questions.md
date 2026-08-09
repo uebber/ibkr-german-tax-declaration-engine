@@ -30,6 +30,7 @@ reasoning lives once, against the claim, which is where a reader acts on it.
 | Q5 | Vorabpauschale in the year of disposal | Rz. 18.4 -- the multiplier is the units held *"mit Ablauf des 31. Dezember des Kalenderjahres"*, so a holding disposed of in full is multiplied by nothing. Rz. 20.4 confirms it from the other side. Retired 2026-08-07 | [GT-INVSTG-016] |
 | Q12 | The day whose Ruecknahmepreis begins the Vorabpauschale year | Rz. 18.3 -- the same figure serves as the Satz 2 base and the Satz 3 cap's lower bound. Retired 2026-08-06 | [GT-INVSTG-010] |
 | Q13 | The Abs. 2 reduction on a holding acquired in several instalments | Rz. 18.11's worked example applies the reduction to the *per-Anteil* amount, before any unit count enters -- which was the whole of the opposing reading. Retired 2026-08-07 | [GT-INVSTG-011] |
+| Q14 | The Einkunftsart of a Wertpapierdarlehen fee in Privatvermoegen | The order of enquiry runs out. **20 Abs. 3 is accessory** -- both limbs presuppose Einnahmen of Abs. 1 or 2 for the payment to attach to or replace, and both worked Randziffern combine it with a Nummer ([GT-ESTG20-050]); a fee owed for the loan period whether or not the securities yield anything has none. **Nr. 7's gate is a Kapitalforderung**, and a lender holds a Sachforderung; BFH VIII R 7/23 refused Nr. 7 for such a fee even where the asset *was* one. 22 Nr. 3 takes it by its own subsidiarity clause. Retired 2026-08-09 | [GT-ESTG20-049] |
 
 Two were retired without being answered, which is a different act and is recorded as such:
 
@@ -243,3 +244,24 @@ different Nummer with different loss-offsetting. The three do not converge.
 **Status.** No Tier 1/2 source has been located that addresses unallocated spot metal at a broker
 specifically. Tier 4 constrains the question from both sides without closing it. **Do not resolve
 this from the shape of the product or from what a broker's asset class happens to be called.**
+
+## Q14 -- retired 2026-08-09
+
+Answered at [GT-ESTG20-049], where the reasoning lives once. Two things were weighed and rejected
+on the way, recorded here so they are not reargued:
+
+**20 Abs. 3 (*neben*).** The width the administration gives Abs. 3 in Rn. 83 and Rn. 84 -- a third
+party's payment, connected with a capital investment, the payer not being the debtor of the income
+-- looked wide enough to take the fee. It is not: both Randziffern reason from a link to the
+investment itself and both combine Abs. 3 with a Nummer of Abs. 1, and a lending fee has no such
+link. [GT-ESTG20-050].
+
+**20 Abs. 1 Nr. 7.** The shape looked right -- an asset surrendered against a promise of return and
+a fee, with Satz 2 making the civil-law form irrelevant. Satz 2 relaxes the **form** of the
+Kapitalanlage, not the requirement that the claim be one for money.
+
+**What the answer does not rest on.** 22 Nr. 3 Satz 2's Freigrenze and the Sparer-Pauschbetrag both
+operate on the taxpayer's total income of their kind from every source, so neither was available to
+weigh a reading. Nor is the practice of brokers and the firms preparing their reports, which enter
+such amounts on Anlage KAP; that is habit, not authority, and it is the likeliest source of a wrong
+answer here.

@@ -1,6 +1,6 @@
 # src/engine/calculation_engine.py
 import logging
-from typing import List, Tuple, Dict, DefaultDict, Optional, Any
+from typing import Callable, List, Tuple, Dict, DefaultDict, Optional, Set, Any
 import uuid
 from decimal import Decimal, getcontext, Context
 from collections import defaultdict
@@ -29,7 +29,14 @@ from src.utils.sorting_utils import get_event_sort_key
 from src.domain.exceptions import ProcessingError
 from src.utils.type_utils import parse_ibkr_date
 
-from .fifo_manager import FifoLedger
+from .fifo_manager import FifoLedger, FifoLot
+from .ledger_views import aggregate_lots
+from .vorabpauschale_attribution import (
+    abs2_retained_twelfths, apply_weighted_share, distribute_declared_vorabpauschale,
+    weigh_tranches)
+from src.processing.vorabpauschale_declarations import (
+    DECLARATION_UNKNOWN_CODE, DIVERGES_CODE, NOT_ATTRIBUTABLE_CODE,
+    NOT_DECLARED_CODE, VorabpauschaleDeclarationStore)
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.exchange_rate_provider import ECBExchangeRateProvider
 import src.config as config
@@ -288,8 +295,20 @@ def run_main_calculations(
     # Checkpoint marks: {year: {asset_id: MarkPosition}} from Positions-{year}-EoY.csv, for
     # every year strictly below the opening snapshot. Empty means the historical window is
     # replayed as one uninterrupted interval — the behaviour before checkpointing.
-    mark_positions: Optional[Dict[int, Dict[uuid.UUID, "MarkPosition"]]] = None
-) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]: 
+    mark_positions: Optional[Dict[int, Dict[uuid.UUID, "MarkPosition"]]] = None,
+    # What was DECLARED as Vorabpauschale on earlier returns, per fund and calendar year.
+    # Feeds the Anlage KAP-INV Zeile 53 deduction (19 Abs. 1 Satz 3 InvStG), which may only
+    # rest on declared amounts. None means no record is available: the deduction then covers
+    # the preceding calendar year alone — the one this return itself declares — and every
+    # other holding-period year is reported as undeducted rather than recomputed.
+    declaration_store: Optional["VorabpauschaleDeclarationStore"] = None,
+    # Asked once per fund and EARLIER holding-period year with nothing on record:
+    # "what did your return for that year declare?". None — which is what a
+    # --no-interactive run passes — means nobody can be asked, so nothing is assumed
+    # and the year is reported unanswered. The year this return itself declares is
+    # never asked about; its figures are on the form being produced.
+    ask_for_declared_vorabpauschale: Optional[Callable] = None,
+) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]:
     """
     Runs the main calculation logic:
     1. Separates historical and current year events.
@@ -310,6 +329,9 @@ def run_main_calculations(
 
     realized_gains_losses: List[RealizedGainLoss] = []
     vorabpauschale_data_items: List[VorabpauschaleData] = []
+    # Every (fund, calendar year) of a holding period whose Vorabpauschale reached no
+    # lot. Reported once at the end, filtered to funds actually disposed of.
+    unattributed_fund_years: List[UnattributedFundYear] = []
 
     historical_events_by_asset: DefaultDict[uuid.UUID, List[FinancialEvent]] = defaultdict(list)
     historical_merger_events: List[CorpActionMergerStock] = []
@@ -381,6 +403,16 @@ def run_main_calculations(
 
     logger.info(f"Separated events: {sum(len(v) for v in historical_events_by_asset.values())} relevant historical events for SOY FIFO reconstruction, "
                 f"{len(current_year_events)} current tax year events.")
+
+    # Funds the tax year opens holding, from the reported opening snapshot. Only
+    # these can reach this year's Zeile 53, so only these are attributed to — and,
+    # for an earlier year, only these are worth asking a person about.
+    funds_held_at_tax_year_opening: Set[uuid.UUID] = {
+        asset_id
+        for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items()
+        if isinstance(asset_obj, InvestmentFund)
+        and (asset_obj.soy_quantity or Decimal(0)) > Decimal(0)
+    }
 
     fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip
     # Separate dict for currency ledgers; same (account_key, asset_id) key shape.
@@ -653,6 +685,30 @@ def run_main_calculations(
                     index + 1, len(interval_ends), interval_end, len(stream))
         stream.run()
 
+        # The interval has been replayed AND reconciled, so the ledgers now describe
+        # the holding at the close of this calendar year — the count Rz. 18.4
+        # multiplies by, and the only moment that year's declared Vorabpauschale can
+        # be spread over the lots that bore it. The final mark is handled below,
+        # after this run's own figure for that year has been computed.
+        # The amount an EARLIER year declared is looked up or asked for right here,
+        # and applied to the lots while they are live.
+        #
+        # Deferring it to one batch after the replay reads better — the questions
+        # would arrive in a block instead of sprinkled through the replay's log —
+        # and it is wrong. A merger rebuilds the lots it transfers, and `_take_newest`
+        # rebuilt them at a mark until this change; a deferred amount would arrive
+        # holding a reference to a lot the ledger no longer has, and the year's
+        # deduction would vanish without a word. Applied here, every later
+        # transformation carries or scales the figure with the units.
+        if not is_final_mark and _year_can_bear_a_vorabpauschale(mark_years[index]):
+            _attribute_declared_vorabpauschale(
+                fifo_ledgers=fifo_ledgers, asset_resolver=asset_resolver,
+                calendar_year=mark_years[index],
+                declaration_store=declaration_store,
+                ask=ask_for_declared_vorabpauschale,
+                held_at_tax_year_opening=funds_held_at_tax_year_opening,
+                ctx=ctx, unattributed=unattributed_fund_years)
+
     _grade_mark_outcomes(mark_outcomes, data_gap_collector)
 
     # Placing the merger ahead of its day's trades (see engine/replay.py) is
@@ -697,10 +753,61 @@ def run_main_calculations(
     # Vorabpauschale of calendar `tax_year - 1`, and each lot carries the
     # acquisition date § 18 Abs. 2 reduces by.
     #
-    # It has to be taken now. The Vorabpauschale is computed far below, after
-    # the tax year's own trades have consumed and created lots, by which point
-    # the ledgers describe the end of the tax year and the moment is gone.
+    # It has to be taken now. Once the tax year's own trades have consumed and
+    # created lots the ledgers describe the end of the tax year and the moment is
+    # gone.
     vorabpauschale_opening_lots = _snapshot_fund_lots(fifo_ledgers, asset_resolver)
+
+    # --- Vorabpauschale for calendar `tax_year - 1`, and its attribution to lots ---
+    #
+    # Computed HERE, not after the tax year's events, for the same reason the
+    # snapshot above is taken here: this run's own figure is what this return
+    # declares on Zeilen 9-13, and § 19 Abs. 1 Satz 3 deducts it from a disposal of
+    # the very units it was computed on. It therefore has to reach those lots
+    # before the tax year's first sale consumes them. Until #63 it was computed
+    # some 400 lines below, which was harmless only because nothing downstream of
+    # it touched a lot.
+    vorabpauschale_year = tax_year - 1
+    vorabpauschale_data_items = _compute_vorabpauschale_for_prior_year(
+        financial_events=financial_events,
+        asset_resolver=asset_resolver,
+        currency_converter=currency_converter,
+        tax_year=tax_year,
+        opening_lots_by_asset=vorabpauschale_opening_lots,
+        prior_year_positions_available=prior_year_positions_available,
+        ctx=ctx,
+        data_gap_collector=data_gap_collector,
+    )
+
+    if _year_can_bear_a_vorabpauschale(vorabpauschale_year):
+        _attribute_declared_vorabpauschale(
+            fifo_ledgers=fifo_ledgers, asset_resolver=asset_resolver,
+            calendar_year=vorabpauschale_year,
+            declared_by_asset=_declared_for_the_preceding_year(
+                asset_resolver=asset_resolver,
+                vorabpauschale_items=vorabpauschale_data_items,
+                vorabpauschale_year=vorabpauschale_year,
+                declaration_store=declaration_store,
+                tax_year=tax_year,
+                data_gap_collector=data_gap_collector,
+            ),
+            # This return declares the preceding calendar year, so every fund is
+            # in the mapping above and nothing is asked.
+            held_at_tax_year_opening=funds_held_at_tax_year_opening,
+            ctx=ctx, unattributed=unattributed_fund_years)
+
+    # A holding-period year whose close is not a checkpoint mark has no reported
+    # holding to distribute that year's declared total over, so the deduction
+    # cannot reach the lots however the year was declared. Scanned from the lots
+    # that survive into the tax year, because those are the ones a disposal can
+    # consume.
+    _scan_for_unattributable_years(
+        opening_lots_by_asset=vorabpauschale_opening_lots,
+        asset_resolver=asset_resolver,
+        attributable_years=set(mark_years) | {vorabpauschale_year},
+        tax_year=tax_year,
+        unattributed=unattributed_fund_years,
+    )
 
     logger.info(f"Initialized {securities_ledger_count} FIFO ledgers (unified replay).")
     for ccy, (done, total) in currency_replay_counts.items():
@@ -1069,13 +1176,41 @@ def run_main_calculations(
     else:
         logger.info("Currency EOY validation passed.")
 
-    # --- Vorabpauschale ---
-    # The VP declared in VZ `tax_year` is the one computed FOR calendar `tax_year - 1`: it is
-    # deemed to flow on the first working day of `tax_year` (18 Abs. 3 InvStG), and Zeilen 9-13
-    # take "die Ihnen im Jahr <tax_year> als zugeflossen geltenden Vorabpauschalen". Until
-    # 2026-08-03 the engine computed the VP for the tax year itself and declared it in that same
-    # year -- one year early, with the wrong Basiszins and the wrong reference prices.
-    # See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    # The Vorabpauschale itself was computed before the tax year's events, at the
+    # moment the ledgers described the close of `tax_year - 1`, and attributed to
+    # the lots there. What remains here is the report of the holding-period years
+    # that never reached a lot, which needs the disposals to be known.
+    _record_unattributed_vorabpauschale(
+        unattributed_fund_years, realized_gains_losses, tax_year, data_gap_collector)
+
+    processed_income_events_for_output: List[FinancialEvent] = list(current_year_events)
+
+    logger.info(f"Calculation engine finished. Produced {len(realized_gains_losses)} RealizedGainLoss records.")
+    logger.info(f"Calculation engine produced {len(vorabpauschale_data_items)} VorabpauschaleData records.")
+
+    return realized_gains_losses, vorabpauschale_data_items, processed_income_events_for_output, eoy_mismatch_errors
+
+
+def _compute_vorabpauschale_for_prior_year(
+    *,
+    financial_events: List[FinancialEvent],
+    asset_resolver: AssetResolver,
+    currency_converter: CurrencyConverter,
+    tax_year: int,
+    opening_lots_by_asset: Dict[uuid.UUID, List["FundUnitTranche"]],
+    prior_year_positions_available: bool,
+    ctx: Context,
+    data_gap_collector: Optional[DataGapCollector],
+) -> List[VorabpauschaleData]:
+    """The Vorabpauschale this return declares: the one FOR calendar `tax_year - 1`.
+
+    It is deemed to flow on the first working day of `tax_year` (18 Abs. 3 InvStG),
+    and Zeilen 9-13 take "die Ihnen im Jahr <tax_year> als zugeflossen geltenden
+    Vorabpauschalen". Until 2026-08-03 the engine computed the VP for the tax year
+    itself and declared it in that same year -- one year early, with the wrong
+    Basiszins and the wrong reference prices.
+    See reference/investment-tax-law/invstg-18-vorabpauschale.md.
+    """
     vorabpauschale_year = tax_year - 1
 
     funds_held = any(
@@ -1117,7 +1252,7 @@ def run_main_calculations(
         distributions_by_asset=prior_year_distributions_by_asset,
         currency_converter=currency_converter,
         vorabpauschale_year=vorabpauschale_year,
-        opening_lots_by_asset=vorabpauschale_opening_lots,
+        opening_lots_by_asset=opening_lots_by_asset,
         ctx=ctx,
         data_gap_collector=data_gap_collector,
     )
@@ -1125,13 +1260,137 @@ def run_main_calculations(
         f"Vorabpauschale calculation produced {len(vorabpauschale_data_items)} records "
         f"for calendar {vorabpauschale_year} (declared in VZ {tax_year})."
     )
+    return vorabpauschale_data_items
 
-    processed_income_events_for_output: List[FinancialEvent] = list(current_year_events)
 
-    logger.info(f"Calculation engine finished. Produced {len(realized_gains_losses)} RealizedGainLoss records.")
-    logger.info(f"Calculation engine produced {len(vorabpauschale_data_items)} VorabpauschaleData records.")
+def _declared_for_the_preceding_year(
+    *,
+    asset_resolver: AssetResolver,
+    vorabpauschale_items: List[VorabpauschaleData],
+    vorabpauschale_year: int,
+    declaration_store: Optional["VorabpauschaleDeclarationStore"],
+    tax_year: int,
+    data_gap_collector: Optional[DataGapCollector],
+) -> Dict[uuid.UUID, Decimal]:
+    """What counts as declared for calendar `tax_year - 1`, per fund.
 
-    return realized_gains_losses, vorabpauschale_data_items, processed_income_events_for_output, eoy_mismatch_errors
+    **This return is the declaration.** The Anleitung to Zeile 53 admits the
+    deduction *"nur, soweit Sie diese Vorabpauschalen der Besteuerung unterworfen
+    haben (Zeile 9 bis 13)"* ([GT-INVSTG-034]), and for the preceding calendar
+    year Zeilen 9-13 are on this very form, carrying exactly the figures computed
+    above. So the run's own figure is the declared amount -- not a recomputation
+    standing in for a record, which is what it would be for any earlier year.
+
+    Where the year has already been committed -- the return was filed and the run
+    is being repeated -- the **declared** figure governs instead, because that is
+    what was brought to tax, and any difference is reported so it can be dealt
+    with while the return is still amendable.
+    """
+    computed_by_asset = {
+        item.asset_internal_id: item.gross_vorabpauschale_eur
+        for item in vorabpauschale_items
+        if item.vorabpauschale_year == vorabpauschale_year
+    }
+
+    declared: Dict[uuid.UUID, Decimal] = {}
+    for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
+        if not isinstance(asset_obj, InvestmentFund):
+            continue
+        computed = computed_by_asset.get(asset_id, Decimal("0.00"))
+        entry = (declaration_store.get(asset_obj.get_classification_key(), vorabpauschale_year)
+                 if declaration_store is not None else None)
+        if entry is None:
+            declared[asset_id] = computed
+            continue
+
+        declared[asset_id] = entry.gross_eur
+        if entry.gross_eur != computed:
+            detail = (
+                f"Fuer das Kalenderjahr {vorabpauschale_year} sind EUR {entry.gross_eur} "
+                f"als erklaert erfasst ({entry.source}, erfasst am "
+                f"{entry.declared_on.isoformat()}); dieser Lauf berechnet EUR {computed}. "
+                f"Der Abzug nach § 19 Abs. 1 Satz 3 InvStG bleibt auf den erklaerten "
+                f"Betrag begrenzt. Weicht die Berechnung ab, weil die Engine "
+                f"zwischenzeitlich korrigiert wurde, ist die Erklaerung fuer VZ "
+                f"{tax_year} zu pruefen, solange sie noch aenderbar ist."
+            )
+            if data_gap_collector is not None:
+                data_gap_collector.record(
+                    code=DIVERGES_CODE,
+                    subject=f"{asset_obj.get_classification_key()} "
+                            f"({asset_obj.description or ''}) {vorabpauschale_year}",
+                    detail=detail, severity=GapSeverity.WARNING,
+                )
+            else:
+                logger.warning("[%s] %s: %s", DIVERGES_CODE,
+                               asset_obj.get_classification_key(), detail)
+    return declared
+
+
+def _scan_for_unattributable_years(
+    *,
+    opening_lots_by_asset: Dict[uuid.UUID, List["FundUnitTranche"]],
+    asset_resolver: AssetResolver,
+    attributable_years: set,
+    tax_year: int,
+    unattributed: List["UnattributedFundYear"],
+) -> None:
+    """Name the holding-period years the replay never stopped at.
+
+    Distributing a fund-year's declared total over its tranches needs the holding
+    as it stood at that year's close, and the replay only has one where
+    `Positions-{Y}-EoY.csv` supplied a checkpoint mark. Without it the year cannot
+    reach a lot however faithfully it was declared -- a different failure from an
+    undeclared year, and reported under its own code.
+
+    Scanned over the lots that survive into the tax year: a lot present when the
+    tax year opens was held at the close of every year from its acquisition
+    onwards, because nothing but a disposal removes it.
+    """
+    for asset_id, tranches in opening_lots_by_asset.items():
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
+        if asset_obj is None:
+            continue
+
+        # Units whose acquisition date reconciliation invented have no knowable
+        # holding period, so no year of one can be established for them -- not the
+        # earliest, and not the § 18 Abs. 2 weight of any single year. The
+        # reconstruction being discarded is already reported by the mark grading;
+        # this names what it costs on Zeile 53, which is a deduction of zero
+        # against a gain the disposal declares in full.
+        undated = [t for t in tranches if not t.acquisition_date_is_known]
+        if undated:
+            unattributed.append(UnattributedFundYear(
+                asset_internal_id=asset_id,
+                classification_key=asset_obj.get_classification_key(),
+                description=asset_obj.description or "",
+                calendar_year=tax_year - 1,
+                code=NOT_ATTRIBUTABLE_CODE,
+                reason=(f"{sum((t.quantity for t in undated), Decimal(0))} Anteile "
+                        f"tragen ein bei der Abstimmung gesetztes Ersatz-"
+                        f"Anschaffungsdatum; ihr Besitzzeitraum ist damit unbekannt "
+                        f"und es laesst sich keine Vorabpauschale auf sie aufteilen"),
+            ))
+
+        dated = [t for t in tranches if t.acquisition_date_is_known]
+        if not dated:
+            continue
+        first_year = min(t.acquisition_date.year for t in dated)
+        for year in range(first_year, tax_year):
+            if year in attributable_years:
+                continue
+            if not _year_can_bear_a_vorabpauschale(year):
+                continue
+            unattributed.append(UnattributedFundYear(
+                asset_internal_id=asset_id,
+                classification_key=asset_obj.get_classification_key(),
+                description=asset_obj.description or "",
+                calendar_year=year,
+                code=NOT_ATTRIBUTABLE_CODE,
+                reason=(f"zum Ende des Kalenderjahres {year} liegt kein gemeldeter "
+                        f"Bestand vor (Positions-{year}-EoY.csv fehlt), auf den sich "
+                        f"eine erklaerte Vorabpauschale aufteilen liesse"),
+            ))
 
 
 def _get_vp_reporting_category(fund_type: InvestmentFundType) -> Optional['TaxReportingCategory']:
@@ -1203,31 +1462,16 @@ class FundUnitTranche:
         """
         Twelfths of the Vorabpauschale these units keep, per § 18 Abs. 2.
 
-        *"Im Jahr des Erwerbs der Investmentanteile vermindert sich die
-        Vorabpauschale um ein Zwoelftel fuer jeden vollen Monat, der dem Monat
-        des Erwerbs vorangeht."* Units acquired before the calendar year are not
-        in their year of acquisition and keep all twelve; units acquired in it
-        keep twelve less one for each full month that preceded the month of
-        acquisition, so a January purchase keeps twelve and a December purchase
-        keeps one.
-
-        Units acquired *after* the year cannot be in a holding counted at its
-        close, so that case is a programming error rather than a tax one.
+        The rule itself lives in `engine/vorabpauschale_attribution.py`, because
+        the Zeile 53 distribution key is the same rule and the two must not be
+        able to drift apart. All this adds is the refusal below.
         """
         if not self.acquisition_date_is_known:
             raise ProcessingError(
                 "Vorabpauschale: § 18 Abs. 2 was asked for the acquisition month "
                 "of units whose acquisition date the engine invented. The caller "
                 "must drop the fund before reaching here.")
-        if self.acquisition_date.year < calendar_year:
-            return 12
-        if self.acquisition_date.year > calendar_year:
-            raise ProcessingError(
-                f"Vorabpauschale {calendar_year}: a lot acquired "
-                f"{self.acquisition_date} cannot be part of the holding at the "
-                "close of that year. The snapshot was taken at the wrong point "
-                "in the pipeline.")
-        return 12 - (self.acquisition_date.month - 1)
+        return abs2_retained_twelfths(self.acquisition_date, calendar_year)
 
 
 def _snapshot_fund_lots(fifo_ledgers, asset_resolver) -> Dict[uuid.UUID, List[FundUnitTranche]]:
@@ -1259,6 +1503,241 @@ def _snapshot_fund_lots(fifo_ledgers, asset_resolver) -> Dict[uuid.UUID, List[Fu
                     acquisition_date_is_known=getattr(
                         lot, "acquisition_date_is_known", True)))
     return snapshot
+
+
+def _year_can_bear_a_vorabpauschale(calendar_year: int) -> bool:
+    """Could ANY fund have owed a Vorabpauschale for this calendar year?
+
+    § 18 Abs. 1 Satz 2 multiplies the year-start price by the Basiszins, so a year
+    whose Basiszins is not positive yields a non-positive Basisertrag for every
+    fund and no Vorabpauschale for any of them ([GT-INVSTG-010], [GT-INVSTG-050]).
+    2021 and 2022 are such years. Nothing could have been declared for them, so a
+    Zeile 53 deduction covering them is not missing -- it does not exist -- and
+    demanding a declaration record would be noise.
+
+    This is a derivation from the law as the registry holds it, not an assumption
+    about the data.
+    """
+    from src.tax_law.registry import basiszins_pct
+    basiszins = basiszins_pct(calendar_year)
+    return basiszins is not None and basiszins > Decimal(0)
+
+
+@dataclass(frozen=True)
+class UnattributedFundYear:
+    """One (fund, calendar year) whose Vorabpauschale never reached a lot.
+
+    Collected rather than recorded on the spot for two reasons. It is only a gap
+    where units of that fund were actually disposed of in the tax year -- which is
+    not known until the tax year has been processed -- and one report naming every
+    fund and year is worth more than a gap per line.
+    """
+    asset_internal_id: uuid.UUID
+    classification_key: str
+    description: str
+    calendar_year: int
+    code: str
+    reason: str
+
+
+def _attribute_declared_vorabpauschale(
+    *,
+    fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger],
+    asset_resolver: AssetResolver,
+    calendar_year: int,
+    ctx: Context,
+    unattributed: List[UnattributedFundYear],
+    held_at_tax_year_opening: Set[uuid.UUID],
+    declared_by_asset: Optional[Dict[uuid.UUID, Decimal]] = None,
+    declaration_store: Optional["VorabpauschaleDeclarationStore"] = None,
+    ask: Optional[Callable] = None,
+) -> None:
+    """Spread one calendar year's declared Vorabpauschalen over the lots holding them.
+
+    Called at the close of each calendar year of the replay -- the one moment the
+    ledgers describe the holding Rz. 18.4 counts ([GT-INVSTG-017]) -- so that when
+    units are disposed of later, § 19 Abs. 1 Satz 3 has a per-lot figure to deduct.
+
+    Two ways the amount arrives, and they are not interchangeable:
+
+    - `declared_by_asset` -- used for the calendar year THIS return declares. The
+      figures are on the form being produced, so there is nothing to ask about.
+    - otherwise the **declaration store**, and where it has no answer, `ask`. This
+      is a year on a return already filed. What it declared is not something this
+      engine can compute, and its own recomputation is not a substitute: the
+      Anleitung to Zeile 53 admits the deduction only so far as the amount was
+      brought to tax ([GT-INVSTG-034]).
+
+    **The question is worth asking even when the expected answer is "nothing".**
+    Anyone whose earlier returns were filed before this engine could compute a
+    Vorabpauschale declared nothing for those years, and will never find out that
+    it costs them a deduction unless something asks. A `--no-interactive` run
+    cannot ask -- and therefore must not assume: it records the year as unanswered
+    and deducts nothing.
+
+    **Only funds still held when the tax year opens are considered.** A fund sold
+    before then cannot reach this return's Zeile 53: no disposal this year can
+    consume lots it no longer has. Without this the run asked about years that
+    could not move a figure -- measured on VZ 2025, all three questions it put
+    were about funds whose opening position was zero, and each belonged to the
+    VZ 2024 return, not this one. Asking a person to look up a filed return for
+    nothing is how a prompt that matters gets dismissed.
+
+    The test is the reported opening position rather than the ledger, because at
+    an intermediate mark the ledger does not yet describe the tax year's opening.
+    The two agree by construction: reconciliation pins the final ledger to exactly
+    that snapshot.
+
+    Anything that cannot be attributed is collected, never approximated.
+    """
+    from src.processing.vorabpauschale_declarations import DeclarationStatus
+
+    for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
+        if not isinstance(asset_obj, InvestmentFund):
+            continue
+        if asset_id not in held_at_tax_year_opening:
+            continue
+        lots = aggregate_lots(fifo_ledgers, asset_id)
+        if not lots:
+            continue
+
+        def _unattributed(code: str, reason: str) -> None:
+            unattributed.append(UnattributedFundYear(
+                asset_internal_id=asset_id,
+                classification_key=asset_obj.get_classification_key(),
+                description=asset_obj.description or "",
+                calendar_year=calendar_year, code=code, reason=reason))
+
+        if declared_by_asset is not None:
+            declared = declared_by_asset.get(asset_id)
+        else:
+            key = asset_obj.get_classification_key()
+            entry = (declaration_store.get(key, calendar_year)
+                     if declaration_store is not None else None)
+            if entry is None and ask is not None:
+                entry = ask(asset_obj, calendar_year)
+                if entry is not None and declaration_store is not None:
+                    declaration_store.commit(key, calendar_year, entry)
+                    declaration_store.save()
+            if entry is None:
+                _unattributed(
+                    DECLARATION_UNKNOWN_CODE,
+                    f"fuer das Kalenderjahr {calendar_year} liegt keine Angabe vor, "
+                    f"ob und in welcher Hoehe eine Vorabpauschale erklaert wurde")
+                continue
+            if entry.status is DeclarationStatus.NOT_DECLARED:
+                _unattributed(
+                    NOT_DECLARED_CODE,
+                    f"fuer das Kalenderjahr {calendar_year} wurde nach eigener "
+                    f"Angabe nichts erklaert ({entry.source})")
+                continue
+            declared = entry.gross_eur
+
+        if declared is None:
+            _unattributed(
+                DECLARATION_UNKNOWN_CODE,
+                f"fuer das Kalenderjahr {calendar_year} liegt keine Angabe vor, "
+                f"ob und in welcher Hoehe eine Vorabpauschale erklaert wurde")
+            continue
+        if declared <= Decimal(0):
+            continue
+
+        try:
+            distribute_declared_vorabpauschale(
+                lots, calendar_year=calendar_year, declared_gross_eur=declared, ctx=ctx)
+        except ProcessingError as e:
+            _unattributed(
+                NOT_ATTRIBUTABLE_CODE,
+                f"die erklaerten EUR {declared} fuer {calendar_year} lassen sich "
+                f"nicht auf die Tranchen aufteilen: {e}")
+
+
+def _record_unattributed_vorabpauschale(
+    unattributed: List[UnattributedFundYear],
+    realized_gains_losses: List[RealizedGainLoss],
+    tax_year: int,
+    data_gap_collector: Optional[DataGapCollector],
+) -> None:
+    """Report the holding-period years that reached no lot, for funds actually sold.
+
+    Three conditions, reported apart because the reader has to do a different
+    thing about each: a year the taxpayer says was never declared (recoverable, by
+    correcting that year's declaration), a year nobody has been asked about
+    (answerable, by running interactively), and a year that cannot be split over
+    the tranches at all. Rolling them into one message was the first version, and
+    it left the most actionable of the three — a lost deduction the taxpayer can
+    still recover — indistinguishable from a missing input file.
+
+    Severity is WARNING for all three, and the direction is what makes that
+    honest: a year left out means the deduction is smaller and the declared gain
+    therefore **larger**, so the figures are conservative rather than
+    income-understating. What the taxpayer loses is money, which is why the fund
+    and the year are named instead of the condition being logged and forgotten.
+
+    Nothing is reported for a fund whose units were not disposed of: Zeile 53 does
+    not arise for it, and an undeclared year costs nothing until units are sold.
+    """
+    disposed = {
+        rgl.asset_internal_id for rgl in realized_gains_losses
+        if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND
+    }
+    relevant = [u for u in unattributed if u.asset_internal_id in disposed]
+    if not relevant or data_gap_collector is None:
+        for entry in relevant:
+            logger.warning("[%s] %s @ %d: %s", entry.code, entry.classification_key,
+                           entry.calendar_year, entry.reason)
+        return
+
+    # One report per condition, because the three call for different things. What
+    # they share is the direction: a year left out makes the deduction smaller and
+    # the declared gain LARGER, so the figures are conservative — and the taxpayer
+    # is out of pocket, which is why each says what to do about it.
+    remedies = {
+        NOT_DECLARED_CODE: (
+            "Fuer diese Jahre wurde nach eigener Angabe keine Vorabpauschale "
+            "erklaert. Nach der Anleitung zu Zeile 53 mindert eine Vorabpauschale "
+            "den Veraeusserungsgewinn nur, soweit sie der Besteuerung unterworfen "
+            "wurde (Zeilen 9-13) — der Abzug entfaellt also, solange die Erklaerung "
+            "des betreffenden Jahres unveraendert bleibt, und der Gewinn wird "
+            "insoweit doppelt erfasst. Den Betrag, der dort anzusetzen gewesen "
+            "waere, zeigt ein Lauf mit --tax-year <Jahr+1>. Wird die Erklaerung "
+            "berichtigt, tragen Sie den erklaerten Betrag hier ein (der Lauf fragt "
+            "danach) — der Abzug steht dann ab dem naechsten Lauf zur Verfuegung. "
+            "Ob eine bereits eingereichte Erklaerung noch geaendert werden kann, "
+            "entscheidet dieses Programm nicht."),
+        DECLARATION_UNKNOWN_CODE: (
+            "Fuer diese Jahre ist nicht bekannt, ob eine Vorabpauschale erklaert "
+            "wurde, und es wird deshalb nichts abgezogen — angenommen wird nichts. "
+            "Starten Sie den Lauf interaktiv (ohne --no-interactive); er fragt je "
+            "Fonds und Jahr danach und merkt sich die Antwort."),
+        NOT_ATTRIBUTABLE_CODE: (
+            "Fuer diese Jahre laesst sich ein erklaerter Betrag nicht auf die "
+            "veraeusserten Anteile aufteilen — es fehlt der gemeldete Bestand zum "
+            "Jahresende, oder Anschaffungsdaten wurden bei der Abstimmung ersetzt. "
+            "Ohne diese Zuordnung waere jeder Abzug geraten."),
+    }
+
+    for code in (NOT_DECLARED_CODE, DECLARATION_UNKNOWN_CODE, NOT_ATTRIBUTABLE_CODE):
+        entries = sorted((u for u in relevant if u.code == code),
+                         key=lambda u: (u.classification_key, u.calendar_year))
+        if not entries:
+            continue
+        named = "; ".join(
+            f"{u.classification_key} ({u.description}) {u.calendar_year}: {u.reason}"
+            for u in entries)
+        years = sorted({u.calendar_year for u in entries})
+        data_gap_collector.record(
+            code=code,
+            subject=f"Anlage KAP-INV Zeile 53 ({tax_year}), "
+                    f"{len(entries)} Fonds-Jahr(e): "
+                    + ", ".join(str(y) for y in years),
+            detail=(
+                f"Fuer {len(entries)} Fonds-Jahr(e) im Besitzzeitraum veraeusserter "
+                f"Anteile wird keine Vorabpauschale nach § 19 Abs. 1 Satz 3 InvStG "
+                f"abgezogen. {named}. {remedies[code]}"
+            ),
+            severity=GapSeverity.WARNING,
+        )
 
 
 def _price_stichtag(recorded: Optional[date], by_convention: date) -> date:
@@ -1305,9 +1784,17 @@ def _calculate_vorabpauschale(
 
       Abs. 1 S. 2  basisertrag_je_anteil = preis_jahresbeginn * basiszins * 0.7
       Abs. 1 S. 3  basisertrag_je_anteil <= (preis_letzt - preis_erst) + ausschuettung_je_anteil
-      Rz. 18.4     Basisertrag = SUM over tranches of basisertrag_je_anteil * units * Abs. 2
-      Abs. 1 S. 1  VP = max(0, Basisertrag - Ausschuettungen)
+      Abs. 1 S. 1  vp_je_anteil = max(0, basisertrag_je_anteil - ausschuettung_je_anteil)
+      Abs. 2       vp_je_anteil * k/12, k = 12 less one per full month before the
+                   month of acquisition
+      Rz. 18.4     VP = SUM over tranches of vp_je_anteil * k/12 * units
       Abs. 4       basiszins from the published BMF table for `vorabpauschale_year`
+
+    **Satz 1 comes before Abs. 2 and the order is load-bearing.** Abs. 2 reduces *"die
+    Vorabpauschale"*, which Satz 1 defines as the shortfall against the Basisertrag, so the
+    twelfths multiply what the distributions left. Rz. 18.3 works it in that order --
+    [GT-INVSTG-056]. The two orders differ by ausschuettungen * (12 - k)/12, and the reversed
+    one can drive the figure below zero and drop a fund that owes something.
 
     The unit count is the holding at the close of 31 December of the Vorabpauschale year
     (Rz. 18.4), taken from `opening_lots_by_asset` -- the ledger's own lots at that moment,
@@ -1486,30 +1973,42 @@ def _calculate_vorabpauschale(
                          f"{basisertrag_per_unit} <= 0 after the Satz 3 cap. VP=0.")
             continue
 
+        # Abs. 1 S. 1, per unit: the Vorabpauschale is what the distributions
+        # fell short of. It is subtracted HERE, before the Abs. 2 twelfths,
+        # because Abs. 2 reduces "die Vorabpauschale" -- the amount Satz 1
+        # defines -- and not the Basisertrag. Rz. 18.3 computes in exactly this
+        # order and Rz. 18.11 then takes the twelfths of what remains
+        # ([GT-INVSTG-056]). The other order was this engine's until 2026-08-09
+        # and understated by distributions * (12 - k)/12.
+        vp_per_unit = ctx.subtract(basisertrag_per_unit, distribution_per_unit)
+        if vp_per_unit <= Decimal('0'):
+            logger.debug(f"Fund {asset_obj.description}: distributions per unit "
+                         f"({distribution_per_unit}) >= per-unit Basisertrag "
+                         f"({basisertrag_per_unit}). VP=0.")
+            continue
+
         # Rz. 18.4 with Abs. 2: multiply by the units, tranche by tranche, each
         # reduced by a twelfth for every full month before its month of acquisition.
-        basisertrag = Decimal(0)
+        gross_vp = Decimal(0)
         for tranche in tranches:
             twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
-            tranche_basisertrag = ctx.multiply(basisertrag_per_unit, tranche.quantity)
+            tranche_vp = ctx.multiply(vp_per_unit, tranche.quantity)
             if twelfths != 12:
-                tranche_basisertrag = ctx.divide(
-                    ctx.multiply(tranche_basisertrag, Decimal(twelfths)), Decimal(12))
+                tranche_vp = ctx.divide(
+                    ctx.multiply(tranche_vp, Decimal(twelfths)), Decimal(12))
                 logger.debug(
                     "Fund %s: tranche of %s acquired %s keeps %d/12 (18 Abs. 2).",
                     asset_obj.description, tranche.quantity,
                     tranche.acquisition_date, twelfths)
-            basisertrag = ctx.add(basisertrag, tranche_basisertrag)
+            gross_vp = ctx.add(gross_vp, tranche_vp)
 
-        if basisertrag <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Basisertrag={basisertrag} <= 0, VP=0.")
-            continue
-
-        # Abs. 1 S. 1: the Vorabpauschale is what the distributions fell short of.
-        gross_vp = ctx.subtract(basisertrag, distributions_eur)
-        if gross_vp <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Distributions ({distributions_eur}) >= Basisertrag ({basisertrag}), VP=0.")
-            continue
+        # Abs. 1 S. 2 and S. 3 over the whole holding, kept for the report.
+        # **Abs. 2 does not enter here.** It reduces the Vorabpauschale, so the
+        # Basisertrag is the plain Rz. 18.4 product and a fund bought in
+        # December has the same one as a fund held all year. This field carried
+        # the twelfths-reduced amount until 2026-08-09, which is a quantity no
+        # provision defines.
+        basisertrag = ctx.multiply(basisertrag_per_unit, units_at_year_end)
 
         # Kept for the report: the holding's value at each end of the year, on the
         # Rz. 18.4 count, so both sides describe the same units.
