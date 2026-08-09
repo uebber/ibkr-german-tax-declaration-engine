@@ -260,7 +260,7 @@ forward carry-over), **2024** and **2025**. Only `separate_derivative_lines`,
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
 | GT-INVSTG-010 | implements (Satz 2 price), see GT-INVSTG-017 for the unit count | `_calculate_vorabpauschale()` in `src/engine/calculation_engine.py`; the Satz 2 price for a fund bought mid-year comes from `src/processing/fund_prices.py` | `test_vorabpauschale.py::TestVorabpauschaleCalculation`, `test_vorabpauschale.py::TestAFundTheEngineCannotPrice`, `test_vorabpauschale_reclassification.py`, `test_fund_price_store.py` | Sätze 1–3: Basisertrag, the value-gain cap, and the distribution subtraction. Reached only for some funds until 2026-08-04, and a fund it could not price dropped out silently until 2026-08-09 — see below. |
-| GT-INVSTG-011 | implements | `_calculate_vorabpauschale()` and `FundUnitTranche.abs2_retained_twelfths()` in `src/engine/calculation_engine.py` | `test_vorabpauschale_abs2.py` | Abs. 2 reduces each acquisition by one twelfth per full month before its month of acquisition; units held before the year keep twelve. **No longer a choice under uncertainty** — the 2026-08-07 audit closed Q13 in favour of exactly this reading, on Rz. 18.11's worked example applying the reduction to the *per-Anteil* amount, with Rz. 18.9 and Rn. 184a alongside. The one residual is recorded in the store, not here: no source works a mixed holding, so summing per acquisition joins two quoted rules. Superseded text: *"implements (Q13 Reading A: per acquisition) … a choice under uncertainty"*; and before that, **Abs. 2 pro-rata was not implemented** at all. |
+| GT-INVSTG-011 | implements | `abs2_retained_twelfths()` in `src/engine/vorabpauschale_attribution.py`, used by `_calculate_vorabpauschale()` and by the Zeile 53 distribution key | `test_vorabpauschale_abs2.py`, `test_vorabpauschale_zeile53.py::TestAbs2Twelfths` | Abs. 2 reduces each acquisition by one twelfth per full month before its month of acquisition; units held before the year keep twelve. **No longer a choice under uncertainty** — the 2026-08-07 audit closed Q13 in favour of exactly this reading, on Rz. 18.11's worked example applying the reduction to the *per-Anteil* amount, with Rz. 18.9 and Rn. 184a alongside. The one residual is recorded in the store, not here: no source works a mixed holding, so summing per acquisition joins two quoted rules. Superseded text: *"implements (Q13 Reading A: per acquisition) … a choice under uncertainty"*; and before that, **Abs. 2 pro-rata was not implemented** at all. |
 | GT-INVSTG-012 | implements | `VorabpauschaleData.vorabpauschale_year` and `.declaration_year` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_pdf_vorabpauschale.py` | The VZ `Y` return carries the Vorabpauschale for calendar `Y-1`. All three output surfaces select on `declaration_year`; the PDF read the pre-rename field until 2026-08-04. Re-decided 2026-08-07 on Rz. 18.12, now recorded: the Zuflussfiktion is stated there as a Steuerabzug convenience so that a full Sparer-Pauschbetrag is available, **not** as a holding test — which is why it could not carry GT-INVSTG-016 and no longer has to. |
 | GT-INVSTG-013 | implements | `src/tax_law/registry.py` `BASISZINS_PCT` | `test_tax_law_registry.py::TestBasiszinsLookup` | Re-decided 2026-08-07 on Rz. 18.13 and 18.14, now recorded. Rz. 18.14 fixes the rate as the value determined for the **erster Börsentag** of the calendar year, which is 2 January only in years whose first exchange day falls on it. This does not reach the engine: it looks up the value the BMF published for the year, and choosing the day is the BMF's step, not the engine's. It bore on GT-INVSTG-018, where a 2 January date *was* used as a Stichtag; that was closed on 2026-08-08 and the two now read the same way. |
 | GT-INVSTG-014 | implements | `Asset.prior_year_*` fields, resolved by `src/data_preparation.py` and populated by `ParsingOrchestrator.process_positions()` | `test_vorabpauschale.py::TestVorabpauschaleDeclarationYear`, `test_vorabpauschale_reclassification.py` | Records which *year* each input is drawn from; the day within it is GT-INVSTG-010. Where the prior year's snapshots are absent and funds are held, the run stops with a `FAIL_FAST` data gap rather than substituting the tax year's own snapshot. Where they are present but do not survive classification, the run stops with a `DataIntegrityError` — see below. |
@@ -426,20 +426,37 @@ figure is correct is how the next reader reopens a settled point or, worse, "fix
 
 | Claim | Position | Module | Guarding tests | Notes |
 |---|---|---|---|---|
-| GT-INVSTG-030 | implements (partly) | fund disposals → `ANLAGE_KAP_INV_*_GEWINN_GROSS` | `test_group6_loss_offsetting.py::TestLossOffsettingFundIsolation` | Sätze 1–2 implemented. Sätze 3–4 — the Vorabpauschale deduction — are not; see GT-FORM-033. |
+| GT-INVSTG-030 | implements | fund disposals → `ANLAGE_KAP_INV_*_GEWINN_GROSS`, net of the Satz 3 deduction; Satz 4's gross ordering in `RealizedGainLoss.__post_init__` (`src/domain/results.py`) | `test_group6_loss_offsetting.py::TestLossOffsettingFundIsolation`, `test_vorabpauschale_zeile53.py::TestSatz4GrossDeductionThenTeilfreistellung` | All four Sätze. Satz 3's deduction reaches the lot through `FifoLot.vorabpauschale_gross_eur`; Satz 4 fixes the order — the full, pre-Teilfreistellung amount comes off the gain first, and the Teilfreistellung is applied to what is left. Was "implements (partly)" until issue #63. |
 | GT-INVSTG-031 | not reached | — | — | A fund leaving the InvStG's scope is not reported in any broker statement. |
 | GT-INVSTG-032 | out of scope | — | — | Wegzug and related, gated by a 1 % / EUR 500 000 threshold. |
-| GT-INVSTG-033 | implements | `ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53` in `src/domain/enums.py` | `test_vorabpauschale.py::TestZeile53VorabpauschaleDeduction` | The category names the right line. The figure is not computed — next row. |
-| GT-INVSTG-034 | **deviates — reports the gap** | `src/engine/calculation_engine.py` records a data gap on fund disposal | `test_vorabpauschale.py::TestZeile53VorabpauschaleDeduction` | See below. |
+| GT-INVSTG-033 | implements | `ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53`, summed in `src/engine/loss_offsetting.py` | `test_vorabpauschale.py::TestZeile53VorabpauschaleDeduction`, `test_vorabpauschale_zeile53_engine.py::TestTheDeductionReachesTheFormLine` | The figure is on the right line, and the gain lines are net of it because the form reaches them through Zeile 54. |
+| GT-INVSTG-034 | implements | `src/processing/vorabpauschale_declarations.py` (what was declared) with `src/engine/vorabpauschale_attribution.py` (distributing it to the lots); `src/engine/calculation_engine.py` reports every holding-period year that reached no lot | `test_vorabpauschale_zeile53.py`, `test_vorabpauschale_zeile53_engine.py::TestAYearWithNoDeclarationRecord` and `::TestDivergenceFromWhatWasDeclared` | See below. Was **deviates — reports the gap** until issue #63. |
 
-**GT-INVSTG-034 / GT-FORM-033 — the Zeile 53 deduction is not computed, deliberately.** There is
-no per-lot Vorabpauschale accumulation: `RealizedGainLoss` carries no Vorabpauschale field. The
-value formerly emitted was the sum of the *current* year's gross Vorabpauschalen — neither
-"während der Besitzzeit" nor restricted to the units disposed of — and it was written to Zeile 55.
-Computing it correctly needs each lot's assessed Vorabpauschalen carried across years **together
-with evidence they were declared**, which is a multi-year record the engine does not hold. It now
-emits no figure and records a data gap when fund units are disposed of, rather than a plausible
-wrong number. The deduction must be completed by hand.
+**GT-INVSTG-034 / GT-FORM-033 — the Zeile 53 deduction, and what it may rest on.** The deduction
+is the mirror of a declaration, not a second quantity the engine may derive: for units that never
+bore inländischer Steuerabzug the Anleitung admits it *"nur, soweit Sie diese Vorabpauschalen der
+Besteuerung unterworfen haben (Zeile 9 bis 13)"*, and requires the taxpayer to demonstrate it. So
+three things had to hold together, and each is a place a plausible wrong number was available:
+
+- **It follows the lot.** `FifoLot.vorabpauschale_gross_eur` accumulates as the replay passes each
+  year end — the moment the ledger describes the Rz. 18.4 holding — and every consumption path
+  hands the disposed units their pro-rata share. A partial sale therefore deducts the tranches
+  FIFO consumed and nothing else.
+- **What is spread is what was declared.** The annual figure per fund is the taxpayer's input,
+  recorded write-once at filing (`--commit-vorabpauschale-declaration`); the engine's own § 18
+  Abs. 2 split is only the key that distributes it, and the prices cancel out of that key, so a
+  year whose prices this run never loaded can still be distributed. For calendar `tax_year-1` the
+  declaration is *this return's own Zeilen 9-13*, which is why that year needs no stored record.
+  Where a stored figure and this run's computation disagree, the stored one governs and the
+  divergence is reported while the return is amendable.
+- **A year with no record deducts nothing, and is named.** Never the engine's recomputation
+  standing in for a declaration — that is the invented input CLAUDE.md refuses. A year whose
+  Basiszins was not positive is excluded from the demand instead of reported, because § 18
+  Abs. 1 Satz 2 yields no Vorabpauschale for any fund in such a year (2021 and 2022).
+
+Superseded text: *"the Zeile 53 deduction is not computed, deliberately … It now emits no figure
+and records a data gap when fund units are disposed of"* — true from 2026-08-03 until issue #63,
+and before that the line carried the current year's gross Vorabpauschalen on Zeile 55.
 
 ### § 20 — Teilfreistellung
 
@@ -550,7 +567,7 @@ acquisition date is compared with the disposal date, so it can decide taxability
 | GT-FORM-030 | implements | `ANLAGE_KAP_INV_*_AUSSCHUETTUNG_GROSS`, one per fund type | `test_vorabpauschale.py::TestGetVpReportingCategory` | Zeilen 4–8. |
 | GT-FORM-031 | implements | `ANLAGE_KAP_INV_*_VORABPAUSCHALE_BRUTTO` | `test_vorabpauschale.py` | Zeilen 9–13, carrying the **prior** calendar year's Vorabpauschale. |
 | GT-FORM-032 | implements | `ANLAGE_KAP_INV_*_GEWINN_GROSS` | `test_group6_loss_offsetting.py::TestLossOffsettingFundIsolation` | Zeilen 14/17/20/23/26. |
-| GT-FORM-033 | **deviates** | — | `test_vorabpauschale.py::TestZeile53VorabpauschaleDeduction` | See GT-INVSTG-034. |
+| GT-FORM-033 | implements | `src/engine/loss_offsetting.py` (Zeile 53 total; gain lines net of it) | `test_vorabpauschale.py::TestZeile53VorabpauschaleDeduction`, `test_vorabpauschale_zeile53_engine.py` | See GT-INVSTG-034. Was **deviates** until issue #63. |
 | GT-FORM-034 | implements | gross figures throughout | `test_vorabpauschale.py`, `test_group6_loss_offsetting.py` | Teilfreistellung is used internally for offsetting, never applied to a declared amount. |
 
 **Not produced at all:** Zeilen 15/18/21/24/27 (bestandsgeschützte Alt-Anteile, § 56 Abs. 6 Satz 1

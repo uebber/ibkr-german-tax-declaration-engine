@@ -33,6 +33,17 @@ class FifoLot:
     # twelfth for each month before acquisition, so believing a placeholder of
     # 31 December would cut a whole year's deemed income to one twelfth.
     acquisition_date_is_known: bool = True
+    # Gross Vorabpauschale declared over the holding period of the units CURRENTLY
+    # in this lot, accumulated year by year as the replay passes each year end
+    # (src/engine/vorabpauschale_attribution.py). It is what § 19 Abs. 1 Satz 3
+    # InvStG deducts from the gain when these units are disposed of, and Satz 4
+    # makes it the gross figure, before Teilfreistellung ([GT-INVSTG-030]).
+    #
+    # A total, not a per-unit rate: it travels with the units, so anything taking
+    # units out of the lot takes the same fraction of it with them — a partial
+    # sale, and the resize at a checkpoint mark. A split changes the unit count
+    # without changing the units, and leaves this alone.
+    vorabpauschale_gross_eur: Decimal = Decimal(0)
 
     def __post_init__(self):
         if not isinstance(self.quantity, Decimal) or not self.quantity.is_finite() or self.quantity <= Decimal(0):
@@ -540,7 +551,14 @@ class FifoLedger:
                     lambda lot: lot.quantity,
                     lambda lot, qty: replace(
                         lot, quantity=qty,
-                        total_cost_basis_eur=self.ctx.multiply(qty, lot.unit_cost_basis_eur))))
+                        total_cost_basis_eur=self.ctx.multiply(qty, lot.unit_cost_basis_eur),
+                        # The dropped units take their share of the accumulated
+                        # Vorabpauschale with them: they were disposed of in a year
+                        # the input does not cover, and their deduction went with
+                        # that disposal. `replace` would otherwise carry the whole
+                        # lot's amount onto the survivors.
+                        vorabpauschale_gross_eur=self._scaled_vorabpauschale(
+                            lot, qty, lot.quantity))))
             elif covers_short:
                 self.short_lots.extend(_take_newest(
                     reconstructed_short_lots_snapshot, reported_quantity.copy_abs(),
@@ -743,6 +761,13 @@ class FifoLedger:
                 unit_cost_basis_eur=new_unit_cost,
                 total_cost_basis_eur=lot.total_cost_basis_eur,
                 source_transaction_id=str(merger_event.event_id),
+                # The new units step into the tax position of the old ones, which
+                # is why the acquisition date and cost basis above travel with
+                # them. The Vorabpauschalen those units already bore travel for the
+                # same reason: they were angesetzt during this holding period and
+                # § 19 Abs. 1 Satz 3 deducts them when it ends. Rebuilding the lot
+                # without this drops them, and the loss is silent.
+                vorabpauschale_gross_eur=lot.vorabpauschale_gross_eur,
             ))
 
         prepared_short_lots: List[ShortFifoLot] = []
@@ -815,6 +840,31 @@ class FifoLedger:
              raise ValueError(f"Unparseable opening date found in Short FIFO lots for asset {self.asset_internal_id} after adding lot.")
 
 
+    def _scaled_vorabpauschale(self, lot: FifoLot, kept_quantity: Decimal,
+                               original_quantity: Decimal) -> Decimal:
+        """The part of a lot's accumulated Vorabpauschale that `kept_quantity` carries."""
+        if lot.vorabpauschale_gross_eur == Decimal(0) or original_quantity <= Decimal(0):
+            return Decimal(0)
+        return self.ctx.divide(
+            self.ctx.multiply(lot.vorabpauschale_gross_eur, kept_quantity),
+            original_quantity)
+
+    def _take_vorabpauschale_from_lot(self, lot: FifoLot, consumed_quantity: Decimal,
+                                      quantity_before: Decimal) -> Decimal:
+        """Remove the consumed units' share of the accumulated Vorabpauschale and return it.
+
+        The § 19 Abs. 1 Satz 3 deduction follows the units disposed of, so a partial
+        sale takes the same fraction of the lot's accumulation as of its quantity
+        and the remainder stays behind for the next disposal. Called on every
+        consumption path, including the historical replay, where the returned figure
+        is discarded but the lot must still lose it -- those units are gone.
+        """
+        taken = self._scaled_vorabpauschale(lot, consumed_quantity, quantity_before)
+        if taken != Decimal(0):
+            lot.vorabpauschale_gross_eur = self.ctx.subtract(
+                lot.vorabpauschale_gross_eur, taken)
+        return taken
+
     def consume_long_lots_for_sale(self, sale_event: TradeEvent, is_historical_simulation: bool = False) -> List[RealizedGainLoss]:
         if sale_event.event_type != FinancialEventType.TRADE_SELL_LONG: return []
         if sale_event.quantity is None or sale_event.quantity >= Decimal(0): return [] 
@@ -841,6 +891,7 @@ class FifoLedger:
         for i, current_lot in enumerate(self.lots):
             if quantity_remaining_to_realize <= Decimal(0): break
             quantity_from_this_lot: Decimal
+            quantity_in_lot_before_sale = current_lot.quantity
             if current_lot.quantity <= quantity_remaining_to_realize:
                 quantity_from_this_lot = current_lot.quantity
                 lots_to_remove_indices.append(i)
@@ -850,7 +901,13 @@ class FifoLedger:
                 current_lot.total_cost_basis_eur = self.ctx.multiply(current_lot.quantity, current_lot.unit_cost_basis_eur) # Renamed
 
             quantity_remaining_to_realize = self.ctx.subtract(quantity_remaining_to_realize, quantity_from_this_lot)
-            
+
+            # § 19 Abs. 1 Satz 3: the Vorabpauschalen these units bore. Taken here,
+            # before the RGL is built and whether or not one is built, because the
+            # units leave the lot either way.
+            vorabpauschale_for_portion = self._take_vorabpauschale_from_lot(
+                current_lot, quantity_from_this_lot, quantity_in_lot_before_sale)
+
             if not is_historical_simulation:
                 cost_basis_for_portion = self.ctx.multiply(quantity_from_this_lot, current_lot.unit_cost_basis_eur) # Renamed
                 realization_value_for_portion = self.ctx.multiply(quantity_from_this_lot, sale_proceeds_eur_per_unit_for_event)
@@ -924,7 +981,7 @@ class FifoLedger:
                     asset_category_at_realization=self.asset_category, acquisition_date=current_lot.acquisition_date,
                     realization_date=sale_event.event_date,
                     realization_type=realization_type_for_rgl,
-                    quantity_realized=quantity_from_this_lot, 
+                    quantity_realized=quantity_from_this_lot,
                     unit_cost_basis_eur=current_lot.unit_cost_basis_eur, # Renamed kwarg
                     unit_realization_value_eur=sale_proceeds_eur_per_unit_for_event, # Renamed kwarg
                     total_cost_basis_eur=cost_basis_for_portion, # Renamed kwarg
@@ -932,10 +989,13 @@ class FifoLedger:
                     gross_gain_loss_eur=gross_gain_loss, holding_period_days=holding_period_days,
                     is_within_speculation_period=bool(within_speculation_period),
                     is_taxable_under_section_23=is_taxable_under_section_23_flag, # Renamed kwarg
-                    tax_reporting_category=tax_cat, 
+                    tax_reporting_category=tax_cat,
                     is_stillhalter_income=is_stillhalter_income_flag, # Renamed kwarg
                     fund_type_at_sale=rgl_fund_type if self.asset_category == AssetCategory.INVESTMENT_FUND else None,
-                    teilfreistellung_rate_applied=rgl_tf_rate if self.asset_category == AssetCategory.INVESTMENT_FUND else None
+                    teilfreistellung_rate_applied=rgl_tf_rate if self.asset_category == AssetCategory.INVESTMENT_FUND else None,
+                    vorabpauschale_deduction_eur=(
+                        vorabpauschale_for_portion
+                        if self.asset_category == AssetCategory.INVESTMENT_FUND else None),
                 )
                 realized_gains_losses.append(rgl)
 
@@ -1150,8 +1210,13 @@ class FifoLedger:
         realized_gains_losses: List[RealizedGainLoss] = []
         realization_value_eur_per_unit_for_event = event.cash_per_share_eur
 
-        for current_lot in list(self.lots): 
-            quantity_from_this_lot = current_lot.quantity 
+        for current_lot in list(self.lots):
+            quantity_from_this_lot = current_lot.quantity
+
+            # Every unit of the lot goes, so the whole accumulated Vorabpauschale
+            # goes with it (§ 19 Abs. 1 Satz 3; a cash merger is a disposal).
+            vorabpauschale_for_portion = self._take_vorabpauschale_from_lot(
+                current_lot, quantity_from_this_lot, quantity_from_this_lot)
 
             cost_basis_for_portion = current_lot.total_cost_basis_eur
             realization_value_for_portion = self.ctx.multiply(quantity_from_this_lot, realization_value_eur_per_unit_for_event)
@@ -1225,6 +1290,9 @@ class FifoLedger:
                 asset_category_at_realization=self.asset_category, acquisition_date=current_lot.acquisition_date,
                 realization_date=event.event_date,
                 realization_type=RealizationType.CASH_MERGER_PROCEEDS, # Renamed
+                vorabpauschale_deduction_eur=(
+                    vorabpauschale_for_portion
+                    if self.asset_category == AssetCategory.INVESTMENT_FUND else None),
                 quantity_realized=quantity_from_this_lot,
                 unit_cost_basis_eur=current_lot.unit_cost_basis_eur, # Renamed kwarg
                 unit_realization_value_eur=realization_value_eur_per_unit_for_event, # Renamed kwarg

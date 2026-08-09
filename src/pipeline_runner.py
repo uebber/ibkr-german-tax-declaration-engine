@@ -20,6 +20,8 @@ from src.utils.exchange_rate_provider import ECBExchangeRateProvider, ExchangeRa
 from src.processing.data_gaps import DataGap, DataGapCollector
 from src.processing.fund_prices import (
     FundPriceStore, make_price_prompt, resolve_year_start_prices)
+from src.processing.vorabpauschale_declarations import (
+    VorabpauschaleDeclarationStore, make_declaration_prompt)
 from src.engine.calculation_engine import run_main_calculations
 from src.identification.asset_resolver import AssetResolver
 
@@ -36,7 +38,8 @@ class ProcessingOutput:
                  all_financial_events_enriched: List[FinancialEvent],
                  asset_resolver: AssetResolver,
                  eoy_mismatch_error_count: int,
-                 data_gaps: Optional[List["DataGap"]] = None):
+                 data_gaps: Optional[List["DataGap"]] = None,
+                 declaration_store: Optional["VorabpauschaleDeclarationStore"] = None):
         self.realized_gains_losses = realized_gains_losses
         self.vorabpauschale_items = vorabpauschale_items
         self.processed_income_events = processed_income_events
@@ -46,6 +49,9 @@ class ProcessingOutput:
         # Data-gap channel: every "input could not fully support the
         # computation" condition, for the report's gap section.
         self.data_gaps: List["DataGap"] = data_gaps or []
+        # The record of what was declared as Vorabpauschale, carried out so that the
+        # commit step at filing writes to the same store the run read from.
+        self.declaration_store = declaration_store
         # For EOY state checks in tests, final assets can be fetched from asset_resolver
         self.final_assets_by_id: Dict[Any, Asset] = asset_resolver.assets_by_internal_id
 
@@ -189,6 +195,13 @@ def run_core_processing_pipeline(
             auto_fetch=getattr(config, "FUND_PRICE_AUTO_FETCH", True),
         )
 
+        # What was DECLARED as Vorabpauschale on earlier returns. Read on every run and
+        # written on none: the Zeile 53 deduction (19 Abs. 1 Satz 3 InvStG) may rest only
+        # on declared amounts, and a run before filing is not a declaration. Committing
+        # is `src/main.py --commit-vorabpauschale-declaration`.
+        # See src/processing/vorabpauschale_declarations.py.
+        declaration_store = VorabpauschaleDeclarationStore()
+
         realized_gains_losses, vorabpauschale_items, processed_income_events, eoy_mismatch_error_count_calc = run_main_calculations(
             financial_events=financial_events_enriched,
             asset_resolver=orchestrator.asset_resolver, # Use the resolver from the orchestrator
@@ -202,6 +215,13 @@ def run_core_processing_pipeline(
             prior_year_positions_available=bool(
                 positions_prior_start_file_path and positions_prior_end_file_path
             ),
+            declaration_store=declaration_store,
+            # Earlier holding-period years are ASKED about, never assumed. A
+            # --no-interactive run passes None: nobody can be asked, so nothing is
+            # taken for granted and the year is reported unanswered. See
+            # src/processing/vorabpauschale_declarations.py.
+            ask_for_declared_vorabpauschale=(
+                make_declaration_prompt() if interactive_classification_mode else None),
         )
     except Exception as e:
         logger.critical(f"Calculation engine failed with unexpected error: {e}", exc_info=True)
@@ -219,5 +239,6 @@ def run_core_processing_pipeline(
         all_financial_events_enriched=financial_events_enriched,
         asset_resolver=orchestrator.asset_resolver,
         eoy_mismatch_error_count=eoy_mismatch_error_count_calc,
-        data_gaps=data_gap_collector.gaps
+        data_gaps=data_gap_collector.gaps,
+        declaration_store=declaration_store,
     )

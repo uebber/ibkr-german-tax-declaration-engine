@@ -4,7 +4,7 @@
 legal_basis: GT-INVSTG-010 (Basisertrag and its cap), GT-INVSTG-012 and
 GT-INVSTG-014 (the VZ Y return carries the figure for calendar Y-1),
 GT-INVSTG-015 (declared gross), GT-INVSTG-033 and GT-FORM-033 (the deduction
-on disposal is Zeile 53, and is not computed), GT-INVSTG-050/053 (Basiszins).
+on disposal is Zeile 53), GT-INVSTG-050/053 (Basiszins).
 See reference/investment-tax-law/invstg-18-vorabpauschale.md and
 docs/legal-implementation-map.md.
 """
@@ -143,7 +143,8 @@ def _make_vp_item(vorabpauschale_year: int,
     )
 
 
-def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND) -> RealizedGainLoss:
+def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND,
+                        vorabpauschale_deduction=None) -> RealizedGainLoss:
     """A minimal realised disposal, used to make Zeile 53 relevant."""
     rgl = RealizedGainLoss(
         originating_event_id=uuid.uuid4(),
@@ -158,6 +159,7 @@ def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND) -> RealizedGainL
         total_cost_basis_eur=Decimal("100"),
         total_realization_value_eur=Decimal("150"),
         gross_gain_loss_eur=Decimal("50"),
+        vorabpauschale_deduction_eur=vorabpauschale_deduction,
     )
     if category == AssetCategory.INVESTMENT_FUND:
         rgl.fund_type_at_sale = InvestmentFundType.AKTIENFONDS
@@ -721,22 +723,33 @@ class TestTeilfreistellungNegativeDistribution:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Z55 in loss offsetting
+# Tests: Zeile 53 in loss offsetting
 # ---------------------------------------------------------------------------
 
 class TestZeile53VorabpauschaleDeduction:
     """Anlage KAP-INV Zeile 53 -- "Waehrend der Besitzzeit angesetzte Vorabpauschalen".
 
-    Until 2026-08-03 the engine emitted the sum of the CURRENT year's gross Vorabpauschalen
-    on a category named `..._Z55`. Both halves were wrong: Zeile 55 is "Gewinne aus der
-    Veraeusserung von bestandsgeschuetzten Alt-Anteilen" (Anleitung zur Anlage KAP-INV 2024
-    and 2025), and the deduction under 19 Abs. 1 S. 3-4 InvStG is the Vorabpauschale
-    accumulated over the holding period of the units actually disposed of, so far as it was
-    brought to tax -- not a current-year total.
+    Two corrections are layered here, and the docstring records both because each
+    produced a plausible figure.
 
-    The engine cannot compute that (no per-lot Vorabpauschale history), so it emits nothing and
-    reports a data gap. These tests hold that line: they fail if a figure reappears, and they
-    fail if the gap stops being reported.
+    Until 2026-08-03 the engine emitted the sum of the CURRENT year's gross
+    Vorabpauschalen on a category named `..._Z55`. Both halves were wrong: Zeile 55 is
+    "Gewinne aus der Veraeusserung von bestandsgeschuetzten Alt-Anteilen" (Anleitung zur
+    Anlage KAP-INV 2024 and 2025), and the deduction under 19 Abs. 1 S. 3-4 InvStG is the
+    Vorabpauschale accumulated over the holding period of the units actually disposed of,
+    so far as it was brought to tax -- not a current-year total.
+
+    From then until issue #63 the line carried nothing and a gap said the engine "does not
+    track per-lot Vorabpauschale history". It now does: the FIFO ledger accumulates the
+    DECLARED Vorabpauschale on each lot year by year and hands each disposal its share, so
+    what this engine does with it is a sum. The tests below hold the two things that sum
+    must get right -- that Zeile 53 is the total of the per-lot deductions, and that the
+    gain lines are net of them, because Zeile 54 subtracts Zeile 53 before the result
+    reaches Zeilen 14/17/20/23/26.
+
+    Where the deduction comes from, and what happens to a holding-period year with no
+    declaration on record, is pinned in `test_vorabpauschale_zeile53.py` and
+    `test_vorabpauschale_zeile53_engine.py`.
     """
 
     def _engine(self, *, rgls=None, vp_items=None, tax_year=2024, collector=None):
@@ -751,38 +764,55 @@ class TestZeile53VorabpauschaleDeduction:
             data_gap_collector=collector,
         )
 
-    def test_no_zeile_53_figure_is_emitted(self):
-        """No amount is placed on Zeile 53, even when the year has Vorabpauschalen."""
+    def test_zeile_53_is_the_sum_of_the_per_lot_deductions(self):
+        engine = self._engine(
+            rgls=[_make_fund_disposal(vorabpauschale_deduction=Decimal("12.50")),
+                  _make_fund_disposal(vorabpauschale_deduction=Decimal("7.50"))],
+            vp_items=[_make_vp_item(vorabpauschale_year=2023)],
+        )
+        result = engine.calculate_reporting_figures()
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53]
+            == Decimal("20.00"))
+
+    def test_a_disposal_that_bore_no_declared_vorabpauschale_leaves_the_line_at_zero(self):
+        """Not an omission: a fund held for less than a year end, or a holding period
+        with nothing declared in it, legitimately deducts nothing."""
         engine = self._engine(
             rgls=[_make_fund_disposal()],
             vp_items=[_make_vp_item(vorabpauschale_year=2023)],
         )
         result = engine.calculate_reporting_figures()
-        assert (
-            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53
-            not in result.form_line_values
-        )
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53]
+            == Decimal("0.00"))
 
-    def test_gap_recorded_when_fund_units_were_disposed(self):
-        """A disposal makes Zeile 53 relevant, so the un-computable deduction is reported."""
-        collector = DataGapCollector()
-        engine = self._engine(rgls=[_make_fund_disposal()], collector=collector)
-        engine.calculate_reporting_figures()
+    def test_the_current_years_vorabpauschale_is_not_what_lands_on_zeile_53(self):
+        """The pre-2026-08-03 defect, kept as a test: Zeilen 9-13 and Zeile 53 are
+        different quantities, and a year with Vorabpauschalen but no disposal of the
+        units they were computed on deducts nothing."""
+        engine = self._engine(vp_items=[_make_vp_item(vorabpauschale_year=2023)])
+        result = engine.calculate_reporting_figures()
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53]
+            == Decimal("0.00"))
 
-        codes = [g.code for g in collector.gaps]
-        assert "KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED" in codes
-        gap = next(g for g in collector.gaps
-                   if g.code == "KAP_INV_Z53_VORABPAUSCHALE_DEDUCTION_NOT_COMPUTED")
-        # WARNING, not FAIL_FAST: omitting the deduction OVERSTATES the gain, so the figures
-        # are conservative rather than income-understating.
-        assert gap.severity is GapSeverity.WARNING
-        assert "Zeile 53" in gap.detail
+    def test_the_gain_line_is_net_of_the_deduction(self):
+        engine = self._engine(
+            rgls=[_make_fund_disposal(vorabpauschale_deduction=Decimal("20.00"))])
+        result = engine.calculate_reporting_figures()
+        # _make_fund_disposal is a gain of 50.00.
+        assert (result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS]
+            == Decimal("30.00"))
 
-    def test_no_gap_when_no_fund_units_were_disposed(self):
-        """Zeile 53 is legitimately empty without a fund disposal -- that is not a gap."""
+    def test_no_gap_is_recorded_here_at_all(self):
+        """The un-computable-deduction gap is retired. What replaces it names the fund
+        and the year, and is recorded where the attribution happens -- in the calculation
+        engine, which knows both."""
         collector = DataGapCollector()
         engine = self._engine(
-            rgls=[_make_fund_disposal(category=AssetCategory.STOCK)],
+            rgls=[_make_fund_disposal()],
             vp_items=[_make_vp_item(vorabpauschale_year=2023)],
             collector=collector,
         )

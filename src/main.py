@@ -52,6 +52,51 @@ def setup_decimal_context():
     logger.info(f"Global decimal precision set to {getcontext().prec}, rounding mode to {getcontext().rounding}.")
 
 
+def _commit_vorabpauschale_declaration(processing_results: ProcessingOutput,
+                                       tax_year: int) -> None:
+    """Record this run's Zeilen 9-13 figures as declared, at filing.
+
+    The § 19 Abs. 1 Satz 3 deduction at disposal is limited to Vorabpauschalen that
+    were brought to tax, and for units at a foreign broker the Anleitung to Zeile 53
+    requires the taxpayer to demonstrate it. Nothing recomputes that record: the
+    engine's own figure for a past year is a computation, not a declaration, and the
+    two drift as the engine is corrected.
+
+    So this writes, and only ever on this flag. It is write-once per fund and year;
+    a second commit of the same figures is harmless, and a commit that would replace
+    a different figure raises rather than rewriting history.
+    """
+    from datetime import date as _date
+    from src.processing.vorabpauschale_declarations import commit_declared_vorabpauschale
+
+    store = processing_results.declaration_store
+    if store is None:
+        logger.error("No declaration store on the pipeline result; nothing committed.")
+        return
+
+    vorabpauschale_year = tax_year - 1
+    try:
+        written = commit_declared_vorabpauschale(
+            store=store,
+            asset_resolver=processing_results.asset_resolver,
+            vorabpauschale_items=processing_results.vorabpauschale_items,
+            vorabpauschale_year=vorabpauschale_year,
+            declared_on=_date.today(),
+            source=f"VZ {tax_year} Anlage KAP-INV, Zeilen 9-13",
+        )
+    except Exception as e:
+        logger.critical("Committing the Vorabpauschale declaration failed: %s", e)
+        sys.exit(1)
+
+    print(f"\n--- Vorabpauschale {vorabpauschale_year} als erklärt erfasst "
+          f"({len(written)} Fonds) ---")
+    for line in written:
+        print(f"  {line}")
+    print(f"  Datei: {store.cache_file_path}")
+    print("  Diese Beträge begrenzen künftig den Abzug in Zeile 53 der Anlage KAP-INV, "
+          "wenn die Anteile veräußert werden.")
+
+
 def main_application():
     """
     Main application entry point.
@@ -135,8 +180,7 @@ def main_application():
                 asset_resolver=processing_results.asset_resolver,
                 tax_year=tax_year,
                 apply_conceptual_derivative_loss_capping=config.APPLY_CONCEPTUAL_DERIVATIVE_LOSS_CAPPING,
-                # Zeile 53 (Vorabpauschale deduction on disposal) cannot be computed; the gap
-                # must reach the report, not just the log.
+                # Its gaps must reach the report, not just the log.
                 data_gap_collector=loss_offsetting_gaps,
             )
             loss_offsetting_summary = loss_engine.calculate_reporting_figures()
@@ -147,6 +191,9 @@ def main_application():
             processing_results.data_gaps.extend(loss_offsetting_gaps.gaps)
 
     asset_resolver = processing_results.asset_resolver
+
+    if args.commit_vorabpauschale_declaration:
+        _commit_vorabpauschale_declaration(processing_results, tax_year)
 
     if args.group_by_type:
         print_assets_by_category_diagnostic(asset_resolver)

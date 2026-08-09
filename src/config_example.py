@@ -24,6 +24,15 @@ ECB_RATES_CACHE_FILE_PATH = "cache/ecb_exchange_rates.json"
 # classification cache, nothing recomputes this file.
 FUND_PRICE_CACHE_FILE_PATH = "cache/user_fund_prices.json"
 
+# Record of the Vorabpauschale DECLARED on earlier returns, per fund and calendar
+# year. 19 Abs. 1 Satz 3 InvStG deducts the Vorabpauschalen angesetzt during the
+# holding period when units are sold, and for units without inlaendischer
+# Steuerabzug the Anleitung admits only what was actually declared -- so the
+# deduction rests on this file, and nothing can recompute it. Written only from
+# what the taxpayer states: the interactive prompt for earlier years, and
+# `--commit-vorabpauschale-declaration` for the year the current return declares.
+VORABPAUSCHALE_DECLARATION_STORE_PATH = "cache/vorabpauschale_declarations.json"
+
 # Whether the run looks the year-start Ruecknahmepreis up in the published NAV
 # history (iShares, SPDR, VanEck, Swiss Fund Data). 18 Abs. 1 Satz 2 InvStG asks
 # for the Ruecknahmepreis and Satz 4 admits the position report's market price

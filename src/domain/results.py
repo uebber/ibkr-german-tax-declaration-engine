@@ -55,12 +55,23 @@ class RealizedGainLoss:
 
     tax_reporting_category: Optional[TaxReportingCategory] = None 
 
-    fund_type_at_sale: Optional[InvestmentFundType] = None 
-    teilfreistellung_rate_applied: Optional[Decimal] = None 
-    teilfreistellung_amount_eur: Optional[Decimal] = None 
-    net_gain_loss_after_teilfreistellung_eur: Optional[Decimal] = None 
+    fund_type_at_sale: Optional[InvestmentFundType] = None
+    teilfreistellung_rate_applied: Optional[Decimal] = None
+    teilfreistellung_amount_eur: Optional[Decimal] = None
+    net_gain_loss_after_teilfreistellung_eur: Optional[Decimal] = None
 
-    is_stillhalter_income: bool = False 
+    # Anlage KAP-INV Zeile 53: the gross Vorabpauschalen the disposed units bore
+    # over their holding period (§ 19 Abs. 1 Satz 3 InvStG, [GT-INVSTG-030]).
+    # Carried per RGL because the deduction follows the LOT — the FIFO ledger takes
+    # each consumed lot's share and puts it here. None on anything that is not a
+    # fund disposal: § 19 reaches Investmentanteile only.
+    vorabpauschale_deduction_eur: Optional[Decimal] = None
+    # gross_gain_loss_eur less that deduction. This — not the gross figure — is the
+    # Veraeusserungsgewinn of Zeile 54, and therefore what Zeilen 14/17/20/23/26
+    # carry (GT-FORM-032, GT-FORM-033). Derived in __post_init__.
+    gain_after_vorabpauschale_eur: Optional[Decimal] = None
+
+    is_stillhalter_income: bool = False
 
     def __post_init__(self):
         if not isinstance(self.asset_category_at_realization, AssetCategory):
@@ -81,14 +92,35 @@ class RealizedGainLoss:
         # speculation period" on disposals the engine had just classified as
         # SECTION_23_ESTG_EXEMPT_HOLDING_PERIOD_MET.
 
+        # § 19 reaches Investmentanteile only. A deduction attached to anything else is
+        # a wiring defect, and a silent one would understate income.
+        if (self.vorabpauschale_deduction_eur
+                and self.asset_category_at_realization != AssetCategory.INVESTMENT_FUND):
+            raise ValueError(
+                f"RealizedGainLoss carries a Vorabpauschale deduction of "
+                f"{self.vorabpauschale_deduction_eur} on a "
+                f"{self.asset_category_at_realization.name} disposal. § 19 Abs. 1 Satz 3 "
+                f"InvStG reduces the gain from Investmentanteile and nothing else."
+            )
+
         # Handle Investment Fund specifics (Teilfreistellung)
         if self.asset_category_at_realization == AssetCategory.INVESTMENT_FUND:
             # Always re-derive the rate based on the current fund_type_at_sale for idempotency.
             self.teilfreistellung_rate_applied = get_teilfreistellung_rate_for_fund_type(self.fund_type_at_sale)
+
+            # § 19 Abs. 1 Saetze 3-4: the gain is FIRST reduced by the Vorabpauschalen
+            # assessed during the holding period, in full and before Teilfreistellung
+            # ("ungeachtet einer moeglichen Teilfreistellung nach § 20 in voller
+            # Hoehe"); the Teilfreistellung is then applied once, to what is left.
+            # Applying it to the gross gain instead would let only 70% of an
+            # Aktienfonds deduction through. [GT-INVSTG-030]
+            self.gain_after_vorabpauschale_eur = (
+                None if self.gross_gain_loss_eur is None
+                else self.gross_gain_loss_eur - (self.vorabpauschale_deduction_eur or Decimal('0')))
             
             # Calculate Teilfreistellung amount
-            if self.gross_gain_loss_eur is not None and self.teilfreistellung_rate_applied is not None:
-                self.teilfreistellung_amount_eur = (self.gross_gain_loss_eur.copy_abs() * self.teilfreistellung_rate_applied).quantize(
+            if self.gain_after_vorabpauschale_eur is not None and self.teilfreistellung_rate_applied is not None:
+                self.teilfreistellung_amount_eur = (self.gain_after_vorabpauschale_eur.copy_abs() * self.teilfreistellung_rate_applied).quantize(
                     global_config.OUTPUT_PRECISION_AMOUNTS,
                     rounding=global_config.DECIMAL_ROUNDING_MODE
                 )
@@ -96,16 +128,17 @@ class RealizedGainLoss:
                 self.teilfreistellung_amount_eur = Decimal('0.00')
             
             # Calculate net gain/loss after Teilfreistellung
-            if self.gross_gain_loss_eur is not None: # self.teilfreistellung_amount_eur is now guaranteed to be set
-                if self.gross_gain_loss_eur >= Decimal('0'):
-                    self.net_gain_loss_after_teilfreistellung_eur = self.gross_gain_loss_eur - self.teilfreistellung_amount_eur
-                else: 
-                    self.net_gain_loss_after_teilfreistellung_eur = self.gross_gain_loss_eur + self.teilfreistellung_amount_eur
+            if self.gain_after_vorabpauschale_eur is not None: # self.teilfreistellung_amount_eur is now guaranteed to be set
+                if self.gain_after_vorabpauschale_eur >= Decimal('0'):
+                    self.net_gain_loss_after_teilfreistellung_eur = self.gain_after_vorabpauschale_eur - self.teilfreistellung_amount_eur
+                else:
+                    self.net_gain_loss_after_teilfreistellung_eur = self.gain_after_vorabpauschale_eur + self.teilfreistellung_amount_eur
             else: # gross_gain_loss_eur is None
                  self.net_gain_loss_after_teilfreistellung_eur = None
-        
+
         # Fallback for non-funds or if net hasn't been set yet (e.g., gross_gain_loss_eur was None for a fund)
         elif self.asset_category_at_realization != AssetCategory.INVESTMENT_FUND:
+            self.gain_after_vorabpauschale_eur = self.gross_gain_loss_eur
             if self.gross_gain_loss_eur is not None:
                 # For non-funds, net is gross if TF not applicable
                 self.net_gain_loss_after_teilfreistellung_eur = self.gross_gain_loss_eur

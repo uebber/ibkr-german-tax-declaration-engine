@@ -70,6 +70,13 @@ def _print_per_asset_breakdown(
     else:
         print(f"  Keine {section_label} in diesem Zeitraum erfasst.")
     print("  " + "-" * 80)
+    if category == AssetCategory.INVESTMENT_FUND:
+        # This table is the raw disposal gain per position. The KAP-INV gain lines are
+        # not: 19 Abs. 1 S. 3 InvStG takes the Zeile 53 Vorabpauschalen off them first.
+        # Said here because the two are otherwise a subtraction apart with nothing to
+        # explain the difference.
+        print("  (vor Abzug der während der Besitzzeit angesetzten Vorabpauschalen; "
+              "Zeile 14/17/20/23/26 sind um diese vermindert)")
 
 
 def generate_console_tax_report(
@@ -164,7 +171,18 @@ def generate_console_tax_report(
         if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND:
             kap_inv_cat = get_kap_inv_category_for_reporting(rgl.fund_type_at_sale, is_distribution=False, is_gain=True)
             if kap_inv_cat:
-                kap_inv_report_lines[kap_inv_cat] += rgl.gross_gain_loss_eur or Decimal(0)
+                # The Veraeusserungsgewinn of Zeile 54 — after the Zeile 53 deduction
+                # (19 Abs. 1 S. 3 InvStG) — because that is what Zeilen 14/17/20/23/26
+                # carry. Identical to the gross figure where nothing was declared over
+                # the holding period.
+                #
+                # This block re-derives figures the LossOffsettingEngine has already
+                # computed, and the PDF reads them from there. Two sites, one quantity:
+                # while it stands, a change to one has to be made in the other.
+                gain_for_the_form = (rgl.gain_after_vorabpauschale_eur
+                                     if rgl.gain_after_vorabpauschale_eur is not None
+                                     else rgl.gross_gain_loss_eur)
+                kap_inv_report_lines[kap_inv_cat] += gain_for_the_form or Decimal(0)
 
     for event in current_year_events: # Already filtered for tax year
         asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
@@ -195,7 +213,8 @@ def generate_console_tax_report(
     print(f"    Zeile 13 (Sonstige Fonds Vorabpauschale): {_q(vp_gross_by_fund_type.get(InvestmentFundType.SONSTIGE_FONDS, Decimal(0)) + vp_gross_by_fund_type.get(InvestmentFundType.NONE, Decimal(0)))}")
 
 
-    print("  Gewinne/Verluste aus Veräußerung von Investmentfondsanteilen (Brutto, vor Teilfreistellung):")
+    print("  Gewinne/Verluste aus Veräußerung von Investmentfondsanteilen (Brutto, vor "
+          "Teilfreistellung, nach Abzug der Vorabpauschalen aus Zeile 53):")
     print(f"    Zeile 14 (Aktienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_AKTIENFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 17 (Mischfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_MISCHFONDS_GEWINN_GROSS, Decimal(0)))}")
     print(f"    Zeile 20 (Immobilienfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_IMMOBILIENFONDS_GEWINN_GROSS, Decimal(0)))}")
@@ -203,8 +222,15 @@ def generate_console_tax_report(
     print(f"    Zeile 26 (Sonstige Investmentfonds G/V): {_q(kap_inv_report_lines.get(TaxReportingCategory.ANLAGE_KAP_INV_SONSTIGE_FONDS_GEWINN_GROSS, Decimal(0)))}")
 
     # Z53: Vorabpauschale assessed during the holding period, deducted on disposal
+    # (19 Abs. 1 S. 3-4 InvStG). A memo figure here: the form arrives at it in the
+    # per-sale block, where Zeile 54 = Erlös - Anschaffungskosten - Veräußerungskosten
+    # - Zeile 53 and Zeile 54 is what is carried to Zeilen 14/17/20/23/26. The lines
+    # above are therefore already net of it, which is what the note says, so nobody
+    # subtracts it twice.
     z53_value = loss_offsetting_summary.form_line_values.get(TaxReportingCategory.ANLAGE_KAP_INV_VORABPAUSCHALE_ABZUG_Z53, Decimal(0))
     print(f"  Zeile 53 (Während der Besitzzeit angesetzte Vorabpauschalen, vor Teilfreistellung): {_q(z53_value)}")
+    print("    (bereits in den Zeilen 14/17/20/23/26 abgezogen — Zeile 54 der "
+          "Einzelaufstellung; nicht erneut abziehen)")
 
     # --- Anlage SO (from LossOffsettingResult) ---
     print("\nAnlage SO (Sonstige Einkünfte - §23 EStG Private Sales)")
