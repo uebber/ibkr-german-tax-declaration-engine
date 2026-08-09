@@ -60,11 +60,26 @@ per Anteil:
   Basisertrag_je_Anteil = Ruecknahmepreis_Jahresbeginn x Basiszins x 0.70          (Satz 2)
   Basisertrag_je_Anteil <= (Ruecknahmepreis_letzt - Ruecknahmepreis_erst)
                              + Ausschuettungen_je_Anteil                           (Satz 3)
+  Vorabpauschale_je_Anteil = max(0, Basisertrag_je_Anteil
+                                    - Ausschuettungen_je_Anteil)                   (Satz 1)
+  Vorabpauschale_je_Anteil x k/12, k = 12 - volle Monate vor dem Erwerbsmonat      (Abs. 2)
 
 per Bestand:
-  Basisertrag = Basisertrag_je_Anteil x Anzahl Anteile am 31.12.                   (Rz. 18.4)
-  Vorabpauschale = max(0, Basisertrag - Ausschuettungen)                           (Satz 1)
+  Vorabpauschale = SUM je Erwerb of Vorabpauschale_je_Anteil x k/12                (Rz. 18.4,
+                                     x Anteile am 31.12.                            Rz. 18.11)
 ```
+
+**The last two per-Anteil lines are in that order and not the other one.** Abs. 2 reduces *"die
+Vorabpauschale"*, and Satz 1 defines the Vorabpauschale as the amount by which the distributions
+fall short of the Basisertrag. So the twelfths multiply `Basisertrag - Ausschuettungen`; they never
+multiply the Basisertrag with the distributions taken off afterwards. The two orders differ by
+`Ausschuettungen x (12 - k)/12` on any fund that both was acquired during the year and distributed
+in it. [GT-INVSTG-056] is the worked example that shows the administration reading it this way.
+
+> **Correction, 2026-08-09.** This block set out Satz 2, Satz 3, Rz. 18.4 and Satz 1 in that
+> sequence and **omitted Abs. 2 entirely**, so the one ordering question the section turns on was
+> the one thing the summary did not state. Abs. 2 was recorded in full below throughout; what was
+> missing was its place in the sequence.
 
 The price and the unit count are therefore taken at different moments: the price is the first
 Ruecknahmepreis set in the calendar year, the count is the holding at the close of 31 December.
@@ -95,10 +110,15 @@ on:**
 > erworben. Die fuer das gesamte Jahr 01 berechnete Vorabpauschale i. H. v. 0,50 € mindert sich um
 > 6/12 auf 0,25 €."*
 
-That 0,50 € is the figure Rz. 18.3 derives **per Anteil**, from a Ruecknahmepreis of 100 € and an
-Ausschuettung of *"0,10 € pro Anteil"*. So the reduction is applied to the per-unit amount, at a
-point where no unit count has yet entered — Rz. 18.4 multiplies by the count only afterwards. The
-factor is therefore an attribute of the units acquired, not of the position.
+That 0,50 € is the figure Rz. 18.3 derives **per Anteil**, and Rz. 18.3 is explicit that it is what
+remains *after* the year's Ausschuettung of 0,10 € has been taken off the capped Basisertrag of
+0,60 € — the quotation is at [GT-INVSTG-056]. Two things follow, and they are separate:
+
+- **What the twelfths multiply.** The 6/12 is applied to a figure that is already net of the
+  distributions, which is the ordering the statute gives in Abs. 2 read with Satz 1.
+- **Where in the computation they apply.** The reduction reaches the per-unit amount at a point
+  where no unit count has yet entered — Rz. 18.4 multiplies by the count only afterwards. The
+  factor is therefore an attribute of the units acquired, not of the position.
 
 **The reduction applies per acquisition.** Units of one fund held at the close of 31 December that
 were acquired at different times each carry their own factor: units already held when the year
@@ -184,10 +204,16 @@ Published values, with per-year provenance: `bmf-guidance/basiszins-vorabpauscha
   as the residual gap.
   **One amendment outside section 18 does reach the Vorabpauschale:** 29.04.2021 appended three
   Saetze to Rz. 20.4 — see [GT-INVSTG-054] in `invstg-22-teilfreistellungssatz-aenderung.md`.
-- **Retrieved 2026-08-07.** Base letter of 21.05.2019, full text, from the industry-body mirror
-  https://www.bvl-verband.de/fileadmin/steuerpolitik/bmf-schreiben/2019/2019-05-21-anwendungsfragen-zum-investmentsteuergesetz-in-der-am-1-januar-2018-geltenden-fassung-InvStG-2018.pdf
+- **Retrieved 2026-08-07**, base letter of 21.05.2019, full text, from the industry-body mirror
+  `https://www.bvl-verband.de/fileadmin/steuerpolitik/bmf-schreiben/2019/2019-05-21-anwendungsfragen-zum-investmentsteuergesetz-in-der-am-1-januar-2018-geltenden-fassung-InvStG-2018.pdf`
   — PDF metadata `Author: BMF`, `Title: Anwendungsfragen zum Investmentsteuergesetz in der ab dem
-  1. Januar 2018 geltenden Fassung (InvStG)`, created 28.05.2019. Amendment letters of 29.10.2020,
+  1. Januar 2018 geltenden Fassung (InvStG)`, created 28.05.2019.
+- **Re-retrieved 2026-08-09, from an official source, because that mirror now 404s.**
+  https://www.bzst.de/SharedDocs/BMF/DE/Downloads/bmf_schreiben_20190521_InvStG_18_anwendungsfragen.pdf?__blob=publicationFile&v=1
+  — 152 pp, PDF created 21.05.2019, letterhead *Bundesministerium der Finanzen*, GZ
+  `IV C 1 - S 1980-1/16/10010 :001`, DOK `2019/0415199`, dated 21. Mai 2019, addressed to the
+  Oberste Finanzbehoerden der Laender. Section 18 runs pp. 91-93. This is the copy Rz. 18.3 at
+  [GT-INVSTG-056] is quoted from. Amendment letters of 29.10.2020,
   18.01.2021, 29.04.2021 and 15.03.2022 from the official BZSt mirror
   (`https://www.bzst.de/SharedDocs/BMF/DE/Downloads/bmf_schreiben_<YYYYMMDD>_InvStG_18_anwendung.pdf`);
   18.06.2021 from the BVL mirror; 24.11.2025 from
@@ -195,11 +221,12 @@ Published values, with per-year provenance: `bmf-guidance/basiszins-vorabpauscha
 - **Applicable tax years:** 2018 onward; regime floor as above.
 
 **What else section 18 contains**, beyond the claims recorded below (Validation Protocol item 2):
-Rz. 18.1 is introductory; Rz. 18.2 restates Abs. 1 Saetze 1 to 3 without adding to them; Rz. 18.3
-is a worked example, whose figures Rz. 18.5 and Rz. 18.11 both continue; Rz. 18.5 governs
-balance-sheet treatment for bilanzierende Anleger, which is outside this library's
+Rz. 18.1 is introductory; Rz. 18.2 restates Abs. 1 Saetze 1 to 3 without adding to them; Rz. 18.5
+governs balance-sheet treatment for bilanzierende Anleger, which is outside this library's
 Privatvermoegen scope; Rz. 18.10 provides that no Vorabpauschale is set on units a domestic
-depotfuehrende Stelle holds for a foreign credit institution.
+depotfuehrende Stelle holds for a foreign credit institution. Rz. 18.3 was in this list, as *"a
+worked example"*, until 2026-08-09; it is recorded in full at [GT-INVSTG-056] because the order it
+computes in decides a figure.
 
 > **Correction, 2026-08-07.** The previous revision of this file gave the range as *"Rz. 18.1 to
 > 18.11"* and described Rz. 18.11 as restating Abs. 2 and nothing more. Both are wrong. The
@@ -208,6 +235,37 @@ depotfuehrende Stelle holds for a foreign credit institution.
 > cross-reference to Rz. 20.4. All four are now recorded below. The range was stated without the
 > document open; the missing Randziffern are exactly the *"unstated unit"* Validation Protocol
 > item 2 exists to catch.
+
+### [GT-INVSTG-056] Rz. 18.3 -- the worked example, and the order it computes in
+
+> *"Beispiel: Der Basiszins nach § 18 Absatz 4 InvStG betraegt 1,0 %. Da nur 70 % davon anzusetzen
+> sind, betraegt der massgebende Zinssatz 0,7 %. Ruecknahmepreis des Investmentanteils am
+> Jahresanfang 01: 100 €. Ruecknahmepreis des Investmentanteils am Jahresende 01: 100,50 €.
+> Ausschuettung waehrend des Jahres 01: 0,10 € pro Anteil. Fuer die Vorabpauschale koennte maximal
+> der Basisertrag i. H. v. 0,70 € pro Anteil angesetzt werden (100 € x 0,7 % = 0,70 €). Die
+> Wertsteigerung waehrend des Kalenderjahres (Mehrbetrag) betraegt 0,50 € + 0,10 € Ausschuettung =
+> 0,60 €. Die Wertsteigerung von 0,60 € bildet die Obergrenze fuer die Vorabpauschale. Von dieser
+> Obergrenze sind die Ausschuettungen des Jahres 01 i. H. v. 0,10 € abzuziehen, so dass eine
+> Vorabpauschale von 0,50 € verbleibt."*
+
+Everything in it is per Anteil, and it runs the three Saetze in one fixed order:
+
+1. Satz 2 gives an uncapped Basisertrag of 0,70 €.
+2. Satz 3 caps it at the Mehrbetrag, 0,50 € of price movement plus the 0,10 € distribution = 0,60 €.
+   Note the distribution appears **inside** the cap, which is what Satz 3 says and is not the Satz 1
+   subtraction.
+3. Satz 1 then subtracts the same 0,10 € from the capped 0,60 €, leaving **0,50 €**.
+
+So the *"Vorabpauschale i. H. v. 0,50 €"* that Rz. 18.11 reduces by 6/12 is already net of the
+year's distributions. That is the administration applying Abs. 2 to `Basisertrag -
+Ausschuettungen`, and it is the corroboration for the order in [GT-INVSTG-010] above.
+
+The example also demonstrates that the Satz 3 cap can bind while a Vorabpauschale still remains: it
+is a ceiling on the Basisertrag, not on the Vorabpauschale.
+
+**What the cited unit also contains:** nothing further. Rz. 18.3 is the example and no other text.
+Rz. 18.5 continues its figures for bilanzierende Anleger, which is outside this library's
+Privatvermoegen scope; Rz. 18.11 continues them for Abs. 2.
 
 ### [GT-INVSTG-017] Rz. 18.4 -- computation precision
 
