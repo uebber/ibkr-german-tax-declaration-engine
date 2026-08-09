@@ -20,7 +20,6 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q8 | [GT-FX-006] | How is a short (negative) currency position taxed in Privatvermoegen? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q9 | [GT-FX-007], [GT-FX-001] | Is a currency movement embedded in another transaction a separate disposal, measured in EUR? Two instances: the leg of a securities trade, and a balance spent on a fee or withholding. | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q11 | [GT-ESTG20-038] | How is unallocated spot precious metal held at a broker taxed -- Termingeschaeft, privates Veraeusserungsgeschaeft, or sonstige Kapitalforderung? | this file |
-| Q14 | [GT-ESTG20-049] | Which Einkunftsart takes the **Darlehensentgelt** a private lender receives for a Wertpapierdarlehen -- 20 Abs. 3, 20 Abs. 1 Nr. 7, or 22 Nr. 3 EStG? | this file |
 
 **Retired on the same terms, and for the same reason -- a source that settles the point was found,
 or the point was never one.** Numbers are never reused. Each line says what answered it; the
@@ -31,6 +30,7 @@ reasoning lives once, against the claim, which is where a reader acts on it.
 | Q5 | Vorabpauschale in the year of disposal | Rz. 18.4 -- the multiplier is the units held *"mit Ablauf des 31. Dezember des Kalenderjahres"*, so a holding disposed of in full is multiplied by nothing. Rz. 20.4 confirms it from the other side. Retired 2026-08-07 | [GT-INVSTG-016] |
 | Q12 | The day whose Ruecknahmepreis begins the Vorabpauschale year | Rz. 18.3 -- the same figure serves as the Satz 2 base and the Satz 3 cap's lower bound. Retired 2026-08-06 | [GT-INVSTG-010] |
 | Q13 | The Abs. 2 reduction on a holding acquired in several instalments | Rz. 18.11's worked example applies the reduction to the *per-Anteil* amount, before any unit count enters -- which was the whole of the opposing reading. Retired 2026-08-07 | [GT-INVSTG-011] |
+| Q14 | The Einkunftsart of a Wertpapierdarlehen fee in Privatvermoegen | The order of enquiry runs out. **20 Abs. 3 is accessory** -- both limbs presuppose Einnahmen of Abs. 1 or 2 for the payment to attach to or replace, and both worked Randziffern combine it with a Nummer ([GT-ESTG20-050]); a fee owed for the loan period whether or not the securities yield anything has none. **Nr. 7's gate is a Kapitalforderung**, and a lender holds a Sachforderung; BFH VIII R 7/23 refused Nr. 7 for such a fee even where the asset *was* one. 22 Nr. 3 takes it by its own subsidiarity clause. Retired 2026-08-09 | [GT-ESTG20-049] |
 
 Two were retired without being answered, which is a different act and is recorded as such:
 
@@ -245,59 +245,23 @@ different Nummer with different loss-offsetting. The three do not converge.
 specifically. Tier 4 constrains the question from both sides without closing it. **Do not resolve
 this from the shape of the product or from what a broker's asset class happens to be called.**
 
-## Q14 -- the Darlehensentgelt of a Wertpapierdarlehen, in Privatvermoegen
+## Q14 -- retired 2026-08-09
 
-**The payment.** What a private lender receives as the consideration for lending securities under
-a Sachdarlehen ([GT-ESTG20-042]). Not the Kompensationszahlung that stands in place of a
-distribution -- that one is reached by 20 Abs. 3 EStG's *"an deren Stelle"* alternative, worked by
-the administration for third-party payments on fund units at [GT-ESTG20-048]. This question is
-about the fee for the loan itself, which stands in place of nothing.
+Answered at [GT-ESTG20-049], where the reasoning lives once. Two things were weighed and rejected
+on the way, recorded here so they are not reargued:
 
-**Reading A -- 20 Abs. 3 EStG, *neben***. The fee is granted alongside the income of securities the
-lender continues to be taxed on, so it is a *besonderes Entgelt* connected with them.
-**Authority:** the width the administration gives Abs. 3 in Rn. 83 and Rn. 84 -- a third party's
-payment, connected with a capital investment, without the payer being the debtor of the capital
-income ([GT-ESTG20-048]). **Against it:** the fee is the price of a separate transaction rather
-than an accessory to the yield of the asset, and *neben* has to bear a lot of weight for a payment
-that would be owed whether or not the asset yielded anything.
+**20 Abs. 3 (*neben*).** The width the administration gives Abs. 3 in Rn. 83 and Rn. 84 -- a third
+party's payment, connected with a capital investment, the payer not being the debtor of the income
+-- looked wide enough to take the fee. It is not: both Randziffern reason from a link to the
+investment itself and both combine Abs. 3 with a Nummer of Abs. 1, and a lending fee has no such
+link. [GT-ESTG20-050].
 
-**Reading B -- 20 Abs. 1 Nr. 7 EStG. Eliminated 2026-08-09, and recorded so it is not reargued.**
-The shape looks right -- an asset surrendered against a promise of return and a fee, with Satz 2
-making the civil-law form irrelevant. It fails twice over. Nr. 7's gate is the subject of its own
-sentence, *Ertraege aus sonstigen Kapitalforderungen*, and Satz 2 relaxes the **form** of the
-Kapitalanlage rather than the requirement that the claim be one for money; shares and
-Investmentanteile are not Kapitalforderungen, and during the loan the lender holds a
-**Sachforderung** ([GT-ESTG20-046]). And BFH vom 22.10.2024 -- VIII R 7/23 held Nr. 7 inapplicable
-to a fee for making an asset available to another **even where that asset was a Kapitalforderung**,
-for want of a Nutzungsueberlassung. Full record at [GT-ESTG20-049].
+**20 Abs. 1 Nr. 7.** The shape looked right -- an asset surrendered against a promise of return and
+a fee, with Satz 2 making the civil-law form irrelevant. Satz 2 relaxes the **form** of the
+Kapitalanlage, not the requirement that the claim be one for money.
 
-**Reading C -- 22 Nr. 3 EStG.** The lending is a *Leistung* and the fee its consideration, so the
-subsidiary provision takes it once 20 EStG is exhausted. **Authority:** BMF 14.05.2025 **Rn. 173**,
-which puts the Repozins of a Wertpapierpensionsgeschaeft under 22 Nr. 3 EStG -- the only
-administrative statement located on the character of a consideration paid under any of these
-transactions ([GT-ESTG20-047]); BFH VIII R 7/23 above, from the Senat that decides capital income,
-in Privatvermoegen and under the Abgeltungsteuer; and the structural argument that
-Stillhalterpraemien needed an express Abs. 1 Nr. 11 to move from 22 Nr. 3 into 20 EStG, with no
-counterpart enacted here. **Against it:** Rn. 173 names a different payment under a different
-transaction; VIII R 7/23 concerns a pledge, which transfers nothing, where a Sachdarlehen transfers
-full ownership and so meets the *Nutzung* limb that decision turned on; and 22 Nr. 3 is reached
-only once Reading A is excluded, which no source does.
-
-**Why this stayed open after Reading B fell.** Only A and C remain, and they are not symmetric.
-C has the weight of authority and A has none that reaches it -- **no located source applies 20
-Abs. 3 to a fee for a separate transaction**, and the two worked cases in Rn. 83 and Rn. 84 are
-reasoned as a compensation for a loss on the investment and a *"teilweiser Rueckflusss frueherer
-Aufwendungen"*, neither of which a lending fee is. But A is excluded by reasoning rather than by a
-source, VIII R 7/23 does not discuss 20 Abs. 3 at all, and Abs. 3 stands first in the order of
-enquiry. An unresolved question recorded is ground truth; this one is narrowed, not answered.
-
-**What turns on the answer.** The form the amount is declared on: Anlage KAP as a Kapitalertrag
-under Reading A, which raises the further question whether the Teilfreistellung follows as in
-Rn. 83 and Rn. 84 where the securities are fund units; Anlage SO among the Einnahmen aus Leistungen
-under Reading C. **Not** 22 Nr. 3 Satz 2's Freigrenze or the Sparer-Pauschbetrag: each operates on
-the taxpayer's total income of its kind from every source, so neither is available to weigh a
-reading.
-
-**What is not a source.** That a broker, or a firm preparing a report for one, enters the amount on
-Anlage KAP is practice and not authority, and it is where this question is most likely to be
-answered by habit.
+**What the answer does not rest on.** 22 Nr. 3 Satz 2's Freigrenze and the Sparer-Pauschbetrag both
+operate on the taxpayer's total income of their kind from every source, so neither was available to
+weigh a reading. Nor is the practice of brokers and the firms preparing their reports, which enter
+such amounts on Anlage KAP; that is habit, not authority, and it is the likeliest source of a wrong
+answer here.

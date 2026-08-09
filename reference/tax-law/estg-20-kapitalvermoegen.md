@@ -239,12 +239,29 @@ third party** connected with a capital investment, and both are decided the same
 **Three things follow, and the third is not obvious from the statute.**
 
 - Abs. 3 is combined with the **Nummer of Abs. 1 the payment relates to**, and where that relation
-  is to fund units the Nummer is **Nr. 3**, Investmentertraege.
+  is to fund units the Nummer is **Nr. 3**, Investmentertraege. Rn. 83 does the same, *"im Sinne
+  des § 20 Absatz 3 in Verbindung mit Absatz 1 oder 2 EStG"*.
 - The payer may be a third party -- in Rn. 84 the custodian, not the fund.
 - **The Teilfreistellung is applied**, in both Randziffern, although an Abs. 3 payment is not an
   Investmentertrag within 16 Abs. 1 InvStG and 20 InvStG attaches the Teilfreistellung to
   Investmentertraege. The administration extends it to Abs. 3 amounts connected with a fund
   holding. This is stated for the Steuerabzug in Rn. 84 and unqualified in Rn. 83.
+
+### [GT-ESTG20-050] Abs. 3 is accessory: it has no case of its own
+
+Both limbs of Satz 1 presuppose Einnahmen of the taxpayer under Abs. 1 or Abs. 2 to which the
+payment attaches. *Neben* means granted **alongside** such Einnahmen; *an deren Stelle* means
+granted **instead of** them. Neither describes a payment that is the consideration for an
+independent transaction and would be owed whether or not any security yielded anything.
+
+The administration reads it the same way and cannot do otherwise: **both** worked cases combine
+Abs. 3 with a Nummer of Abs. 1 -- Rn. 84 with *"§ 20 Absatz 1 Nummer 3"*, Rn. 83 with *"Absatz 1
+oder 2"* -- and both reason from a link to the investment itself, a compensation for a loss on it
+and a *"teilweiser Rueckfluss frueherer Aufwendungen"* on it. An Abs. 3 amount with no Nummer to
+attach to is not something either Randziffer contemplates.
+
+**Consequence.** Where a payment cannot be tied to Einnahmen of a particular Kapitalanlage, Abs. 3
+is unavailable and the order of enquiry moves on. That is what decides [GT-ESTG20-049].
 
 **What the cited unit also contains:** Rn. 83a, on a Vergleich under 278 ZPO in which the bank
 assumes the legal costs -- those are *"nicht um Einnahmen des Anlegers im Sinne des § 8 Absatz 1
@@ -271,9 +288,28 @@ words, and then two provisions remain in a fixed order:
   from gesetze-im-internet.de/estg/__22.html.
 
 **The order of enquiry is therefore fixed and the sequence matters:** Abs. 3, then Abs. 1 Nr. 7,
-then 22 Nr. 3. For the fee a private lender receives under a Wertpapierdarlehen the third step is
-reached only if the first two fail, and Q14 in `../research/open-legal-questions.md` records what
-is left open. **Nr. 7 is closed**, on the two grounds below.
+then 22 Nr. 3. For the fee a private lender receives under a Wertpapierdarlehen **both 20 EStG
+steps fail and the third takes it.**
+
+**Step 1, Abs. 3, fails because the fee is accessory to nothing** -- [GT-ESTG20-050]. It is the
+consideration for the Sachdarlehen itself, owed for the period the securities are out on loan
+whether or not they yield anything in it, and measured by the loan rather than by any Einnahme of
+Abs. 1 or Abs. 2. There is no Nummer for it to be *in Verbindung mit*, which is the form both
+Rn. 83 and Rn. 84 require.
+
+**Step 2, Nr. 7, fails on its gate**, on the two grounds below.
+
+**Step 3 therefore applies.** 22 Nr. 3's subsidiarity clause is satisfied once 20 EStG is
+exhausted, the lending is a *Leistung* -- a Dulden of another's use of the securities, done for the
+fee -- and the fee is its consideration. **Two Tier 2 and Tier 4 statements point the same way and
+neither is the ground of the rule:** BMF 14.05.2025 Rn. 173 puts the Repozins of a
+Wertpapierpensionsgeschaeft under 22 Nr. 3 ([GT-ESTG20-047]), and BFH VIII R 7/23 treats a fee for
+making an asset available to another as a Leistung rather than capital income.
+
+**What is not quoted.** No located source addresses the Wertpapierdarlehen fee itself. The answer
+is a subsumption under the three provisions in their order, and it is recorded as one. What was
+weighed and rejected on the way is at Q14's retirement note in
+`../research/open-legal-questions.md`.
 
 **Nr. 7's gate is the subject of the sentence, not the condition attached to it.** The Erträge must
 be *"aus sonstigen Kapitalforderungen jeder Art"*; the clause about a Rueckzahlung or an *"Entgelt
