@@ -569,6 +569,103 @@ class TestAFundAcquiredDuringTheYear:
 
 
 # ---------------------------------------------------------------------------
+# Tests: what the Abs. 2 twelfths multiply (issue #58, [GT-INVSTG-056])
+# ---------------------------------------------------------------------------
+
+class TestAFundAcquiredDuringTheYearThatAlsoDistributed:
+    """Abs. 2 and a distribution in the same year -- the ordering [GT-INVSTG-056].
+
+    Abs. 2 reduces *"die Vorabpauschale"*, which Abs. 1 Satz 1 defines as the
+    amount by which the distributions fall short of the Basisertrag. So the
+    twelfths multiply `Basisertrag - Ausschuettungen`. Rz. 18.3 shows the
+    administration computing it in that order and Rz. 18.11 taking 6/12 of what
+    remains.
+
+    **Why this class and not two more cases in the one above.** Every case
+    there runs with no distribution, so `B * k/12 - D` and `(B - D) * k/12`
+    agree on all of them and the ordering is unobservable. The class above says
+    of itself that the twelfths' *effect on a declared figure* is guarded
+    nowhere else; that was true of the effect and not of the order. The engine
+    had the two steps the wrong way round from the day pro-rata was added until
+    2026-08-09, understating by `D * (12 - k)/12`.
+
+    The fixture is the one above: 100 units, year-start price 100, year-end 110,
+    Basiszins 2.29%, so the per-unit Basisertrag is 1.603 and the full-year
+    figure 160.30. Adding a distribution raises the Satz 3 cap rather than
+    binding it -- the cap is `(110 - 100) + D/100` per unit and 1.603 stays
+    under it for every D used here, so what these cases move is Satz 1 and
+    nothing else.
+    """
+
+    @pytest.mark.parametrize("month,twelfths,distributions,expected", [
+        # (160.30 - 60) * 6/12
+        (7, 6, Decimal("60"), Decimal("50.15")),
+        # (160.30 - 60) * 3/12 = 25.075, rounded once at the end
+        (10, 3, Decimal("60"), Decimal("25.08")),
+    ])
+    def test_the_twelfths_multiply_what_the_distributions_left(
+            self, month, twelfths, distributions, expected):
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, distributions)]
+
+        results = _run_vp(fund, events=events,
+                          acquisition_date=dt_date(2024, month, 15))
+
+        assert len(results) == 1
+        assert results[0].gross_vorabpauschale_eur == expected
+        # Restates the rule independently of the engine, so a shared arithmetic
+        # slip cannot make both sides agree.
+        assert expected == ((Decimal("160.30") - distributions)
+                            * twelfths / 12).quantize(Decimal("0.01"))
+
+    def test_distributions_above_the_reduced_basisertrag_still_leave_a_figure(self):
+        """The worse of the two failures: an absent figure, not a small one.
+
+        With the twelfths applied first the fund owes 160.30 * 6/12 - 120, which
+        is negative, and the engine's `<= 0` branch drops it and declares
+        nothing. In the statute's order 120 falls short of 160.30 by 40.30 and
+        half of that is due.
+        """
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, Decimal("120"))]
+
+        results = _run_vp(fund, events=events, acquisition_date=dt_date(2024, 7, 15))
+
+        assert len(results) == 1, (
+            "a distribution that exceeds the pro-rata share of the Basisertrag, "
+            "but not the Basisertrag, does not extinguish the Vorabpauschale")
+        assert results[0].gross_vorabpauschale_eur == Decimal("20.15")
+
+    def test_a_distribution_exceeding_the_basisertrag_still_extinguishes_it(self):
+        """The boundary the fix must not cross.
+
+        Satz 1 is what produces nothing here, and it does so before Abs. 2 has
+        anything to reduce. Without this case the fix above could be had by
+        deleting the `<= 0` branch, which would declare a negative figure.
+        """
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, Decimal("200"))]
+
+        results = _run_vp(fund, events=events, acquisition_date=dt_date(2024, 7, 15))
+
+        assert results == []
+
+    def test_the_basisertrag_reported_is_not_reduced_by_the_twelfths(self):
+        """Abs. 2 reduces the Vorabpauschale; the Basisertrag is Abs. 1's.
+
+        `calculated_base_return_eur` carried the twelfths-reduced amount, which
+        is a quantity no provision defines. It is the Rz. 18.4 product: the
+        per-unit Basisertrag times the units held at the close.
+        """
+        fund = _make_fund()
+        events = [_make_distribution(fund.internal_asset_id, Decimal("60"))]
+
+        results = _run_vp(fund, events=events, acquisition_date=dt_date(2024, 7, 15))
+
+        assert results[0].calculated_base_return_eur == Decimal("160.30")
+
+
+# ---------------------------------------------------------------------------
 # Tests: a fund the engine cannot price (issue #55)
 # ---------------------------------------------------------------------------
 

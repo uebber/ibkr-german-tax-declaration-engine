@@ -1784,9 +1784,17 @@ def _calculate_vorabpauschale(
 
       Abs. 1 S. 2  basisertrag_je_anteil = preis_jahresbeginn * basiszins * 0.7
       Abs. 1 S. 3  basisertrag_je_anteil <= (preis_letzt - preis_erst) + ausschuettung_je_anteil
-      Rz. 18.4     Basisertrag = SUM over tranches of basisertrag_je_anteil * units * Abs. 2
-      Abs. 1 S. 1  VP = max(0, Basisertrag - Ausschuettungen)
+      Abs. 1 S. 1  vp_je_anteil = max(0, basisertrag_je_anteil - ausschuettung_je_anteil)
+      Abs. 2       vp_je_anteil * k/12, k = 12 less one per full month before the
+                   month of acquisition
+      Rz. 18.4     VP = SUM over tranches of vp_je_anteil * k/12 * units
       Abs. 4       basiszins from the published BMF table for `vorabpauschale_year`
+
+    **Satz 1 comes before Abs. 2 and the order is load-bearing.** Abs. 2 reduces *"die
+    Vorabpauschale"*, which Satz 1 defines as the shortfall against the Basisertrag, so the
+    twelfths multiply what the distributions left. Rz. 18.3 works it in that order --
+    [GT-INVSTG-056]. The two orders differ by ausschuettungen * (12 - k)/12, and the reversed
+    one can drive the figure below zero and drop a fund that owes something.
 
     The unit count is the holding at the close of 31 December of the Vorabpauschale year
     (Rz. 18.4), taken from `opening_lots_by_asset` -- the ledger's own lots at that moment,
@@ -1965,30 +1973,42 @@ def _calculate_vorabpauschale(
                          f"{basisertrag_per_unit} <= 0 after the Satz 3 cap. VP=0.")
             continue
 
+        # Abs. 1 S. 1, per unit: the Vorabpauschale is what the distributions
+        # fell short of. It is subtracted HERE, before the Abs. 2 twelfths,
+        # because Abs. 2 reduces "die Vorabpauschale" -- the amount Satz 1
+        # defines -- and not the Basisertrag. Rz. 18.3 computes in exactly this
+        # order and Rz. 18.11 then takes the twelfths of what remains
+        # ([GT-INVSTG-056]). The other order was this engine's until 2026-08-09
+        # and understated by distributions * (12 - k)/12.
+        vp_per_unit = ctx.subtract(basisertrag_per_unit, distribution_per_unit)
+        if vp_per_unit <= Decimal('0'):
+            logger.debug(f"Fund {asset_obj.description}: distributions per unit "
+                         f"({distribution_per_unit}) >= per-unit Basisertrag "
+                         f"({basisertrag_per_unit}). VP=0.")
+            continue
+
         # Rz. 18.4 with Abs. 2: multiply by the units, tranche by tranche, each
         # reduced by a twelfth for every full month before its month of acquisition.
-        basisertrag = Decimal(0)
+        gross_vp = Decimal(0)
         for tranche in tranches:
             twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
-            tranche_basisertrag = ctx.multiply(basisertrag_per_unit, tranche.quantity)
+            tranche_vp = ctx.multiply(vp_per_unit, tranche.quantity)
             if twelfths != 12:
-                tranche_basisertrag = ctx.divide(
-                    ctx.multiply(tranche_basisertrag, Decimal(twelfths)), Decimal(12))
+                tranche_vp = ctx.divide(
+                    ctx.multiply(tranche_vp, Decimal(twelfths)), Decimal(12))
                 logger.debug(
                     "Fund %s: tranche of %s acquired %s keeps %d/12 (18 Abs. 2).",
                     asset_obj.description, tranche.quantity,
                     tranche.acquisition_date, twelfths)
-            basisertrag = ctx.add(basisertrag, tranche_basisertrag)
+            gross_vp = ctx.add(gross_vp, tranche_vp)
 
-        if basisertrag <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Basisertrag={basisertrag} <= 0, VP=0.")
-            continue
-
-        # Abs. 1 S. 1: the Vorabpauschale is what the distributions fell short of.
-        gross_vp = ctx.subtract(basisertrag, distributions_eur)
-        if gross_vp <= Decimal('0'):
-            logger.debug(f"Fund {asset_obj.description}: Distributions ({distributions_eur}) >= Basisertrag ({basisertrag}), VP=0.")
-            continue
+        # Abs. 1 S. 2 and S. 3 over the whole holding, kept for the report.
+        # **Abs. 2 does not enter here.** It reduces the Vorabpauschale, so the
+        # Basisertrag is the plain Rz. 18.4 product and a fund bought in
+        # December has the same one as a fund held all year. This field carried
+        # the twelfths-reduced amount until 2026-08-09, which is a quantity no
+        # provision defines.
+        basisertrag = ctx.multiply(basisertrag_per_unit, units_at_year_end)
 
         # Kept for the report: the holding's value at each end of the year, on the
         # Rz. 18.4 count, so both sides describe the same units.
