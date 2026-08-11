@@ -212,10 +212,44 @@ class ParsingOrchestrator:
             logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
                         f"for the {mark_year}-12-31 checkpoint mark.")
 
-    def process_positions(self, tax_year: Optional[int] = None):
-        # ... (implementation is the same)
-        logger.info("Processing start-of-year positions...")
-        for raw_pos in self.raw_positions_start:
+    @staticmethod
+    def _sum_optional(a: Optional[Decimal], b: Optional[Decimal]) -> Optional[Decimal]:
+        """Add two optional amounts, keeping None only when both are absent.
+
+        Neither operand is ever absent in practice -- measured 2026-08-11 over the
+        69 position rows in data_import/: 0 blank Quantity, CostBasisMoney,
+        PositionValue or MarkPrice. The None handling exists because the model
+        declares the fields Optional, not because a blank has been observed; it
+        preserves the previous single-account behaviour, where a None was stored
+        as None rather than coerced to zero.
+        """
+        if a is None:
+            return b
+        if b is None:
+            return a
+        return a + b
+
+    def _fold_positions_by_asset(self, raw_rows: List[RawPositionRecord]) -> List[dict]:
+        """One entry per asset for a snapshot, summing the rows across accounts.
+
+        [GT-ESTG20-061]: the assessed holding is the Steuerpflichtige's, so a
+        snapshot the broker reports per custody account is summed before it becomes
+        a ledger seed or a reconciliation baseline. Previously each loop assigned,
+        so with two accounts the last row won and the others were discarded --
+        quantity, cost basis and position value alike.
+
+        Additive fields sum. Per-unit and descriptive fields (mark price, currency,
+        multiplier, description) are taken from the FIRST row of the asset: one
+        instrument in one snapshot has one price. Measured 2026-08-11 across all
+        four Positions files: 0 instruments carry more than one distinct MarkPrice,
+        so no reconciliation between differing prices is required and none is
+        attempted.
+
+        Insertion order is preserved, so a single-account snapshot yields exactly
+        the previous sequence of assets.
+        """
+        folded: Dict[uuid.UUID, dict] = {}
+        for raw_pos in raw_rows:
             asset = self.asset_resolver.get_or_create_asset(
                 raw_isin=raw_pos.isin, raw_conid=raw_pos.conid, raw_symbol=raw_pos.symbol,
                 raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
@@ -225,27 +259,41 @@ class ParsingOrchestrator:
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.soy_quantity = raw_pos.position # Changed from initial_quantity_soy
-            asset.soy_cost_basis_amount = raw_pos.cost_basis_money # Changed from initial_cost_basis_money_soy
+            entry = folded.get(asset.internal_asset_id)
+            if entry is None:
+                folded[asset.internal_asset_id] = {
+                    "asset": asset,
+                    "first": raw_pos,
+                    "position": raw_pos.position,
+                    "position_value": raw_pos.position_value,
+                    "cost_basis_money": raw_pos.cost_basis_money,
+                }
+            else:
+                entry["position"] += raw_pos.position
+                entry["position_value"] = self._sum_optional(
+                    entry["position_value"], raw_pos.position_value)
+                entry["cost_basis_money"] = self._sum_optional(
+                    entry["cost_basis_money"], raw_pos.cost_basis_money)
+        return list(folded.values())
+
+    def process_positions(self, tax_year: Optional[int] = None):
+        # ... (implementation is the same)
+        logger.info("Processing start-of-year positions...")
+        for entry in self._fold_positions_by_asset(self.raw_positions_start):
+            asset, raw_pos = entry["asset"], entry["first"]
+            asset.soy_quantity = entry["position"] # Changed from initial_quantity_soy
+            asset.soy_cost_basis_amount = entry["cost_basis_money"] # Changed from initial_cost_basis_money_soy
             asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
-            asset.soy_position_value = raw_pos.position_value
+            asset.soy_position_value = entry["position_value"]
             asset.soy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
 
         logger.info("Processing end-of-year positions...")
-        for raw_pos in self.raw_positions_end:
-            asset = self.asset_resolver.get_or_create_asset(
-                raw_isin=raw_pos.isin, raw_conid=raw_pos.conid, raw_symbol=raw_pos.symbol,
-                raw_currency=raw_pos.currency_primary, raw_ibkr_asset_class=raw_pos.asset_class,
-                raw_description=raw_pos.description,
-                description_source_type="position",
-                raw_multiplier=raw_pos.multiplier,
-                raw_underlying_conid=raw_pos.underlying_conid,
-                raw_underlying_symbol=raw_pos.underlying_symbol
-            )
-            asset.eoy_quantity = raw_pos.position
+        for entry in self._fold_positions_by_asset(self.raw_positions_end):
+            asset, raw_pos = entry["asset"], entry["first"]
+            asset.eoy_quantity = entry["position"]
             asset.eoy_market_price = raw_pos.mark_price # Changed from eoy_mark_price
-            asset.eoy_position_value = raw_pos.position_value
+            asset.eoy_position_value = entry["position_value"]
             asset.eoy_mark_price_currency = raw_pos.currency_primary
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
 
@@ -269,10 +317,10 @@ class ParsingOrchestrator:
         eoy_snapshot_date = (last_business_day_of_year(vorabpauschale_year)
                              if vorabpauschale_year is not None else None)
 
-        for raw_pos in self.raw_positions_prior_start:
-            asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_soy_quantity = raw_pos.position
-            asset.prior_year_soy_position_value = raw_pos.position_value
+        for entry in self._fold_positions_by_asset(self.raw_positions_prior_start):
+            asset, raw_pos = entry["asset"], entry["first"]
+            asset.prior_year_soy_quantity = entry["position"]
+            asset.prior_year_soy_position_value = entry["position_value"]
             asset.prior_year_soy_mark_price = raw_pos.mark_price
             asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
             asset.prior_year_soy_mark_price_date = soy_snapshot_date
@@ -282,10 +330,10 @@ class ParsingOrchestrator:
                 "prior_year_soy_mark_price_date",
             ))
 
-        for raw_pos in self.raw_positions_prior_end:
-            asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_eoy_quantity = raw_pos.position
-            asset.prior_year_eoy_position_value = raw_pos.position_value
+        for entry in self._fold_positions_by_asset(self.raw_positions_prior_end):
+            asset, raw_pos = entry["asset"], entry["first"]
+            asset.prior_year_eoy_quantity = entry["position"]
+            asset.prior_year_eoy_position_value = entry["position_value"]
             asset.prior_year_eoy_mark_price = raw_pos.mark_price
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
             asset.prior_year_eoy_mark_price_date = eoy_snapshot_date
@@ -305,22 +353,29 @@ class ParsingOrchestrator:
             for raw_pos in raw_rows:
                 asset = self._resolve_asset_from_position(raw_pos)
                 quantity = raw_pos.position
+                cost_basis = raw_pos.cost_basis_money
                 existing = by_asset.get(asset.internal_asset_id)
                 if existing is not None:
-                    # Same instrument reported on more than one row at the same mark.
+                    # Same instrument reported on more than one row at the same mark:
+                    # one custody account per row, one holding. [GT-ESTG20-061].
+                    # The cost basis accumulates with the quantity -- a mark whose two
+                    # figures describe different holdings is worse than either alone,
+                    # because reconcile_with_mark takes the snapshot when they disagree
+                    # with the reconstruction and synthesises a lot from both.
                     quantity += existing.quantity
+                    cost_basis = self._sum_optional(existing.cost_basis_amount, cost_basis)
                 by_asset[asset.internal_asset_id] = MarkPosition(
                     quantity=quantity,
-                    cost_basis_amount=raw_pos.cost_basis_money,
+                    cost_basis_amount=cost_basis,
                     cost_basis_currency=raw_pos.currency_primary,
                 )
             self.mark_positions[mark_year] = by_asset
             logger.info("Checkpoint mark %d-12-31: %d instrument(s) reported.",
                         mark_year, len(by_asset))
 
-        for raw_pos in self.raw_positions_prior_opening:
-            asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_opening_quantity = raw_pos.position
+        for entry in self._fold_positions_by_asset(self.raw_positions_prior_opening):
+            asset, raw_pos = entry["asset"], entry["first"]
+            asset.prior_year_opening_quantity = entry["position"]
             asset.prior_year_opening_mark_price = raw_pos.mark_price
             asset.prior_year_opening_mark_price_currency = raw_pos.currency_primary
             self._record_prior_year_snapshot_fields(asset, (
@@ -749,43 +804,72 @@ class ParsingOrchestrator:
             except (ValueError, TypeError):
                 pass  # malformed date, skip validation
 
+        # Fold the rows per currency BEFORE deciding anything. [GT-ESTG20-061]: the
+        # balance assessed is the Steuerpflichtige's, and IBKR emits one row per
+        # custody account, so a currency held in two accounts arrives as two rows.
+        # This loop used to assign, and the last row won -- which seeded the currency
+        # FIFO ledger from one account (see _reconcile_currency_soy in
+        # src/engine/calculation_engine.py, which materialises reported_soy - fifo_qty
+        # as fallback lots).
+        folded: Dict[str, dict] = {}
         for raw_balance in self.raw_cash_balances:
-            # Skip EUR (base currency) and BASE_SUMMARY (IBKR aggregate row)
+            # Skip EUR (base currency) and BASE_SUMMARY (IBKR's per-account aggregate
+            # row). BASE_SUMMARY must be excluded BEFORE the fold: summing it would
+            # double-count every currency in that account.
             if raw_balance.currency_primary and raw_balance.currency_primary.upper() in ("EUR", "BASE_SUMMARY"):
                 logger.debug(f"Skipping cash balance row: {raw_balance.currency_primary}")
                 balances_skipped += 1
                 continue
 
-            # Skip tiny balances (below threshold)
-            if (abs(raw_balance.starting_cash) < MIN_BALANCE_THRESHOLD and
-                abs(raw_balance.ending_cash) < MIN_BALANCE_THRESHOLD):
-                logger.debug(f"Skipping tiny cash balance {raw_balance.currency_primary}: "
-                           f"SOY={raw_balance.starting_cash}, EOY={raw_balance.ending_cash}")
-                balances_skipped += 1
+            entry = folded.get(raw_balance.currency_primary)
+            if entry is None:
+                entry = {"soy": Decimal(0), "eoy": Decimal(0), "rows": 0,
+                         "largest_single": Decimal(0)}
+                folded[raw_balance.currency_primary] = entry
+            entry["soy"] += raw_balance.starting_cash
+            entry["eoy"] += raw_balance.ending_cash
+            entry["rows"] += 1
+            entry["largest_single"] = max(entry["largest_single"],
+                                          abs(raw_balance.starting_cash),
+                                          abs(raw_balance.ending_cash))
+
+        for currency, entry in folded.items():
+            # Tiny-balance filter, applied to the FOLDED figures -- but a currency is
+            # dropped only when the summed balances AND every individual account
+            # balance are negligible. A currency netting to ~0 across accounts (+800
+            # in one, -800 in another) is actively held: its FIFO ledger carries real
+            # FX gain and loss, and thresholding the sum alone would delete it.
+            if (abs(entry["soy"]) < MIN_BALANCE_THRESHOLD
+                    and abs(entry["eoy"]) < MIN_BALANCE_THRESHOLD
+                    and entry["largest_single"] < MIN_BALANCE_THRESHOLD):
+                logger.debug(f"Skipping tiny cash balance {currency}: "
+                             f"SOY={entry['soy']}, EOY={entry['eoy']}")
+                balances_skipped += entry["rows"]
                 continue
 
             # Get or create CashBalance asset
             cash_asset = self.asset_resolver.get_or_create_asset(
                 raw_isin=None,
                 raw_conid=None,
-                raw_symbol=raw_balance.currency_primary,
-                raw_currency=raw_balance.currency_primary,
+                raw_symbol=currency,
+                raw_currency=currency,
                 raw_ibkr_asset_class="CASH",
-                raw_description=f"Cash Balance {raw_balance.currency_primary}",
+                raw_description=f"Cash Balance {currency}",
                 description_source_type="cash_balance_csv"
             )
 
             # Set SOY/EOY quantities (can be negative for short positions)
-            cash_asset.soy_quantity = raw_balance.starting_cash
-            cash_asset.eoy_quantity = raw_balance.ending_cash
+            cash_asset.soy_quantity = entry["soy"]
+            cash_asset.eoy_quantity = entry["eoy"]
 
-            position_type = "LONG" if raw_balance.starting_cash >= Decimal("0") else "SHORT"
-            eoy_position_type = "LONG" if raw_balance.ending_cash >= Decimal("0") else "SHORT"
+            position_type = "LONG" if entry["soy"] >= Decimal("0") else "SHORT"
+            eoy_position_type = "LONG" if entry["eoy"] >= Decimal("0") else "SHORT"
 
-            logger.debug(f"Cash {raw_balance.currency_primary}: "
-                        f"SOY={raw_balance.starting_cash} ({position_type}), "
-                        f"EOY={raw_balance.ending_cash} ({eoy_position_type})")
-            balances_processed += 1
+            logger.debug(f"Cash {currency}: "
+                        f"SOY={entry['soy']} ({position_type}), "
+                        f"EOY={entry['eoy']} ({eoy_position_type}) "
+                        f"from {entry['rows']} account row(s)")
+            balances_processed += entry["rows"]
 
         logger.info(f"Processed {balances_processed} cash balance positions, skipped {balances_skipped}")
 
