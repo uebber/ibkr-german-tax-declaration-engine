@@ -31,6 +31,12 @@ neither of which has a field below, so `extra = 'ignore'` discards them.
 a caller. It is mapped now. That it stayed unmapped for as long as it did is the rule
 above working as intended: a field whose only reader is a test is the same defect as a
 field nothing populates, approached from the other side.
+
+`Transfers` is the one model that maps a *subset* of its tuple rather than all of it. The
+tuple is the export's full header, declared in full so that a column appearing or
+disappearing is caught at the boundary; the model maps what the engine reads. Which
+columns it leaves alone, and why, is listed in `tests/test_raw_model_fields.py` beside the
+other deliberate drops.
 """
 from typing import Optional, Any
 from decimal import Decimal
@@ -261,6 +267,70 @@ class RawOptionsEAERecord(RawBaseRecord):
         if v is None or str(v).strip() == "":
             return None
         return str(v).strip()
+
+    class Config:
+        extra = 'ignore'
+
+
+class RawTransferRecord(RawBaseRecord):
+    """One row of the Transfers export -- a move of a holding or a cash balance.
+
+    The export writes a move as SEVERAL rows, and a consumer that sums them moves the
+    holding more than once. Two kinds are mixed together:
+
+    * a **summary** row, carrying `TransactionID` and `PositionAmount`. There is one per
+      side of the move: `Direction` "OUT" on the sending account and "IN" on the
+      receiving one. Each names both accounts -- its own in `ClientAccountID` and the
+      other in `TransferAccount` -- so either side alone describes the whole move.
+    * a **lot-detail** row per lot, carrying `Code` "ST" and no `TransactionID`.
+
+    `TransactionID` is therefore the discriminator, and `DomainEventFactory
+    .create_events_from_transfers` collapses what survives it. That the two kinds
+    coincide with `Code` was measured on the export before this model was written; the
+    count is in `VALIDATION_REPORT.md`.
+
+    **`Direction` carries the direction and the sign of `Quantity` does not.** The two
+    sides of one move carry opposite signs, and which side is negative varies by
+    instrument, so the sign identifies neither the direction nor a short position. The
+    engine reads `abs(quantity)` and takes the direction from `Direction`; whether the
+    units moved are long or short is read from the sending ledger, which knows.
+
+    `TransferPrice` is not mapped because it is not a cost basis: the standard export
+    leaves it at zero, and a per-lot basis needs the Flex Query's lot-detail option. A
+    field for it here would read as a supported input at every call site -- the state
+    this module's header exists to prevent.
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    asset_class: str = Field(alias="AssetClass")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    date: str = Field(alias="Date")
+    transfer_type: Optional[str] = Field(None, alias="Type")
+    direction: Optional[str] = Field(None, alias="Direction")
+    transfer_account: Optional[str] = Field(None, alias="TransferAccount")
+    quantity: Decimal = Field(alias="Quantity")
+    transaction_id: Optional[str] = Field(None, alias="TransactionID")
+
+    @validator('multiplier', 'quantity', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Any:
+        """Blank becomes absent; anything else is handed to pydantic to parse or reject.
+
+        Deliberately NOT the other models' pattern of defaulting an unparseable non-blank
+        value to `Decimal("0.0")`. A quantity of zero here is a move of nothing, so that
+        default would leave the holding where it was while the broker had moved it -- and
+        the reconciliation that follows compares quantities, which would then agree with
+        the snapshot for the wrong reason.
+
+        Blank must not raise: `Multiplier` is blank on a cash row. `Quantity` is required,
+        so a blank one still raises.
+        """
+        if v is None or str(v).strip() == "":
+            return None
+        return v
 
     class Config:
         extra = 'ignore'

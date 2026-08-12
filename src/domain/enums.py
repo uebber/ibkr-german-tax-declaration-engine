@@ -53,6 +53,10 @@ class FinancialEventType(Enum):
     WITHHOLDING_TAX = auto()
     FEE_TRANSACTION = auto()
     CURRENCY_CONVERSION = auto() # From FX trades or explicit conversions
+    # A holding moved between two of the taxpayer's own accounts. Not a disposal
+    # ([GT-ESTG20-014]): the lots relocate carrying their acquisition date and cost,
+    # so this event realises nothing and produces no RealizedGainLoss.
+    INTERNAL_TRANSFER = auto()
 
 class RealizationType(Enum):
     """Defines how a gain or loss was realized."""

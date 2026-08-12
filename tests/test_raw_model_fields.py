@@ -37,6 +37,7 @@ MODELS = [
      "data_import/Corporate_Actions-*.csv"),
     ("RawOptionsEAERecord", cv.OPTIONS_EAE_COLUMNS, "data_import/Options_EAE-*.csv"),
     ("RawCashBalanceRecord", cv.CASH_BALANCE_COLUMNS, "data_import/Cash_Balance-*.csv"),
+    ("RawTransferRecord", cv.TRANSFERS_COLUMNS, "data_import/Transfers-*.csv"),
 ]
 
 
@@ -122,10 +123,19 @@ def test_the_column_tuples_match_the_real_exports():
 
 def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
     """
-    The mirror case, pinned rather than fixed. Two columns are requested and
-    delivered but have no field, so `extra = 'ignore'` discards them silently.
+    The mirror case, pinned rather than fixed. Columns are requested and delivered
+    but have no field, so `extra = 'ignore'` discards them silently.
 
-    They are left alone here because correcting one could move a figure — feeding
+    **`RawTransferRecord` is here by design and not by neglect**, and it is the one
+    model that drops most of its tuple. `TRANSFERS_COLUMNS` is the export's full
+    header, declared in full so that a column appearing or disappearing is caught at
+    the boundary; the model maps what the engine reads. `TransferPrice` is the one
+    worth naming: it is zero on every row of the standard export, so it is not a cost
+    basis, and a field for it would read as a supported input at every call site —
+    the state this file exists to prevent. The Flex Query's lot-detail option is what
+    would make it one, and it is what a partial move needs.
+
+    The other two are left alone because correcting one could move a figure — feeding
     `SubCategory` into `process_positions` would reach `preliminary_classify`, and
     classification drives Teilfreistellung and the KAP/KAP-INV split. That makes it
     Band A work with its own parity and knowledge-store gates, not part of a
@@ -152,6 +162,13 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
     assert dropped == {
         "RawPositionRecord": ["SubCategory"],
         "RawCorporateActionRecord": ["Amount"],
+        "RawTransferRecord": [
+            "AccountAlias", "CashTransfer", "ClientReference", "Code", "CommodityType",
+            "DateTime", "DeliveryType", "PnlAmount", "PnlAmountInBase", "PositionAmount",
+            "PositionAmountInBase", "ReportDate", "SerialNumber", "SettleDate",
+            "TransferAccountName", "TransferPrice", "UnderlyingConid",
+            "UnderlyingSymbol",
+        ],
     }, (
         f"the set of requested-but-unmapped columns changed: {dropped}. If a column "
         f"gained a field, remove it from this list. If one was dropped, decide whether "

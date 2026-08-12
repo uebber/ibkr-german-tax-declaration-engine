@@ -284,6 +284,53 @@ lots nobody measured.
 Until the Transfers export is read, this branch is sound only for input in which nothing was ever
 moved between accounts.
 
+## 2026-08-12 (later the same day) — reading the Transfers export closes the block above
+
+Same tooling, same year. This entry supersedes the last sentence of the one above.
+
+### What the export contains — measured before any code was written
+
+`data_import/Transfers-*.csv`, all three files, 2026-08-12:
+
+| Measurement | Result |
+|---|---|
+| Files with rows | one only (2023): **52 data rows**. 2022 is header-only; 2024 carries a repeated header and no data. |
+| Rows by class | 48 `STK`, 4 `CASH` |
+| `Type` | `INTERNAL` on all 52 |
+| `Code` = `ST` ⟺ blank `TransactionID` | exactly, both ways: **28 rows** of each, the same 28 |
+| The complement | **24 summary rows**, each carrying `TransactionID` *and* `PositionAmount`: 20 `STK` (10 OUT, 10 IN) and 4 `CASH` (2 OUT, 2 IN) |
+| Pairing the STK summary rows on (ISIN, Date, reversed accounts, \|Quantity\|) | **10 OUT, 10 IN, 0 unmatched either way** |
+| Signs across a pair | opposite in all 10; **8 pairs are OUT-negative, 2 are OUT-positive** — so the sign carries neither the direction nor long-versus-short |
+| `TransferPrice` | `0` on all 52 rows |
+| `Multiplier` on the STK rows | `1` on all 20 |
+| Distinct move dates | 2 |
+
+That settles the collapse rule the engine implements: drop the rows with no `TransactionID`, read
+the direction from `Direction`, take `abs(Quantity)`, and deduplicate the two sides of each move.
+
+### VZ 2025 with the export read
+
+| Capture | Result |
+|---|---|
+| Control, this tree twice (`pr2_a` vs `pr2_a2`) | console, log and PDF IDENTICAL |
+| **This tree, VZ 2025** | **the run completes.** On the branch without this change it aborts (entry above) |
+| This tree vs `origin/main`, VZ 2025 | **three declared figures move** — Zeile 19, Zeile 22, Saldo Sonstige — plus the new multi-account banner and gap text, and `[CURRENCY_EOY_MISMATCH]` closing. **Nothing else differs.** |
+| `REPLAY_MARK_UNCONFIRMED_START` | **1**, the same single instrument and the same interval as on `origin/main`. It was 19 on the branch without this change. |
+| VZ 2024 | aborts on `VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN` in a `--no-interactive` run — identical on `origin/main`, unrelated to this change |
+| VZ 2023 | cannot be prepared at all: `Positions-2022-EoY.csv` is absent. Unchanged, and unrelated |
+
+**The eight moved lines reduce to three, and the three are exactly the ones the snapshot summation
+accounts for.** The five that came off re-dated lots are gone, which is what the plan required:
+anything still moving would have been a defect rather than a consequence of lot selection.
+
+### What the engine did with the rows
+
+10 moves built from 52 rows, 28 of them lot-detail rows collapsed into their summary rows. All 10
+are whole-position moves, so the partial-move refusal does not fire on this data. **Eight moved a
+long position and two moved a short one** — six short lots each — which is the reading taken from
+the sending ledger rather than from the export's sign, and the case that sign could never have
+identified.
+
 ## 2026-08-07
 
 **Supersedes the 2026-08-06 row reading "2024 | aborts on

@@ -253,3 +253,76 @@ settles it.
 **Notes:**
 - Only rows with `TransactionType = "Cash Settlement"` are processed by the engine. Other rows (Exercise, Assignment, Expiration) duplicate information already present in the Trades CSV.
 - Cash-settled options (e.g. SPX, ESTX50 index options) have no underlying stock delivery; the settlement amount is the option's intrinsic value at expiration.
+
+---
+
+## 7. Transfers File (Optional)
+- **Input:** `data_import/Transfers-{YYYY}.csv`, concatenated across every year <= the tax year
+- **Purpose:** Records moves of a holding or a cash balance between accounts. A move between the
+  taxpayer's own accounts is not a disposal ([GT-ESTG20-014]), so the lots relocate carrying their
+  acquisition date and cost. Nothing else in the input records that a move happened, so without
+  this file the receiving account holds units the engine has to rebuild from the position snapshot
+  — right quantity, invented acquisition date.
+- **Optional as a whole, but not per year.** A person who has never exported the report has no
+  rows; the engine says so to the reader rather than assuming nothing moved, and continues. What it
+  does **not** do is continue past a window with a hole: an export covering 2023 and 2024 but not
+  2025 means the query exists and a year of it is missing, and a move in that year would be
+  invisible in that year and every year after it. `prepare_data_for_tax_year` counts the missing
+  years into `transfers_missing_years` and the run stops naming them
+  (`TRANSFERS_WINDOW_INCOMPLETE`, FAIL_FAST). Absence is a warning; a hole is a refusal. Only for a
+  run that sees more than one account — a move between your own accounts needs two of them.
+- **Every account you hold must be ticked in the query.** A move is applied as tax-neutral because
+  it stays within the taxpayer's own depots ([GT-ESTG20-014]), and `Type=INTERNAL` does not
+  establish that — it means the counterparty is an IBKR account, not that it is yours. The engine
+  tests ownership against the input instead: an account you hold is one your own exports report.
+  A transfer naming an account that appears nowhere else stops the run
+  (`TRANSFER_COUNTERPARTY_UNKNOWN`, FAIL_FAST).
+- **Associated Pydantic Model:** `RawTransferRecord`
+
+**How the rows relate to the moves.** One move is written as several rows and summing them moves
+the holding more than once:
+
+- a **summary** row per side, carrying `TransactionID` and `PositionAmount` — `Direction` "OUT" on
+  the sending account and "IN" on the receiving one. Each names both accounts, so either side
+  alone describes the whole move.
+- a **lot-detail** row per lot, carrying `Code` "ST" and no `TransactionID`.
+
+`DomainEventFactory.create_events_from_transfers` keeps the summary rows, normalises each through
+`Direction` into `(from, to, asset, date, quantity)` and deduplicates, so each move becomes one
+event whichever sides are present.
+
+**`Direction` carries the direction; the sign of `Quantity` does not.** The two sides of one move
+carry opposite signs and which side is negative varies by instrument, so the sign identifies
+neither the direction nor a short position. The engine reads `abs(Quantity)` and reads long versus
+short from the sending ledger.
+
+**Column Specifications** — `TRANSFERS_COLUMNS` in `src/parsers/column_validator.py` declares the
+export's full header so that a column appearing or disappearing is caught at the boundary, and it
+is checked against every real export by `tests/test_raw_model_fields.py`. The model maps the
+subset below; the rest are listed in that test as deliberate drops.
+
+| CSV Header          | Model Field Name (Pydantic) | Model Data Type     | Description                                                        | Notes                                                                             |
+|---------------------|-----------------------------|---------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------------|
+| `ClientAccountID`   | `client_account_id`         | `Optional[str]`     | The account this row is written from the point of view of.         | Optional. Example: "U1234567"                                                     |
+| `CurrencyPrimary`   | `currency_primary`          | `str`               | The instrument's currency, or the currency moved on a cash row.    | Required. Example: "EUR", "USD"                                                   |
+| `AssetClass`        | `asset_class`               | `str`               | Asset class. `CASH` rows produce no event — currency is held per person. | Required. Example: "STK", "CASH"                                             |
+| `Symbol`            | `symbol`                    | `Optional[str]`     | Instrument symbol.                                                 | Optional. Blank on a cash row.                                                    |
+| `Description`       | `description`               | `Optional[str]`     | Instrument description.                                            | Optional.                                                                         |
+| `Conid`             | `conid`                     | `Optional[str]`     | IBKR contract identifier.                                          | Optional. Blank on a cash row.                                                    |
+| `ISIN`              | `isin`                      | `Optional[str]`     | ISIN.                                                              | Optional. Blank on a cash row.                                                    |
+| `Multiplier`        | `multiplier`                | `Optional[Decimal]` | Contract multiplier.                                               | Optional. Blank on a cash row. A blank is absent, not zero.                       |
+| `Date`              | `date`                      | `str`               | The date the move was booked (YYYYMMDD).                           | Required. The move is applied at this date in the chronological replay.           |
+| `Type`              | `transfer_type`             | `Optional[str]`     | Kind of transfer.                                                  | Only `INTERNAL` is covered; anything else stops the run, because it may be a disposal and no rule in `reference/` decides which. |
+| `Direction`         | `direction`                 | `Optional[str]`     | "OUT" or "IN". The sole carrier of which way the units went.       | A row with neither stops the run.                                                 |
+| `TransferAccount`   | `transfer_account`          | `Optional[str]`     | The counterparty account of this row.                              | Required in effect: a row naming only one account stops the run.                  |
+| `Quantity`          | `quantity`                  | `Decimal`           | Units moved. Read as an absolute value.                            | Required. Zero stops the run — a move of nothing would leave the holding where it was while the broker reported it elsewhere. |
+| `TransactionID`     | `transaction_id`            | `Optional[str]`     | Present on a summary row, blank on a lot-detail row.               | The discriminator between the two kinds. It does NOT reach the event: the two sides carry different ids, so neither names the move. |
+
+**Notes:**
+- **`TransferPrice` is deliberately unmapped.** It is zero on every row of the standard export, so
+  it is not a cost basis, and a field for it would read as a supported input at every call site.
+  The Flex Query's lot-detail option is what would make it one.
+- **Only a move of a whole position is applied.** A partial move is refused through the data-gap
+  channel (`INTERNAL_TRANSFER_PARTIAL`, FAIL_FAST) naming the instrument, the account, the date,
+  the quantity moved and the quantity held — because nothing here says which lots moved, and the
+  oldest and the newest give different gains and different holding periods.

@@ -88,6 +88,12 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     # appear in no other export. A run that needs it and does not have it stops and names
     # the contracts -- see ParsingOrchestrator._require_option_cash_settlements.
     "options_eae": None,
+    # Needed if you have ever moved a holding between your own accounts. Such a move is
+    # not a sale and the units keep their purchase date and price ([GT-ESTG20-014]), but
+    # no other export records that it happened -- so a year without this report is a year
+    # in which a move is invisible, and the run says which years those are. Set the ID
+    # once and every later download covers it.
+    "transfers": None,
 }
 
 # Cache directory for downloaded Flex Query CSVs

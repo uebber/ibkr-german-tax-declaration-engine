@@ -251,21 +251,58 @@ turning a real loss into a taxable gain.
 The figures on your return stay the person's total across all your accounts — the split decides
 *which* units a sale consumed, not what gets declared.
 
-Two limits before you tick the box, both of which later releases remove:
+**If you have ever moved a holding between your own accounts, add Query 7 below.** Moving shares
+or fund units from one of your accounts to another is not a sale, and they keep the price and date
+you originally bought them at — but the engine can only apply that if it can see the move, and the
+move appears in no other report. Without Query 7 it rebuilds the receiving account's holding from
+the broker's position snapshot, which gives the right *number* of units and a made-up purchase
+date for them; the purchase date decides the holding period and which units a later sale consumes.
+The effect reaches the year of the move **and every later year**.
 
-- **Moved shares or fund units between your own accounts? Do not use this yet — that year and
-  every later year are affected.** The engine does not read the Transfers report, so it cannot see
-  the move: the receiving account holds units it never bought and the sending one still shows units
-  it never sold. It rebuilds those holdings from the broker's position snapshot instead, which
-  gives the right *number* of units and the wrong purchase date for them — and the purchase date
-  decides the holding period and which units a later sale consumes. Where an investment fund is
-  involved the run stops outright, because the Vorabpauschale refuses an invented date; **without a
-  fund it does not stop, and the figures it produces rest on those dates.** A later release reads
-  the Transfers report and moves the lots across with their original date and price.
+One limit remains, which a later release removes:
+
 - **Cash balances are still one pot per currency, not one per account.** FX gains are computed
-  against the pooled balance. A later release keeps each account's balance separately.
+  against the pooled balance, and moving money between your own accounts therefore has no effect
+  on them. A later release keeps each account's balance separately. Your securities figures do not
+  depend on this.
 
-Neither affects a single account, or several accounts with nothing ever moved between them.
+It does not affect a single account.
+
+### Query 7: Transfers (needed if you have moved a holding between your own accounts)
+
+Create an Activity Flex Query with only the **Transfers** section enabled, and tick every account
+you hold. If you have never moved a holding between your accounts, you have no rows and do not
+need this query.
+
+**Export it for every year, the same years as the other queries.** A year you do not export is a
+year in which a move would be invisible — not just in that year, but in every year after it, because
+the acquisition date the engine has to invent travels with the units. So once this report exists for
+any year, **a year missing from it stops the run** and names the year to export. Having no Transfers
+report at all is different and does not stop anything: it is the ordinary state of anyone with one
+account or who has never moved a holding.
+
+Ticking every account matters for the same reason: a move to an account the engine sees nowhere else
+stops the run, because *"internal"* in this report means the other account is at IBKR, not that it
+is yours — and a move to someone else's account may be a sale.
+
+Select **all fields** the section offers. The engine reads a subset, but it checks the header
+against the full list, so a query that offers fewer columns is rejected rather than read
+half-heartedly. The columns it uses are `ClientAccountID`, `TransferAccount` and `Direction` to
+say which account the units left and which they arrived in; `Date`; `Quantity`; `Type`;
+`TransactionID`; and `CurrencyPrimary`, `AssetClass`, `Symbol`, `Description`, `Conid`, `ISIN` and
+`Multiplier` to identify the instrument.
+
+**Only moves of a whole position are supported. Move part of a position and the run stops** rather
+than guess. Nothing in this report says *which* of your units moved — the cheap ones you bought
+years ago or the expensive ones you bought last month — and the two give different tax. The report
+has a lot-detail option that would answer it, by carrying a cost basis per lot instead of zero;
+until the engine reads that, a partial move is refused with the instrument, the account, the date,
+the quantity moved and the quantity held, so you can see the size of what is missing.
+
+Moves of **cash** between your own accounts are read and deliberately have no effect, because
+currency is still held as one balance per person (the limit above).
+
+Name the file `Transfers-YYYY.csv` in `data_import/`, like the others.
 
 ### Enabling the Flex Web Service (for automated download)
 
@@ -295,8 +332,14 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "corporate_actions": 123459, # Your Corporate Actions query ID
     "cash_balance": 123460,      # Your Cash Balance query ID
     "options_eae": None,         # Your Options EAE query ID (None if you never traded index options)
+    "transfers": 123461,         # Your Transfers query ID (None if you have never moved a holding between your accounts)
 }
 ```
+
+`--download` fetches every query that has an ID here, so a report with no ID is a report
+that never arrives. Set the Transfers ID before you rely on a downloaded year: without it
+the download completes and looks fine, and the run then tells you which years it could not
+see a move in.
 
 ## Preparing Input Data
 
@@ -308,6 +351,7 @@ Cash_Transactions-{YYYY}.csv    # One file per year
 Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
 Options_EAE-{YYYY}.csv          # One file per year (only if you trade index options — see below)
+Transfers-{YYYY}.csv            # One file per year (only if you have moved a holding between your own accounts)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
@@ -392,7 +436,7 @@ decided in `src/data_preparation.py`, and is deliberately not restated here.
 A run for tax year `Y` needs `Positions-{Y-1}-EoY.csv`: it is required, not
 optional, and the run stops with an explanation if it is missing.
 
-**Resolving queries by name.** If you gave your six Flex Queries a common
+**Resolving queries by name.** If you gave your Flex Queries a common
 naming prefix — `MyTax Trades`, `MyTax_Cash_Transactions`, and so on — set
 `FLEX_QUERY_NAME_PREFIX` in `src/config.py` and the downloader looks the IDs up
 in the portal. Case and separators do not matter. This survives recreating a

@@ -12,13 +12,13 @@ from src.domain.events import (
     CorpActionMergerStock, CorpActionStockDividend, CorpActionExpireDividendRights,
     OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
-    CurrencyConversionEvent, FeeEvent
+    CurrencyConversionEvent, FeeEvent, InternalTransferEvent
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord,
-    RawOptionsEAERecord
+    RawOptionsEAERecord, RawTransferRecord
 )
 from src.domain.exceptions import DataIntegrityError
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
@@ -995,6 +995,138 @@ class DomainEventFactory:
                 f"{len(data_errors)} corporate action record(s) have data integrity issues:\n  " + "\n  ".join(data_errors)
             )
         return domain_ca_events
+
+    def create_events_from_transfers(
+        self, raw_transfers: List[RawTransferRecord]
+    ) -> List[InternalTransferEvent]:
+        """Collapse the Transfers export into one event per move of a holding.
+
+        The export writes each move as a summary row per side plus a lot-detail row per
+        lot (see `RawTransferRecord`), so the first job is to drop what is not a summary
+        row: a run that summed them all would move the holding several times over.
+
+        Each surviving row names both accounts, so either side alone describes the whole
+        move. Both are normalised through `Direction` into the same
+        `(from, to, asset, date, quantity)` and the set is deduplicated -- whichever side
+        is present produces the move, and both sides produce one.
+
+        **What deduplication cannot see, and why it is not silent.** Two genuinely
+        distinct moves of one instrument on one day between one pair of accounts, of
+        equal size, collapse into one. Nothing in the export distinguishes that from the
+        two sides of a single move: the sides carry different `TransactionID`s too. It
+        does not pass quietly, because a move takes the sending account's whole position
+        or the run stops -- after the first, that account holds nothing, so the second
+        cannot be a whole-position move (`apply_internal_transfer`). The same guard is
+        what catches an export that started giving every row a `TransactionID`.
+
+        Cash rows produce no event. Currency is tracked as one balance per person, and a
+        move between two of that person's accounts changes nothing in one pooled balance.
+        What would make these rows move a figure is holding each account's balance as its
+        own Kapitalforderung, which the engine does not do; the multi-account warning in
+        `calculation_engine` states that limitation to the reader.
+        """
+        moves: dict = {}
+        data_errors: List[str] = []
+        skipped_detail_rows = 0
+
+        for rtr in raw_transfers:
+            if not (rtr.transaction_id or "").strip():
+                skipped_detail_rows += 1
+                continue
+            if (rtr.asset_class or "").strip().upper() == "CASH":
+                continue
+
+            # Every observed row is INTERNAL. A move to a third party or to another
+            # institution is a different question -- whether it is a disposal at all
+            # depends on who ends up owning the units -- and `reference/` settles only
+            # the own-depot case ([GT-ESTG20-014]). So it stops the run rather than
+            # being relocated as if it stayed in the family.
+            transfer_type = (rtr.transfer_type or "").strip().upper()
+            if transfer_type != "INTERNAL":
+                data_errors.append(
+                    f"Transfer of {rtr.symbol or rtr.isin or 'unknown instrument'} on "
+                    f"{rtr.date} has Type '{rtr.transfer_type}', not INTERNAL. Only a "
+                    f"move between the taxpayer's own accounts is covered "
+                    f"([GT-ESTG20-014]); anything else may be a disposal and no rule "
+                    f"here decides which.")
+                continue
+
+            direction = (rtr.direction or "").strip().upper()
+            if direction == "OUT":
+                from_account, to_account = rtr.client_account_id, rtr.transfer_account
+            elif direction == "IN":
+                from_account, to_account = rtr.transfer_account, rtr.client_account_id
+            else:
+                data_errors.append(
+                    f"Transfer of {rtr.symbol or rtr.isin or 'unknown instrument'} on "
+                    f"{rtr.date} has Direction '{rtr.direction}'. The sign of Quantity "
+                    f"does not carry the direction, so there is nothing else to read it "
+                    f"from.")
+                continue
+
+            if not (from_account or "").strip() or not (to_account or "").strip():
+                data_errors.append(
+                    f"Transfer of {rtr.symbol or rtr.isin or 'unknown instrument'} on "
+                    f"{rtr.date} names only one account (from "
+                    f"'{from_account}' to '{to_account}'). Both are needed to say which "
+                    f"ledger loses the lots and which receives them.")
+                continue
+
+            # Parsed here rather than through `_zufluss_date`: nothing flows on a move
+            # between one person's own accounts, and that helper's docstring names the
+            # three cash-flow callers it has. `Date` is the export's only date column
+            # besides `ReportDate` and a blank `SettleDate`.
+            parsed_date = parse_ibkr_date(rtr.date)
+            event_date = parsed_date.isoformat() if parsed_date else None
+            if not event_date:
+                data_errors.append(
+                    f"Transfer of {rtr.symbol or rtr.isin or 'unknown instrument'} "
+                    f"has an unparseable Date '{rtr.date}'. The move is applied in "
+                    f"chronological order, so it cannot be placed without one.")
+                continue
+
+            asset = self.asset_resolver.get_or_create_asset(
+                raw_isin=rtr.isin, raw_conid=rtr.conid, raw_symbol=rtr.symbol,
+                raw_currency=rtr.currency_primary,
+                raw_ibkr_asset_class=rtr.asset_class, raw_description=rtr.description,
+                description_source_type="transfer",
+                raw_multiplier=rtr.multiplier,
+            )
+
+            quantity = rtr.quantity.copy_abs()
+            if quantity <= Decimal(0):
+                data_errors.append(
+                    f"Transfer of {asset.get_classification_key()} on {event_date} moves "
+                    f"{rtr.quantity} units. A move of nothing is not a move, and reading "
+                    f"it as one would leave the holding where it was while the broker "
+                    f"reported it elsewhere.")
+                continue
+
+            key = (from_account.strip(), to_account.strip(),
+                   asset.internal_asset_id, event_date, quantity)
+            if key in moves:
+                continue
+            moves[key] = InternalTransferEvent(
+                asset_internal_id=asset.internal_asset_id,
+                event_date=event_date,
+                to_account_id=to_account.strip(),
+                quantity=quantity,
+                account_id=from_account.strip(),
+                ibkr_activity_description=rtr.description,
+            )
+
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} transfer record(s) have data integrity issues:\n  "
+                + "\n  ".join(data_errors)
+            )
+
+        logger.info(
+            f"Created {len(moves)} internal transfer event(s) from {len(raw_transfers)} "
+            f"raw transfer row(s) ({skipped_detail_rows} lot-detail row(s) collapsed "
+            f"into their summary rows)."
+        )
+        return list(moves.values())
 
     def create_events_from_options_eae(
         self, raw_records: List[RawOptionsEAERecord]

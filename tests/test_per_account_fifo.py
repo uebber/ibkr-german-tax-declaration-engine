@@ -284,23 +284,23 @@ class TestAdversarial(FifoTestCaseBase):
                 tax_year=TAX_YEAR,
             )
 
-    def test_a_transfer_between_accounts_stops_the_run_because_nothing_reads_it(self):
-        """The known limitation, pinned as behaviour rather than left to emerge.
-
-        A holds 100 units at the start of the year and B holds none. At the end
+    def test_a_move_the_input_does_not_record_still_stops_the_run(self):
+        """A holds 100 units at the start of the year and B holds none. At the end
         of the year the broker reports the position in B. Nothing was bought or
         sold: it was moved between the person's own accounts, which is not a
-        disposal ([GT-ESTG20-014]) -- and the export that records the move is not
-        read, so the engine cannot see it.
+        disposal ([GT-ESTG20-014]) -- and here the Transfers export is not supplied,
+        so nothing tells the engine that it happened.
 
-        Pooled, this was invisible AND harmless: the lots never left the pool.
-        Per Depot it is invisible and not harmless, so the run must stop. The
-        person's total is unchanged at 100, which is exactly why a person-level
-        check would let it through.
+        Pooled, this was invisible AND harmless: the lots never left the pool. Per
+        Depot it is invisible and not harmless, so the run must stop. The person's
+        total is unchanged at 100, which is exactly why a person-level check would
+        let it through.
 
-        This test exists to fail when the Transfers export is read: at that point
-        the move is applied, the reconciliation passes, and this scenario needs
-        rewriting into the one that asserts the lots relocated with their dates.
+        **What changed when the export became readable.** Supply the rows and this
+        same scenario completes, with the lots relocated carrying their date and
+        cost -- `test_internal_transfers.py` is where that is asserted. This one
+        keeps the other half: a move the input does not record must not be guessed
+        at from the snapshots, whatever the reason it is missing.
         """
         isin = "US000000TR01"
         with pytest.raises(DataGapError, match="EOY_RECONCILIATION_FAILED"):
@@ -377,16 +377,18 @@ class TestTheLimitationsAreStated(FifoTestCaseBase):
     still holds, and nothing in the input marks that it happened. A person who
     has moved nothing between accounts is told so in the text.
 
-    These assertions are meant to be deleted one at a time as each limitation is
-    closed — the securities half with the Transfers change, the currency half
-    after it.
+    The securities clause went with the change that reads the Transfers export and
+    relocates lots between accounts ([GT-ESTG20-014]). The currency clause is what
+    is left, and it takes this class with it when it goes.
     """
     ISIN = "US000000LM01"
 
-    def _run(self, accounts):
+    def _run(self, accounts, transfers_data=None, transfers_missing_years=""):
         return self._run_pipeline(
             trades_data=[trade_row(a, self.ISIN, "2025-03-01", "10", "20", "BUY", "O", f"T{i}")
                          for i, a in enumerate(accounts)],
+            transfers_data=transfers_data,
+            transfers_missing_years=transfers_missing_years,
             positions_start_data=[],
             positions_end_data=[position_row(a, self.ISIN, "10", "200", price="20")
                                 for a in accounts],
@@ -399,12 +401,81 @@ class TestTheLimitationsAreStated(FifoTestCaseBase):
                      if g.code == "MULTI_ACCOUNT_LIMITATIONS"), None)
 
     def test_two_accounts_are_told_what_is_not_covered(self):
-        gap = self._gap(self._run([A, B]))
+        gap = self._gap(self._run([A, B], transfers_data=[]))
         assert gap is not None, "a multi-account run must state its limitations"
-        assert "Überträge zwischen Ihren eigenen Konten werden nicht eingelesen" in gap.detail
-        assert "Fremdwährungsbestände werden weiterhin je Person geführt" in gap.detail
+        assert "Fremdwährungsbestände werden je Person geführt" in gap.detail
+
+    def test_the_closed_limitation_is_not_still_warned_about(self):
+        """A warning left standing after its limitation is closed is the same defect
+        as a comment asserting something false: the reader trusts it and works around
+        a problem that is gone. With the export supplied, the moves ARE read."""
+        gap = self._gap(self._run([A, B], transfers_data=[]))
+        assert "KEIN TRANSFERS-BERICHT" not in gap.detail
+        assert "NICHT BELASTBAR" not in gap.detail, \
+            "the securities figures no longer rest on what this warning covered"
+
+    def test_a_run_with_no_transfers_export_is_told_the_moves_are_invisible(self):
+        """The other half, and the one that matters more. Supplying no Transfers
+        export does not mean nothing moved — it means the engine cannot know. The
+        text must not tell that reader the moves were read and their figures are
+        unaffected, because that is the run where a move would be invisible and the
+        acquisition dates behind it invented.
+
+        Found by review: the wording was unconditional, so the reader who most
+        needed the caveat was told the opposite of the truth.
+        """
+        gap = self._gap(self._run([A, B]))
+        assert "KEIN TRANSFERS-BERICHT" in gap.detail
         assert "NICHT BELASTBAR" in gap.detail, \
             "the severity is only WARNING, so the text has to carry the weight"
+        assert "eingelesen; die Bestände" not in gap.detail, \
+            "it must not claim the moves were applied"
+
+    def test_a_transfers_export_with_a_year_missing_stops_the_run(self):
+        """A hole is not an absence. An export covering some years and not others means
+        the query exists and a year of it is simply missing — and a move in that year is
+        invisible, silently, in that year and every year after it. Exporting the year is
+        cheap; the acquisition date it protects is not recoverable afterwards.
+
+        Found by review as a wording defect, then decided by the taxpayer on 2026-08-12
+        to be a refusal rather than a caveat.
+        """
+        with pytest.raises(DataGapError) as excinfo:
+            self._run([A, B], transfers_data=[], transfers_missing_years="2025")
+        message = str(excinfo.value)
+        assert "TRANSFERS_WINDOW_INCOMPLETE" in message
+        assert "2025" in message, "the year to export is the reader's next action"
+
+    def test_no_transfers_export_at_all_is_a_warning_and_not_a_refusal(self):
+        """The other side of that decision, and the reason it is not simply "refuse".
+        Everyone who holds one account, and everyone who has never moved anything, has
+        no Transfers export — stopping them would be stopping them for nothing."""
+        gap = self._gap(self._run([A, B]))
+        assert gap is not None and "KEIN TRANSFERS-BERICHT" in gap.detail
+
+    def test_an_absent_export_stays_a_warning_even_if_years_are_reported_missing(self):
+        """The scoping condition, pinned rather than left to another module's
+        behaviour. `data_preparation` reports no missing years when there is no export
+        at all, so in production the two never arrive together — but the refusal is
+        scoped on "the export exists AND a year of it is missing", and a change over
+        there must not silently turn an absence into a refusal.
+
+        Found by probe: dropping the `transfers_file_supplied` condition left the
+        suite green.
+        """
+        gap = self._gap(self._run([A, B], transfers_missing_years="2025"))
+        assert gap is not None, "an absent export is a warning, not a refusal"
+        assert "KEIN TRANSFERS-BERICHT" in gap.detail
+
+    def test_a_single_account_is_never_refused_over_a_missing_year(self):
+        """A move between the taxpayer's own accounts needs two of them, so with one
+        account there is no per-Depot placement a missing year could get wrong.
+        Refusing there would stop a run for nothing.
+
+        Found by probe: dropping the two-account condition left the suite green.
+        """
+        out = self._run([A], transfers_data=[], transfers_missing_years="2025")
+        assert self._gap(out) is None, "one account gets no multi-account warning either"
 
     def test_one_account_is_told_nothing(self):
         """The warning must not reach the people it does not apply to — a report
@@ -435,10 +506,10 @@ class TestTheWarningReachesTheReader:
                                         LossOffsettingResult(), data_gaps=gaps)
         return buffer.getvalue().splitlines()
 
-    def _gap(self):
+    def _gap(self, detail="…"):
         from src.processing.data_gaps import DataGap, GapSeverity
         return DataGap(code="MULTI_ACCOUNT_LIMITATIONS", subject="2 Konten im Export",
-                       detail="…", severity=GapSeverity.WARNING)
+                       detail=detail, severity=GapSeverity.WARNING)
 
     def test_it_is_printed_before_the_figures(self):
         """A reader who stops at the number they came for must have passed it."""
@@ -446,6 +517,26 @@ class TestTheWarningReachesTheReader:
         banner = next(i for i, l in enumerate(lines) if "Mehrkonten-Unterstützung" in l)
         first_figure = next(i for i, l in enumerate(lines) if "Zeile 20" in l)
         assert banner < first_figure
+
+    def test_the_banner_does_not_contradict_the_gap_it_points_at(self):
+        """The banner is a pointer to the full wording, so the two must agree about
+        the one thing that decides how bad the run is. It reads the answer off the
+        gap's own detail rather than making its own claim.
+
+        It keys on "NICHT BELASTBAR", which the engine writes in the cautious variant
+        and only there. Keying on one variant's own wording was a defect while there
+        were two cautious variants: the second printed the reassuring banner over a
+        full wording that said the opposite. There is one cautious variant again now —
+        a partly exported window stops the run instead — and the marker is what keeps
+        the banner right if a third is ever added.
+        """
+        lines = "\n".join(self._lines([
+            self._gap("… ES WURDE KEIN TRANSFERS-BERICHT … NICHT BELASTBAR …")]))
+        assert "NICHT BELASTBAR" in lines
+        assert "nicht betroffen" not in lines
+        read = "\n".join(self._lines([self._gap("… Überträge werden eingelesen …")]))
+        assert "NICHT BELASTBAR" not in read
+        assert "nicht betroffen" in read
 
     def test_a_clean_run_prints_no_banner(self):
         assert not any("Mehrkonten-Unterstützung" in l for l in self._lines([]))
