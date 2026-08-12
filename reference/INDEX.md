@@ -14,6 +14,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 - [EStG 20 -- Kapitalvermoegen](tax-law/estg-20-kapitalvermoegen.md) -- Central statute for all capital income (dividends, gains, options, corporate actions). Also hosts 2 Abs. 1 and 25 Abs. 1/3, which fix the person and the Veranlagungszeitraum as the units of assessment [GT-ESTG20-061]
 - [EStG 20 Abs. 6 -- Verlustverrechnung](tax-law/estg-20-abs6-verlustverrechnung.md) -- Loss offsetting rules, stock ring-fencing, abolished derivative cap
+- [EStG 22 Nr. 3 -- Einkuenfte aus Leistungen](tax-law/estg-22-nr3-leistungen.md) -- The residual income type the order of enquiry at [GT-ESTG20-049] ends in: a benefit granted for placing capital is a Leistung, not Kapitalertrag [GT-ESTG20-063]; valuation and Zufluss of a benefit in kind [GT-ESTG20-064]; the amount taxed on receipt becomes the Anschaffungskosten [GT-ESTG20-065]
 - [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold and commodity ETCs), 1-year speculation period
 - [EStG 32d -- Abgeltungsteuer](tax-law/estg-32d-abgeltungsteuer.md) -- Flat tax rate (25%), Veranlagungspflicht (Abs. 3), foreign tax credit (Abs. 5), Guenstigerpruefung (Abs. 6)
 - [EStG 34d -- Auslaendische Einkuenfte](tax-law/estg-34d-auslaendische-einkuenfte.md) -- Schuldner-domicile test for foreign-source income; distinct from the Z18/Z19 form split

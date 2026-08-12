@@ -21,6 +21,7 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q9 | [GT-FX-007], [GT-FX-001] | Is a currency movement embedded in another transaction a separate disposal, measured in EUR? Two instances: the leg of a securities trade, and a balance spent on a fee or withholding. | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q11 | [GT-ESTG20-038] | How is unallocated spot precious metal held at a broker taxed -- Termingeschaeft, privates Veraeusserungsgeschaeft, or sonstige Kapitalforderung? | this file |
 | Q15 | [GT-FX-010] | Rz. 131 makes an Umbuchung between two foreign-currency accounts a Veraeusserung. What is the Veraeusserungspreis, when nothing is paid? | `../bmf-guidance/fremdwaehrung-konten.md` |
+| Q16 | [GT-ESTG20-065] | Does a benefit in kind left untaxed by the Freigrenze of § 22 Nr. 3 Satz 2 still supply Anschaffungskosten at its full value on the later disposal? | this file |
 
 **Retired on the same terms, and for the same reason -- a source that settles the point was found,
 or the point was never one.** Numbers are never reused. Each line says what answered it; the
@@ -266,6 +267,32 @@ operate on the taxpayer's total income of their kind from every source, so neith
 weigh a reading. Nor is the practice of brokers and the firms preparing their reports, which enter
 such amounts on Anlage KAP; that is habit, not authority, and it is the likeliest source of a wrong
 answer here.
+
+## Q16 -- Anschaffungskosten from a receipt the Freigrenze left untaxed
+
+**What is settled.** A benefit in kind granted for placing capital is a Leistung under § 22 Nr. 3
+([GT-ESTG20-063]), valued at the ueblicher Endpreis on the day of Zufluss ([GT-ESTG20-064]), and
+the amount brought to tax is the Anschaffungskosten of the securities received ([GT-ESTG20-065]).
+**What no located Tier 1 or Tier 2 source settles is what happens when Satz 2's Freigrenze means
+no amount is brought to tax at all** -- because the year's Leistungen together stayed below
+256 Euro.
+
+**Reading A (full value regardless).** The Freigrenze exempts the *Einkuenfte*; it does not say the
+receipt was worth nothing. § 20 Abs. 4 Satz 1 measures a later gain against the Anschaffungskosten,
+and what was acquired had a value, ascertained under § 8 Abs. 2 on the day it accrued. On this
+reading the exemption is a relief on the receipt and leaves the acquisition side untouched.
+**Against it:** nothing located states it for a receipt that never entered an assessment.
+
+**Reading B (no taxed amount, no Anschaffungskosten).** [GT-ESTG20-065]'s ground is that taxing the
+receipt and then the whole disposal proceeds would tax one accretion twice. Where the Freigrenze
+means the receipt was never taxed, that ground does not arise, and the acquisition is unentgeltlich
+in substance. On this reading the whole disposal proceeds are the gain.
+**Against it:** it makes the Anschaffungskosten of an asset depend on the taxpayer's *other*
+Leistungen in the year of receipt, which no provision located ties together.
+
+**Why it is open rather than decided.** The two readings diverge only in a year whose Leistungen
+total stayed below the Freigrenze, and neither § 22 Nr. 3, § 8 nor § 20 Abs. 4 addresses the
+interaction. The Freigrenze itself is recorded at [GT-ESTG23-009].
 
 ## Q15 -- what a currency Umbuchung between the taxpayer's own accounts is worth
 
