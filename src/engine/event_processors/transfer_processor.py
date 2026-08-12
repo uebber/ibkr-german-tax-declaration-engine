@@ -135,17 +135,19 @@ class InternalCashTransferProcessor(EventProcessor):
     sending account's Kapitalforderung and an Anschaffung of the receiving account's, so
     it realises the currency movement accrued up to that day ([GT-FX-009]).
 
-    **What the two legs are worth.** Both are the gemeiner Wert of the Kapitalforderung
-    received, which for an equal amount of one currency is the amount moved
-    ([GT-FX-010]); § 20 Abs. 4 Satz 1 zweiter Halbsatz converts it at the day of the move
-    ([GT-ESTG20-022]). So the sending account disposes at that EUR value and the
-    receiving account acquires at it -- one rate, both sides, no gain created or
-    destroyed by the conversion itself.
+    **What the two legs are worth is NOT settled law, and this code takes a side.**
+    [GT-FX-010] is an open question, not a rule: no Tier 1 or Tier 2 source values an
+    Umbuchung. Reading A is applied -- both legs are the gemeiner Wert of the
+    Kapitalforderung received, which for an equal amount of one currency is the amount
+    moved, converted at the day of the move (§ 20 Abs. 4 Satz 1 zweiter Halbsatz,
+    [GT-ESTG20-022]). So the sending account disposes at that EUR value and the receiving
+    account acquires at it -- one rate, both sides, no gain created or destroyed by the
+    conversion itself. Reading B, and why it is the weaker, are in the store beside the
+    question; the map records the choice and the reason against [GT-FX-010].
 
-    That valuation is an **extension** of a principle the administration states only for
-    cases it does not name here; Q15 in the store carries both readings, and the map
-    records which was taken. It is not a substituted input: the amount and the date are
-    both in the export, so nothing about the figure is invented.
+    It is a choice between two readings, not a substituted input: the amount and the date
+    are both in the export, so nothing about the figure is invented. What is uncertain is
+    the law, not the data.
     """
 
     def process(self, event: FinancialEvent, ledger: FifoLedger,

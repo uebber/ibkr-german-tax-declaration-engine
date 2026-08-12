@@ -185,50 +185,11 @@ the position taken is recorded in the map.
 account belonging to somebody else is a different question, on which this Randziffer says
 nothing.
 
-#### [GT-FX-010] What the Umbuchung is worth
-
-**The Veraeusserungspreis of the balance given up, and the Anschaffungskosten of the balance
-acquired, are the gemeiner Wert of the Kapitalforderung received.** For an equal amount of one
-currency that is the amount moved. Each leg is converted on its own day under § 20 Abs. 4 Satz 1
-zweiter Halbsatz ([GT-ESTG20-022]): the proceeds on the day of the Umbuchung, the acquisition cost
-on the day the amount originally entered the sending account.
-
-**This is an extension, and is recorded as one.** [GT-FX-009] settles *that* the Umbuchung is a
-Veraeusserung. Neither Tier 1 nor Tier 2 states what it is worth:
-
-- **Tier 1 does not supply a value.** § 20 Abs. 4 EStG has nine Saetze (enumerated in
-  `../tax-law/estg-20-kapitalvermoegen.md` under [GT-ESTG20-011]). The only two that substitute a
-  value where there are no Einnahmen are Satz 2, *"In den Faellen der verdeckten Einlage tritt an
-  die Stelle der Einnahmen aus der Veraeusserung der Wirtschaftsgueter ihr gemeiner Wert"*, and
-  Satz 8, on a Zinsschein separated from the Stammrecht. Neither reaches a move between one
-  person's own currency accounts. Retrieved 2026-08-12 from
-  gesetze-im-internet.de/estg/__20.html.
-- **Tier 2 states the principle three times, never for this case.** BMF 14.05.2025, retrieved and
-  read 2026-08-12:
-  - **Rn. 65:** *"Als Veraeusserungserloes fuer die hingegebenen Wertpapiere ist der Boersenkurs
-    der erlangten Wertpapiere am Tag der Depoteinbuchung anzusetzen."* **Rn. 66** is its mirror:
-    *"Als Anschaffungskosten der erlangten Wertpapiere ist der Boersenkurs der hingegebenen
-    Wertpapiere im Zeitpunkt der Depotausbuchung anzusetzen."* Both are addressed to a Tausch von
-    Wertpapieren.
-  - **Rn. 66a:** the same pair for an Umschuldung on the debtor's initiative.
-  - **Rn. 69:** *"Wird die Gegenleistung nicht in Geld geleistet (z. B. Lieferung eigener Aktien
-    des Uebernehmenden), ist als Veraeusserungspreis der gemeine Wert der erhaltenen
-    Wirtschaftsgueter anzusetzen."* Addressed to the Abfindung of Minderheitsaktionaere.
-
-  A Fremdwaehrungsguthaben is not a Wertpapier and an Umbuchung is neither of the other two, so
-  none of the three names this case. What they establish is that where a disposal's consideration
-  is not money, the administration measures it at the value of what is received -- stated for
-  every configuration it addresses, and never contradicted.
-
-**The competing reading, and why it is weaker.** One could hold that a Veraeusserung whose price
-no source states is simply not measurable, so nothing is realised until the balance is genuinely
-spent or converted. That reading empties Rz. 131's express *"Veraeusserung der urspruenglichen
-Kapitalforderung"* of effect, and no located source advances it. Both readings and their authority
-are in `../research/open-legal-questions.md` **Q15**; which one is applied is an implementation
-decision and is recorded against this claim ID in the map, not here.
-
-**No exchange-rate source is prescribed.** [GT-ESTG20-022] records that no Tier 1 or Tier 2 source
-names one for the Veranlagung; that gap is this claim's too, and it is not enlarged by it.
+**Not decided here: what the Umbuchung is worth.** Rz. 131 says the Vorgang *is* a Veraeusserung
+and an Anschaffung; it puts no figure on either. No Tier 1 or Tier 2 source deciding it has been
+located -- see **[GT-FX-010]** under Open questions below, and
+`../research/open-legal-questions.md` **Q15**. The same shape as the cash-flow debit under
+[GT-FX-001]: the Randziffer settles the event and not its measurement.
 
 ### [GT-FX-002] Non-interest-bearing accounts -> 23 Abs. 1 Satz 1 Nr. 2 EStG
 
@@ -351,3 +312,58 @@ What the retrieved circular does establish, and what it does not:
 **No Tier 1 or Tier 2 source deciding the point has been located.** Separate measurement remains
 the conservative reading -- it cannot understate income -- but it is now recorded as reasoned,
 not sourced. Registered in `../research/open-legal-questions.md` Q9.
+
+### [GT-FX-010] What is the Veraeusserungspreis of an Umbuchung, when nothing is paid?
+
+[GT-FX-009] settles *that* moving a foreign-currency balance to another of the taxpayer's
+accounts is a Veraeusserung of one Kapitalforderung and an Anschaffung of another. **What no
+located source states is what either leg is worth**, and an Umbuchung pays nothing.
+
+**Reading A -- the gemeiner Wert of the Kapitalforderung received**, which for an equal amount of
+one currency is the amount moved, each leg converted on its own day under § 20 Abs. 4 Satz 1
+zweiter Halbsatz ([GT-ESTG20-022]). Its support is a principle the administration states for every
+configuration it addresses and never for this one:
+
+- **Tier 1 does not supply a value.** § 20 Abs. 4 EStG has nine Saetze (enumerated in
+  `../tax-law/estg-20-kapitalvermoegen.md` under [GT-ESTG20-011]). The only two that substitute a
+  value where there are no Einnahmen are Satz 2, *"In den Faellen der verdeckten Einlage tritt an
+  die Stelle der Einnahmen aus der Veraeusserung der Wirtschaftsgueter ihr gemeiner Wert"*, and
+  Satz 8, on a Zinsschein separated from the Stammrecht. Neither reaches a move between one
+  person's own currency accounts. Retrieved 2026-08-12 from
+  gesetze-im-internet.de/estg/__20.html.
+- **Tier 2 states the principle three times, never for this case.** BMF 14.05.2025, retrieved and
+  read 2026-08-12:
+  - **Rn. 65:** *"Als Veraeusserungserloes fuer die hingegebenen Wertpapiere ist der Boersenkurs
+    der erlangten Wertpapiere am Tag der Depoteinbuchung anzusetzen."* **Rn. 66** is its mirror:
+    *"Als Anschaffungskosten der erlangten Wertpapiere ist der Boersenkurs der hingegebenen
+    Wertpapiere im Zeitpunkt der Depotausbuchung anzusetzen."* Both are addressed to a Tausch von
+    Wertpapieren.
+  - **Rn. 66a:** the same pair for an Umschuldung on the debtor's initiative.
+  - **Rn. 69:** *"Wird die Gegenleistung nicht in Geld geleistet (z. B. Lieferung eigener Aktien
+    des Uebernehmenden), ist als Veraeusserungspreis der gemeine Wert der erhaltenen
+    Wirtschaftsgueter anzusetzen."* Addressed to the Abfindung of Minderheitsaktionaere.
+
+  A Fremdwaehrungsguthaben is not a Wertpapier and an Umbuchung is neither of the other two, so
+  none of the three names this case. What they establish is that where a disposal's consideration
+  is not money, the administration measures it at the value of what is received -- stated for
+  every configuration it addresses, and never contradicted.
+
+**Reading B -- no stated price, so nothing realised.** § 20 Abs. 4 EStG substitutes a value for
+absent Einnahmen in exactly two places, and the legislature having named those two is an argument
+that it intended no general gemeiner-Wert rule. On this reading the gain stays latent in the moved
+balance until it is genuinely spent or converted. **Against it:** it empties Rz. 131's express
+*"Veraeusserung der urspruenglichen Kapitalforderung"* of effect, and no located source advances
+it. It is written down because the alternative to Reading A has to be, not because a source was
+found for it.
+
+**What turns on the answer.** The two agree on the lifetime total where the balance is eventually
+disposed of in full. They differ on **which year** the gain falls in, on whether a balance that is
+moved and then simply held is taxed at all, and -- on the § 23 branch ([GT-FX-002]) -- on whether
+the Jahresfrist restarts at the move.
+
+**Which reading is applied is an implementation decision** and is recorded against this claim ID in
+`../../docs/legal-implementation-map.md`, not here. Both readings are also in
+`../research/open-legal-questions.md` **Q15**.
+
+**No exchange-rate source is prescribed.** [GT-ESTG20-022] records that no Tier 1 or Tier 2 source
+names one for the Veranlagung; that gap is this claim's too, and it is not enlarged by it.
