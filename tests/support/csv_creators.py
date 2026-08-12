@@ -10,6 +10,7 @@ from src.parsers.column_validator import (
     POSITIONS_COLUMNS,
     CORPORATE_ACTIONS_COLUMNS,
     CASH_BALANCE_COLUMNS,
+    TRANSFERS_COLUMNS,
 )
 
 def create_csv_string(headers: List[str], data_rows: List[List[Union[str, Decimal, int, float, None]]]) -> str:
@@ -42,6 +43,7 @@ POSITIONS_FILE_HEADERS = list(POSITIONS_COLUMNS)
 CASH_TRANSACTIONS_HEADERS = list(CASH_TRANSACTIONS_COLUMNS)
 CORPORATE_ACTIONS_HEADERS = list(CORPORATE_ACTIONS_COLUMNS)
 CASH_BALANCE_HEADERS = list(CASH_BALANCE_COLUMNS)
+TRANSFERS_FILE_HEADERS = list(TRANSFERS_COLUMNS)
 
 def create_trades_csv_string(data_rows: List[List[Any]]) -> str:
     return create_csv_string(TRADES_FILE_HEADERS, data_rows)
@@ -57,3 +59,6 @@ def create_corporate_actions_csv_string(data_rows: List[List[Any]]) -> str:
 
 def create_cash_balance_csv_string(data_rows: List[List[Any]]) -> str:
     return create_csv_string(CASH_BALANCE_HEADERS, data_rows)
+
+def create_transfers_csv_string(data_rows: List[List[Any]]) -> str:
+    return create_csv_string(TRANSFERS_FILE_HEADERS, data_rows)

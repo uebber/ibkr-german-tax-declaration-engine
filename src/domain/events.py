@@ -69,6 +69,18 @@ class FinancialEvent:
     # Corresponding amounts in EUR after conversion (populated by enrichment step)
     gross_amount_eur: Optional[Decimal] = None
 
+    # The custody account this event belongs to, as the broker reported it
+    # (`ClientAccountID`). `None` where the source row carried none -- older exports, and
+    # every event the engine synthesises after parsing -- and `account_key()` collapses
+    # that to a single DEFAULT account, so a single-account run behaves exactly as before.
+    #
+    # It is here because FIFO is applied per Depot: BMF 14.05.2025 Rz. 97 Satz 2,
+    # [GT-ESTG20-013], with Q2's "each sub-account is its own Depot" reading recorded in
+    # docs/legal-implementation-map.md. A disposal must consume the lots of the account it
+    # was made from, so the ledger key has to reach the account and the event is what
+    # carries it there.
+    account_id: Optional[str] = None
+
     # IBKR specific identifiers for tracing back to reports
     ibkr_transaction_id: Optional[str] = None # From Trades, Cash Transactions etc.
     ibkr_activity_description: Optional[str] = None # From Cash Transactions "Description" or Trades "Description"
@@ -433,6 +445,63 @@ class CurrencyConversionEvent(FinancialEvent):
         if self.local_currency is None:
             self.local_currency = to_currency
         # gross_amount_eur will be populated by the enrichment step based on to_amount and to_currency (if to_currency is not EUR).
+
+    def __post_init__(self):
+        super().__post_init__()
+
+
+@dataclass
+class InternalTransferEvent(FinancialEvent):
+    """A holding moved from one of the taxpayer's own accounts to another.
+
+    **Not a disposal** -- no change of beneficial owner and no consideration, so
+    acquisition date and acquisition cost carry over and the lots RELOCATE between the
+    two accounts' ledgers rather than being closed and reopened ([GT-ESTG20-014];
+    reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 2"). It therefore realises
+    nothing: no proceeds, no cost, no amount of any kind, which is why this event carries
+    none.
+
+    `account_id` (from `FinancialEvent`) is the SENDING account and `to_account_id` the
+    receiving one -- the same convention as every other event, where `account_id` is the
+    account whose ledger the event acts on first.
+
+    `quantity` is the number of units moved, always positive. The export's sign carries
+    neither the direction nor long-versus-short (see `RawTransferRecord`); whether the
+    units are long or short is read from the sending ledger when the move is applied.
+
+    **`ibkr_transaction_id` is deliberately left unset.** The export records each move
+    once per side and the two sides carry different ids, so neither names the move. It
+    would also decide more than identity: `get_event_sort_key` places
+    `ibkr_transaction_id` ahead of the intra-day band, so an id here would let a broker's
+    string decide whether the move lands before or after the same day's trades. That
+    order is fixed deliberately in `sorting_utils.py` instead.
+    """
+    _: KW_ONLY
+    to_account_id: str
+    quantity: Decimal
+
+    def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
+                 to_account_id: str, quantity: Decimal,
+                 **kwargs_for_parent_kw_only):
+        super().__init__(asset_internal_id, event_date,
+                         event_type=FinancialEventType.INTERNAL_TRANSFER,
+                         **kwargs_for_parent_kw_only)
+        self.to_account_id = to_account_id
+        self.quantity = quantity
+        # Checked here and not in `__post_init__`: the parent's generated `__init__`
+        # calls `__post_init__` before the two lines above have run, so neither field
+        # exists yet at that point.
+        if quantity is None or quantity <= Decimal(0):
+            raise ValueError(
+                f"InternalTransferEvent quantity must be positive, got {quantity}. "
+                f"The export's sign does not carry the direction; callers pass the "
+                f"absolute quantity and the direction separately."
+            )
+        if not to_account_id or not str(to_account_id).strip():
+            raise ValueError(
+                "InternalTransferEvent requires a receiving account. Without it the "
+                "units have nowhere to go and would be lost rather than relocated."
+            )
 
     def __post_init__(self):
         super().__post_init__()

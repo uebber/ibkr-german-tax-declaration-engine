@@ -92,6 +92,34 @@ def generate_console_tax_report(
     logger.info(f"Generating console tax declaration summary for tax year {tax_year}...")
     print(f"\n--- Tax Declaration Summary for Year {tax_year} (All amounts in EUR) ---")
     print("--- Figures for direct entry into German tax forms (as per PRD v3.2.2) ---")
+
+    # Ahead of the figures, not only among the gaps at the end: a reader who stops at
+    # the number they came for must still meet the reason it may not be one they can
+    # use. Printed only when a multi-account limitation was recorded, so a
+    # single-account run is unchanged.
+    for gap in (data_gaps or []):
+        if gap.code == "MULTI_ACCOUNT_LIMITATIONS":
+            print("\n" + "!" * 80)
+            print(f"  ACHTUNG -- {gap.subject}. Mehrkonten-Unterstützung ist unvollständig:")
+            # The banner is a pointer to the gap's own text and must not contradict it.
+            # Whether the Transfers export covers the window decides how bad this run is,
+            # and the engine has already decided that when it wrote the detail -- so the
+            # banner reads the answer off there rather than making its own claim.
+            #
+            # The marker is "NICHT BELASTBAR", which the engine writes in the cautious
+            # variant and only there. Keying on the absent-export wording instead was a
+            # defect: it missed the partly-exported window, so the banner reassured a
+            # reader whose full wording three screens down did not.
+            if "NICHT BELASTBAR" in gap.detail:
+                print("  Der Transfers-Bericht deckt nicht jedes Jahr ab: ein Übertrag")
+                print("  zwischen Ihren Konten wäre dort unsichtbar, und die Zahlen unten")
+                print("  wären dann NICHT BELASTBAR. Fremdwährung wird je Person geführt.")
+            else:
+                print("  Fremdwährung wird je Person geführt statt je Konto. Die")
+                print("  Wertpapier-Zahlen unten sind davon nicht betroffen.")
+            print("  Vollständiger Wortlaut: Abschnitt 'DATENLÜCKEN / HINWEISE' am Ende.")
+            print("!" * 80)
+            break
     
     tax_year_start_date = parse_ibkr_date(f"{tax_year}-01-01")
     tax_year_end_date = parse_ibkr_date(f"{tax_year}-12-31")

@@ -176,8 +176,9 @@ what survived. Keep it current for that reason.
 | GT-ESTG20-023 | implements | derivative close/expiry/settlement paths in `src/engine/event_processors/` | `test_options_lifecycle.py`, `test_futures.py` | Abs. 4 Satz 5 — Differenzausgleich less directly related costs, and the same Satz governs a worthless expiry (BMF Rz. 27). Newly stated in the store; the engine already computed derivative results this way, but the store had only the Abs. 4 Satz 1 formula. |
 | GT-ESTG20-024 | out of scope | — | — | Sparer-Pauschbetrag (Abs. 9). Applied by the Finanzamt; the engine reports gross figures and has no representation of Zeilen 16/17. The Satz 1 exclusion of actual Werbungskosten is nonetheless why only directly-related disposal costs reduce a gain — that part *is* how the engine computes. |
 | GT-ESTG20-012 | implements | `src/engine/fifo_manager.py` — FIFO lot consumption; `reconcile_with_mark` decides which lots survive each checkpoint | `test_fifo_groups.py`, `test_replay_checkpoint_marks.py`, `tests/docs/spec_fifo.md` | Mandatory fiction; no specific-identification alternative is offered. Which lots a reconciliation keeps is part of it: where the reconstruction exceeds the reported holding the survivors are the **newest**, because FIFO consumed the oldest. Filling from the oldest end (the behaviour before August 2026) returned the wrong lot whenever a ledger held more than one, and the oversell flag previously discarded even an exactly-matching reconstruction. |
-| GT-ESTG20-013 | **deviates** | `src/engine/ledger_views.py`, `src/utils/account_utils.py` | `test_ledger_views.py`, `test_multi_account_harness.py` | See below. |
-| GT-ESTG20-014 | not reached | — | — | Own-depot transfer is not a disposal. No input represents one; a per-depot implementation would have to relocate lots rather than close and reopen them. |
+| GT-ESTG20-013 | implements | `src/engine/calculation_engine.py` (one ledger per `(account, asset)`; the dispatch, the mark reconciliation and the end-of-year check all keyed by account), `src/engine/ledger_views.py`, `src/utils/account_utils.py` | `test_per_account_fifo.py`, `test_ledger_views.py`, `test_multi_account_harness.py` | See below for Q2's chosen reading and what this does **not** cover. |
+| GT-ESTG20-061 | implements | `src/parsers/parsing_orchestrator.py` (per-account snapshot records, person total derived by summation), `src/engine/calculation_engine.py` | `test_per_account_fifo.py::TestTheSaleConsumesItsOwnAccount::test_the_person_still_declares_the_total_of_both_accounts` and `::TestAdversarial::test_an_account_that_only_appears_in_the_snapshot_still_gets_a_ledger`, `test_multi_account_harness.py::test_position_rows_per_account` | **Closed 2026-08-12.** The taxable subject is the person (§ 2 Abs. 1 S. 1 Nr. 5, § 25 Abs. 1 EStG), so what is declared is the total across that person's accounts. Each snapshot row is now recorded under its own `(account, asset)` and the record on `Asset` is the SUM of those rows, so the per-account holding and the person's total both exist and cannot disagree. Before this the last row read won and every ledger was keyed `DEFAULT_ACCOUNT`, so one was discarded and the other never formed. Incidence measured against a real two-account export before the work and re-measured after it: currencies are held in both accounts, which is where the summation moves a declared figure today, and no instrument is, so the securities half of the claim is correct-but-latent on that data. The counts are in `VALIDATION_REPORT.md`. Independent of Q2, which governs which lot a sale consumes, not whose holding is declared. |
+| GT-ESTG20-014 | implements | `src/parsers/transfers_parser.py` + `RawTransferRecord` (reading the export), `DomainEventFactory.create_events_from_transfers` (collapsing its rows into one move each), `src/engine/event_processors/transfer_processor.py` (`apply_internal_transfer`, called by the historical replay and by the tax-year dispatch), `FifoLedger.receive_all_lots_from_transfer` | `test_internal_transfers.py`, `test_transfers_parser.py` | **Closed 2026-08-12.** The lots relocate between the two accounts' queues carrying acquisition date, cost basis, accumulated Vorabpauschale and `acquisition_date_is_known`; the lot objects are not rebuilt, so nothing can be lost in the copy. No `RealizedGainLoss` is produced — the move declares nothing. **What is not covered, and refuses rather than guesses:** a move of PART of a position, because `TransferPrice` is zero on every row of the standard export and nothing else says which lots moved (`INTERNAL_TRANSFER_PARTIAL`, FAIL_FAST); a transfer whose `Type` is not `INTERNAL`; and a transfer naming an account the input reports nowhere else (`TRANSFER_COUNTERPARTY_UNKNOWN`, FAIL_FAST) — the claim reaches the taxpayer's **own** depots, and IBKR's `INTERNAL` means the counterparty is an IBKR account rather than that it is theirs, so the ownership test is made from the input instead. **What the claim rests on being complete:** a Transfers export covering every year the engine replays. A year not exported is a year in which a move is invisible, so a window with a hole stops the run naming the missing years (`TRANSFERS_WINDOW_INCOMPLETE`, FAIL_FAST) — the export existing for other years means the query exists and the year is simply absent. An export absent for every year stays a warning: that is the ordinary state of anyone holding one account or having never moved anything. Cash rows are read and produce nothing, because currency is still one balance per person, so a move within that person changes nothing in it — whether each account's balance is its own Kapitalforderung is a § 20 Abs. 2 Nr. 3 question this claim does not reach, and the store does not yet answer it. |
 | GT-ESTG20-039 | implements | `DomainEventFactory._trade_contract_date()` in `src/parsers/domain_event_factory.py`, feeding `FinancialEvent.event_date` | `test_trade_event_date.py` — the rule, the signature, the absent-date case, and the wiring through `create_events_from_trades` | Rn. 85: the obligatorisches Rechtsgeschäft fixes the FX rate and the gain computation, so the trade date governs and settlement does not. **By rule since 2026-08-07**, not by fallback: the trade path has its own helper, which takes no settlement or report parameter, and `RawTradeRecord` no longer declares a settlement field. Previously the trades path used the general helper, which orders settlement first, and was right only because IBKR's Trades export omits `SettleDateTarget` — measured that day, 0 of 6,976 rows across `Trades-2021.csv`…`Trades-2025.csv`. |
 | GT-ESTG20-040 | implements | as above | as above. The § 23 tests (`test_section23_holding_period.py`, `test_section23_holding_period_guards.py`) build lots directly and do not reach the parser's choice of date, which is why `test_trade_event_date.py` exists | Rn. 317 defines *Erwerb* as the rechtswirksam abgeschlossener obligatorischer Vertrag; BFH IX R 18/13 (BStBl II 2014, 826, Rz 29) is to the same effect for § 23 and does not stand alone. Acquisition dates are therefore trade dates, which is what the ledger holds. The claim reaches past the Vorabpauschale: it also fixes the § 23 Jahresfrist and the month for § 18 Abs. 2. |
 | GT-ESTG20-041 | implements | `FifoLedger.receive_all_lots_from_merger()` in `src/engine/fifo_manager.py` carries `acquisition_date` across to the replacement lots | `test_stock_merger_fifo.py` asserts the carry-over (four separate assertions on the surviving lot's `acquisition_date`) | Rn. 184a: a steuerneutrale Fondsverschmelzung restates the count *"unter Berücksichtigung des Umtauschverhältnisses"* and does not create a new Anschaffungszeitpunkt. **What the guarding test does not cover:** every case it exercises is a stock merger. The path is shared, but no test merges an `InvestmentFund`, so the § 18 Abs. 2 consequence — a merged fund keeping its acquisition month — is unguarded. The per-acquisition half of Rn. 184a is what grounds GT-INVSTG-011. |
@@ -203,17 +204,52 @@ field closes the second route; the validator closes the first.
 > it did not update the row. Both are the same failure: writing about code from what it looks like
 > it does rather than from what it does.
 
-**GT-ESTG20-013 — known deviation.** The ledger registries are keyed by `(account_key, asset_id)`,
-but every write uses a single `DEFAULT_ACCOUNT` constant and no account identifier is read
-anywhere in `src/engine/`, `src/domain/` or `src/processing/`. The key is a seam; FIFO is pooled
-across accounts. **This deviates from BMF Rz. 97 Satz 2.** It has no effect where the input covers
-a single depot, because per-depot and pooled FIFO coincide then. For a taxpayer holding one ISIN
-in two accounts the pooled result is wrong.
+**GT-ESTG20-013 — implemented 2026-08-12.** Every row the engine reads carries its
+`ClientAccountID` through to the ledger key, so a disposal consumes the lots of the account it was
+made from. The mark and opening-snapshot reconciliations compare each account's ledger against
+that account's own row, and the end-of-year check runs per account — a reconstruction too high in
+one account and too low in another agrees with the broker on the person's total, which is what a
+person-level check would have passed. Red-first: the 13 lot-selection scenarios in
+`test_per_account_fifo.py` **as that change wrote them** give 9 failed / 4 passed against
+`origin/main`'s `src/`, and all 13 pass with it. The measurement is against that tree and not the
+final one, and it cannot be repeated against the final one: the harness later grew a Transfers
+writer, so the test file no longer imports against `origin/main` at all. The number was written
+here as "measured on the final tree" until a review caught it.
 
-**Open question Q2 — reading chosen: not reached.** Whether the *"einzelnes Depot"* boundary
-transposes to a foreign broker's sub-accounts is unresolved, and the engine is account-agnostic,
-so it does not take a position either way. The deviation above is separate from, and prior to,
-that question: pooling is wrong under both readings.
+**Open question Q2 — Reading A, chosen by the taxpayer on 2026-08-11.** Whether the *"einzelnes
+Depot"* boundary of Rz. 97 Satz 2 transposes to a foreign broker's sub-accounts is not settled by
+any Tier 1 or Tier 2 source; both readings stay open in
+`reference/research/open-legal-questions.md`. Reading A — each IBKR sub-account under a
+`ClientAccountID` is its own Depot — is what the engine now implements. The evidence for the
+conditions this had to meet: Rz. 98 counts a Unterdepot as a Depot, so the finest identifier the
+broker reports is the natural unit; the alternative (one Depot per broker relationship) would
+require pooling accounts the broker itself keeps apart. The choice is recorded here rather than in
+`reference/`, per `docs/knowledge-store.md:87`.
+
+**What this did not cover, and what closed it — measured on real data 2026-08-12.** Per-Depot lot
+tracking needs to know where the units are, and a move between the taxpayer's own accounts was
+invisible to the engine, because nothing read the Transfers export. Under per-account ledgers such
+a move read as a loss in one account and an unexplained gain in the other at the next checkpoint,
+so the reconstruction was discarded on both sides and replaced by lots carrying the broker's
+quantity and an invented acquisition date. **The end-of-year reconciliation passed** — it compares
+quantities, and the quantities were the broker's — so nothing downstream objected.
+
+**The engine was not protecting anyone there, and an earlier wording of this block claimed it
+was.** On the export measured the run did stop, but only because one holding is an Investmentfonds
+and § 18 Abs. 2 refuses an invented month. Patching that one refusal showed what was behind it:
+the run completed and **eight** declared figures moved against `origin/main`, five of them off
+re-dated lots. A portfolio with no fund would have declared them without stopping. The refusal was
+a property of the fund path, not of this change.
+
+The effect reached every assessment year from the move onwards, not only the year of the move: the
+historical replay spans the whole window, so a transfer in an early year re-dates lots that later
+years still hold.
+
+**Closed 2026-08-12 by the change that reads the Transfers export and relocates lots between
+account queues ([GT-ESTG20-014] below).** On the same real export, a VZ 2025 run now completes
+rather than aborting; every move is applied, both accounts reconcile against the broker without a
+synthesised lot, and the eight moved figures reduce to the three the per-account snapshot
+summation accounts for. Figures and per-instrument detail are in `VALIDATION_REPORT.md`.
 
 ### Abs. 4a — corporate actions
 
