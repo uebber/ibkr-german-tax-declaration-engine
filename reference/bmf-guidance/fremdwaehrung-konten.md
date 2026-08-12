@@ -3,9 +3,14 @@
 ## Source
 
 - **Legal basis (Tier 1):** 20 Abs. 2 Satz 1 Nr. 7 EStG (interest-bearing) /
-  23 Abs. 1 Satz 1 Nr. 2 EStG (non-interest-bearing)
+  23 Abs. 1 Satz 1 Nr. 2 EStG (non-interest-bearing); **20 Abs. 4 EStG** for the gain, all nine
+  Saetze retrieved and read 2026-08-12 from
+  [gesetze-im-internet.de/estg/__20.html](https://www.gesetze-im-internet.de/estg/__20.html) --
+  see [GT-FX-010], which turns on what those Saetze do *not* contain
 - **Controlling administrative source (Tier 2): BMF-Schreiben "Einzelfragen zur Abgeltungsteuer"
-  vom 14.05.2025, GZ IV C 1 - S 2252/00075/016/070, Rz. 131** --
+  vom 14.05.2025, GZ IV C 1 - S 2252/00075/016/070, Rz. 131**; **Rn. 59** (Veraeusserungsbegriff,
+  cross-referenced by Rz. 131), and **Rn. 65, 66, 66a and 69** (what a disposal is worth where the
+  consideration is not money), all four retrieved and read **2026-08-12** from the same document --
   [BMF PDF](https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Abgeltungsteuer/2025-05-14-einzelfragen-zur-abgeltungsteuer.pdf?__blob=publicationFile&v=2),
   **retrieved and read in full 2026-08-03**. A Neufassung superseding BMF 19.05.2022
   (BStBl I S. 742); see [abgeltungsteuer-einzelfragen.md](abgeltungsteuer-einzelfragen.md) for the
@@ -135,6 +140,95 @@ is the same, which is worth knowing because the classification itself is unsettl
 > conclusion (FIFO) was right; the grounding was a provision that does not apply. Both real
 > anchors -- Rz. 131 for § 20, § 23 Abs. 1 Satz 1 Nr. 2 Satz 3 for § 23 -- were absent from the
 > library until this audit. Validation Protocol items 1 and 2.
+
+#### [GT-FX-009] One account, one Kapitalforderung
+
+**Each foreign-currency account balance is a Kapitalforderung of its own.** Two accounts holding
+the same currency hold two of them, not one pooled amount.
+
+Rz. 131, second paragraph, in terms: *"Das Gleiche gilt, wenn die Fremdwaehrungskapitalforderung
+nach Faelligkeit erneut verzinslich angelegt wird oder auf ein anderes verzinsliches Konto **bei
+demselben oder einem anderen Kreditinstitut** umgebucht wird. Diese Vorgaenge stellen steuerlich
+eine Veraeusserung der urspruenglichen Kapitalforderung und zugleich eine Anschaffung einer neuen
+Kapitalforderung dar."*
+
+Two consequences, and the second follows from the first:
+
+- **A move between two such accounts is a disposal of the first balance and an acquisition of a
+  second.** *"Bei demselben ... Kreditinstitut"* settles that the two accounts need not be at
+  different institutions, which is the case that arises where one person holds several accounts
+  with one broker.
+- **The Kapitalforderungen are therefore distinct.** A holding cannot be sold to itself. If the
+  two balances were one Kapitalforderung the Umbuchung could not be the Veraeusserung the
+  Randziffer says it is, and the FIFO fiction of the same paragraph ([GT-FX-008]) orders the
+  amounts *within* the Kapitalforderung being disposed of -- so a disposal from one account
+  consumes the amounts paid into that account, and no others.
+
+**Cite Rz. 131 for this, never Rz. 97.** Rz. 97 draws the Depot boundary for the § 20 Abs. 4
+Satz 7 Fifo rule ([GT-ESTG20-013]), and that provision is conditioned on *vertretbare Wertpapiere
+... zur Sammelverwahrung*, which a currency balance is not -- the [GT-FX-008] correction records
+the same point. The two rules reach the same shape by different routes and the routes must not be
+crossed.
+
+**What else the cited sentence carries, and this claim inherits (Validation Protocol item 2).**
+Rz. 131 ¶2 speaks throughout of a *verzinsliches* Konto -- *"auf ein anderes **verzinsliches**
+Konto"* -- and ¶3 takes Zahlungsverkehrskonten, Kreditkarten und digitale Zahlungsmittel out of
+§ 20 altogether, on the permitted assumption that they serve only as means of payment
+([GT-FX-003]). **So this claim reaches an account within the § 20 branch and no other.** On a
+balance that is a pure payment instrument there is no Waehrungsgewinn to capture under § 20 at
+all, and the Umbuchung realises nothing there; on an unverzinsliches Guthaben the § 23 branch
+applies instead ([GT-FX-002]) and the same Umbuchung would restart the Jahresfrist. Which of the
+three a broker's cash sub-account is, is not decided here -- it is the [GT-FX-005] question, and
+the position taken is recorded in the map.
+
+**Not decided here either: whether both sides are the taxpayer's own accounts.** A move to an
+account belonging to somebody else is a different question, on which this Randziffer says
+nothing.
+
+#### [GT-FX-010] What the Umbuchung is worth
+
+**The Veraeusserungspreis of the balance given up, and the Anschaffungskosten of the balance
+acquired, are the gemeiner Wert of the Kapitalforderung received.** For an equal amount of one
+currency that is the amount moved. Each leg is converted on its own day under § 20 Abs. 4 Satz 1
+zweiter Halbsatz ([GT-ESTG20-022]): the proceeds on the day of the Umbuchung, the acquisition cost
+on the day the amount originally entered the sending account.
+
+**This is an extension, and is recorded as one.** [GT-FX-009] settles *that* the Umbuchung is a
+Veraeusserung. Neither Tier 1 nor Tier 2 states what it is worth:
+
+- **Tier 1 does not supply a value.** § 20 Abs. 4 EStG has nine Saetze (enumerated in
+  `../tax-law/estg-20-kapitalvermoegen.md` under [GT-ESTG20-011]). The only two that substitute a
+  value where there are no Einnahmen are Satz 2, *"In den Faellen der verdeckten Einlage tritt an
+  die Stelle der Einnahmen aus der Veraeusserung der Wirtschaftsgueter ihr gemeiner Wert"*, and
+  Satz 8, on a Zinsschein separated from the Stammrecht. Neither reaches a move between one
+  person's own currency accounts. Retrieved 2026-08-12 from
+  gesetze-im-internet.de/estg/__20.html.
+- **Tier 2 states the principle three times, never for this case.** BMF 14.05.2025, retrieved and
+  read 2026-08-12:
+  - **Rn. 65:** *"Als Veraeusserungserloes fuer die hingegebenen Wertpapiere ist der Boersenkurs
+    der erlangten Wertpapiere am Tag der Depoteinbuchung anzusetzen."* **Rn. 66** is its mirror:
+    *"Als Anschaffungskosten der erlangten Wertpapiere ist der Boersenkurs der hingegebenen
+    Wertpapiere im Zeitpunkt der Depotausbuchung anzusetzen."* Both are addressed to a Tausch von
+    Wertpapieren.
+  - **Rn. 66a:** the same pair for an Umschuldung on the debtor's initiative.
+  - **Rn. 69:** *"Wird die Gegenleistung nicht in Geld geleistet (z. B. Lieferung eigener Aktien
+    des Uebernehmenden), ist als Veraeusserungspreis der gemeine Wert der erhaltenen
+    Wirtschaftsgueter anzusetzen."* Addressed to the Abfindung of Minderheitsaktionaere.
+
+  A Fremdwaehrungsguthaben is not a Wertpapier and an Umbuchung is neither of the other two, so
+  none of the three names this case. What they establish is that where a disposal's consideration
+  is not money, the administration measures it at the value of what is received -- stated for
+  every configuration it addresses, and never contradicted.
+
+**The competing reading, and why it is weaker.** One could hold that a Veraeusserung whose price
+no source states is simply not measurable, so nothing is realised until the balance is genuinely
+spent or converted. That reading empties Rz. 131's express *"Veraeusserung der urspruenglichen
+Kapitalforderung"* of effect, and no located source advances it. Both readings and their authority
+are in `../research/open-legal-questions.md` **Q15**; which one is applied is an implementation
+decision and is recorded against this claim ID in the map, not here.
+
+**No exchange-rate source is prescribed.** [GT-ESTG20-022] records that no Tier 1 or Tier 2 source
+names one for the Veranlagung; that gap is this claim's too, and it is not enlarged by it.
 
 ### [GT-FX-002] Non-interest-bearing accounts -> 23 Abs. 1 Satz 1 Nr. 2 EStG
 

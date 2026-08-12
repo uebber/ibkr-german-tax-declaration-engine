@@ -331,6 +331,34 @@ long position and two moved a short one** — six short lots each — which is t
 the sending ledger rather than from the export's sign, and the case that sign could never have
 identified.
 
+## 2026-08-12 (third entry) — incidence behind per-account currency, measured before the code
+
+The counting gate for [GT-FX-009] and [GT-FX-010]. `data_import/Cash_Balance-*.csv` and
+`data_import/Transfers-*.csv`, all years, 2026-08-12, repeated mid-file headers stripped the way
+the engine strips them.
+
+| Measurement | Result |
+|---|---|
+| Export years carrying a cash-balance report | 4 |
+| Years whose report names more than one account | 3 of 4 |
+| Non-EUR currencies held in **more than one account** in the same year | 3, 3 and 4 in the three multi-account years; 0 in the single-account year |
+| `ClientAccountID` present on every cash-balance row | yes, all years |
+| `ClientAccountID` present on every cash-transaction row | yes, all years |
+| Non-EUR `AssetClass=CASH` transfer rows between the taxpayer's own accounts | **1 move**, in one year, appearing as one OUT and one IN summary row |
+| EUR `AssetClass=CASH` transfer rows | 1 move, same year — out of scope, the engine's base currency is not a Fremdwährungsguthaben |
+| `Quantity`, `PositionAmount`, `TransferPrice` on the cash rows | `0` on every one; the amount is in `CashTransfer` |
+| Sign of `CashTransfer` | negative on the OUT side, positive on the IN side, in the one move observed. **Not relied on** — the direction is read from `Direction`, as for securities |
+| `CASH` rows in any `Positions-*.csv` | none, any year. So no export supplies a cost basis for a currency balance, and none is read |
+
+**Zero would have meant stop.** It is not zero on either half: currencies collide across accounts
+in most years, so the pooled ledger measures disposals against the wrong lots today; and a move of
+a foreign-currency balance between the two accounts has occurred, so the disposal [GT-FX-009]
+creates is a real one rather than a hypothetical.
+
+**Reproduce with:** read each file with the header row taken from the first line and any later row
+equal to it discarded, then group the non-EUR, non-`BASE_SUMMARY` rows by `CurrencyPrimary` and
+count distinct `ClientAccountID`.
+
 ## 2026-08-07
 
 **Supersedes the 2026-08-06 row reading "2024 | aborts on
