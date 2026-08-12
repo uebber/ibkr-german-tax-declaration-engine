@@ -28,6 +28,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.domain.assets import InvestmentFund, MarkPosition
+from src.utils.account_utils import DEFAULT_ACCOUNT
 from src.domain.enums import (
     AssetCategory, FinancialEventType, InvestmentFundType, TaxReportingCategory,
 )
@@ -141,7 +142,10 @@ def _run(store, *, fund=None, events=None, collector=None, ask=None):
         decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
         data_gap_collector=collector,
         prior_year_positions_available=True,
-        mark_positions={2023: {fund.internal_asset_id: MarkPosition(
+        # Keyed by (account, asset): each account's ledger reconciles against its own
+        # mark. These scenarios build the fund directly, so it sits in the one DEFAULT
+        # account every accountless input collapses to.
+        mark_positions={2023: {(DEFAULT_ACCOUNT, fund.internal_asset_id): MarkPosition(
             quantity=Decimal("100"), cost_basis_amount=Decimal("1000"),
             cost_basis_currency="EUR")}},
         declaration_store=store,

@@ -92,6 +92,21 @@ def generate_console_tax_report(
     logger.info(f"Generating console tax declaration summary for tax year {tax_year}...")
     print(f"\n--- Tax Declaration Summary for Year {tax_year} (All amounts in EUR) ---")
     print("--- Figures for direct entry into German tax forms (as per PRD v3.2.2) ---")
+
+    # Ahead of the figures, not only among the gaps at the end: a reader who stops at
+    # the number they came for must still meet the reason it may not be one they can
+    # use. Printed only when a multi-account limitation was recorded, so a
+    # single-account run is unchanged.
+    for gap in (data_gaps or []):
+        if gap.code == "MULTI_ACCOUNT_LIMITATIONS":
+            print("\n" + "!" * 80)
+            print(f"  ACHTUNG -- {gap.subject}. Mehrkonten-Unterstützung ist unvollständig:")
+            print("  Überträge zwischen eigenen Konten werden nicht eingelesen, und")
+            print("  Fremdwährung wird je Person geführt statt je Konto. Die Zahlen unten")
+            print("  können dadurch unzutreffend sein.")
+            print("  Vollständiger Wortlaut: Abschnitt 'DATENLÜCKEN / HINWEISE' am Ende.")
+            print("!" * 80)
+            break
     
     tax_year_start_date = parse_ibkr_date(f"{tax_year}-01-01")
     tax_year_end_date = parse_ibkr_date(f"{tax_year}-12-31")

@@ -175,9 +175,11 @@ class MergerStockProcessor(EventProcessor):
             logger.error(f"MergerStockProcessor received event with type {event.event_type} but expected CORP_MERGER_STOCK. ID: {event.event_id}")
             return []
 
-        # 1. Get target ledger. The registry is keyed by (account_key, asset_id).
+        # 1. Get target ledger. The registry is keyed by (account_key, asset_id), and the
+        # shares are delivered into the same Depot the old ones were held in.
         fifo_ledgers = context.get('fifo_ledgers', {})
-        target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, event.new_asset_internal_id))
+        target_ledger = fifo_ledgers.get(
+            (account_key(event.account_id), event.new_asset_internal_id))
         if target_ledger is None:
             logger.error(f"No FIFO ledger for target asset {event.new_asset_internal_id}. "
                          f"Cannot transfer lots for merger event {event.event_id}.")

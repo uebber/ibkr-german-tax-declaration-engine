@@ -212,6 +212,8 @@ def run_core_processing_pipeline(
             decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
             data_gap_collector=data_gap_collector,
             mark_positions=orchestrator.mark_positions,
+            soy_positions=orchestrator.soy_positions,
+            eoy_positions=orchestrator.eoy_positions,
             prior_year_positions_available=bool(
                 positions_prior_start_file_path and positions_prior_end_file_path
             ),
