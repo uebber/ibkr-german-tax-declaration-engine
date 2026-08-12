@@ -6,7 +6,8 @@ from typing import Tuple, Any
 
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, WithholdingTaxEvent, CorporateActionEvent,
-    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent
+    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent, InternalTransferEvent,
+    InternalCashTransferEvent
 )
 from src.identification.asset_resolver import AssetResolver
 from src.domain.assets import Asset
@@ -62,6 +63,40 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.ca_action_id_ibkr or "", 
             event.ibkr_activity_description or "", # PRD's event.description (FinancialEvent.ibkr_activity_description)
             event.creation_sequence
+        )
+    elif isinstance(event, (InternalTransferEvent, InternalCashTransferEvent)):
+        # Same intra-day slot as a corporate action, and for the same reason a merger
+        # takes it (see engine/replay.py): the units must be in the RECEIVING account
+        # before that day's disposals, or a sale of what just arrived hits an empty
+        # ledger. The price is the other end of the day -- a sale out of the SENDING
+        # account booked on the move date is applied after the move, so the ledger then
+        # holds less than the move claims. That case is loud, not silent: the move takes
+        # the whole position or the run stops (`apply_internal_transfer`).
+        #
+        # A CASH move shares the band and the argument -- the balance has to be in the
+        # receiving account before that day's spending -- but not the loudness: a
+        # currency ledger that runs short opens a short position rather than refusing
+        # ([GT-FX-006]), so the sending side simply sells what it has and shorts the
+        # rest. Nothing in the export orders a move against a trade on the same day, so
+        # this is a choice between two unsourced orders, and it is the one that keeps
+        # the receiving side able to spend what it just received.
+        #
+        # The band decides this only because the event carries no `ibkr_transaction_id`;
+        # the shared tail below puts that ahead of the band. See InternalTransferEvent.
+        intra_day_order = _INTRA_DAY_SORT_ORDER_CORP_ACTION
+        # Four elements, all strings but the last, because that is the shape the
+        # corporate-action branch above produces and this event shares its band. Two
+        # items in one band whose element types differ at some position raise TypeError
+        # the moment everything before that position ties -- which is exactly what
+        # `asset.asset_category` did here: `AssetCategory` is a plain Enum and does not
+        # compare, so two moves on the same day (neither carrying a transaction id) took
+        # the whole run down. Caught by a real-data run, not by the suite;
+        # `test_two_moves_on_one_day_sort_without_blowing_up` is what catches it now.
+        specific_secondary_elements = (
+            asset.asset_category.name,
+            event.account_id or "",
+            event.to_account_id,
+            event.creation_sequence,
         )
     elif isinstance(event, OptionLifecycleEvent): # Option Lifecycles before regular trades
         intra_day_order = _INTRA_DAY_SORT_ORDER_OPTION_LIFECYCLE

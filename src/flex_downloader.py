@@ -454,6 +454,12 @@ def download_and_merge(
         "corporate_actions": "Corporate_Actions",
         "cash_balance": "Cash_Balance",
         "options_eae": "Options_EAE",
+        # A query type missing here is not a query type that is skipped loudly: the loop
+        # below reaches `prefix_mapping.get(query_type)`, finds None, and `continue`s
+        # without a word. Transfers was absent while its query ID was configurable, so a
+        # `--download` run silently produced no Transfers file for the year -- which the
+        # engine then reads as a year it cannot see a move in.
+        "transfers": "Transfers",
     }
 
     # Positions are special: SOY and EOY are separate files from the same query
@@ -469,7 +475,15 @@ def download_and_merge(
 
         prefix = prefix_mapping.get(query_type)
         if prefix is None:
-            continue
+            # Loud, because the silent version of this is what let a whole report go
+            # missing: a query type the user has configured an ID for is a query type
+            # they expect to be downloaded, and skipping it without a word produces a
+            # `data_import/` that looks complete and is not.
+            raise FlexDownloadError(
+                f"Query type {query_type!r} has a Flex Query ID configured but no "
+                f"filename prefix, so the download would be skipped and no file would "
+                f"appear in data_import/. Add it to prefix_mapping in this function "
+                f"(known: {', '.join(sorted(prefix_mapping))}, plus 'positions').")
 
         print(f"Downloading {query_type} for {tax_year}...")
         from_date, to_date = _year_date_range(tax_year)

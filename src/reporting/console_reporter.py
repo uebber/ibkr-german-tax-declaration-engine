@@ -92,6 +92,22 @@ def generate_console_tax_report(
     logger.info(f"Generating console tax declaration summary for tax year {tax_year}...")
     print(f"\n--- Tax Declaration Summary for Year {tax_year} (All amounts in EUR) ---")
     print("--- Figures for direct entry into German tax forms (as per PRD v3.2.2) ---")
+
+    # Ahead of the figures, not only among the gaps at the end: a reader who stops at
+    # the number they came for must still meet the reason it may not be one they can
+    # use. Printed only when the engine recorded that a multi-account run had no
+    # Transfers export, so every other run is unchanged — including a multi-account run
+    # with one, which is now fully supported and has nothing to be warned about.
+    for gap in (data_gaps or []):
+        if gap.code == "TRANSFERS_EXPORT_NOT_READ":
+            print("\n" + "!" * 80)
+            print(f"  ACHTUNG -- {gap.subject}, aber kein Transfers-Bericht:")
+            print("  Ein Übertrag zwischen Ihren Konten wäre unsichtbar, und die Zahlen")
+            print("  unten wären dann NICHT BELASTBAR. Exportieren Sie den")
+            print("  Transfers-Bericht für jedes Jahr (siehe README).")
+            print("  Vollständiger Wortlaut: Abschnitt 'DATENLÜCKEN / HINWEISE' am Ende.")
+            print("!" * 80)
+            break
     
     tax_year_start_date = parse_ibkr_date(f"{tax_year}-01-01")
     tax_year_end_date = parse_ibkr_date(f"{tax_year}-12-31")
