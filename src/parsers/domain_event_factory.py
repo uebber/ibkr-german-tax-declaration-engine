@@ -219,6 +219,7 @@ class DomainEventFactory:
             common_args = {
                 "asset_internal_id": asset.internal_asset_id,
                 "event_date": event_date_str,
+                "account_id": raw_trade.client_account_id,
                 "quantity_contracts": qty_contracts,
                 "gross_amount_foreign_currency": gross_amount_val,
                 "local_currency": raw_trade.currency_primary,
@@ -380,6 +381,7 @@ class DomainEventFactory:
                         from_currency=from_curr, from_amount=from_amt_val,
                         to_currency=to_curr, to_amount=to_amt_val,
                         exchange_rate=rate,
+                        account_id=rt.client_account_id,
                         ibkr_transaction_id=tx_id_primary,
                         ibkr_activity_description=f"FX Pair Trade: {rt.description}",
                         ibkr_notes_codes=rt.notes_codes
@@ -439,6 +441,7 @@ class DomainEventFactory:
                     commission_currency=rt.ib_commission_currency or rt.currency_primary,
                     local_currency=rt.currency_primary,
                     gross_amount_foreign_currency=calculated_gross_amount.copy_abs(),
+                    account_id=rt.client_account_id,
                     ibkr_transaction_id=tx_id_primary,
                     ibkr_activity_description=rt.description,
                     ibkr_notes_codes=rt.notes_codes,
@@ -545,6 +548,7 @@ class DomainEventFactory:
                 event_amount_for_storage = raw_amount.copy_abs()
 
             event_params_kw = {
+                "account_id": rct.client_account_id,
                 "gross_amount_foreign_currency": event_amount_for_storage,
                 "local_currency": rct.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
@@ -737,6 +741,7 @@ class DomainEventFactory:
             logger.debug(f"CA Record {idx+1}: Final gross_amount_ca (parsed Decimal): {gross_amount_ca}")
 
             common_ca_params_kw_base = {
+                "account_id": rca.client_account_id,
                 "ca_action_id_ibkr": rca.action_id_ibkr,
                 "ibkr_transaction_id": None,  # TransactionID is not exported for CAs
                 "ibkr_activity_description": rca.description,
@@ -963,6 +968,7 @@ class DomainEventFactory:
                 bm_event = TradeEvent(
                     asset_internal_id=affected_asset.internal_asset_id,
                     event_date=event_date_str,
+                    account_id=rca.client_account_id,
                     event_type=FinancialEventType.TRADE_SELL_LONG,
                     quantity=maturity_quantity,
                     price_foreign_currency=price_per_bond,
@@ -1075,6 +1081,7 @@ class DomainEventFactory:
                 event = OptionCashSettlementEvent(
                     asset_internal_id=option_asset.internal_asset_id,
                     event_date=event_date,
+                    account_id=settle_row.client_account_id,
                     quantity_contracts=qty_contracts,
                     cash_settlement_proceeds=proceeds,
                     commission_foreign_currency=commission,

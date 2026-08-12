@@ -19,6 +19,7 @@ from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundTy
 from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
+from src.utils.account_utils import account_key
 from src.utils.snapshot_dates import (
     first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
@@ -122,6 +123,29 @@ def _drop_cancelled_trade_pairs(raw_trades: List[RawTradeRecord]) -> List[RawTra
 
     return [r for r in raw_trades if id(r) not in removed]
 
+def _add_optional(total: Optional[Decimal], addend: Optional[Decimal]) -> Optional[Decimal]:
+    """Accumulate one snapshot column across the rows of several accounts.
+
+    `None` on the left is "nothing recorded yet" and on the right is "the broker left the
+    column blank". Blank is skipped rather than read as zero, so an asset whose every row
+    is blank keeps `None` and reaches the guard in `_ensure_soy_quantities_are_set`, which
+    refuses a holding with no cost basis rather than declaring its whole proceeds as gain.
+
+    What this does NOT distinguish is one account blank and another filled: the total is
+    then the filled one, understating the basis and so overstating the gain. **Nothing
+    detects that**, and the guard in `_ensure_soy_quantities_are_set` does not — it
+    refuses only where the total is `None`, which one filled row is enough to prevent.
+    The assumption this rests on is that every account's row carries a basis. It is an
+    assumption, not a checked condition; filling the blank instead is not the answer,
+    because a substituted cost basis is an invented figure.
+    """
+    if addend is None:
+        return total
+    if total is None:
+        return addend
+    return total + addend
+
+
 class ParsingOrchestrator:
     def __init__(self, asset_resolver: AssetResolver, asset_classifier: AssetClassifier, interactive_classification: bool = True):
         self.asset_resolver = asset_resolver
@@ -137,9 +161,17 @@ class ParsingOrchestrator:
         self.raw_positions_prior_end: List[RawPositionRecord] = []
         self.raw_positions_prior_opening: List[RawPositionRecord] = []
         # Checkpoint marks for the historical replay: {year: rows of Positions-{year}-EoY.csv}.
-        # Resolved into `mark_positions` (keyed by asset) once assets exist.
+        # Resolved into `mark_positions` (keyed by account and asset) once assets exist.
         self.raw_positions_marks: Dict[int, List[RawPositionRecord]] = {}
-        self.mark_positions: Dict[int, Dict[uuid.UUID, MarkPosition]] = {}
+        self.mark_positions: Dict[int, Dict[Tuple[str, uuid.UUID], MarkPosition]] = {}
+        # The tax year's opening and closing snapshots, one record per (account, asset).
+        # FIFO is applied per Depot -- BMF 14.05.2025 Rz. 97 Satz 2, [GT-ESTG20-013] -- so a
+        # ledger is per account, and the snapshot it reconciles against has to be the same
+        # account's. Ticking several accounts in one Flex Query emits them into one file, so
+        # a single asset legitimately appears on several rows; the person-level record on
+        # `Asset` is the sum of these, never one row of them.
+        self.soy_positions: Dict[Tuple[str, uuid.UUID], MarkPosition] = {}
+        self.eoy_positions: Dict[Tuple[str, uuid.UUID], MarkPosition] = {}
         # Which prior-year snapshot fields were read onto which asset, so the pipeline can
         # verify they are still there once classification has run. See
         # _verify_prior_year_snapshot_survived_classification.
@@ -212,6 +244,60 @@ class ParsingOrchestrator:
             logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
                         f"for the {mark_year}-12-31 checkpoint mark.")
 
+    @staticmethod
+    def _record_account_position(records: Dict[Tuple[str, uuid.UUID], MarkPosition],
+                                 raw_pos: RawPositionRecord, asset: Asset) -> None:
+        """Record one snapshot row under the account that reported it.
+
+        A repeat of the same (account, asset) is summed rather than overwritten, exactly
+        as the checkpoint marks already do: two rows for one instrument in one account are
+        two parts of one holding, and the last one is not the holding.
+        """
+        key = (account_key(raw_pos.client_account_id), asset.internal_asset_id)
+        existing = records.get(key)
+        quantity = raw_pos.position
+        cost_basis = raw_pos.cost_basis_money
+        if existing is not None:
+            quantity = (existing.quantity or Decimal(0)) + (quantity or Decimal(0))
+            cost_basis = _add_optional(existing.cost_basis_amount, cost_basis)
+        records[key] = MarkPosition(
+            quantity=quantity,
+            cost_basis_amount=cost_basis,
+            cost_basis_currency=raw_pos.currency_primary,
+        )
+
+    @staticmethod
+    def _derive_person_soy_record(asset: Asset, raw_pos: RawPositionRecord) -> None:
+        """Add this row into the person-level opening record on `Asset`.
+
+        The person declares one figure across their accounts ([GT-ESTG20-061]), so the
+        record on `Asset` is the sum of the per-account records -- a derived view of them,
+        never a substitute for them. Before this it was the LAST row read, which with more
+        than one account ticked in the Flex Query is one account's holding presented as
+        the whole.
+        """
+        asset.soy_quantity = _add_optional(asset.soy_quantity, raw_pos.position)
+        asset.soy_cost_basis_amount = _add_optional(
+            asset.soy_cost_basis_amount, raw_pos.cost_basis_money)
+        asset.soy_cost_basis_currency = raw_pos.currency_primary
+        asset.soy_position_value = _add_optional(
+            asset.soy_position_value, raw_pos.position_value)
+        asset.soy_mark_price_currency = raw_pos.currency_primary
+
+    @staticmethod
+    def _derive_person_eoy_record(asset: Asset, raw_pos: RawPositionRecord) -> None:
+        """Add this row into the person-level closing record on `Asset`.
+
+        Quantity and value are the person's total; the mark price is a per-unit property
+        of the instrument, so every account's row carries the same one and it is taken,
+        not summed.
+        """
+        asset.eoy_quantity = _add_optional(asset.eoy_quantity, raw_pos.position)
+        asset.eoy_position_value = _add_optional(
+            asset.eoy_position_value, raw_pos.position_value)
+        asset.eoy_market_price = raw_pos.mark_price
+        asset.eoy_mark_price_currency = raw_pos.currency_primary
+
     def process_positions(self, tax_year: Optional[int] = None):
         # ... (implementation is the same)
         logger.info("Processing start-of-year positions...")
@@ -225,11 +311,8 @@ class ParsingOrchestrator:
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.soy_quantity = raw_pos.position # Changed from initial_quantity_soy
-            asset.soy_cost_basis_amount = raw_pos.cost_basis_money # Changed from initial_cost_basis_money_soy
-            asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
-            asset.soy_position_value = raw_pos.position_value
-            asset.soy_mark_price_currency = raw_pos.currency_primary
+            self._record_account_position(self.soy_positions, raw_pos, asset)
+            self._derive_person_soy_record(asset, raw_pos)
             logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
 
         logger.info("Processing end-of-year positions...")
@@ -243,10 +326,8 @@ class ParsingOrchestrator:
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.eoy_quantity = raw_pos.position
-            asset.eoy_market_price = raw_pos.mark_price # Changed from eoy_mark_price
-            asset.eoy_position_value = raw_pos.position_value
-            asset.eoy_mark_price_currency = raw_pos.currency_primary
+            self._record_account_position(self.eoy_positions, raw_pos, asset)
+            self._derive_person_eoy_record(asset, raw_pos)
             logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
 
         # Preceding calendar year's snapshots. Used ONLY by the Vorabpauschale, which for a VZ Y
@@ -269,10 +350,17 @@ class ParsingOrchestrator:
         eoy_snapshot_date = (last_business_day_of_year(vorabpauschale_year)
                              if vorabpauschale_year is not None else None)
 
+        # These are person-level from the outset: the Vorabpauschale is computed on the
+        # units held at the close of the year (Rz. 18.4), which the ledgers supply per
+        # account, and the figures here are the prices and the person's unit counts. So
+        # each row ADDS to the count -- the last row winning would report one account's
+        # holding as the person's.
         for raw_pos in self.raw_positions_prior_start:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_soy_quantity = raw_pos.position
-            asset.prior_year_soy_position_value = raw_pos.position_value
+            asset.prior_year_soy_quantity = _add_optional(
+                asset.prior_year_soy_quantity, raw_pos.position)
+            asset.prior_year_soy_position_value = _add_optional(
+                asset.prior_year_soy_position_value, raw_pos.position_value)
             asset.prior_year_soy_mark_price = raw_pos.mark_price
             asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
             asset.prior_year_soy_mark_price_date = soy_snapshot_date
@@ -284,8 +372,10 @@ class ParsingOrchestrator:
 
         for raw_pos in self.raw_positions_prior_end:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_eoy_quantity = raw_pos.position
-            asset.prior_year_eoy_position_value = raw_pos.position_value
+            asset.prior_year_eoy_quantity = _add_optional(
+                asset.prior_year_eoy_quantity, raw_pos.position)
+            asset.prior_year_eoy_position_value = _add_optional(
+                asset.prior_year_eoy_position_value, raw_pos.position_value)
             asset.prior_year_eoy_mark_price = raw_pos.mark_price
             asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
             asset.prior_year_eoy_mark_price_date = eoy_snapshot_date
@@ -301,26 +391,21 @@ class ParsingOrchestrator:
         # a mark with the SoY record is how a mid-window snapshot would end up feeding the tax
         # year's cost basis.
         for mark_year, raw_rows in sorted(self.raw_positions_marks.items()):
-            by_asset: Dict[uuid.UUID, MarkPosition] = {}
+            by_account_and_asset: Dict[Tuple[str, uuid.UUID], MarkPosition] = {}
             for raw_pos in raw_rows:
                 asset = self._resolve_asset_from_position(raw_pos)
-                quantity = raw_pos.position
-                existing = by_asset.get(asset.internal_asset_id)
-                if existing is not None:
-                    # Same instrument reported on more than one row at the same mark.
-                    quantity += existing.quantity
-                by_asset[asset.internal_asset_id] = MarkPosition(
-                    quantity=quantity,
-                    cost_basis_amount=raw_pos.cost_basis_money,
-                    cost_basis_currency=raw_pos.currency_primary,
-                )
-            self.mark_positions[mark_year] = by_asset
-            logger.info("Checkpoint mark %d-12-31: %d instrument(s) reported.",
-                        mark_year, len(by_asset))
+                # Keyed by account as well as asset: each account's ledger is reconciled
+                # against its own mark. Summing across accounts here would hand every
+                # account the person's total.
+                self._record_account_position(by_account_and_asset, raw_pos, asset)
+            self.mark_positions[mark_year] = by_account_and_asset
+            logger.info("Checkpoint mark %d-12-31: %d (account, instrument) pair(s) reported.",
+                        mark_year, len(by_account_and_asset))
 
         for raw_pos in self.raw_positions_prior_opening:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_opening_quantity = raw_pos.position
+            asset.prior_year_opening_quantity = _add_optional(
+                asset.prior_year_opening_quantity, raw_pos.position)
             asset.prior_year_opening_mark_price = raw_pos.mark_price
             asset.prior_year_opening_mark_price_currency = raw_pos.currency_primary
             self._record_prior_year_snapshot_fields(asset, (
@@ -749,6 +834,10 @@ class ParsingOrchestrator:
             except (ValueError, TypeError):
                 pass  # malformed date, skip validation
 
+        # Which currencies this report has already spoken for, so the first row replaces
+        # and the later ones add. See the comment at the assignment below.
+        seeded_from_cash_report: Set[uuid.UUID] = set()
+
         for raw_balance in self.raw_cash_balances:
             # Skip EUR (base currency) and BASE_SUMMARY (IBKR aggregate row)
             if raw_balance.currency_primary and raw_balance.currency_primary.upper() in ("EUR", "BASE_SUMMARY"):
@@ -775,9 +864,23 @@ class ParsingOrchestrator:
                 description_source_type="cash_balance_csv"
             )
 
-            # Set SOY/EOY quantities (can be negative for short positions)
-            cash_asset.soy_quantity = raw_balance.starting_cash
-            cash_asset.eoy_quantity = raw_balance.ending_cash
+            # Set SOY/EOY quantities (can be negative for short positions).
+            # The cash-balance report REPLACES whatever a Positions row said about this
+            # currency -- it always has, by running second -- but it accumulates across
+            # its own rows, because one currency held in two accounts is reported on two
+            # rows and the person's balance is both of them. Seeding one ledger from the
+            # last row read was simply the wrong number. (The ledger is still one per
+            # person: two accounts holding one currency hold two Kapitalforderungen, which
+            # is a separate change.)
+            if cash_asset.internal_asset_id not in seeded_from_cash_report:
+                seeded_from_cash_report.add(cash_asset.internal_asset_id)
+                cash_asset.soy_quantity = raw_balance.starting_cash
+                cash_asset.eoy_quantity = raw_balance.ending_cash
+            else:
+                cash_asset.soy_quantity = _add_optional(
+                    cash_asset.soy_quantity, raw_balance.starting_cash)
+                cash_asset.eoy_quantity = _add_optional(
+                    cash_asset.eoy_quantity, raw_balance.ending_cash)
 
             position_type = "LONG" if raw_balance.starting_cash >= Decimal("0") else "SHORT"
             eoy_position_type = "LONG" if raw_balance.ending_cash >= Decimal("0") else "SHORT"
@@ -807,9 +910,10 @@ class ParsingOrchestrator:
                 elif asset_obj.soy_quantity != Decimal(0) and asset_obj.soy_cost_basis_amount is None:
                     # Held at the start of the year with no reported cost basis. This used to
                     # set the basis to zero, which makes the whole of a later disposal a gain.
-                    # `CostBasisMoney` is blank in 0 of 87 position rows across 2021-2025, so
-                    # nothing was ever floored -- but a zero here is an invented figure, not a
-                    # missing one, and the run must not carry it.
+                    # A zero here is an invented figure, not a missing one, and the run
+                    # must not carry it. How often an export actually leaves the column
+                    # blank is an incidence question, answered against the exports by
+                    # whoever proposes a fallback -- never by writing the fallback here.
                     raise ProcessingError(
                         f"Asset {asset_obj.get_classification_key()}: the start-of-year "
                         f"snapshot reports {asset_obj.soy_quantity} units with no cost basis. "

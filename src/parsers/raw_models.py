@@ -24,8 +24,13 @@ Adding a field therefore means adding the column to the Flex Query *and* to the
 `*_COLUMNS` tuple. Leaving it declared-but-unrequested is the one state to avoid.
 
 Note the mirror case, which is *not* corrected here because changing it could move a
-figure: `Positions` exports `ClientAccountID` and `SubCategory`, and `Corporate_Actions`
-exports `Amount`, none of which have a field below, so `extra = 'ignore'` discards them.
+figure: `Positions` exports `SubCategory` and `Corporate_Actions` exports `Amount`,
+neither of which has a field below, so `extra = 'ignore'` discards them.
+
+`Positions` also exported `ClientAccountID` unmapped until per-Depot lot tracking gave it
+a caller. It is mapped now. That it stayed unmapped for as long as it did is the rule
+above working as intended: a field whose only reader is a test is the same defect as a
+field nothing populates, approached from the other side.
 """
 from typing import Optional, Any
 from decimal import Decimal
@@ -153,6 +158,10 @@ class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
     been an option's only source. Restoring the capability means adding the three columns
     to the Flex Query and to POSITIONS_COLUMNS together, not re-declaring them here.
     """
+    # The custody account this row belongs to. Every other raw model mapped it and this
+    # one did not, which is why the per-Depot ledger keying could not see a snapshot's
+    # account. Deliberately unmapped until it had a caller (issue #69); it has one now.
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed for consistency
     asset_class: str = Field(alias="AssetClass")
     symbol: str = Field(alias="Symbol")
@@ -278,3 +287,4 @@ class RawCashBalanceRecord(RawBaseRecord):
 
     class Config:
         extra = 'ignore'
+

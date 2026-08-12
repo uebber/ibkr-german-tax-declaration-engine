@@ -69,6 +69,18 @@ class FinancialEvent:
     # Corresponding amounts in EUR after conversion (populated by enrichment step)
     gross_amount_eur: Optional[Decimal] = None
 
+    # The custody account this event belongs to, as the broker reported it
+    # (`ClientAccountID`). `None` where the source row carried none -- older exports, and
+    # every event the engine synthesises after parsing -- and `account_key()` collapses
+    # that to a single DEFAULT account, so a single-account run behaves exactly as before.
+    #
+    # It is here because FIFO is applied per Depot: BMF 14.05.2025 Rz. 97 Satz 2,
+    # [GT-ESTG20-013], with Q2's "each sub-account is its own Depot" reading recorded in
+    # docs/legal-implementation-map.md. A disposal must consume the lots of the account it
+    # was made from, so the ledger key has to reach the account and the event is what
+    # carries it there.
+    account_id: Optional[str] = None
+
     # IBKR specific identifiers for tracing back to reports
     ibkr_transaction_id: Optional[str] = None # From Trades, Cash Transactions etc.
     ibkr_activity_description: Optional[str] = None # From Cash Transactions "Description" or Trades "Description"

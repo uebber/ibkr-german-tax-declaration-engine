@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 import uuid
 from datetime import date as date_obj, datetime
 
-from src.domain.assets import Asset, Option 
+from src.domain.assets import Asset, MarkPosition, Option
 from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
@@ -207,6 +207,7 @@ def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, av
         return TradeEvent(
             asset_internal_id=event.asset_internal_id,
             event_date=event.event_date,
+            account_id=event.account_id,
             event_type=sub_type,
             quantity=signed_qty,
             price_foreign_currency=event.price_foreign_currency,
@@ -289,9 +290,17 @@ class FifoLedger:
                                  asset: Asset,
                                  all_historical_events_for_asset: List[FinancialEvent],
                                  tax_year: int):
-        """Convenience method: simulate + reconcile in one call (used when no mergers)."""
+        """Convenience method: simulate + reconcile in one call (used when no mergers).
+
+        Reconciles against the person-level record on the asset, which is one account's
+        only when the person has one account.
+        """
         self.simulate_historical_events(asset, all_historical_events_for_asset, tax_year)
-        self.reconcile_with_soy_position(asset, tax_year)
+        self.reconcile_with_soy_position(asset, tax_year, reported=MarkPosition(
+            quantity=asset.soy_quantity,
+            cost_basis_amount=asset.soy_cost_basis_amount,
+            cost_basis_currency=asset.soy_cost_basis_currency,
+        ))
 
     def begin_historical_simulation(self, asset: Asset):
         """Prepare the ledger for historical replay (unified replayer, AR5):
@@ -454,18 +463,26 @@ class FifoLedger:
         for hist_event in all_historical_events_for_asset:
             self.apply_historical_event(asset, hist_event, tax_year)
 
-    def reconcile_with_soy_position(self, asset: Asset, tax_year: int) -> "MarkReconciliation":
+    def reconcile_with_soy_position(self, asset: Asset, tax_year: int, *,
+                                    reported: Optional["MarkPosition"]) -> "MarkReconciliation":
         """Reconcile against the tax year's opening snapshot -- the final mark.
 
-        The SoY *record* (`asset.soy_quantity` and friends) is read from
-        `Positions-{tax_year-1}-EoY.csv`, not from any SoY file. Thin wrapper
-        over `reconcile_with_mark`, which every checkpoint uses.
+        The SoY record is read from `Positions-{tax_year-1}-EoY.csv`, not from any SoY
+        file. Thin wrapper over `reconcile_with_mark`, which every checkpoint uses.
+
+        `reported` is THIS ledger's account's row of that snapshot, because FIFO is
+        applied per Depot ([GT-ESTG20-013]). It is passed in rather than read off the
+        asset: the record on `Asset` is the person's total across their accounts, and
+        handing that to one account's ledger would give every account the whole holding.
+        `None` means the snapshot does not list this account for this asset, i.e. it
+        reports zero units there.
         """
         return self.reconcile_with_mark(
             asset,
-            reported_quantity=asset.soy_quantity,
-            reported_cost_basis=asset.soy_cost_basis_amount,
-            reported_cost_basis_currency=asset.soy_cost_basis_currency,
+            reported_quantity=reported.quantity if reported is not None else Decimal(0),
+            reported_cost_basis=reported.cost_basis_amount if reported is not None else None,
+            reported_cost_basis_currency=(reported.cost_basis_currency
+                                          if reported is not None else None),
             mark_label=f"{tax_year - 1}-12-31 (opening snapshot)",
             fallback_acquisition_date=f"{tax_year-1}-12-31",
             fx_conversion_date=date_obj(tax_year, 1, 1),

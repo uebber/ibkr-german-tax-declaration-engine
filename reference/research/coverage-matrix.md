@@ -31,6 +31,7 @@ have is worse than one with a visible hole.
 | Gain on a Termingeschaeft | EStG | 20 Abs. 4 S. 5 (Differenzausgleich less direct costs) | KAP Z21/19 | estg-20-kapitalvermoegen.md [GT-ESTG20-023] |
 | Sparer-Pauschbetrag; no actual Werbungskosten | EStG | 20 Abs. 9 | KAP Z16/17 (portion already used) | estg-20-kapitalvermoegen.md [GT-ESTG20-024] |
 | Lot identification (Fifo), securities | EStG | 20 Abs. 4 S. 7 + BMF 14.05.2025 Rz. 97-99 (je Depot) | (all disposals) | estg-20-kapitalvermoegen.md |
+| Whose holding is declared, across several accounts | EStG | 2 Abs. 1 S. 1 Nr. 5 + 25 Abs. 1, Abs. 3 S. 1 (the person and the Veranlagungszeitraum are the units) | (every declared figure) | estg-20-kapitalvermoegen.md [GT-ESTG20-061] |
 | Lot identification (Fifo), currency | EStG / BMF | 23 Abs. 1 S. 1 Nr. 2 S. 3 (Tier 1) for the 23 branch; BMF 14.05.2025 Rz. 131 for the 20 branch | (all currency disposals) | estg-23-private-veraeusserung.md [GT-ESTG23-013], fremdwaehrung-konten.md [GT-FX-008] |
 | Bond sale | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | estg-20-kapitalvermoegen.md |
 | Bond maturity (BM) | EStG | 20 Abs. 2 S. 1 Nr. 7 i.V.m. S. 2 (Einlösung) | KAP Z19/22 | estg-20-kapitalvermoegen.md |

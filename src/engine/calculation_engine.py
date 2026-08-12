@@ -142,6 +142,86 @@ def _format_asset_info(asset_obj) -> str:
     symbol = asset_obj.ibkr_symbol or "N/A"
     return f"'{desc}' (Symbol: {symbol})"
 
+def _person_record_as_default_account(asset_resolver, which: str) -> Dict[Tuple[str, uuid.UUID], "MarkPosition"]:
+    """Read the person-level snapshot on each `Asset` as the DEFAULT account's own.
+
+    For a caller that supplies no per-account breakdown there is one account, so the
+    person's record and that account's record are the same figures. This is the shape
+    conversion, not a substitution: nothing is filled in that the caller did not give,
+    including a `None` quantity, which `reconcile_with_mark` still reports as unknown.
+
+    Cash balances are excluded: they reconcile against the cash-balance report through
+    `_reconcile_currency_soy`, never against a Positions snapshot.
+    """
+    from src.domain.assets import MarkPosition as _MarkPosition
+    records: Dict[Tuple[str, uuid.UUID], "MarkPosition"] = {}
+    for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
+        if asset_obj.asset_category == AssetCategory.CASH_BALANCE:
+            continue
+        if which == "soy":
+            records[(DEFAULT_ACCOUNT, asset_id)] = _MarkPosition(
+                quantity=asset_obj.soy_quantity,
+                cost_basis_amount=asset_obj.soy_cost_basis_amount,
+                cost_basis_currency=asset_obj.soy_cost_basis_currency,
+            )
+        elif asset_obj.eoy_quantity is not None:
+            # Absent means "not in the end-of-year report", which the check reads as a
+            # reported zero. Recording a row here would say the opposite.
+            records[(DEFAULT_ACCOUNT, asset_id)] = _MarkPosition(
+                quantity=asset_obj.eoy_quantity,
+                cost_basis_amount=None,
+                cost_basis_currency=None,
+            )
+    return records
+
+
+MULTI_ACCOUNT_LIMITATIONS = "MULTI_ACCOUNT_LIMITATIONS"
+
+
+def _report_multi_account_limitations(accounts, data_gap_collector) -> None:
+    """Say what per-Depot lot tracking does NOT yet cover, whenever it is in play.
+
+    Raised for every run that sees more than one account, not only for one that hits
+    the gap: a transfer in an earlier year re-dates lots this year still holds, and
+    nothing in the input marks that it happened. A person who has never moved anything
+    between their accounts is told so in the text, which is the cheaper error of the two.
+
+    A WARNING, because the run must still produce figures for the case where nothing
+    was ever transferred -- so the text has to carry what the severity does not, and
+    says outright that the securities figures cannot be relied on otherwise.
+
+    Removed piece by piece as each limitation is closed; the last one to go takes this
+    function with it.
+    """
+    named = sorted(a for a in accounts if a != DEFAULT_ACCOUNT)
+    if len(named) < 2:
+        return
+    detail = (
+        "Die Depot-bezogene FIFO-Zuordnung ist aktiv (BMF 14.05.2025 Rz. 97 Satz 2): "
+        "Ein Verkauf verbraucht die Bestände des Kontos, aus dem er erfolgte. ZWEI "
+        "EINSCHRÄNKUNGEN BESTEHEN WEITERHIN UND KÖNNEN DIE AUSGEWIESENEN ZAHLEN "
+        "UNZUTREFFEND MACHEN. "
+        "(1) Überträge zwischen Ihren eigenen Konten werden nicht eingelesen. Wurde "
+        "jemals eine Position zwischen Ihren Konten übertragen, kann die Engine den "
+        "Übertrag nicht sehen: sie rekonstruiert den Bestand aus dem Positionsbericht "
+        "-- die Stückzahl ist die des Brokers, das Anschaffungsdatum ist erfunden. "
+        "Betroffen sind die Haltefrist (§ 23 EStG) und die FIFO-Reihenfolge, im Jahr "
+        "des Übertrags UND in allen Folgejahren. "
+        "(2) Fremdwährungsbestände werden weiterhin je Person geführt, nicht je Konto. "
+        "Devisengewinne werden gegen den zusammengefassten Bestand gerechnet. "
+        "Wurde nie eine Position zwischen Ihren Konten übertragen, ist (1) für Sie ohne "
+        "Bedeutung. Andernfalls sind die Wertpapier-Zahlen dieses Berichts NICHT "
+        "BELASTBAR -- prüfen Sie sie, bevor Sie sie übernehmen."
+    )
+    subject = f"{len(named)} Konten im Export"
+    if data_gap_collector is not None:
+        data_gap_collector.record(
+            code=MULTI_ACCOUNT_LIMITATIONS, subject=subject, detail=detail,
+            severity=GapSeverity.WARNING)
+    else:
+        logger.warning("[%s] %s: %s", MULTI_ACCOUNT_LIMITATIONS, subject, detail)
+
+
 def _grade_mark_outcomes(mark_outcomes, data_gap_collector) -> None:
     """Report every checkpoint mark where the reconstruction was discarded.
 
@@ -239,9 +319,13 @@ def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
     with their acquisition date and cost basis, and Satz 6 places the transfer
     at the Einbuchung date so that day's disposals can consume it:
     reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 4a"
-    (GT-ESTG20-015, GT-ESTG20-018)."""
-    source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
-    target_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.new_asset_internal_id))
+    (GT-ESTG20-015, GT-ESTG20-018).
+
+    Both ledgers are the ones of the account the merger was booked in: the shares that
+    step into the old ones' tax position are the shares that were in that Depot."""
+    merger_account = account_key(merger_event.account_id)
+    source_ledger = fifo_ledgers.get((merger_account, merger_event.asset_internal_id))
+    target_ledger = fifo_ledgers.get((merger_account, merger_event.new_asset_internal_id))
 
     if source_ledger is None:
         logger.warning(f"Historical merger {merger_event.event_id}: No source ledger for {merger_event.asset_internal_id}. Skipping.")
@@ -292,10 +376,22 @@ def run_main_calculations(
     # their absence is a gap rather than an empty portfolio. Defaults False so a caller that
     # has not been updated fails loudly instead of silently dropping deemed income.
     prior_year_positions_available: bool = False,
-    # Checkpoint marks: {year: {asset_id: MarkPosition}} from Positions-{year}-EoY.csv, for
-    # every year strictly below the opening snapshot. Empty means the historical window is
-    # replayed as one uninterrupted interval — the behaviour before checkpointing.
-    mark_positions: Optional[Dict[int, Dict[uuid.UUID, "MarkPosition"]]] = None,
+    # Checkpoint marks: {year: {(account, asset_id): MarkPosition}} from
+    # Positions-{year}-EoY.csv, for every year strictly below the opening snapshot. Empty
+    # means the historical window is replayed as one uninterrupted interval — the behaviour
+    # before checkpointing.
+    mark_positions: Optional[Dict[int, Dict[Tuple[str, uuid.UUID], "MarkPosition"]]] = None,
+    # The tax year's opening and closing snapshots, one record per (account, asset). FIFO
+    # is applied per Depot (BMF 14.05.2025 Rz. 97 Satz 2, [GT-ESTG20-013]), so each
+    # account's ledger is reconciled against that account's own row, and the end-of-year
+    # check is run per account — being too high in one account and too low in another
+    # cancels out in the person's total and would otherwise pass.
+    #
+    # None means the caller supplied no per-account breakdown. The person-level record on
+    # `Asset` is then read as the single DEFAULT account's, which is exactly what a
+    # one-account run is; every ledger key collapses to DEFAULT_ACCOUNT with it.
+    soy_positions: Optional[Dict[Tuple[str, uuid.UUID], "MarkPosition"]] = None,
+    eoy_positions: Optional[Dict[Tuple[str, uuid.UUID], "MarkPosition"]] = None,
     # What was DECLARED as Vorabpauschale on earlier returns, per fund and calendar year.
     # Feeds the Anlage KAP-INV Zeile 53 deduction (19 Abs. 1 Satz 3 InvStG), which may only
     # rest on declared amounts. None means no record is available: the deduction then covers
@@ -325,6 +421,10 @@ def run_main_calculations(
     """
     logger.info(f"Starting main calculation engine for tax year {tax_year} with {len(financial_events)} events.")
     mark_positions = mark_positions or {}
+    if soy_positions is None:
+        soy_positions = _person_record_as_default_account(asset_resolver, "soy")
+    if eoy_positions is None:
+        eoy_positions = _person_record_as_default_account(asset_resolver, "eoy")
     ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode) # Renamed internal_working_precision
 
     realized_gains_losses: List[RealizedGainLoss] = []
@@ -414,9 +514,70 @@ def run_main_calculations(
         and (asset_obj.soy_quantity or Decimal(0)) > Decimal(0)
     }
 
-    fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip
-    # Separate dict for currency ledgers; same (account_key, asset_id) key shape.
+    fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id) — one ledger per Depot
+    # Separate dict for currency ledgers; same (account_key, asset_id) key shape, but still
+    # one per person. Whether a currency balance is one holding per person or one per
+    # account is a question about § 20 Abs. 2 Nr. 3 that this change does not answer, and
+    # Rz. 97 does not reach a currency balance (the GT-FX-008 correction). Unchanged here.
     currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}
+
+    # Which accounts hold which instrument, and therefore which ledgers exist. A disposal
+    # consumes the lots of the account it was made from (Rz. 97 Satz 2, [GT-ESTG20-013]),
+    # so every account that touches an instrument needs its own queue of lots.
+    #
+    # Four sources, and what each is demonstrated to do — probed by deleting it and running
+    # the suite, because three of the four are invisible to a green run otherwise:
+    #
+    #   * the tax year's own events. Moves figures: an account that opens AND closes a
+    #     position inside the year appears in no snapshot, and without a ledger its
+    #     disposal has nothing to consume. Guarded across the suite, most directly by
+    #     test_a_position_opened_and_closed_inside_the_year_needs_no_snapshot_row.
+    #   * the opening snapshot. Moves figures: an account holding units bought before the
+    #     input window has no event anywhere, and its holding would silently vanish.
+    #     Guarded by test_an_account_that_only_appears_in_the_snapshot_still_gets_a_ledger.
+    #   * the historical events. Moves no figure, and is kept for what it makes visible:
+    #     an account whose replay disagrees with the opening snapshot has to HAVE a ledger
+    #     for the disagreement to be recorded at all. Guarded by
+    #     test_an_accounts_unconfirmed_history_is_reported_and_not_dropped_in_silence.
+    #   * the checkpoint marks. Defensive, and no case is known where it changes anything:
+    #     an account that appears only in a mid-window mark is reconciled away again at the
+    #     opening snapshot, which does not list it. Kept because the alternative is a
+    #     mid-window disagreement nothing reports; **not verified to matter** — deleting it
+    #     leaves the suite green and no scenario has been constructed that it moves.
+    #
+    # The closing snapshot is deliberately NOT a source: an account that reports units it
+    # never acquired is a reconciliation failure, and creating a ledger for it would not
+    # make it one. The end-of-year check reads that file directly.
+    ledger_accounts: DefaultDict[uuid.UUID, Set[str]] = defaultdict(set)
+
+    def _register_event_accounts(event, asset_id) -> None:
+        account = account_key(event.account_id)
+        ledger_accounts[asset_id].add(account)
+        # A stock-for-stock merger names a second asset, and the lots arrive in the same
+        # Depot they left. Without this the target has no ledger in that account and the
+        # transfer is refused — which is how the whole holding would silently disappear.
+        new_asset_id = getattr(event, "new_asset_internal_id", None)
+        if new_asset_id:
+            ledger_accounts[new_asset_id].add(account)
+
+    for _asset_id, _events in historical_events_by_asset.items():
+        for _event in _events:
+            _register_event_accounts(_event, _asset_id)
+    for _event in current_year_events:
+        _register_event_accounts(_event, _event.asset_internal_id)
+    for _merger in historical_merger_events:
+        _register_event_accounts(_merger, _merger.asset_internal_id)
+    for _account, _asset_id in soy_positions:
+        ledger_accounts[_asset_id].add(_account)
+    for _year_marks in mark_positions.values():
+        for _account, _asset_id in _year_marks:
+            ledger_accounts[_asset_id].add(_account)
+
+    _report_multi_account_limitations(
+        {account for accounts in ledger_accounts.values() for account in accounts}
+        | {account for account, _ in eoy_positions},
+        data_gap_collector,
+    )
 
     # === Unified historical replay (AR5) ===
     # ONE ordered stream rebuilds all pre-tax-year ledger state — securities
@@ -444,41 +605,45 @@ def run_main_calculations(
             elif isinstance(asset_obj, InvestmentFund):
                 asset_fund_type = asset_obj.fund_type
 
-            ledger = FifoLedger(
-                asset_internal_id=asset_id, asset_category=asset_obj.asset_category,
-                asset_multiplier_from_asset=asset_multiplier_val,
-                currency_converter=currency_converter, exchange_rate_provider=exchange_rate_provider,
-                internal_working_precision=internal_calculation_precision,
-                decimal_rounding_mode=decimal_rounding_mode,
-                fund_type=asset_fund_type
-            )
-
-            # Key each event ONCE and carry the key into the stream. Computing it
-            # again at stream.add() would repeat every warning get_event_sort_key
-            # emits (e.g. a historical trade with no ibkr_transaction_id).
-            sorted_hist_keys_and_events: List[Tuple[Any, FinancialEvent]] = []
-            if asset_id in historical_events_by_asset:
-                try:
-                    sorted_hist_keys_and_events = sorted(
-                        ((get_event_sort_key(e, asset_resolver), e)
-                         for e in historical_events_by_asset[asset_id]),
-                        key=lambda keyed: keyed[0],
-                    )
-                except ValueError as e:
-                    logger.critical(f"Fatal error sorting historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Cannot guarantee deterministic order for FIFO init. Aborting.")
-                    raise e
-
-            ledger.begin_historical_simulation(asset_obj)
-            ledger.announce_historical_simulation(asset_obj, len(sorted_hist_keys_and_events))
-            for hist_key, hist_event in sorted_hist_keys_and_events:
-                _defer(
-                    Phase.LEDGER_EVENTS, hist_key,
-                    (lambda l=ledger, a=asset_obj, e=hist_event:
-                        l.apply_historical_event(a, e, tax_year)),
-                    label=f"sec:{asset_obj.get_classification_key()}",
+            # An asset that appears nowhere with an account still gets its one ledger, so
+            # that a caller building assets directly behaves as it did before.
+            for ledger_account in sorted(ledger_accounts.get(asset_id) or {DEFAULT_ACCOUNT}):
+                ledger = FifoLedger(
+                    asset_internal_id=asset_id, asset_category=asset_obj.asset_category,
+                    asset_multiplier_from_asset=asset_multiplier_val,
+                    currency_converter=currency_converter, exchange_rate_provider=exchange_rate_provider,
+                    internal_working_precision=internal_calculation_precision,
+                    decimal_rounding_mode=decimal_rounding_mode,
+                    fund_type=asset_fund_type
                 )
 
-            fifo_ledgers[(DEFAULT_ACCOUNT, asset_id)] = ledger
+                # Key each event ONCE and carry the key into the stream. Computing it
+                # again at stream.add() would repeat every warning get_event_sort_key
+                # emits (e.g. a historical trade with no ibkr_transaction_id).
+                sorted_hist_keys_and_events: List[Tuple[Any, FinancialEvent]] = []
+                if asset_id in historical_events_by_asset:
+                    try:
+                        sorted_hist_keys_and_events = sorted(
+                            ((get_event_sort_key(e, asset_resolver), e)
+                             for e in historical_events_by_asset[asset_id]
+                             if account_key(e.account_id) == ledger_account),
+                            key=lambda keyed: keyed[0],
+                        )
+                    except ValueError as e:
+                        logger.critical(f"Fatal error sorting historical events for asset {asset_obj.get_classification_key()} (ID: {asset_id}): {e}. Cannot guarantee deterministic order for FIFO init. Aborting.")
+                        raise e
+
+                ledger.begin_historical_simulation(asset_obj)
+                ledger.announce_historical_simulation(asset_obj, len(sorted_hist_keys_and_events))
+                for hist_key, hist_event in sorted_hist_keys_and_events:
+                    _defer(
+                        Phase.LEDGER_EVENTS, hist_key,
+                        (lambda l=ledger, a=asset_obj, e=hist_event:
+                            l.apply_historical_event(a, e, tax_year)),
+                        label=f"sec:{asset_obj.get_classification_key()}",
+                    )
+
+                fifo_ledgers[(ledger_account, asset_id)] = ledger
     securities_ledger_count = len(fifo_ledgers)
 
     # Mergers join the chronological stream at their own date, not a phase of
@@ -508,9 +673,10 @@ def run_main_calculations(
     mark_outcomes: List[Tuple[Asset, "MarkReconciliation"]] = []
     currency_reconcilers: List[Any] = []
 
-    def _reconcile_security_soy(ledger, asset_obj):
+    def _reconcile_security_soy(ledger, asset_obj, reported):
         try:
-            mark_outcomes.append((asset_obj, ledger.reconcile_with_soy_position(asset_obj, tax_year)))
+            mark_outcomes.append((asset_obj, ledger.reconcile_with_soy_position(
+                asset_obj, tax_year, reported=reported)))
         except ValueError as e:
             logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_obj.internal_asset_id}): {e}. Aborting.")
             raise e
@@ -661,15 +827,19 @@ def run_main_calculations(
             # an ordering accident, and one the interval loop would otherwise have inherited.
             if asset_obj.asset_category == AssetCategory.CASH_BALANCE:
                 continue
+            # Each ledger is compared against its OWN account's row. A missing row is a
+            # reported zero, which is what the snapshot says by not listing the account:
+            # `_ensure_soy_quantities_are_set` has always read an absent asset that way.
             if is_final_mark:
+                reported = soy_positions.get((ledger_account, asset_id))
                 stream.add(
                     Phase.RECONCILE, (0,),
-                    (lambda l=ledger, a=asset_obj: _reconcile_security_soy(l, a)),
+                    (lambda l=ledger, a=asset_obj, r=reported: _reconcile_security_soy(l, a, r)),
                     label=f"reconcile-sec:{asset_obj.get_classification_key()}",
                 )
             else:
                 mark_year = mark_years[index]
-                reported = mark_positions.get(mark_year, {}).get(asset_id)
+                reported = mark_positions.get(mark_year, {}).get((ledger_account, asset_id))
                 stream.add(
                     Phase.RECONCILE, (0,),
                     (lambda l=ledger, a=asset_obj, y=mark_year, r=reported:
@@ -726,7 +896,8 @@ def run_main_calculations(
     if historical_merger_events:
         orphaned: List[str] = []
         for merger_event in historical_merger_events:
-            source_ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, merger_event.asset_internal_id))
+            source_ledger = fifo_ledgers.get(
+                (account_key(merger_event.account_id), merger_event.asset_internal_id))
             if source_ledger is None:
                 continue
             leftover = (sum(lot.quantity for lot in source_ledger.lots)
@@ -856,7 +1027,11 @@ def run_main_calculations(
         if not asset_object:
             raise ProcessingError(f"Event {event.event_id} ({event.event_type.name}) references unknown asset {event.asset_internal_id}. Asset resolution failure.")
 
-        ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, asset_object.internal_asset_id))
+        # The disposal consumes the lots of the account it was made from: Rz. 97 Satz 2,
+        # [GT-ESTG20-013]. Every account that this asset's events name has a ledger --
+        # `ledger_accounts` was built from these same events -- so a miss here is a
+        # cash balance or an option, both handled below.
+        ledger = fifo_ledgers.get((account_key(event.account_id), asset_object.internal_asset_id))
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):
@@ -1014,23 +1189,41 @@ def run_main_calculations(
     logger.info(f"Pending option adjustments stored: {len(pending_option_adjustments)}")
 
 
-    logger.info("Performing End-of-Year (EOY) quantity validation...")
-    eoy_mismatch_errors = 0 
-    for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
-        if asset_obj.asset_category == AssetCategory.CASH_BALANCE:
+    # Run per (account, asset), not per asset. A reconstruction that is too high in one
+    # account and too low in another agrees with the broker on the person's total, and a
+    # person-level check passes it — while every disposal in both accounts has been
+    # matched against the wrong lots. The pairs checked are every ledger there is, plus
+    # every pair the closing snapshot reports, so an account that reports units it never
+    # acquired is caught rather than skipped for having no ledger.
+    logger.info("Performing End-of-Year (EOY) quantity validation per account...")
+    eoy_mismatch_errors = 0
+    checked_pairs = sorted(
+        set(fifo_ledgers) | set(eoy_positions),
+        key=lambda pair: (str(pair[1]), pair[0]),
+    )
+    for ledger_account, asset_id in checked_pairs:
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
+        if asset_obj is None or asset_obj.asset_category == AssetCategory.CASH_BALANCE:
             continue
 
-        ledger = fifo_ledgers.get((DEFAULT_ACCOUNT, asset_id))
+        ledger = fifo_ledgers.get((ledger_account, asset_id))
         calculated_eoy_qty: Decimal
 
         if ledger:
             calculated_eoy_qty = ledger.get_current_position_quantity()
         else:
             calculated_eoy_qty = Decimal(0)
-            if asset_obj.soy_quantity is not None and asset_obj.soy_quantity != Decimal(0): # Renamed
-                logger.warning(f"EOY Validation: Asset {asset_obj.get_classification_key()} had SOY qty {asset_obj.soy_quantity} but no ledger found at EOY. Calculated EOY assumed 0.") # Renamed
+            reported_soy = soy_positions.get((ledger_account, asset_id))
+            if reported_soy is not None and reported_soy.quantity:
+                logger.warning(f"EOY Validation: Asset {asset_obj.get_classification_key()} had SOY qty {reported_soy.quantity} but no ledger found at EOY. Calculated EOY assumed 0.")
 
-        reported_eoy_qty = asset_obj.eoy_quantity
+        reported = eoy_positions.get((ledger_account, asset_id))
+        reported_eoy_qty = reported.quantity if reported is not None else None
+        # Named only when there is an account to name: a run over one account reports
+        # exactly what it reported before.
+        subject = asset_obj.description or asset_obj.get_classification_key()
+        if ledger_account != DEFAULT_ACCOUNT:
+            subject = f"{subject} (Konto {ledger_account})"
         try:
             tolerance_exponent = -(ctx.prec // 2)
             comparison_tolerance = Decimal('1e' + str(tolerance_exponent))
@@ -1041,7 +1234,7 @@ def run_main_calculations(
         if reported_eoy_qty is not None:
             if abs(calculated_eoy_qty - reported_eoy_qty) > comparison_tolerance:
                 logger.error(
-                    f"CRITICAL EOY MISMATCH for {asset_obj.description or asset_obj.get_classification_key()} (ID: {asset_id}): "
+                    f"CRITICAL EOY MISMATCH for {subject} (ID: {asset_id}): "
                     f"Calculated EOY Qty: {calculated_eoy_qty}, Reported EOY Qty (from file): {reported_eoy_qty}. "
                     f"Difference: {calculated_eoy_qty - reported_eoy_qty}"
                 )
@@ -1049,20 +1242,20 @@ def run_main_calculations(
                 if data_gap_collector is not None:
                     data_gap_collector.record(
                         code="EOY_QTY_MISMATCH",
-                        subject=asset_obj.description or asset_obj.get_classification_key(),
+                        subject=subject,
                         detail=(f"Berechnete EoY-Stückzahl {calculated_eoy_qty} weicht von der im "
                                 f"Broker-Report gemeldeten ({reported_eoy_qty}) ab."),
                     )
         elif abs(calculated_eoy_qty) > comparison_tolerance: 
             logger.error( 
-                f"EOY MISMATCH for {asset_obj.description or asset_obj.get_classification_key()} (ID: {asset_id}): "
+                f"EOY MISMATCH for {subject} (ID: {asset_id}): "
                 f"Calculated EOY Qty: {calculated_eoy_qty}, but asset NOT found in EOY positions report (implying reported EOY Qty is 0)."
             )
             eoy_mismatch_errors += 1 
             if data_gap_collector is not None:
                 data_gap_collector.record(
                     code="EOY_QTY_MISMATCH",
-                    subject=asset_obj.description or asset_obj.get_classification_key(),
+                    subject=subject,
                     detail=(f"Berechnete EoY-Stückzahl {calculated_eoy_qty}, aber das Asset fehlt "
                             f"im EoY-Positionsreport (impliziert 0)."),
                 )
@@ -2139,6 +2332,7 @@ def _create_excess_dividend_event(original_event, excess_amount, asset_object, c
     excess_dividend_event = CashFlowEvent(
         asset_internal_id=asset_object.internal_asset_id,
         event_date=original_event.event_date,
+        account_id=original_event.account_id,
         event_type=FinancialEventType.DIVIDEND_CASH,
         gross_amount_foreign_currency=excess_amount,
         local_currency=original_event.local_currency,

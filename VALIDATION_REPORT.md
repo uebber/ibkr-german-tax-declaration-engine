@@ -219,6 +219,71 @@ All 28 loss offsetting test cases (LO_ALL_001 through LO_FUND_MISCH_002) were sp
 Ledger reconciliation and output parity against the maintainer's own IBKR export. Instance data —
 holdings, identifiers, amounts — stays in gitignored working copies; only outcomes are recorded here.
 
+## 2026-08-12 — per-Depot FIFO: what it corrects, and what it re-dates
+
+Captures with `scripts/parity_check.sh`, VZ 2025, on the branch that keys FIFO ledgers by the real
+account.
+
+| Capture | Result |
+|---|---|
+| Control, unmodified tree twice (`base25a` vs `base25b`) | console, log and PDF IDENTICAL |
+| Per-account tree, VZ 2025 | **the run aborts** — see below; it is not a designed refusal |
+| Per-account tree, VZ 2024 / VZ 2023 | aborts, as it does on the unmodified tree; neither year produces figures there either |
+| **Cash- and position-snapshot summation alone, applied to the unmodified tree, VZ 2025** | **three declared figures move, and a standing data gap closes** |
+| **Per-account tree with the § 18 Abs. 2 refusal patched, VZ 2025** | **eight declared figures move** |
+
+### The half that is a correction
+
+Isolating the snapshot summation — the record on `Asset` summed across accounts instead of taking
+the last row read — and applying it alone to an `origin/main` worktree, VZ 2025 completes and
+differs from the unmodified capture in exactly four places:
+
+- **Anlage KAP Zeile 19** (Ausländische Kapitalerträge nach Saldierung, ohne Fonds),
+- **Anlage KAP Zeile 22** (Verluste Kapitalerträge ohne Aktien, inkl. Termingeschäfte),
+- the **Saldo Sonstige Kapitalerträge (nicht Fonds)** line, and
+- the standing **`[CURRENCY_EOY_MISMATCH]` USD** data gap, which **disappears**.
+
+The gap closing is the confirmation that the new figure is the right one: the USD ledger was
+seeded from one account's opening balance and therefore disagreed with the broker's reported
+closing balance all along. Seeded from the person's total it reconciles.
+
+### The half that is blocked, and what is behind the block
+
+The full branch produces no VZ 2025 output. The abort is **not** the per-account code refusing:
+it is `FundUnitTranche.abs2_retained_twelfths` raising because
+`_calculate_vorabpauschale` re-dates an undated tranche with `dataclasses.replace(...)` and does
+not clear `acquisition_date_is_known` — a dormant defect from `e70099b`, present on `origin/main`,
+which this change is the first input shape to reach.
+
+Patching that one line (`acquisition_date_is_known=True`, which is what the surrounding comment
+intends) and re-running VZ 2025 on the branch: the run completes, and **eight** declaration lines
+differ from `origin/main` — the three above plus **Saldo Aktien**, **Zeile 20** (Gewinne aus
+Aktienveräußerungen), **Zeile 26** (Sonstige Investmentfonds G/V), **Zeile 53** and **Saldo
+Investmentfonds**.
+
+Those five extra movements are not the per-Depot rule working. They come from lots the checkpoint
+reconciliation discarded and rebuilt from the broker's snapshot: `REPLAY_MARK_UNCONFIRMED_START`
+goes from **1 gap on `origin/main` to 19 on the branch**. The quantities are the broker's, so the
+end-of-year reconciliation passes; the acquisition dates are invented, and only § 18 Abs. 2
+refuses to read one — § 23 and the FIFO order do not.
+
+The cause is input the engine does not read: the export records transfers between the two
+accounts, all in one earlier year. Per-account ledgers turn each into a hole — the sending account
+still holds units, the receiving one holds none — and the reconciliation papers over it with dated
+lots nobody measured.
+
+**Three conclusions, recorded because each was wrong in an earlier draft of this entry:**
+
+1. The per-Depot half is **not latent on this data**. It is blocked, and it moves five further
+   declared figures the moment the block is removed.
+2. The engine's "refusal" here is a property of the fund path, not of this change. A portfolio
+   with no Investmentfonds would declare those figures without stopping.
+3. The effect is not confined to the year of a transfer. The historical replay spans the whole
+   window, so an early move re-dates lots that later years still hold.
+
+Until the Transfers export is read, this branch is sound only for input in which nothing was ever
+moved between accounts.
+
 ## 2026-08-07
 
 **Supersedes the 2026-08-06 row reading "2024 | aborts on

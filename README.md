@@ -231,6 +231,42 @@ Select these fields:
 | 21 | Basis | Cost basis |
 | 22 | RealizedPnl | Realized P&L |
 
+### Ticking more than one account
+
+If you hold several IBKR accounts, select **all of them** in every query above. The export then
+contains the rows of all selected accounts in one file:
+
+- each account's block is preceded by **its own header row**, so a header appears more than once
+  mid-file;
+- **every data row carries its account in the first column, `ClientAccountID`.**
+
+Both matter to the engine. It drops the repeated header rows when it copies or concatenates the
+yearly files (`src/data_preparation.py`), and it keys the lot ledgers by that first column —
+because German law applies the first-in-first-out rule **per Depot** (BMF 14.05.2025 Rz. 97
+Satz 2), so a sale from one account consumes that account's own units and not another account's
+older ones. Sell the shares you bought last year out of the account you bought them in, and a
+pooled calculation would hand you the cheap ones you bought years ago in the other account,
+turning a real loss into a taxable gain.
+
+The figures on your return stay the person's total across all your accounts — the split decides
+*which* units a sale consumed, not what gets declared.
+
+Two limits before you tick the box, both of which later releases remove:
+
+- **Moved shares or fund units between your own accounts? Do not use this yet — that year and
+  every later year are affected.** The engine does not read the Transfers report, so it cannot see
+  the move: the receiving account holds units it never bought and the sending one still shows units
+  it never sold. It rebuilds those holdings from the broker's position snapshot instead, which
+  gives the right *number* of units and the wrong purchase date for them — and the purchase date
+  decides the holding period and which units a later sale consumes. Where an investment fund is
+  involved the run stops outright, because the Vorabpauschale refuses an invented date; **without a
+  fund it does not stop, and the figures it produces rest on those dates.** A later release reads
+  the Transfers report and moves the lots across with their original date and price.
+- **Cash balances are still one pot per currency, not one per account.** FX gains are computed
+  against the pooled balance. A later release keeps each account's balance separately.
+
+Neither affects a single account, or several accounts with nothing ever moved between them.
+
 ### Enabling the Flex Web Service (for automated download)
 
 To use the automated download feature (`--download`), you need to enable the Flex Web Service and generate an access token:

@@ -43,10 +43,11 @@ def test_position_rows_per_account(tmp_path):
     recs = parse_positions_csv(str(p))
     assert len(recs) == 2
     assert recs[0].position == Decimal("100") and recs[1].position == Decimal("50")
-    # NOTE: the per-account assertion ({A, B} on the records) is intentionally
-    # absent here: RawPositionRecord currently drops ClientAccountID (wrong
-    # alias "AccountId") — the multi-account aggregation fix (train item B2)
-    # corrects the alias and strengthens this test.
+    # The account is the assertion that matters: it decides which ledger the row
+    # reconciles against. `RawPositionRecord` declared no field for it until
+    # per-Depot lot tracking gave it a caller, so the two rows above were two
+    # quantities of an unknown provenance.
+    assert [r.client_account_id for r in recs] == [A, B]
 
 
 def test_cash_balance_rows_per_account(tmp_path):
