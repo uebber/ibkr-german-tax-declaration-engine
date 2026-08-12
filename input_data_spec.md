@@ -200,7 +200,7 @@ settles it.
 
 | CSV Header              | Model Field Name (Pydantic) | Model Data Type     | Description                                                                 | Notes (Optionality, Example, Parsing Detail)                                                                                               |
 |-------------------------|-----------------------------|---------------------|-----------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-| `ClientAccountID`       | `client_account_id`         | `Optional[str]`     | The client's account identifier.                                            | Optional. Example: "U1234567"                                                                                                              |
+| `ClientAccountID`       | `client_account_id`         | `Optional[str]`     | The client's account identifier.                                            | Optional. **Load-bearing:** each account's balance in a currency is its own Kapitalforderung ([GT-FX-009]), so this decides which ledger the row builds and reconciles against. Ticking several accounts in one query puts them all in one file. Example: "U1234567" |
 | `CurrencyPrimary`       | `currency_primary`          | `str`               | The currency code (ISO 4217).                                               | Required. Example: "EUR", "USD", "CHF", "JPY"                                                                                              |
 | `FromDate`              | `from_date`                 | `str`               | Start date of the report period (YYYYMMDD).                                 | Required. Example: "10000000"                                                                                                              |
 | `ToDate`                | `to_date`                   | `str`               | End date of the report period (YYYYMMDD).                                   | Required. Example: "10000000"                                                                                                              |
@@ -305,7 +305,7 @@ subset below; the rest are listed in that test as deliberate drops.
 |---------------------|-----------------------------|---------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------------|
 | `ClientAccountID`   | `client_account_id`         | `Optional[str]`     | The account this row is written from the point of view of.         | Optional. Example: "U1234567"                                                     |
 | `CurrencyPrimary`   | `currency_primary`          | `str`               | The instrument's currency, or the currency moved on a cash row.    | Required. Example: "EUR", "USD"                                                   |
-| `AssetClass`        | `asset_class`               | `str`               | Asset class. `CASH` rows produce no event — currency is held per person. | Required. Example: "STK", "CASH"                                             |
+| `AssetClass`        | `asset_class`               | `str`               | Asset class. A `CASH` row is a move of a balance and becomes a disposal ([GT-FX-009]); everything else is a move of a holding and relocates lots ([GT-ESTG20-014]). | Required. Example: "STK", "CASH"                                             |
 | `Symbol`            | `symbol`                    | `Optional[str]`     | Instrument symbol.                                                 | Optional. Blank on a cash row.                                                    |
 | `Description`       | `description`               | `Optional[str]`     | Instrument description.                                            | Optional.                                                                         |
 | `Conid`             | `conid`                     | `Optional[str]`     | IBKR contract identifier.                                          | Optional. Blank on a cash row.                                                    |
@@ -315,13 +315,22 @@ subset below; the rest are listed in that test as deliberate drops.
 | `Type`              | `transfer_type`             | `Optional[str]`     | Kind of transfer.                                                  | Only `INTERNAL` is covered; anything else stops the run, because it may be a disposal and no rule in `reference/` decides which. |
 | `Direction`         | `direction`                 | `Optional[str]`     | "OUT" or "IN". The sole carrier of which way the units went.       | A row with neither stops the run.                                                 |
 | `TransferAccount`   | `transfer_account`          | `Optional[str]`     | The counterparty account of this row.                              | Required in effect: a row naming only one account stops the run.                  |
-| `Quantity`          | `quantity`                  | `Decimal`           | Units moved. Read as an absolute value.                            | Required. Zero stops the run — a move of nothing would leave the holding where it was while the broker reported it elsewhere. |
-| `TransactionID`     | `transaction_id`            | `Optional[str]`     | Present on a summary row, blank on a lot-detail row.               | The discriminator between the two kinds. It does NOT reach the event: the two sides carry different ids, so neither names the move. |
+| `Quantity`          | `quantity`                  | `Decimal`           | Units moved. Read as an absolute value.                            | Required. Zero stops the run on a securities row — a move of nothing would leave the holding where it was while the broker reported it elsewhere. Zero is the ordinary value on a cash row, where the amount is in `CashTransfer`. |
+| `CashTransfer`      | `cash_transfer`             | `Optional[Decimal]` | The amount moved, on a cash row. Read as an absolute value.        | Blank on a securities row. **The only column carrying a cash amount**: `Quantity`, `PositionAmount` and `TransferPrice` are all zero on a cash row, because a balance has no units. Zero or blank on a cash row stops the run. |
+| `TransactionID`     | `transaction_id`            | `Optional[str]`     | Present on a summary row, blank on a lot-detail row.               | The discriminator between the two kinds, and — measured across every summary row of the export — **the same on both sides of one move**, one OUT and one IN per id. The cash path collapses the two sides on it. It does NOT reach the event either way: `get_event_sort_key` puts `ibkr_transaction_id` ahead of the intra-day band, so an id there would let a broker's string decide whether a move lands before or after that day's trades. |
 
 **Notes:**
 - **`TransferPrice` is deliberately unmapped.** It is zero on every row of the standard export, so
   it is not a cost basis, and a field for it would read as a supported input at every call site.
   The Flex Query's lot-detail option is what would make it one.
+- **The securities path still collapses on the move's shape, not on the id.** The sentence above
+  said the two sides carried different ids until it was measured; they do not. Changing that path
+  moves lots and belongs with a change that means to, and it has the whole-position refusal standing
+  behind the collision the shape key cannot see. The cash path has no such backstop, so it keys on
+  the id.
+- **A cash move in EUR produces no event.** § 20 Abs. 2 Satz 1 Nr. 7 reaches a
+  Fremdwährungsguthaben and the declaration is written in euros, so there is no currency gain to
+  declare. Read and deliberately without effect, which is not the same as dropped unseen.
 - **Only a move of a whole position is applied.** A partial move is refused through the data-gap
   channel (`INTERNAL_TRANSFER_PARTIAL`, FAIL_FAST) naming the instrument, the account, the date,
   the quantity moved and the quantity held — because nothing here says which lots moved, and the

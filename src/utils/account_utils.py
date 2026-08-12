@@ -12,9 +12,13 @@ consumes the lots of the account it was made from. Events / positions without an
 (e.g. test fixtures or older exports) collapse to a single DEFAULT account, so
 single-account behaviour is unchanged.
 
-Currency ledgers use the same key shape but are still one per person: Rz. 97 does not
-reach a currency balance (the GT-FX-008 correction), and what a per-account currency
-holding would mean is a question of its own.
+Currency ledgers use the same key shape and the same real account, but they get there by
+a different route and the two must not be crossed. Securities are per Depot because
+Rz. 97 draws that boundary for the Fifo rule of 20 Abs. 4 Satz 7 ([GT-ESTG20-013]), and
+that provision cannot reach a currency balance (the GT-FX-008 correction). A currency
+balance is per account because each account's is its own Kapitalforderung -- Rz. 131 2,
+[GT-FX-009] -- so a move between two of them is a disposal and an acquisition, which one
+pooled balance could not be.
 """
 from typing import Optional
 

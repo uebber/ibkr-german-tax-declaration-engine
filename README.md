@@ -259,14 +259,12 @@ the broker's position snapshot, which gives the right *number* of units and a ma
 date for them; the purchase date decides the holding period and which units a later sale consumes.
 The effect reaches the year of the move **and every later year**.
 
-One limit remains, which a later release removes:
-
-- **Cash balances are still one pot per currency, not one per account.** FX gains are computed
-  against the pooled balance, and moving money between your own accounts therefore has no effect
-  on them. A later release keeps each account's balance separately. Your securities figures do not
-  depend on this.
-
-It does not affect a single account.
+**Cash is held per account too, and moving it between your accounts is a taxable event.** Each
+account's balance in a foreign currency is its own claim against the broker, so moving money from
+one to the other counts as disposing of one holding and acquiring another (BMF 14.05.2025
+Rz. 131). The gain that has built up in the currency since you acquired it is realised at that
+moment, and the receiving account starts a fresh holding at that day's rate. Query 7 is what lets
+the engine see these moves as well.
 
 ### Query 7: Transfers (needed if you have moved a holding between your own accounts)
 
@@ -289,8 +287,8 @@ Select **all fields** the section offers. The engine reads a subset, but it chec
 against the full list, so a query that offers fewer columns is rejected rather than read
 half-heartedly. The columns it uses are `ClientAccountID`, `TransferAccount` and `Direction` to
 say which account the units left and which they arrived in; `Date`; `Quantity`; `Type`;
-`TransactionID`; and `CurrencyPrimary`, `AssetClass`, `Symbol`, `Description`, `Conid`, `ISIN` and
-`Multiplier` to identify the instrument.
+`TransactionID`; `CashTransfer` for the amount of a cash move; and `CurrencyPrimary`, `AssetClass`,
+`Symbol`, `Description`, `Conid`, `ISIN` and `Multiplier` to identify the instrument.
 
 **Only moves of a whole position are supported. Move part of a position and the run stops** rather
 than guess. Nothing in this report says *which* of your units moved — the cheap ones you bought
@@ -299,8 +297,12 @@ has a lot-detail option that would answer it, by carrying a cost basis per lot i
 until the engine reads that, a partial move is refused with the instrument, the account, the date,
 the quantity moved and the quantity held, so you can see the size of what is missing.
 
-Moves of **cash** between your own accounts are read and deliberately have no effect, because
-currency is still held as one balance per person (the limit above).
+Moves of **cash** between your own accounts are read and **do** move a figure: each account's
+foreign-currency balance is its own holding, so the move realises the currency gain accrued up to
+that day and the receiving account acquires at that day's rate. The amount comes from the report's
+`CashTransfer` column — on a cash row `Quantity` and `PositionAmount` are zero, because a balance
+has no units. A move of euros is read and produces nothing, since euros are the currency the return
+is written in.
 
 Name the file `Transfers-YYYY.csv` in `data_import/`, like the others.
 

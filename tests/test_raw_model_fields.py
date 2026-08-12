@@ -146,7 +146,10 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
     action has a non-zero `Amount` disagreeing with both `Proceeds` and `Value`);
     `SubCategory` wants its masking measured. `ClientAccountID` left this list when
     per-Depot lot tracking gave it a caller: the account a snapshot row belongs to
-    decides which ledger it reconciles against.
+    decides which ledger it reconciles against. `CashTransfer` left it when a move of a
+    currency balance became a disposal to be measured: `Quantity`, `PositionAmount` and
+    `TransferPrice` are all zero on a cash row, so it is the only column carrying the
+    amount.
 
     This test fails when the set changes, so the next person either finds the
     decision recorded or has to record their own.
@@ -163,7 +166,7 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
         "RawPositionRecord": ["SubCategory"],
         "RawCorporateActionRecord": ["Amount"],
         "RawTransferRecord": [
-            "AccountAlias", "CashTransfer", "ClientReference", "Code", "CommodityType",
+            "AccountAlias", "ClientReference", "Code", "CommodityType",
             "DateTime", "DeliveryType", "PnlAmount", "PnlAmountInBase", "PositionAmount",
             "PositionAmountInBase", "ReportDate", "SerialNumber", "SettleDate",
             "TransferAccountName", "TransferPrice", "UnderlyingConid",

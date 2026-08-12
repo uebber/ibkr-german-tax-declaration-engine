@@ -95,28 +95,16 @@ def generate_console_tax_report(
 
     # Ahead of the figures, not only among the gaps at the end: a reader who stops at
     # the number they came for must still meet the reason it may not be one they can
-    # use. Printed only when a multi-account limitation was recorded, so a
-    # single-account run is unchanged.
+    # use. Printed only when the engine recorded that a multi-account run had no
+    # Transfers export, so every other run is unchanged — including a multi-account run
+    # with one, which is now fully supported and has nothing to be warned about.
     for gap in (data_gaps or []):
-        if gap.code == "MULTI_ACCOUNT_LIMITATIONS":
+        if gap.code == "TRANSFERS_EXPORT_NOT_READ":
             print("\n" + "!" * 80)
-            print(f"  ACHTUNG -- {gap.subject}. Mehrkonten-Unterstützung ist unvollständig:")
-            # The banner is a pointer to the gap's own text and must not contradict it.
-            # Whether the Transfers export covers the window decides how bad this run is,
-            # and the engine has already decided that when it wrote the detail -- so the
-            # banner reads the answer off there rather than making its own claim.
-            #
-            # The marker is "NICHT BELASTBAR", which the engine writes in the cautious
-            # variant and only there. Keying on the absent-export wording instead was a
-            # defect: it missed the partly-exported window, so the banner reassured a
-            # reader whose full wording three screens down did not.
-            if "NICHT BELASTBAR" in gap.detail:
-                print("  Der Transfers-Bericht deckt nicht jedes Jahr ab: ein Übertrag")
-                print("  zwischen Ihren Konten wäre dort unsichtbar, und die Zahlen unten")
-                print("  wären dann NICHT BELASTBAR. Fremdwährung wird je Person geführt.")
-            else:
-                print("  Fremdwährung wird je Person geführt statt je Konto. Die")
-                print("  Wertpapier-Zahlen unten sind davon nicht betroffen.")
+            print(f"  ACHTUNG -- {gap.subject}, aber kein Transfers-Bericht:")
+            print("  Ein Übertrag zwischen Ihren Konten wäre unsichtbar, und die Zahlen")
+            print("  unten wären dann NICHT BELASTBAR. Exportieren Sie den")
+            print("  Transfers-Bericht für jedes Jahr (siehe README).")
             print("  Vollständiger Wortlaut: Abschnitt 'DATENLÜCKEN / HINWEISE' am Ende.")
             print("!" * 80)
             break

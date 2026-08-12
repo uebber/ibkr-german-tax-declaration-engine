@@ -189,15 +189,58 @@ class TestCollapsingRowsIntoMoves:
         assert len(moves) == 2
         assert sorted(m.event_date for m in moves) == ["2023-06-01", "2023-07-15"]
 
-    def test_a_cash_row_produces_no_move(self, tmp_path):
-        """Currency is held as one balance per person, so a move between two of that
-        person's accounts changes nothing in it. Reading these rows is what
-        per-account currency would need, and the engine does not do that yet."""
-        assert _moves(tmp_path, [
+    def test_a_cash_row_produces_one_disposal(self, tmp_path):
+        """Each account's foreign-currency balance is its own Kapitalforderung, so a
+        move between two of them is a Veraeusserung of the first and an Anschaffung of
+        the second ([GT-FX-009]) -- the opposite of what a securities move is. Both
+        sides describe one move and collapse into one event.
+
+        The amount comes from `CashTransfer`: on a cash row `Quantity`,
+        `PositionAmount` and `TransferPrice` are all zero, because a balance has no
+        units. Read from `Quantity` this would be a move of nothing.
+
+        **Both sides carry the same `TransactionID`**, which is what the cash path
+        collapses on. The fixture said `X1`/`X2` until it was measured against the
+        export: every summary row pair there shares one id, cash and securities alike.
+
+        This assertion was `== []` until the engine held currency per account. The
+        scenario is unchanged; what it establishes is now the reverse.
+        """
+        moves = _moves(tmp_path, [
             transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
                          quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
             transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
-                         quantity="0", cash_transfer="500", tx_id="X2", multiplier=""),
+                         quantity="0", cash_transfer="500", tx_id="X1", multiplier=""),
+        ])
+        assert len(moves) == 1
+        assert moves[0].account_id == A and moves[0].to_account_id == B
+        assert moves[0].quantity == Decimal("500"), "the sign carries no direction"
+        assert moves[0].local_currency == "USD"
+
+    def test_two_distinct_cash_moves_of_one_shape_stay_two(self, tmp_path):
+        """Same currency, same day, same pair of accounts, same amount — two moves,
+        and the ids are what say so. Keyed on the shape instead, these would collapse
+        into one disposal and pass in silence: unlike a securities move, a cash move
+        has no whole-position test to fall foul of afterwards.
+        """
+        rows = []
+        for tx in ("X1", "X2"):
+            rows += [
+                transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="-500", tx_id=tx, multiplier=""),
+                transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="500", tx_id=tx, multiplier=""),
+            ]
+        assert len(_moves(tmp_path, rows)) == 2
+
+    def test_a_cash_row_in_euros_produces_nothing(self, tmp_path):
+        """§ 20 Abs. 2 Satz 1 Nr. 7 reaches a *Fremdwaehrungs*guthaben, and euros are
+        the currency the declaration is written in, so a move of them realises nothing
+        to declare. Read and deliberately without effect, which is a different thing
+        from being dropped unseen."""
+        assert _moves(tmp_path, [
+            transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="EUR",
+                         quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
         ]) == []
 
     def test_the_event_carries_no_transaction_id(self, tmp_path):

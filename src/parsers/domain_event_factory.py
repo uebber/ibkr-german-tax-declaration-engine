@@ -12,7 +12,8 @@ from src.domain.events import (
     CorpActionMergerStock, CorpActionStockDividend, CorpActionExpireDividendRights,
     OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
-    CurrencyConversionEvent, FeeEvent, InternalTransferEvent
+    CurrencyConversionEvent, FeeEvent, InternalTransferEvent,
+    InternalCashTransferEvent
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
@@ -998,7 +999,7 @@ class DomainEventFactory:
 
     def create_events_from_transfers(
         self, raw_transfers: List[RawTransferRecord]
-    ) -> List[InternalTransferEvent]:
+    ) -> List[Union[InternalTransferEvent, InternalCashTransferEvent]]:
         """Collapse the Transfers export into one event per move of a holding.
 
         The export writes each move as a summary row per side plus a lot-detail row per
@@ -1019,22 +1020,43 @@ class DomainEventFactory:
         cannot be a whole-position move (`apply_internal_transfer`). The same guard is
         what catches an export that started giving every row a `TransactionID`.
 
-        Cash rows produce no event. Currency is tracked as one balance per person, and a
-        move between two of that person's accounts changes nothing in one pooled balance.
-        What would make these rows move a figure is holding each account's balance as its
-        own Kapitalforderung, which the engine does not do; the multi-account warning in
-        `calculation_engine` states that limitation to the reader.
+        **The cash path does not need that argument, because it keys on the
+        `TransactionID` instead.** Both sides of one move carry the same id -- measured
+        across every summary row of the export, cash and securities alike -- so the id
+        names the move and the collision above cannot arise there. The securities path
+        keys on the shape and is left as it is: changing it moves lots, and it has the
+        whole-position test standing behind it.
+
+        **A move whose two accounts are the same is not rejected, and does not occur.**
+        [GT-FX-009] rests on a holding not being sellable to itself, so a self-move
+        would realise a gain the claim says cannot exist; no row of the export names one
+        account twice, and the count is in `VALIDATION_REPORT.md`. The assumption is
+        written here rather than turned into a guard for a condition nobody has seen.
+
+        **A cash row is the opposite event and gets its own.** Moving a foreign-currency
+        balance to another of the taxpayer's accounts is a disposal of the sending
+        account's Kapitalforderung and an acquisition of the receiving account's
+        ([GT-FX-009]), where the securities move is no disposal at all. The two are built
+        here side by side because the export writes them the same way, and they leave as
+        different event types so that nothing downstream can treat one as the other. A
+        cash row carries its amount in `CashTransfer`: `Quantity`, `PositionAmount` and
+        `TransferPrice` are all zero on one, because a balance has no units.
+
+        A move of EUR produces nothing. § 20 Abs. 2 Satz 1 Nr. 7 reaches a
+        *Fremdwaehrungs*guthaben and this engine's base currency is EUR, so there is no
+        currency gain to declare either way.
         """
         moves: dict = {}
+        cash_moves: dict = {}
         data_errors: List[str] = []
         skipped_detail_rows = 0
+        skipped_eur_cash_rows = 0
 
         for rtr in raw_transfers:
             if not (rtr.transaction_id or "").strip():
                 skipped_detail_rows += 1
                 continue
-            if (rtr.asset_class or "").strip().upper() == "CASH":
-                continue
+            is_cash_row = (rtr.asset_class or "").strip().upper() == "CASH"
 
             # Every observed row is INTERNAL. A move to a third party or to another
             # institution is a different question -- whether it is a disposal at all
@@ -1085,6 +1107,63 @@ class DomainEventFactory:
                     f"chronological order, so it cannot be placed without one.")
                 continue
 
+            if is_cash_row:
+                currency = (rtr.currency_primary or "").strip().upper()
+                if not currency:
+                    data_errors.append(
+                        f"Cash transfer on {event_date} names no currency. Which "
+                        f"Kapitalforderung was disposed of cannot be read without one.")
+                    continue
+                if currency == "EUR":
+                    # Nothing to declare: § 20 Abs. 2 Satz 1 Nr. 7 reaches a
+                    # Fremdwaehrungsguthaben, and euros are this engine's base currency.
+                    # Counted as handled rather than skipped in silence.
+                    skipped_eur_cash_rows += 1
+                    continue
+                amount = (rtr.cash_transfer or Decimal(0)).copy_abs()
+                if amount <= Decimal(0):
+                    data_errors.append(
+                        f"Cash transfer of {currency} on {event_date} moves "
+                        f"{rtr.cash_transfer} — the only column carrying the amount is "
+                        f"CashTransfer, and a move of nothing is not a move. Reading it "
+                        f"as one would leave the balance where it was while the broker "
+                        f"reported it elsewhere.")
+                    continue
+                cash_asset = self.asset_resolver.get_or_create_asset(
+                    raw_isin=None, raw_conid=None, raw_symbol=currency,
+                    raw_currency=currency, raw_ibkr_asset_class="CASH",
+                    raw_description=f"Cash Balance {currency}",
+                    description_source_type="transfer_cash",
+                )
+                # Keyed on the TRANSACTION ID, not on the move's shape. Both sides of
+                # one cash move carry the same id -- measured across every summary row
+                # of the export, securities and cash alike -- so the id names the move
+                # and two genuinely distinct moves of one currency, one day, one pair of
+                # accounts and one amount stay two. Keyed on the shape they would
+                # collapse into one disposal and pass in silence, which the securities
+                # path is saved from by its whole-position test and this one would not
+                # be: a currency ledger that runs short opens a short position rather
+                # than refusing ([GT-FX-006]).
+                #
+                # It is used to identify the move and is deliberately NOT carried onto
+                # the event: `get_event_sort_key` puts `ibkr_transaction_id` ahead of the
+                # intra-day band, so an id there would let a broker's string decide
+                # whether the move lands before or after that day's trades.
+                cash_key = (rtr.transaction_id or "").strip()
+                if cash_key in cash_moves:
+                    continue
+                cash_moves[cash_key] = InternalCashTransferEvent(
+                    asset_internal_id=cash_asset.internal_asset_id,
+                    event_date=event_date,
+                    to_account_id=to_account.strip(),
+                    quantity=amount,
+                    account_id=from_account.strip(),
+                    local_currency=currency,
+                    gross_amount_foreign_currency=amount,
+                    ibkr_activity_description=rtr.description,
+                )
+                continue
+
             asset = self.asset_resolver.get_or_create_asset(
                 raw_isin=rtr.isin, raw_conid=rtr.conid, raw_symbol=rtr.symbol,
                 raw_currency=rtr.currency_primary,
@@ -1122,11 +1201,13 @@ class DomainEventFactory:
             )
 
         logger.info(
-            f"Created {len(moves)} internal transfer event(s) from {len(raw_transfers)} "
-            f"raw transfer row(s) ({skipped_detail_rows} lot-detail row(s) collapsed "
-            f"into their summary rows)."
+            f"Created {len(moves)} internal transfer event(s) and {len(cash_moves)} "
+            f"internal cash transfer event(s) from {len(raw_transfers)} raw transfer "
+            f"row(s) ({skipped_detail_rows} lot-detail row(s) collapsed into their "
+            f"summary rows, {skipped_eur_cash_rows} EUR cash row(s) carrying no currency "
+            f"gain)."
         )
-        return list(moves.values())
+        return list(moves.values()) + list(cash_moves.values())
 
     def create_events_from_options_eae(
         self, raw_records: List[RawOptionsEAERecord]

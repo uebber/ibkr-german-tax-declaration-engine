@@ -8,7 +8,7 @@ import sys
 
 from src.domain.assets import (
     Asset, InvestmentFund, Option, CashBalance, Derivative, Stock, Bond, PrivateSaleAsset, Cfd, # Changed Section23EstgAsset to PrivateSaleAsset
-    MarkPosition,
+    MarkPosition, AccountCashBalance,
 )
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
 from src.domain.events import (
@@ -173,6 +173,12 @@ class ParsingOrchestrator:
         # `Asset` is the sum of these, never one row of them.
         self.soy_positions: Dict[Tuple[str, uuid.UUID], MarkPosition] = {}
         self.eoy_positions: Dict[Tuple[str, uuid.UUID], MarkPosition] = {}
+        # The cash report's rows, one per (account, currency). Currency balances never
+        # appear in a Positions file -- checked against every one of them -- so this is
+        # the only per-account statement of a currency holding the input carries, and it
+        # is what the currency ledgers are built and reconciled against. Each is its own
+        # Kapitalforderung ([GT-FX-009]); the totals on `CashBalance` are their sum.
+        self.cash_balances: Dict[Tuple[str, uuid.UUID], AccountCashBalance] = {}
         # Which prior-year snapshot fields were read onto which asset, so the pipeline can
         # verify they are still there once classification has run. See
         # _verify_prior_year_snapshot_survived_classification.
@@ -897,14 +903,29 @@ class ParsingOrchestrator:
                 description_source_type="cash_balance_csv"
             )
 
+            # The row under the account that reported it. This is what the ledgers are
+            # built and reconciled against: each account's balance is its own
+            # Kapitalforderung ([GT-FX-009]), so a disposal from one account is measured
+            # against what was paid into that account. A repeat of the same
+            # (account, currency) is summed, as the position snapshots already do -- two
+            # rows for one currency in one account are two parts of one balance.
+            account = account_key(raw_balance.client_account_id)
+            key = (account, cash_asset.internal_asset_id)
+            existing = self.cash_balances.get(key)
+            self.cash_balances[key] = AccountCashBalance(
+                soy_quantity=(raw_balance.starting_cash if existing is None
+                              else existing.soy_quantity + raw_balance.starting_cash),
+                eoy_quantity=(raw_balance.ending_cash if existing is None
+                              else existing.eoy_quantity + raw_balance.ending_cash),
+            )
+
             # Set SOY/EOY quantities (can be negative for short positions).
             # The cash-balance report REPLACES whatever a Positions row said about this
             # currency -- it always has, by running second -- but it accumulates across
             # its own rows, because one currency held in two accounts is reported on two
             # rows and the person's balance is both of them. Seeding one ledger from the
-            # last row read was simply the wrong number. (The ledger is still one per
-            # person: two accounts holding one currency hold two Kapitalforderungen, which
-            # is a separate change.)
+            # last row read was simply the wrong number. These person-level figures are
+            # for the reader; no ledger is built or reconciled from them.
             if cash_asset.internal_asset_id not in seeded_from_cash_report:
                 seeded_from_cash_report.add(cash_asset.internal_asset_id)
                 cash_asset.soy_quantity = raw_balance.starting_cash

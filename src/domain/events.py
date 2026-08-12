@@ -508,6 +508,70 @@ class InternalTransferEvent(FinancialEvent):
 
 
 @dataclass
+class InternalCashTransferEvent(FinancialEvent):
+    """A foreign-currency BALANCE moved from one of the taxpayer's own accounts to another.
+
+    **A disposal, and the mirror image of `InternalTransferEvent`.** Moving securities
+    between one person's depots changes no beneficial owner and is not a Veraeusserung
+    ([GT-ESTG20-014]); moving a foreign-currency balance to another account "bei demselben
+    oder einem anderen Kreditinstitut" *is* one, and is simultaneously the acquisition of a
+    new Kapitalforderung -- BMF 14.05.2025 Rz. 131 ¶2, [GT-FX-009]. The two events are
+    separate classes because the two consequences are opposite, and one class serving both
+    is one dispatch mistake away from relocating a balance that should have been realised.
+
+    `account_id` is the SENDING account and `to_account_id` the receiving one, the same
+    convention `InternalTransferEvent` uses.
+
+    `quantity` is the amount moved, always positive: the export's sign carries neither the
+    direction nor which side is which, so callers pass the absolute amount and read the
+    direction separately. `local_currency` is the currency of that amount, and
+    `gross_amount_foreign_currency` carries it again so that the generic cash-flow machinery
+    -- which reads that field and nothing else for an amount -- cannot see a balance move as
+    a move of nothing.
+
+    **EUR never produces one of these.** § 20 Abs. 2 Satz 1 Nr. 7 reaches a
+    *Fremdwaehrungs*guthaben, and this engine's base currency is EUR, so a move of euros
+    between the accounts realises nothing to declare.
+    """
+    _: KW_ONLY
+    to_account_id: str
+    quantity: Decimal
+
+    def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
+                 to_account_id: str, quantity: Decimal,
+                 **kwargs_for_parent_kw_only):
+        super().__init__(asset_internal_id, event_date,
+                         event_type=FinancialEventType.INTERNAL_CASH_TRANSFER,
+                         **kwargs_for_parent_kw_only)
+        self.to_account_id = to_account_id
+        self.quantity = quantity
+        # Checked here rather than in `__post_init__`, for the reason
+        # `InternalTransferEvent` records: the parent's generated `__init__` runs
+        # `__post_init__` before these two fields exist.
+        if quantity is None or quantity <= Decimal(0):
+            raise ValueError(
+                f"InternalCashTransferEvent amount must be positive, got {quantity}. "
+                f"The export's sign does not carry the direction; callers pass the "
+                f"absolute amount and the direction separately."
+            )
+        if not to_account_id or not str(to_account_id).strip():
+            raise ValueError(
+                "InternalCashTransferEvent requires a receiving account. It is where the "
+                "new Kapitalforderung is acquired; without it only half the transaction "
+                "exists and the balance would simply vanish."
+            )
+        if not self.local_currency or self.local_currency.upper() == "EUR":
+            raise ValueError(
+                f"InternalCashTransferEvent needs a foreign currency, got "
+                f"'{self.local_currency}'. Only a Fremdwaehrungsguthaben is the "
+                f"Kapitalforderung whose Umbuchung is a disposal ([GT-FX-009])."
+            )
+
+    def __post_init__(self):
+        super().__post_init__()
+
+
+@dataclass
 class FeeEvent(FinancialEvent):
     # For miscellaneous fees (e.g., account fees, market data fees)
     # event_type is FinancialEventType.FEE_TRANSACTION

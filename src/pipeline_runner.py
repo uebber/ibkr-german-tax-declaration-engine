@@ -223,6 +223,7 @@ def run_core_processing_pipeline(
             mark_positions=orchestrator.mark_positions,
             soy_positions=orchestrator.soy_positions,
             eoy_positions=orchestrator.eoy_positions,
+            cash_balances=orchestrator.cash_balances,
             prior_year_positions_available=bool(
                 positions_prior_start_file_path and positions_prior_end_file_path
             ),

@@ -369,17 +369,20 @@ class TestAdversarial(FifoTestCaseBase):
         assert out.eoy_mismatch_error_count == 0
 
 
-class TestTheLimitationsAreStated(FifoTestCaseBase):
-    """Multi-account support is incomplete, and a run that uses it says so.
+class TestAnUnreadTransfersExportIsStated(FifoTestCaseBase):
+    """Multi-account support is complete; a multi-account run WITHOUT the Transfers
+    export is not, and says so.
 
-    The warning is raised on the presence of a second account, not on the
-    presence of a defect: a transfer in an earlier year re-dates lots this year
-    still holds, and nothing in the input marks that it happened. A person who
-    has moved nothing between accounts is told so in the text.
+    The warning is raised on the absence of the export, not on the presence of a
+    defect: a move in an earlier year re-dates lots this year still holds, and
+    nothing else in the input marks that it happened. A person who has moved nothing
+    between accounts is told so in the text.
 
-    The securities clause went with the change that reads the Transfers export and
-    relocates lots between accounts ([GT-ESTG20-014]). The currency clause is what
-    is left, and it takes this class with it when it goes.
+    It used to carry every multi-account limitation. The securities clause went with
+    the change that reads the Transfers export ([GT-ESTG20-014]); the currency clause
+    went with the change that holds each account's balance as its own
+    Kapitalforderung and measures a move between two of them ([GT-FX-009],
+    [GT-FX-010]). What is left is about the export, not the engine.
     """
     ISIN = "US000000LM01"
 
@@ -398,21 +401,18 @@ class TestTheLimitationsAreStated(FifoTestCaseBase):
 
     def _gap(self, out):
         return next((g for g in out.data_gaps
-                     if g.code == "MULTI_ACCOUNT_LIMITATIONS"), None)
+                     if g.code == "TRANSFERS_EXPORT_NOT_READ"), None)
 
-    def test_two_accounts_are_told_what_is_not_covered(self):
-        gap = self._gap(self._run([A, B], transfers_data=[]))
-        assert gap is not None, "a multi-account run must state its limitations"
-        assert "Fremdwährungsbestände werden je Person geführt" in gap.detail
-
-    def test_the_closed_limitation_is_not_still_warned_about(self):
+    def test_two_accounts_with_the_export_are_told_nothing(self):
         """A warning left standing after its limitation is closed is the same defect
         as a comment asserting something false: the reader trusts it and works around
-        a problem that is gone. With the export supplied, the moves ARE read."""
-        gap = self._gap(self._run([A, B], transfers_data=[]))
-        assert "KEIN TRANSFERS-BERICHT" not in gap.detail
-        assert "NICHT BELASTBAR" not in gap.detail, \
-            "the securities figures no longer rest on what this warning covered"
+        a problem that is gone. With the export supplied there is no limitation left
+        to state — the moves are read, and currency is held per account.
+
+        This assertion is the inverse of the one it replaces, which required the
+        currency clause to be present.
+        """
+        assert self._gap(self._run([A, B], transfers_data=[])) is None
 
     def test_a_run_with_no_transfers_export_is_told_the_moves_are_invisible(self):
         """The other half, and the one that matters more. Supplying no Transfers
@@ -508,35 +508,32 @@ class TestTheWarningReachesTheReader:
 
     def _gap(self, detail="…"):
         from src.processing.data_gaps import DataGap, GapSeverity
-        return DataGap(code="MULTI_ACCOUNT_LIMITATIONS", subject="2 Konten im Export",
+        return DataGap(code="TRANSFERS_EXPORT_NOT_READ", subject="2 Konten im Export",
                        detail=detail, severity=GapSeverity.WARNING)
 
     def test_it_is_printed_before_the_figures(self):
         """A reader who stops at the number they came for must have passed it."""
         lines = self._lines([self._gap()])
-        banner = next(i for i, l in enumerate(lines) if "Mehrkonten-Unterstützung" in l)
+        banner = next(i for i, l in enumerate(lines) if "kein Transfers-Bericht" in l)
         first_figure = next(i for i, l in enumerate(lines) if "Zeile 20" in l)
         assert banner < first_figure
 
     def test_the_banner_does_not_contradict_the_gap_it_points_at(self):
         """The banner is a pointer to the full wording, so the two must agree about
-        the one thing that decides how bad the run is. It reads the answer off the
-        gap's own detail rather than making its own claim.
+        the one thing that decides how bad the run is.
 
-        It keys on "NICHT BELASTBAR", which the engine writes in the cautious variant
-        and only there. Keying on one variant's own wording was a defect while there
-        were two cautious variants: the second printed the reassuring banner over a
-        full wording that said the opposite. There is one cautious variant again now —
-        a partly exported window stops the run instead — and the marker is what keeps
-        the banner right if a third is ever added.
+        It no longer has to READ that answer off the detail, because there is one
+        wording again: the gap exists only where the export was not read, and the
+        engine does not record it otherwise. That is a stronger arrangement than the
+        marker this test used to look for — a banner that cannot be printed over a
+        wording that disagrees with it. What has to stay true is that both say the
+        figures are not sound.
         """
         lines = "\n".join(self._lines([
             self._gap("… ES WURDE KEIN TRANSFERS-BERICHT … NICHT BELASTBAR …")]))
         assert "NICHT BELASTBAR" in lines
-        assert "nicht betroffen" not in lines
-        read = "\n".join(self._lines([self._gap("… Überträge werden eingelesen …")]))
-        assert "NICHT BELASTBAR" not in read
-        assert "nicht betroffen" in read
+        assert "nicht betroffen" not in lines, \
+            "the banner must not reassure where the gap does not"
 
     def test_a_clean_run_prints_no_banner(self):
-        assert not any("Mehrkonten-Unterstützung" in l for l in self._lines([]))
+        assert not any("Transfers-Bericht" in l for l in self._lines([]))
