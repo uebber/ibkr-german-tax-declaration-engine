@@ -460,6 +460,7 @@ def download_and_merge(
         # `--download` run silently produced no Transfers file for the year -- which the
         # engine then reads as a year it cannot see a move in.
         "transfers": "Transfers",
+        "grants": "Grants",
     }
 
     # Positions are special: SOY and EOY are separate files from the same query

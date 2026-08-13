@@ -94,6 +94,13 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     # in which a move is invisible, and the run says which years those are. Set the ID
     # once and every later download covers it.
     "transfers": None,
+    # Needed if your broker has ever awarded you shares for placing capital with it.
+    # The award is the only record that those shares arrived and what they were worth,
+    # and no other export carries it -- so a year without this report is a year whose
+    # holding cannot be reconstructed, and the run stops rather than inventing an
+    # acquisition for it. Three row kinds share the report and only two move the
+    # position; see input_data_spec.md.
+    "grants": None,
 }
 
 # Cache directory for downloaded Flex Query CSVs

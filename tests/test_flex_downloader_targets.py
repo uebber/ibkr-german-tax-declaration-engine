@@ -28,6 +28,7 @@ ALL_IDS = {
     "cash_balance": 1000005,
     "options_eae": 1000006,
     "transfers": 1000007,
+    "grants": 1000008,
 }
 
 
@@ -44,6 +45,12 @@ class TestEveryConfiguredQueryHasSomewhereToLand:
         """Named on its own because the general assertion above would stay green if
         both sides lost it together."""
         assert "transfers" in config_example.FLEX_QUERY_IDS
+
+    def test_grants_is_one_of_them(self):
+        """Same reason as Transfers, and the same failure available to it: an award
+        report nobody knows they can configure is a holding the engine cannot
+        reconstruct, and the run then stops with every figure withheld."""
+        assert "grants" in config_example.FLEX_QUERY_IDS
 
     def test_a_configured_query_with_nowhere_to_land_stops_the_run(self, tmp_path,
                                                                    monkeypatch):

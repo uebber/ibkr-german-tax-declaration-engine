@@ -73,11 +73,12 @@ FILENAME_PREFIXES = {
     "cash_balance": "Cash_Balance",
     "options_eae": "Options_EAE",
     "transfers": "Transfers",
+    "grants": "Grants",
     "positions": "Positions",
 }
 
 # Portal query name (normalised, naming prefix removed) -> query key. The names
-# are the ones the README tells you to give the seven queries; separators and
+# are the ones the README tells you to give the eight queries; separators and
 # case do not matter, so "MyTax_Cash_Transactions" and "MyTax Cash
 # Transactions" both resolve to cash_transactions.
 QUERY_KEYS_BY_NAME = {
@@ -90,6 +91,9 @@ QUERY_KEYS_BY_NAME = {
     "option exercises assignments expirations": "options_eae",
     "options exercises assignments expirations": "options_eae",
     "transfers": "transfers",
+    "grants": "grants",
+    "stock grant activity": "grants",
+    "grant activity": "grants",
 }
 
 # How long to wait for a manual login before giving up.
