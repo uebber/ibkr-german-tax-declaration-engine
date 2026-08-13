@@ -85,7 +85,14 @@ class SelectiveRateProvider:
 
 class TestIssueA_SoyRateFallback:
     """_initialize_currency_soy_ledger and _reconcile_currency_soy must raise
-    ValueError when ECB rate is unavailable, instead of silently using 1:1."""
+    ValueError when ECB rate is unavailable, instead of silently using 1:1.
+
+    `reported_soy` became a required argument when currency ledgers went per account:
+    the balance to reconcile against is that account's, and reading the person-level
+    total off the asset is the mistake the parameter exists to prevent. These calls
+    pass the asset's own figure, which is what the function used to read, so what each
+    assertion establishes is unchanged.
+    """
 
     def test_initialize_soy_raises_when_ecb_rate_is_none(self):
         """SOY initialization must fail loudly when ECB rate is None."""
@@ -132,7 +139,8 @@ class TestIssueA_SoyRateFallback:
         # Ledger has no lots, SOY says 5000 => diff of 5000 => needs rate
 
         with pytest.raises(ValueError, match="No ECB rate available for SOY reconciliation"):
-            _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX)
+            _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX,
+                                reported_soy=asset.soy_quantity)
 
     def test_reconcile_soy_raises_when_ecb_rate_is_zero(self):
         """SOY reconciliation must fail loudly when ECB rate is zero."""
@@ -141,7 +149,8 @@ class TestIssueA_SoyRateFallback:
         provider = SelectiveRateProvider({"USD": Decimal("0")})
 
         with pytest.raises(ValueError, match="No ECB rate available for SOY reconciliation"):
-            _reconcile_currency_soy(ledger, asset, 2023, provider, CTX)
+            _reconcile_currency_soy(ledger, asset, 2023, provider, CTX,
+                                    reported_soy=asset.soy_quantity)
 
     def test_reconcile_soy_skips_when_balanced(self):
         """SOY reconciliation does nothing when FIFO matches reported SOY."""
@@ -157,7 +166,8 @@ class TestIssueA_SoyRateFallback:
         ))
 
         # Should not raise even with NoneRateProvider since diff is 0
-        _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX)
+        _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX,
+                                reported_soy=asset.soy_quantity)
 
 
 # =============================================================================

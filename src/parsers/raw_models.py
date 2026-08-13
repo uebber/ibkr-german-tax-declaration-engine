@@ -24,8 +24,19 @@ Adding a field therefore means adding the column to the Flex Query *and* to the
 `*_COLUMNS` tuple. Leaving it declared-but-unrequested is the one state to avoid.
 
 Note the mirror case, which is *not* corrected here because changing it could move a
-figure: `Positions` exports `ClientAccountID` and `SubCategory`, and `Corporate_Actions`
-exports `Amount`, none of which have a field below, so `extra = 'ignore'` discards them.
+figure: `Positions` exports `SubCategory` and `Corporate_Actions` exports `Amount`,
+neither of which has a field below, so `extra = 'ignore'` discards them.
+
+`Positions` also exported `ClientAccountID` unmapped until per-Depot lot tracking gave it
+a caller. It is mapped now. That it stayed unmapped for as long as it did is the rule
+above working as intended: a field whose only reader is a test is the same defect as a
+field nothing populates, approached from the other side.
+
+`Transfers` is the one model that maps a *subset* of its tuple rather than all of it. The
+tuple is the export's full header, declared in full so that a column appearing or
+disappearing is caught at the boundary; the model maps what the engine reads. Which
+columns it leaves alone, and why, is listed in `tests/test_raw_model_fields.py` beside the
+other deliberate drops.
 """
 from typing import Optional, Any
 from decimal import Decimal
@@ -153,6 +164,10 @@ class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
     been an option's only source. Restoring the capability means adding the three columns
     to the Flex Query and to POSITIONS_COLUMNS together, not re-declaring them here.
     """
+    # The custody account this row belongs to. Every other raw model mapped it and this
+    # one did not, which is why the per-Depot ledger keying could not see a snapshot's
+    # account. Deliberately unmapped until it had a caller (issue #69); it has one now.
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed for consistency
     asset_class: str = Field(alias="AssetClass")
     symbol: str = Field(alias="Symbol")
@@ -257,6 +272,149 @@ class RawOptionsEAERecord(RawBaseRecord):
         extra = 'ignore'
 
 
+class RawTransferRecord(RawBaseRecord):
+    """One row of the Transfers export -- a move of a holding or a cash balance.
+
+    The export writes a move as SEVERAL rows, and a consumer that sums them moves the
+    holding more than once. Two kinds are mixed together:
+
+    * a **summary** row, carrying `TransactionID` and `PositionAmount`. There is one per
+      side of the move: `Direction` "OUT" on the sending account and "IN" on the
+      receiving one. Each names both accounts -- its own in `ClientAccountID` and the
+      other in `TransferAccount` -- so either side alone describes the whole move.
+    * a **lot-detail** row per lot, carrying `Code` "ST" and no `TransactionID`.
+
+    `TransactionID` is therefore the discriminator, and `DomainEventFactory
+    .create_events_from_transfers` collapses what survives it. That the two kinds
+    coincide with `Code` was measured on the export before this model was written; the
+    count is in `VALIDATION_REPORT.md`.
+
+    **`Direction` carries the direction and the sign of `Quantity` does not.** The two
+    sides of one move carry opposite signs, and which side is negative varies by
+    instrument, so the sign identifies neither the direction nor a short position. The
+    engine reads `abs(quantity)` and takes the direction from `Direction`; whether the
+    units moved are long or short is read from the sending ledger, which knows.
+
+    `TransferPrice` is not mapped because it is not a cost basis: the standard export
+    leaves it at zero, and a per-lot basis needs the Flex Query's lot-detail option. A
+    field for it here would read as a supported input at every call site -- the state
+    this module's header exists to prevent.
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    asset_class: str = Field(alias="AssetClass")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    date: str = Field(alias="Date")
+    transfer_type: Optional[str] = Field(None, alias="Type")
+    direction: Optional[str] = Field(None, alias="Direction")
+    transfer_account: Optional[str] = Field(None, alias="TransferAccount")
+    quantity: Decimal = Field(alias="Quantity")
+    transaction_id: Optional[str] = Field(None, alias="TransactionID")
+    # The amount moved, on a cash row. `Quantity`, `PositionAmount` and `TransferPrice`
+    # are all zero on such a row -- a cash move has no units -- so this is the only column
+    # that carries it, and without it a currency move could not be measured at all. Blank
+    # on a securities row, where the units are in `Quantity`.
+    cash_transfer: Optional[Decimal] = Field(None, alias="CashTransfer")
+
+    @validator('multiplier', 'quantity', 'cash_transfer', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Any:
+        """Blank becomes absent; anything else is handed to pydantic to parse or reject.
+
+        Deliberately NOT the other models' pattern of defaulting an unparseable non-blank
+        value to `Decimal("0.0")`. A quantity of zero here is a move of nothing, so that
+        default would leave the holding where it was while the broker had moved it -- and
+        the reconciliation that follows compares quantities, which would then agree with
+        the snapshot for the wrong reason.
+
+        Blank must not raise: `Multiplier` is blank on a cash row. `Quantity` is required,
+        so a blank one still raises.
+        """
+        if v is None or str(v).strip() == "":
+            return None
+        return v
+
+    class Config:
+        extra = 'ignore'
+
+
+class RawGrantRecord(RawBaseRecord):
+    """One row of the Stock Grant Activity export -- shares awarded for placing capital.
+
+    **Three activity kinds share this export and only two of them move the position.**
+    `ActivityDescription` is the discriminator:
+
+    * an **award** ("... Grant ...") books shares into the account;
+    * a **reversal** ("... Return ...") takes some back when the condition fails, with a
+      negative `Quantity` and the ORIGINAL award's `AwardDate`;
+    * a **vesting** ("... Vesting ...") moves nothing. It records the lapse of the
+      condition and restates the value, and a consumer that added its `Quantity` to the
+      position would count the same shares twice.
+
+    The third is why `GrantsParser` refuses an `ActivityDescription` it does not
+    recognise instead of skipping it. A dispatch that falls through without an `else`
+    would silently drop a future kind, and the drop would reconcile against the broker's
+    snapshot only until the kind was one that moved the position.
+
+    **Why both dates are mapped.** `AwardDate` is where Zufluss falls -- a contractual
+    condition under which the grantor may reclaim the shares does not postpone it, only a
+    disposal being *rechtlich unmoeglich* would ([GT-ESTG20-064]) -- so it is the
+    acquisition date and the matching key. `VestingDate` is mapped because it is what
+    identifies a vesting row as the lapse of THAT award's condition, and because the
+    claim's own test turns on whether disposal was possible before it, which a reader
+    checking this engine's position has to be able to see. `ReportDate` is the broker's
+    booking day, mapped for ordering only.
+
+    **`SerialNumber` is not mapped.** The export carries the column and leaves it blank,
+    so there is no identity to read from it. It stays in `GRANTS_COLUMNS` so that its
+    ever being populated is caught at the boundary rather than downstream.
+
+    **`Value` is mapped and deliberately not read.** It is `Quantity` x `Price` rounded
+    to the cent, so it can only disagree with them by rounding, and the cost basis is
+    computed from `Price` -- the unrounded figure -- rather than from it. It is declared
+    so that the column is accounted for at the boundary rather than discarded by
+    `extra = 'ignore'`. No code compares the two: a consistency check that fired on the broker's own rounding
+    would be noise, and one with a tolerance would need a source for the tolerance.
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    asset_class: str = Field(alias="AssetClass")
+    sub_category: Optional[str] = Field(None, alias="SubCategory")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    report_date: str = Field(alias="ReportDate")
+    activity_description: str = Field(alias="ActivityDescription")
+    award_date: str = Field(alias="AwardDate")
+    vesting_date: str = Field(alias="VestingDate")
+    quantity: Decimal = Field(alias="Quantity")
+    price: Decimal = Field(alias="Price")
+    value: Decimal = Field(alias="Value")
+
+    @validator('multiplier', 'quantity', 'price', 'value', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Any:
+        """Blank becomes absent; anything else is handed to pydantic to parse or reject.
+
+        Deliberately NOT the `safe_decimal(v, default=Decimal("0.0"))` pattern of the
+        older models. A quantity, price or value of zero here is a real statement -- an
+        award of nothing, or one worth nothing -- so defaulting an unparseable figure to
+        zero would put an invented acquisition cost on a lot, which is the substitution
+        CLAUDE.md's fallback rule forbids. `quantity`, `price` and `value` are required,
+        so a blank one still raises; `multiplier` is optional.
+        """
+        if v is None or str(v).strip() == "":
+            return None
+        return v
+
+    class Config:
+        extra = 'ignore'
+
+
 class RawCashBalanceRecord(RawBaseRecord):
     """Raw record for currency cash balances from IBKR Cash Report."""
     client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
@@ -278,3 +436,4 @@ class RawCashBalanceRecord(RawBaseRecord):
 
     class Config:
         extra = 'ignore'
+

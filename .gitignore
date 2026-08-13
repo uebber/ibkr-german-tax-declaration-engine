@@ -125,3 +125,6 @@ PLAN_*.md
 docs/PLAN_*.md
 docs/GROUP7_FIX_PLAN.md
 parity/
+
+# Local PR layout files (build-pr-minimal); never committed
+tmp/

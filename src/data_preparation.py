@@ -168,8 +168,24 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
     # trades say whether one happened. So the requirement is decided after parsing, in
     # `ParsingOrchestrator._require_option_cash_settlements`, not by a missing-file check
     # here. Absent means absent; it does not mean unnecessary.
+    #
+    # Transfers is optional in a plainer sense: a person who has never moved a holding
+    # between their own accounts has no rows, and there is nothing to decide later --
+    # a move that never happened leaves no lot in the wrong place. Both `_copy_file` and
+    # `_concatenate_csvs` strip the repeated header row IBKR leaves mid-file where a
+    # second account's export was appended, so neither reaches the parser as data.
+    # Grants is optional on the same plain footing as Transfers: a person whose broker has
+    # never awarded them shares has no rows, and there is nothing to decide later.
+    #
+    # A per-year hole here CAN hide an award, and the missing-years record below only LOGS
+    # it -- unlike `transfers_missing_years`, nothing consumes `grants_missing_years` and
+    # no run stops because of it. What actually catches a missing award year is the
+    # replay's reconciliation against the broker's snapshots, and only where the interval
+    # began at one; see the note in input_data_spec.md section 8.
     optional_transaction_types = {
         "options_eae": "Options_EAE",
+        "transfers": "Transfers",
+        "grants": "Grants",
     }
 
     for file_key, prefix in transaction_types.items():
@@ -207,6 +223,7 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         if not years_to_include:
             logger.info("No %s files found in %s/. Skipping.", prefix, IMPORT_DIR)
             result[file_key] = ""
+            result[f"{file_key}_missing_years"] = ""
             continue
 
         paths = [IMPORT_DIR / f"{prefix}-{y}.csv" for y in years_to_include]
@@ -220,6 +237,24 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
         result[file_key] = str(output_path)
         logger.info("%s: %d year(s) included (%s)", file_key, len(years_to_include),
                     ", ".join(str(y) for y in years_to_include))
+
+        # An optional export that exists for SOME years is a different thing from one that
+        # does not exist at all, and the difference has to reach the consumer rather than
+        # be inferred from a path. The required types above stop the run when the tax
+        # year's own file is missing; these cannot, because absence is legitimate. What
+        # they can do is say which years are missing, so nothing downstream reports the
+        # export as complete when it has a hole. Transfers is the case that needs it: the
+        # multi-account warning tells the reader whether a move between their accounts
+        # could be invisible, and a per-year gap is exactly when one could.
+        expected_years = [y for y in range(min(years_to_include), tax_year + 1)]
+        missing = [y for y in expected_years if y not in years_to_include]
+        result[f"{file_key}_missing_years"] = ",".join(str(y) for y in missing)
+        if missing:
+            logger.warning(
+                "%s: no file for %s, although %s exist(s). The window this export covers "
+                "has a hole; anything reading it must not report it as complete.",
+                file_key, ", ".join(str(y) for y in missing),
+                ", ".join(str(y) for y in years_to_include))
 
     # --- Opening position: the PRECEDING year's end-of-year snapshot ---
     # The ledger's opening lots and the end-of-year reconciliation baseline must be the holding

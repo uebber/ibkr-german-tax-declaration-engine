@@ -155,6 +155,9 @@ def main_application():
             tax_year_to_process=tax_year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
             options_eae_file_path=data_paths.get("options_eae", "") or None,
+            transfers_file_path=data_paths.get("transfers", "") or None,
+            grants_file_path=data_paths.get("grants", "") or None,
+            transfers_missing_years=data_paths.get("transfers_missing_years", ""),
             positions_mark_file_paths={
                 int(key.rsplit("_", 1)[1]): path
                 for key, path in data_paths.items()

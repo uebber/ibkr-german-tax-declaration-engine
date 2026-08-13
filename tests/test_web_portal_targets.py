@@ -47,6 +47,7 @@ ALL_IDS = {
     "corporate_actions": 1213973,
     "cash_balance": 1372852,
     "options_eae": 1427928,
+    "transfers": 1481066,
 }
 
 CSV = '"ClientAccountID","Symbol"\n"U1234567","SAP"\n'
@@ -165,7 +166,7 @@ class TestBuildTargets:
         assert filenames == {
             "Trades-2021.csv", "Cash_Transactions-2021.csv",
             "Corporate_Actions-2021.csv", "Cash_Balance-2021.csv",
-            "Options_EAE-2021.csv",
+            "Options_EAE-2021.csv", "Transfers-2021.csv",
             "Positions-2021-SoY.csv", "Positions-2021-EoY.csv",
         }
 
@@ -213,7 +214,7 @@ class TestFilenameAgreementWithDataPreparation:
             (tmp_path / target.filename).write_text(CSV, encoding="utf-8-sig")
 
         for prefix in ("Trades", "Cash_Transactions", "Corporate_Actions",
-                       "Options_EAE", "Cash_Balance"):
+                       "Options_EAE", "Cash_Balance", "Transfers"):
             assert data_preparation._find_import_file(prefix, 2021) is not None, prefix
             assert data_preparation._find_years_available(prefix) == [2021], prefix
 
@@ -224,7 +225,7 @@ class TestFilenameAgreementWithDataPreparation:
 class TestResolveQueryIdsByName:
     PREFIX = "MyTax"
 
-    def test_resolves_the_six_reports_by_their_portal_names(self):
+    def test_resolves_every_report_by_its_portal_name(self):
         queries = [
             FlexQuery(1212943, "MyTax Trades"),
             FlexQuery(1212969, "MyTax Cash Transactions"),
@@ -232,6 +233,7 @@ class TestResolveQueryIdsByName:
             FlexQuery(1212973, "MyTax Positions"),
             FlexQuery(1372852, "MyTax Cash Balance"),
             FlexQuery(1427928, "MyTax Options EAE"),
+            FlexQuery(1481066, "MyTax Transfers"),
         ]
 
         assert resolve_query_ids_by_name(queries, self.PREFIX) == ALL_IDS

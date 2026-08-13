@@ -53,6 +53,31 @@ class FinancialEventType(Enum):
     WITHHOLDING_TAX = auto()
     FEE_TRANSACTION = auto()
     CURRENCY_CONVERSION = auto() # From FX trades or explicit conversions
+    # A holding moved between two of the taxpayer's own accounts. Not a disposal
+    # ([GT-ESTG20-014]): the lots relocate carrying their acquisition date and cost,
+    # so this event realises nothing and produces no RealizedGainLoss.
+    INTERNAL_TRANSFER = auto()
+    # A currency BALANCE moved between the taxpayer's own accounts. Deliberately not
+    # INTERNAL_TRANSFER: that one relocates lots because a securities move is no disposal
+    # ([GT-ESTG20-014]), and this one is the opposite — an Umbuchung of a
+    # Fremdwaehrungsguthaben is a disposal of the sending account's Kapitalforderung and
+    # an acquisition of the receiving account's ([GT-FX-009]). One enum member per legal
+    # consequence, so no dispatch can confuse them.
+    INTERNAL_CASH_TRANSFER = auto()
+    # Shares a broker awarded for capital placed with it. Three members, not one, because
+    # the three rows of the grant export have three different consequences and a single
+    # member would let a dispatch confuse them:
+    #   * AWARD books the shares in. They are in the account from this day, which is what
+    #     the broker's snapshot reports, but they are not yet acquired for tax.
+    #   * REVERSAL takes some back when the condition fails. It is NOT a disposal and
+    #     realises nothing -- deliberately not routed through the trade path, which would
+    #     produce a RealizedGainLoss the law does not recognise here.
+    #   * VESTING moves no shares at all. It is the day the condition lapses, which is
+    #     where Zufluss falls ([GT-ESTG20-064]) and therefore where the acquisition date
+    #     and the Anschaffungskosten come from ([GT-ESTG20-065]).
+    STOCK_AWARD_GRANTED = auto()
+    STOCK_AWARD_REVERSED = auto()
+    STOCK_AWARD_VESTED = auto()
 
 class RealizationType(Enum):
     """Defines how a gain or loss was realized."""
@@ -78,8 +103,12 @@ class RealizationType(Enum):
     FX_IMPLICIT_SECURITY_SALE = auto()       # Short currency covered by security sale proceeds
 
     # Currency/FX realization types (Phase 5c: Implicit currency from cash flows)
-    FX_IMPLICIT_CASHFLOW_EXPENSE = auto()    # Currency consumed to pay fees/WHT (implicit FX disposal)
-    FX_IMPLICIT_CASHFLOW_INCOME = auto()     # Short currency covered by dividend/interest receipt
+    # Also carry a balance moved between the taxpayer's own accounts ([GT-FX-009]): the
+    # sending side consumes lots and the receiving side covers a short, which is the same
+    # operation on the ledger. The names say "cashflow" and the label reaches the PDF, so
+    # the comment has to say what else is in the set rather than let the name decide.
+    FX_IMPLICIT_CASHFLOW_EXPENSE = auto()    # Currency consumed to pay fees/WHT, or moved out of an account (implicit FX disposal)
+    FX_IMPLICIT_CASHFLOW_INCOME = auto()     # Short currency covered by dividend/interest receipt, or by a balance moved in
 
 class TaxReportingCategory(Enum):
     ANLAGE_KAP_AKTIEN_GEWINN = auto()

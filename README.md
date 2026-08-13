@@ -231,6 +231,81 @@ Select these fields:
 | 21 | Basis | Cost basis |
 | 22 | RealizedPnl | Realized P&L |
 
+### Ticking more than one account
+
+If you hold several IBKR accounts, select **all of them** in every query above. The export then
+contains the rows of all selected accounts in one file:
+
+- each account's block is preceded by **its own header row**, so a header appears more than once
+  mid-file;
+- **every data row carries its account in the first column, `ClientAccountID`.**
+
+Both matter to the engine. It drops the repeated header rows when it copies or concatenates the
+yearly files (`src/data_preparation.py`), and it keys the lot ledgers by that first column —
+because German law applies the first-in-first-out rule **per Depot** (BMF 14.05.2025 Rz. 97
+Satz 2), so a sale from one account consumes that account's own units and not another account's
+older ones. Sell the shares you bought last year out of the account you bought them in, and a
+pooled calculation would hand you the cheap ones you bought years ago in the other account,
+turning a real loss into a taxable gain.
+
+The figures on your return stay the person's total across all your accounts — the split decides
+*which* units a sale consumed, not what gets declared.
+
+**If you have ever moved a holding between your own accounts, add Query 7 below.** Moving shares
+or fund units from one of your accounts to another is not a sale, and they keep the price and date
+you originally bought them at — but the engine can only apply that if it can see the move, and the
+move appears in no other report. Without Query 7 it rebuilds the receiving account's holding from
+the broker's position snapshot, which gives the right *number* of units and a made-up purchase
+date for them; the purchase date decides the holding period and which units a later sale consumes.
+The effect reaches the year of the move **and every later year**.
+
+**Cash is held per account too, and moving it between your accounts is a taxable event.** Each
+account's balance in a foreign currency is its own claim against the broker, so moving money from
+one to the other counts as disposing of one holding and acquiring another (BMF 14.05.2025
+Rz. 131). The gain that has built up in the currency since you acquired it is realised at that
+moment, and the receiving account starts a fresh holding at that day's rate. Query 7 is what lets
+the engine see these moves as well.
+
+### Query 7: Transfers (needed if you have moved a holding between your own accounts)
+
+Create an Activity Flex Query with only the **Transfers** section enabled, and tick every account
+you hold. If you have never moved a holding between your accounts, you have no rows and do not
+need this query.
+
+**Export it for every year, the same years as the other queries.** A year you do not export is a
+year in which a move would be invisible — not just in that year, but in every year after it, because
+the acquisition date the engine has to invent travels with the units. So once this report exists for
+any year, **a year missing from it stops the run** and names the year to export. Having no Transfers
+report at all is different and does not stop anything: it is the ordinary state of anyone with one
+account or who has never moved a holding.
+
+Ticking every account matters for the same reason: a move to an account the engine sees nowhere else
+stops the run, because *"internal"* in this report means the other account is at IBKR, not that it
+is yours — and a move to someone else's account may be a sale.
+
+Select **all fields** the section offers. The engine reads a subset, but it checks the header
+against the full list, so a query that offers fewer columns is rejected rather than read
+half-heartedly. The columns it uses are `ClientAccountID`, `TransferAccount` and `Direction` to
+say which account the units left and which they arrived in; `Date`; `Quantity`; `Type`;
+`TransactionID`; `CashTransfer` for the amount of a cash move; and `CurrencyPrimary`, `AssetClass`,
+`Symbol`, `Description`, `Conid`, `ISIN` and `Multiplier` to identify the instrument.
+
+**Only moves of a whole position are supported. Move part of a position and the run stops** rather
+than guess. Nothing in this report says *which* of your units moved — the cheap ones you bought
+years ago or the expensive ones you bought last month — and the two give different tax. The report
+has a lot-detail option that would answer it, by carrying a cost basis per lot instead of zero;
+until the engine reads that, a partial move is refused with the instrument, the account, the date,
+the quantity moved and the quantity held, so you can see the size of what is missing.
+
+Moves of **cash** between your own accounts are read and **do** move a figure: each account's
+foreign-currency balance is its own holding, so the move realises the currency gain accrued up to
+that day and the receiving account acquires at that day's rate. The amount comes from the report's
+`CashTransfer` column — on a cash row `Quantity` and `PositionAmount` are zero, because a balance
+has no units. A move of euros is read and produces nothing, since euros are the currency the return
+is written in.
+
+Name the file `Transfers-YYYY.csv` in `data_import/`, like the others.
+
 ### Enabling the Flex Web Service (for automated download)
 
 To use the automated download feature (`--download`), you need to enable the Flex Web Service and generate an access token:
@@ -259,8 +334,86 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "corporate_actions": 123459, # Your Corporate Actions query ID
     "cash_balance": 123460,      # Your Cash Balance query ID
     "options_eae": None,         # Your Options EAE query ID (None if you never traded index options)
+    "transfers": 123461,         # Your Transfers query ID (None if you have never moved a holding between your accounts)
+    "grants": 123462,            # Your Stock Grant Activity query ID (None if your broker has never awarded you shares)
 }
 ```
+
+`--download` fetches every query that has an ID here, so a report with no ID is a report
+that never arrives. Set the Transfers ID before you rely on a downloaded year: without it
+the download completes and looks fine, and the run then tells you which years it could not
+see a move in. The same applies to Grants. A year of awards that does not arrive is a year whose holding
+cannot be reconstructed — and whether that stops the run depends on where the gap falls:
+between two position snapshots it refuses, but in the earliest year of your input window it
+warns, invents an acquisition date and gives you a figure anyway. Set the ID rather than rely
+on being told.
+
+### Query 8: Grants (needed if your broker has awarded you shares)
+
+Create an Activity Flex Query with only the **Stock Grant Activity** section enabled. If your
+broker has never given you shares — IBKR awards them for wiring cash in, for example — you have no
+rows and do not need this query.
+
+**Export it for every year, the same years as the other queries.** The award is the only record
+that those shares arrived and what they were worth. A year you do not export is a year the engine
+cannot reconstruct your holding for.
+
+Whether that stops the run depends on where the gap falls, and **one of the two cases is silent**:
+if the missing year sits between two position snapshots the engine refuses and produces nothing,
+but if it falls in the earliest year of your input window there is no snapshot before it to
+disagree with — so the engine takes the broker's quantity, invents an acquisition date of
+31 December, warns, and **gives you a figure anyway**. Export every year rather than rely on being
+told.
+
+Select these fields:
+
+| # | Field | Why it is needed |
+|---|-------|------------------|
+| 1 | Account ID | Which account's ledger the shares belong to |
+| 2 | Currency | The currency of `Price`, converted at the ECB rate for the event's own date |
+| 3 | Asset Class | `STK` |
+| 4 | Sub Category | e.g. `COMMON` |
+| 5 | Symbol | Instrument identification |
+| 6 | Description | Instrument identification |
+| 7 | Conid | Instrument identification |
+| 8 | ISIN | Instrument identification |
+| 9 | Multiplier | 1 for shares |
+| 10 | Report Date | The day the broker booked the row |
+| 11 | Activity Description | **The only thing distinguishing an award from a vesting** |
+| 12 | Award Date | The matching key tying a vesting or a reversal to its award |
+| 13 | Vesting Date | The day the shares become unconditionally yours |
+| 14 | Quantity | Shares, negative on a return |
+| 15 | Price | Per-share value |
+| 16 | Value | Quantity x Price, to the cent. Requested so the column is accounted for; the engine computes from the unrounded Price and does not read it |
+| 17 | Serial Number | Blank in practice; requested so that its ever being filled is noticed |
+
+Do **not** select the rest. The engine checks the header against exactly this list and rejects a
+query offering more or fewer columns, rather than reading it half-heartedly. In particular leave
+**FX Rate To Base** unticked: the engine converts at ECB rates, never the broker's, and importing a
+second rate alongside creates a plausible wrong path.
+
+**Three row kinds share this report and they are not interchangeable.** A *Grant* books shares in,
+a *Return* takes some back if you withdraw the cash that earned them, and a *Vesting* moves no
+shares at all — it records the day they stopped being forfeitable. Adding the vesting rows to your
+position would roughly double it. If your broker ever introduces a fourth kind, the run stops and
+names it rather than guessing which sort it is.
+
+**The award date is what counts, not the vesting date.** Your shares are acquired for tax purposes
+on the day they are booked into your account, at that day's value. A promise to give them back if
+you withdraw the cash does not postpone that — the BFH holds that a contractual lock-up or
+forfeiture clause does not delay Zufluss, only being *legally unable to sell* would. So a vesting
+row changes nothing the engine computes.
+
+**One thing to check against your own award terms:** if you were legally unable to sell the shares
+until they vested, that test comes out the other way and the engine's dates would be wrong for you.
+A holding period you merely promised to observe is not the same thing.
+
+**What the engine does with it.** The award gives your shares a real acquisition date and cost, so
+when you eventually sell them the gain on **Anlage KAP** is measured properly instead of against an
+invented basis. What it does **not** do is declare the award itself as income in the year you
+received it — that belongs on **Anlage SO** under *Einkünfte aus Leistungen*, and this engine has no
+line for it yet. The run now says so, naming the year and the amount, but **declaring it is still
+yours to do.**
 
 ## Preparing Input Data
 
@@ -272,6 +425,8 @@ Cash_Transactions-{YYYY}.csv    # One file per year
 Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
 Options_EAE-{YYYY}.csv          # One file per year (only if you trade index options — see below)
+Transfers-{YYYY}.csv            # One file per year (only if you have moved a holding between your own accounts)
+Grants-{YYYY}.csv               # One file per year (only if your broker has awarded you shares)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
@@ -356,7 +511,7 @@ decided in `src/data_preparation.py`, and is deliberately not restated here.
 A run for tax year `Y` needs `Positions-{Y-1}-EoY.csv`: it is required, not
 optional, and the run stops with an explanation if it is missing.
 
-**Resolving queries by name.** If you gave your six Flex Queries a common
+**Resolving queries by name.** If you gave your Flex Queries a common
 naming prefix — `MyTax Trades`, `MyTax_Cash_Transactions`, and so on — set
 `FLEX_QUERY_NAME_PREFIX` in `src/config.py` and the downloader looks the IDs up
 in the portal. Case and separators do not matter. This survives recreating a
@@ -671,6 +826,7 @@ uv run pytest tests/test_group7_currency_fifo.py -v   # Currency FIFO
 ## Known Limitations
 
 *   **IBKR API history:** The Flex Web Service API only retains ~2 calendar years of data. Older years come from the Client Portal instead, either with the browser downloader or by hand (see [Client Portal Download](#client-portal-download-for-older-years)).
+*   **Awarded shares: the sale is handled, the receipt is not.** Where your broker has given you shares for placing capital with it, the engine gives them a real acquisition date and cost basis, so the **gain when you sell them** is computed correctly on Anlage KAP. It does **not** declare the **award itself** as income in the year you received it. Such a benefit is a *Leistung* under § 22 Nr. 3 EStG ([GT-ESTG20-063]), which belongs on **Anlage SO**, and the reporting layer has no line for it — the same gap as for a securities-lending fee, tracked as issue #76. **If you have been awarded shares, the income side of them is still yours to declare.**
 *   **No "Alt-Anteile":** Assumes all investment fund shares were acquired on or after January 1, 2018.
 *   **Foreign WHT:** Aggregates WHT paid (Anlage KAP Zeile 41) but does not calculate creditable WHT.
 *   **No loss carry-forward/backward:** Calculations are limited to the specified tax year.

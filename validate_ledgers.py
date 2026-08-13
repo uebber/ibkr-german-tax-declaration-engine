@@ -86,6 +86,22 @@ def run_validation_for_year(year: int) -> YearResult:
             tax_year_to_process=year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
             options_eae_file_path=data_paths.get("options_eae", "") or None,
+            # Transfers and Grants, both optional and both load-bearing when present. A
+            # reconciliation run that omits them measures a ledger the engine would never
+            # build: a move it cannot see puts a sale in front of the wrong lots, and an
+            # award it cannot see leaves the holding short against the snapshot. This tool
+            # exists to disagree with the broker for real reasons, not for missing inputs.
+            transfers_file_path=data_paths.get("transfers", "") or None,
+            transfers_missing_years=data_paths.get("transfers_missing_years", ""),
+            grants_file_path=data_paths.get("grants", "") or None,
+            # The checkpoint marks. Without them every interval is the earliest one, which
+            # is the configuration where a missing award degrades to a WARNING and a
+            # synthesised lot instead of a refusal.
+            positions_mark_file_paths={
+                int(key.rsplit("_", 1)[1]): path
+                for key, path in data_paths.items()
+                if key.startswith("positions_mark_") and path
+            },
             # The preceding calendar year's snapshots. Omitting them does not degrade the
             # Vorabpauschale, it aborts the run: the engine fail-fasts when funds are held and
             # these are absent, so every year with a fund failed here regardless of what was

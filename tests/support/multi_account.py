@@ -36,6 +36,7 @@ from src.parsers.column_validator import (
     POSITIONS_COLUMNS,
     CORPORATE_ACTIONS_COLUMNS,
     CASH_BALANCE_COLUMNS,
+    TRANSFERS_COLUMNS,
 )
 
 
@@ -94,9 +95,45 @@ def cash_transaction_row(account: str, currency: str, amount, tx_type: str, date
             isin, country_code, tx_id]
 
 
+def transfer_row(account: str, other_account: str, direction: str, date: str,
+                 isin: str = "", quantity="0", asset_class: str = "STK",
+                 currency: str = "EUR", symbol: Optional[str] = None,
+                 transfer_type: str = "INTERNAL", tx_id: str = "",
+                 code: str = "", cash_transfer=None,
+                 multiplier="1") -> List[Any]:
+    """One Transfers row (TRANSFERS_COLUMNS order).
+
+    `account` is the account the row is written FROM the point of view of, and
+    `other_account` is the counterparty; `direction` ("OUT"/"IN") is what says
+    which way the units went, exactly as in the export. The sign of `quantity`
+    is deliberately a free parameter and carries nothing.
+
+    A row with `tx_id` empty and `code="ST"` is a lot-detail row -- what the
+    export emits per lot beneath each summary row. A row with a `tx_id` is a
+    summary row, and one of those per side is what the engine collapses.
+    """
+    # A blank stays blank rather than becoming a Decimal: a blank `Multiplier` is the
+    # ordinary shape of a cash row, and a blank `Quantity` is what the parser must
+    # reject, so both have to be expressible here.
+    def _amount(value):
+        return None if value is None or str(value).strip() == "" else Decimal(str(value))
+
+    return [account, None, currency, asset_class,
+            symbol or (isin[:6] if isin else currency),
+            f"{symbol or (isin[:6] if isin else currency)} transfer",
+            conid_for(isin) if isin else None, isin,
+            None, None, _amount(multiplier), date,
+            date, f"{date};000000", None, transfer_type,
+            direction, other_account, None, _amount(quantity),
+            Decimal("0"), None, None, None,
+            None, _amount(cash_transfer),
+            code, None,
+            tx_id, None, None, None]
+
+
 __all__ = [
     "write_csv", "conid_for", "trade_row", "position_row", "cash_balance_row",
-    "cash_transaction_row",
+    "cash_transaction_row", "transfer_row",
     "TRADES_COLUMNS", "CASH_TRANSACTIONS_COLUMNS", "POSITIONS_COLUMNS",
-    "CORPORATE_ACTIONS_COLUMNS", "CASH_BALANCE_COLUMNS",
+    "CORPORATE_ACTIONS_COLUMNS", "CASH_BALANCE_COLUMNS", "TRANSFERS_COLUMNS",
 ]

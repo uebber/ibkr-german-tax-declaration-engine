@@ -96,7 +96,9 @@ overhead.
   claim. Any claim that a column can be absent, blank or malformed is counted there before it
   becomes work — the condition that would produce the wrong figure, not a precursor of it, as N of
   M rows across the window. Zero means stop: write the assumption where the code relies on it, and
-  open nothing. Does not reach a `reference/` deviation, a defect at zero incidence because there
+  open nothing — **the assumption, not the count**, which belongs in the description (see "A
+  comment may rest only on what a reader of this repository can check" under Engineering rules).
+  Does not reach a `reference/` deviation, a defect at zero incidence because there
   the law is ground truth and the data is not.
   Every other gate here points at the harm of a silent substitution and none asked whether the
   input ever goes missing. On 2026-08-09 that produced two issues (#72, #73) for failures with
@@ -208,6 +210,22 @@ run.
   kinds this way, and each affected instrument reconciled against a reported zero — which clears
   the ledger and hides the disagreement. Probe by reconciling at every yearly snapshot, not only
   the tax year's. Written up in `docs/research_historical_replay_defects.md`.
+- **A ledger that the opening snapshot reconciles away again.** The checkpoint marks are one of
+  four sources of the accounts a FIFO ledger is built for, and deleting that source leaves the
+  suite fully green: an account appearing only in a mid-window mark is reconciled back to the
+  opening snapshot, which does not list it. Anything whose only effect is confined to an interval
+  the final reconciliation overwrites is invisible the same way.
+
+- **The intra-day sort band of a new event kind.** Deleting the stock-award branch from
+  `get_event_sort_key` leaves the suite green, including a scenario built to sort a
+  same-day disposal against it. The event falls to the unknown-type band, which orders it
+  after that day's trades. It is currently harmless for stock awards, because the only
+  kind that touches the ledger is dated on the day the shares arrive; it would stop being
+  harmless the moment a kind that changes a lot is added.
+- **Which date column an event is built from, where the export's columns agree.** Dating a
+  stock award on the broker's report date instead of the award date leaves the suite
+  green. The two coincide on every award row of the current export, so no fixture
+  distinguishes them, and the scenario written to do so passes either way.
 
 Add to this list whenever a probe finds a site the suite cannot observe.
 
@@ -382,6 +400,13 @@ choice is between a figure and no figure, not between two figures.
 **Verify your rationale, not just your citations.** A reason given in a comment, a commit message or
 a document is a claim, and a plausible one is the hardest kind to catch. Check it, or mark it
 unverified.
+
+**A comment may rest only on what a reader of this repository can check** — the law in
+`reference/`, the code, the test suite, `input_data_spec.md`. Not on one person's export: no row
+counts from `data_import/`, no figures or outcomes from a particular run. Name the test that pins
+the rule, or invent an example. A count that justified a decision goes in the commit description;
+what belongs in the code is the reason — "a substituted value is an invented figure" — which
+cannot go stale.
 
 **Use `Decimal`, constructed from strings.** All money and quantity arithmetic runs at
 `INTERNAL_CALCULATION_PRECISION`. `Decimal("123.45")`, never `Decimal(123.45)`. Nothing catches a

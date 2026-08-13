@@ -42,6 +42,33 @@ CASH_BALANCE_COLUMNS = (
     "StartingCash", "EndingCash",
 )
 
+# Transfers export -- moves of a holding or a cash balance between accounts.
+# The export's full header, declared in full rather than as the subset the engine maps,
+# so that a column appearing or disappearing is caught at the boundary rather than
+# discovered downstream. `RawTransferRecord` says which of these it reads and why.
+TRANSFERS_COLUMNS = (
+    "ClientAccountID", "AccountAlias", "CurrencyPrimary", "AssetClass",
+    "Symbol", "Description", "Conid", "ISIN",
+    "UnderlyingConid", "UnderlyingSymbol", "Multiplier", "ReportDate",
+    "Date", "DateTime", "SettleDate", "Type",
+    "Direction", "TransferAccount", "TransferAccountName", "Quantity",
+    "TransferPrice", "PositionAmount", "PositionAmountInBase", "PnlAmount",
+    "PnlAmountInBase", "CashTransfer", "Code", "ClientReference",
+    "TransactionID", "SerialNumber", "DeliveryType", "CommodityType",
+)
+
+# Stock Grant Activity export -- shares a broker awards for placing capital with it.
+# Declared in full rather than as the subset the engine maps, for the reason given on
+# TRANSFERS_COLUMNS: a column appearing or disappearing is then caught at the boundary.
+# `SerialNumber` is the case that needs it -- the export carries the column and leaves it
+# blank, so it is declared here and deliberately absent from `RawGrantRecord`.
+GRANTS_COLUMNS = (
+    "ClientAccountID", "CurrencyPrimary", "AssetClass", "SubCategory", "Symbol",
+    "Description", "Conid", "ISIN", "Multiplier", "ReportDate",
+    "ActivityDescription", "AwardDate", "VestingDate", "Quantity", "Price",
+    "Value", "SerialNumber",
+)
+
 OPTIONS_EAE_COLUMNS = (
     "ClientAccountID", "CurrencyPrimary", "FXRateToBase", "AssetClass",
     "Symbol", "Description", "Conid", "ISIN", "UnderlyingConid",

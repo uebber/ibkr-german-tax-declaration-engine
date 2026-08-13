@@ -70,6 +70,15 @@ def run_core_processing_pipeline(
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
     options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
+    # Moves of a holding between the taxpayer's own accounts. Optional: a person who has
+    # never exported the report has no rows.
+    transfers_file_path: Optional[str] = None,
+    grants_file_path: Optional[str] = None,
+    # Years of the replayed window the Transfers export does not cover, comma-joined.
+    # Only the multi-account warning reads it, and only to refuse to call a partly
+    # exported window complete. "" means either complete or absent, which the path above
+    # already distinguishes.
+    transfers_missing_years: str = "",
     # Preceding calendar year's position snapshots. Required for the Vorabpauschale, which for
     # a VZ Y declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). Optional at
     # this boundary: the engine decides what a missing snapshot means once it knows whether any
@@ -111,6 +120,8 @@ def run_core_processing_pipeline(
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
+            transfers_file=transfers_file_path,
+            grants_file=grants_file_path,
             positions_mark_files=positions_mark_file_paths,
             tax_year=tax_year_to_process
         )
@@ -212,9 +223,14 @@ def run_core_processing_pipeline(
             decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
             data_gap_collector=data_gap_collector,
             mark_positions=orchestrator.mark_positions,
+            soy_positions=orchestrator.soy_positions,
+            eoy_positions=orchestrator.eoy_positions,
+            cash_balances=orchestrator.cash_balances,
             prior_year_positions_available=bool(
                 positions_prior_start_file_path and positions_prior_end_file_path
             ),
+            transfers_file_supplied=orchestrator.transfers_file_supplied,
+            transfers_missing_years=transfers_missing_years,
             declaration_store=declaration_store,
             # Earlier holding-period years are ASKED about, never assumed. A
             # --no-interactive run passes None: nobody can be asked, so nothing is

@@ -305,3 +305,29 @@ class MarkPosition:
     quantity: Decimal
     cost_basis_amount: Optional[Decimal]
     cost_basis_currency: Optional[str]
+
+
+@dataclass(frozen=True)
+class AccountCashBalance:
+    """One account's balance in one currency, as the cash report gives it.
+
+    Kept per (account, currency) rather than summed onto the `CashBalance` asset,
+    because each account's balance is its own Kapitalforderung -- BMF 14.05.2025
+    Rz. 131 second paragraph, [GT-FX-009] -- so a disposal from one account is
+    measured against the amounts paid into that account and no others. The
+    person-level figures on `CashBalance` are the sum of these and exist for the
+    reader, never for lot selection.
+
+    Both ends come from one row of the report, which states the balance at the
+    start and at the end of its period. There is no cost-basis column and no
+    export supplies one for a currency, so unlike `MarkPosition` there is nothing
+    to carry: the EUR cost of a currency lot is always computed from the event
+    that acquired it.
+
+    `None` is "the report did not state this end", which is not the same claim as
+    a balance of zero and must not be reconciled against. The cash report always
+    states both, so `None` arises only for a caller that supplies no cash report
+    at all.
+    """
+    soy_quantity: Optional[Decimal]
+    eoy_quantity: Optional[Decimal]

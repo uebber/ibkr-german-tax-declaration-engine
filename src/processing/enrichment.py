@@ -5,7 +5,8 @@ from typing import List
 
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, CorpActionStockDividend,
-    CorpActionMergerCash, OptionCashSettlementEvent, FinancialEventType
+    CorpActionMergerCash, OptionCashSettlementEvent, FinancialEventType,
+    StockAwardEvent
 )
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.type_utils import parse_ibkr_date
@@ -200,6 +201,38 @@ def enrich_financial_events(
                 elif not event.local_currency:
                      logger.warning(f"Event {event_idx+1} (CorpActionStockDividend ID: {event.event_id}): Missing currency. Cannot convert fmv_per_new_share to EUR.")
                      eur_corp_action_detail_conversions_failed += 1
+
+        elif isinstance(event, StockAwardEvent):
+            # The award price converted at the ECB rate for the EVENT's own date -- the
+            # award day for an award, the vesting day for a vesting. Never the broker's
+            # rate: the export carries none here, and § 8 Abs. 2 Satz 1 wants the price
+            # at Zufluss, which is the day this event is dated on ([GT-ESTG20-064]).
+            #
+            # A failed conversion is left as None rather than defaulted. The ledger
+            # refuses a lot without a EUR cost, so an unconvertible award stops the run
+            # instead of acquiring shares at an invented price.
+            if event.unit_cost_basis_eur is None:
+                if event_date_obj and event.currency:
+                    if event.currency.upper() != "EUR":
+                        eur_val = currency_converter.convert_to_eur(
+                            event.unit_price_foreign, event.currency, event_date_obj)
+                        if eur_val is not None:
+                            event.unit_cost_basis_eur = ctx.create_decimal(eur_val)
+                            eur_corp_action_detail_conversions_success += 1
+                        else:
+                            logger.warning(
+                                f"Event {event_idx+1} (StockAwardEvent ID: {event.event_id}): "
+                                f"could not convert the award price "
+                                f"({event.unit_price_foreign} {event.currency}) to EUR.")
+                            eur_corp_action_detail_conversions_failed += 1
+                    else:
+                        event.unit_cost_basis_eur = ctx.create_decimal(event.unit_price_foreign)
+                        eur_corp_action_detail_conversions_success += 1
+                else:
+                    logger.warning(
+                        f"Event {event_idx+1} (StockAwardEvent ID: {event.event_id}): "
+                        f"missing a valid date or currency; cannot convert the award price.")
+                    eur_corp_action_detail_conversions_failed += 1
 
     logger.info(f"Enrichment summary: Events with date parsing errors: {events_skipped_date_parsing}.")
     logger.info(f"Gross amount to EUR: {eur_gross_conversions_success} succeeded, {eur_gross_conversions_failed} failed/skipped.")
