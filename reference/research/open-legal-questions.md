@@ -293,6 +293,36 @@ apart and take the Anschaffungskosten from two different days' prices, so both t
 on a later disposal and the size of the untaxed receipt move with it. The direction is not fixed:
 it depends on which way the price moved between the two days.
 
+**Research run 2026-08-13, and it points at Reading B.** A search of Tier 4 (bundesfinanzhof.de)
+and Tier 1/2 domains for Zufluss of shares subject to a Sperrfrist, a Verfallklausel or a
+return obligation returns a consistent line of BFH decisions on *verbilligte Aktien*, of which
+the closest read in full is **BFH VI R 30/07 of 29.07.2010**: the advantage accrues *"erst, wenn
+der Arbeitnehmer auch die wirtschaftliche Verfuegungsmacht ueber die Aktien erlangt"*, and that
+is the delivery of the shares, not the grant of a right to them. Summaries of the neighbouring
+decisions state that a Sperr- or Verfallklausel does **not** postpone Zufluss, and that a
+possible obligation to give the shares back does not either, because the recipient obtains
+Verfuegungsmacht first. **On that line, shares actually booked into the recipient's account
+zufliessen on the booking, and a resolutive condition does not defer it** -- which is Reading B.
+
+**Why this is recorded and not applied.** Three things stand in the way of treating it as
+settled:
+
+1. **Tier 4 never stands alone** (Validation Protocol item 1), and VI R 30/07 decides the
+   valuation date of a capital increase; it does not analyse the repurchase right its own
+   Tatbestand mentions. The passages that would settle the point are known here only from
+   search summaries, not from the decisions read in full and cited to the Randnummer.
+2. **Every located decision is § 19 EStG** -- Arbeitslohn, an employee receiving shares from an
+   employer. § 11's Zufluss concept is general, but whether the same result carries to a
+   § 22 Nr. 3 benefit from a broker is the step no located source takes.
+3. **The distinction the cases turn on is delivery versus expectancy**, and this fact pattern
+   sits on the delivered side: the shares are in the account and their dividends are paid to the
+   recipient from the booking. That is an argument for Reading B, and it is an argument, not a
+   citation.
+
+**What it moves, if applied:** the acquisition date of every awarded lot returns to the award
+day, the Anschaffungskosten to the award price, and the declared gain on a later disposal rises
+correspondingly -- measured at about a third on the maintainer's VZ 2025 position.
+
 ## Q16 -- Anschaffungskosten from a receipt the Freigrenze left untaxed
 
 **What is settled.** A benefit in kind granted for placing capital is a Leistung under § 22 Nr. 3
