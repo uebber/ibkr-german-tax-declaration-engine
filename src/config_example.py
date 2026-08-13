@@ -96,10 +96,12 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "transfers": None,
     # Needed if your broker has ever awarded you shares for placing capital with it.
     # The award is the only record that those shares arrived and what they were worth,
-    # and no other export carries it -- so a year without this report is a year whose
-    # holding cannot be reconstructed, and the run stops rather than inventing an
-    # acquisition for it. Three row kinds share the report and only two move the
-    # position; see input_data_spec.md.
+    # and no other export carries it. A year without this report is a year whose holding
+    # cannot be reconstructed; whether the run STOPS or falls back to a synthesised lot
+    # depends on whether the interval began at a reported snapshot -- see
+    # input_data_spec.md section 8, which says which case is which. Set the ID rather
+    # than rely on either. Three row kinds share the report and only two move the
+    # position.
     "grants": None,
 }
 

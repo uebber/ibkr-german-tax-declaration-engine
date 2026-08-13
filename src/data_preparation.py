@@ -175,10 +175,13 @@ def prepare_data_for_tax_year(tax_year: int) -> dict[str, str]:
     # `_concatenate_csvs` strip the repeated header row IBKR leaves mid-file where a
     # second account's export was appended, so neither reaches the parser as data.
     # Grants is optional on the same plain footing as Transfers: a person whose broker has
-    # never awarded them shares has no rows, and there is nothing to decide later. Unlike
-    # Transfers, a per-year hole here CAN hide a lot -- an award year that is missing leaves
-    # the position short against the broker's snapshot -- which is what the missing-years
-    # record below is for.
+    # never awarded them shares has no rows, and there is nothing to decide later.
+    #
+    # A per-year hole here CAN hide an award, and the missing-years record below only LOGS
+    # it -- unlike `transfers_missing_years`, nothing consumes `grants_missing_years` and
+    # no run stops because of it. What actually catches a missing award year is the
+    # replay's reconciliation against the broker's snapshots, and only where the interval
+    # began at one; see the note in input_data_spec.md section 8.
     optional_transaction_types = {
         "options_eae": "Options_EAE",
         "transfers": "Transfers",

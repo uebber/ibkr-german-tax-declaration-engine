@@ -8,8 +8,9 @@ from .raw_models import RawGrantRecord
 from .column_validator import GRANTS_COLUMNS
 
 # The three activity kinds this export is known to carry, and whether each moves the
-# position. Measured against the export before this module was written; the count is in
-# `VALIDATION_REPORT.md`.
+# position. Which rows move it is pinned by `tests/test_stock_award_lots.py` and
+# `tests/test_stock_award_scenarios.py`; the incidence that justified treating a vesting
+# as a non-moving row is in the commit that added this file.
 #
 # Matching is on a substring rather than the whole string because the broker appends the
 # reason to the kind -- an award reads "... for Cash Deposit", a reversal "... for Cash

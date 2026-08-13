@@ -370,9 +370,12 @@ class RawGrantRecord(RawBaseRecord):
     so there is no identity to read from it. It stays in `GRANTS_COLUMNS` so that its
     ever being populated is caught at the boundary rather than downstream.
 
-    **`Value` is mapped although it is derivable** from `Quantity` and `Price`. The two
-    disagree by rounding -- the broker writes `Value` to the cent -- and the cross-check
-    is what shows which of the two the broker's own cost basis was built from.
+    **`Value` is mapped and deliberately not read.** It is `Quantity` x `Price` rounded
+    to the cent, so it can only disagree with them by rounding, and the cost basis is
+    computed from `Price` -- the unrounded figure -- rather than from it. It is declared
+    so that the column is accounted for at the boundary rather than discarded by
+    `extra = 'ignore'`. No code compares the two: a consistency check that fired on the broker's own rounding
+    would be noise, and one with a tolerance would need a source for the tolerance.
     """
     client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
     currency_primary: str = Field(alias="CurrencyPrimary")

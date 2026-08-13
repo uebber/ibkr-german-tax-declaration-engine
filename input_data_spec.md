@@ -342,9 +342,15 @@ subset below; the rest are listed in that test as deliberate drops.
 - **Input:** `data_import/Grants-{YYYY}.csv`, concatenated across every year <= the tax year
 - **Purpose:** Records shares a broker awarded for capital placed with it. The award is the only
   record that those shares arrived and what they were worth; no other export carries it. Without
-  this file the historical replay reconstructs a holding smaller than the broker reports, and the
-  run stops with every declared figure withheld — correctly, because the alternative is to
-  synthesise a lot with an invented acquisition date and cost.
+  this file the historical replay reconstructs a holding smaller than the broker reports. **What
+  happens then depends on the interval**, and only one of the two cases is a stop:
+  - the interval **began at a reported snapshot** — `REPLAY_MARK_MISMATCH`, FAIL_FAST, and the run
+    produces no figures at all;
+  - the interval is the **earliest one**, with nothing confirming its start —
+    `REPLAY_MARK_UNCONFIRMED_START`, severity WARNING. The broker's quantity is taken, a lot is
+    synthesised dated `{tax_year-1}-12-31`, and **the run completes**. A user whose award falls in
+    the first year of their input window gets a figure, not a refusal, and the acquisition date
+    behind it is invented. This is the fallback rule's case, and the report is what avoids it.
 - **Legal ground:** shares granted for placing capital are a *Leistung* under § 22 Nr. 3 EStG, not
   Kapitalertrag ([GT-ESTG20-063]). Zufluss falls where wirtschaftliche Verfügungsmacht arrives,
   which while the grantor may still take the shares back is not the booking ([GT-ESTG20-064]), and

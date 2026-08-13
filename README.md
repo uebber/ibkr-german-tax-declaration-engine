@@ -354,8 +354,14 @@ rows and do not need this query.
 
 **Export it for every year, the same years as the other queries.** The award is the only record
 that those shares arrived and what they were worth. A year you do not export is a year the engine
-cannot reconstruct your holding for, and it stops rather than invent an acquisition date and a cost
-for shares it can see in the position snapshot but nowhere else.
+cannot reconstruct your holding for.
+
+Whether that stops the run depends on where the gap falls, and **one of the two cases is silent**:
+if the missing year sits between two position snapshots the engine refuses and produces nothing,
+but if it falls in the earliest year of your input window there is no snapshot before it to
+disagree with — so the engine takes the broker's quantity, invents an acquisition date of
+31 December, warns, and **gives you a figure anyway**. Export every year rather than rely on being
+told.
 
 Select these fields:
 
