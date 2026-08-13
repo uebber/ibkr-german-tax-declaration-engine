@@ -404,10 +404,6 @@ you withdraw the cash does not postpone that — the BFH holds that a contractua
 forfeiture clause does not delay Zufluss, only being *legally unable to sell* would. So a vesting
 row changes nothing the engine computes.
 
-**One thing to check against your own award terms:** if you were legally unable to sell the shares
-until they vested, that test comes out the other way and the engine's dates would be wrong for you.
-A holding period you merely promised to observe is not the same thing.
-
 **What the engine does with it.** The award gives your shares a real acquisition date and cost, so
 when you eventually sell them the gain on **Anlage KAP** is measured properly instead of against an
 invented basis. What it does **not** do is declare the award itself as income in the year you

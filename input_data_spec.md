@@ -397,10 +397,6 @@ unmöglich* — so a contractual clawback does not postpone the acquisition. A r
 matching lot **at that lot's own unit cost** and realises nothing: it is not a disposal and
 produces no `RealizedGainLoss`.
 
-> **The position rests on a fact, not only on law.** The citation exempts an *obligatorisch*
-> restraint. Where a particular award makes disposal legally impossible until vesting, Leitsatz 2
-> puts Zufluss at the lapse instead and these dates are wrong for it.
-
 **Column Specifications** — `GRANTS_COLUMNS` in `src/parsers/column_validator.py` declares the
 export's full header so that a column appearing or disappearing is caught at the boundary.
 

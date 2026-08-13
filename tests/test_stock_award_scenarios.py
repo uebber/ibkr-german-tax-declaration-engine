@@ -149,6 +149,30 @@ class TestAwardedSharesReachTheLedger(FifoTestCaseBase):
         assert rgl.quantity_realized == Decimal("6"), "4 of the 10 were taken back"
         assert rgl.total_cost_basis_eur == Decimal("24"), "at the awarded price"
 
+    def test_a_grant_inside_the_tax_year_creates_its_lot(self):
+        """The current-year dispatch. A grant dated in the declared year goes through
+        `StockAwardProcessor`, not the historical replay, and nothing else reaches that
+        path -- a vesting is inert and a reversal needs a grant to reverse.
+
+        Without the processor entry the grant is dropped with a log line, the lot never
+        exists, and the sale has nothing to consume.
+        """
+        results = self._run_pipeline(
+            tax_year=TAX_YEAR,
+            grants_data=[
+                grant_row("Stock Award Grant for Cash Deposit",
+                          "20230210", "20230210", "20240210", "10", "4"),
+            ],
+            trades_data=[
+                trade_row(ACCOUNT, ISIN, "2023-08-01", "-10", "10", "SELL", "C", "T_SELL"),
+            ],
+            positions_start_data=[],
+            positions_end_data=[],
+        )
+        rgl = self._sale_gain(results)
+        assert rgl.total_cost_basis_eur == Decimal("40")
+        assert rgl.acquisition_date == "2023-02-10"
+
     def test_a_currency_award_is_converted_at_the_event_date_not_left_foreign(self):
         """Covers the enrichment link. A non-EUR award whose price is never converted
         would reach the ledger with no EUR cost and stop the run; one converted at the

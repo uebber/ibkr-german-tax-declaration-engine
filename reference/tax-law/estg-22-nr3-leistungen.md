@@ -141,9 +141,8 @@ Verfuegung darueber rechtlich unmoeglich ist."*
 
 **Applied to a benefit in shares booked into the recipient's account:** Zufluss falls on the
 booking, and a condition under which the grantor may later reclaim the shares does not defer it,
-**unless the recipient is legally unable to dispose of them until the condition lapses**. That
-last clause is a question of fact about the particular award's terms, not of law, and it is
-what a reader must check before relying on this claim.
+**unless the recipient is legally unable to dispose of them until the condition lapses**, which
+is Leitsatz 2's case.
 
 **What the cited unit also contains, and the limit of the citation.** VI R 37/09 is decided
 under § 19 Abs. 1 Satz 1 Nr. 1 in Verbindung mit § 8 Abs. 1 and § 11 Abs. 1 Satz 1 EStG -- an
