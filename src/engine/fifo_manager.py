@@ -360,16 +360,18 @@ class FifoLedger:
                     elif sub.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
                         self.consume_short_lots_for_cover(sub, is_historical_simulation=True)
             elif isinstance(hist_event, StockAwardEvent):
-                # Three kinds, three effects, and an unhandled fourth stops the run for
-                # the reason the CorporateActionEvent branch below gives: a kind that
-                # reaches the ledger and does nothing leaves a phantom holding, or a
-                # provisional cost basis, in every later year.
+                # Two kinds move the ledger and one deliberately does not. A vesting is
+                # the lapse of a contractual condition, and BFH VI R 37/09 puts Zufluss
+                # at the booking regardless of one ([GT-ESTG20-064]) -- so by the time a
+                # vesting is reported the acquisition has already happened and there is
+                # nothing left for it to change. Read and inert, which is not the same as
+                # dropped unseen: an unrecognised kind still raises.
                 if hist_event.event_type == FinancialEventType.STOCK_AWARD_GRANTED:
                     self.add_lot_for_stock_award(hist_event)
                 elif hist_event.event_type == FinancialEventType.STOCK_AWARD_REVERSED:
                     self.reverse_stock_award_lot(hist_event)
                 elif hist_event.event_type == FinancialEventType.STOCK_AWARD_VESTED:
-                    self.restate_stock_award_lot_on_vesting(hist_event)
+                    pass
                 else:
                     raise ProcessingError(
                         f"Historical replay has no handler for stock-award kind "
@@ -1437,11 +1439,11 @@ class FifoLedger:
         waited for vesting would reconstruct a smaller holding and fail reconciliation at
         every mark in between.
 
-        Its acquisition date and cost basis are PROVISIONAL and are restated when the
-        award vests ([GT-ESTG20-064], [GT-ESTG20-065]). They are not marked unknown: the
-        date is a real day on which real shares arrived, unlike the placeholder a
-        snapshot fallback carries, and `acquisition_date_is_known` means that other
-        thing.
+        Its acquisition date and cost basis are FINAL. Zufluss falls on the booking --
+        a contractual condition under which the grantor may reclaim the shares does not
+        postpone it, only a disposal being *rechtlich unmoeglich* would ([GT-ESTG20-064],
+        BFH VI R 37/09 Leitsatz 2 and Rn. 4) -- and the value at Zufluss is the
+        Anschaffungskosten ([GT-ESTG20-065]). A later vesting therefore changes nothing.
         """
         if event.unit_cost_basis_eur is None:
             raise ProcessingError(
@@ -1467,7 +1469,7 @@ class FifoLedger:
         ))
         self.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(),
                                         lot.source_transaction_id))
-        logger.info("Stock award %s: added lot on %s, qty %s, provisional cost/unit %s",
+        logger.info("Stock award %s: added lot on %s, qty %s, cost/unit %s",
                     event.award_date, event.event_date, quantity, event.unit_cost_basis_eur)
 
     def reverse_stock_award_lot(self, event: StockAwardEvent):
@@ -1501,42 +1503,6 @@ class FifoLedger:
             lot.total_cost_basis_eur = self.ctx.multiply(lot.quantity, lot.unit_cost_basis_eur)
         logger.info("Stock award %s: reversed %s units, no gain realised",
                     event.award_date, quantity)
-
-    def restate_stock_award_lot_on_vesting(self, event: StockAwardEvent):
-        """Move the lot's acquisition date and cost basis to the vesting values.
-
-        This is where the acquisition actually happens for tax: Zufluss falls when the
-        recipient gets wirtschaftliche Verfuegungsmacht, which while the grantor may
-        still take the shares back is not the booking ([GT-ESTG20-064]), and the value
-        brought to tax then is the Anschaffungskosten on a later disposal
-        ([GT-ESTG20-065]).
-
-        The lot's quantity is NOT touched. A vesting moves no shares -- they have been
-        in the account since the award -- and adding its quantity would count the same
-        shares twice.
-        """
-        if event.unit_cost_basis_eur is None:
-            raise ProcessingError(
-                f"Stock award vesting {event.event_id} on asset {self.asset_internal_id} "
-                f"reached the ledger without a EUR cost basis. This is the figure that "
-                f"becomes the Anschaffungskosten; without it the disposal would be "
-                f"measured against the provisional award price instead."
-            )
-        lot = self._find_stock_award_lot(event.award_date)
-        if lot is None:
-            raise ProcessingError(
-                f"A stock award vesting on asset {self.asset_internal_id} names award "
-                f"date {event.award_date}, and no lot in this account's ledger came from "
-                f"an award on that day. Restating some other lot would put this award's "
-                f"cost basis on shares that did not come from it."
-            )
-        lot.acquisition_date = event.event_date
-        lot.unit_cost_basis_eur = event.unit_cost_basis_eur
-        lot.total_cost_basis_eur = self.ctx.multiply(lot.quantity, event.unit_cost_basis_eur)
-        self.lots.sort(key=lambda lot_: (parse_ibkr_date(lot_.acquisition_date) or datetime.min.date(),
-                                         lot_.source_transaction_id))
-        logger.info("Stock award %s: vested on %s, cost/unit restated to %s",
-                    event.award_date, event.event_date, event.unit_cost_basis_eur)
 
     def consume_long_option_get_cost(self, quantity_contracts_to_consume: Decimal) -> List[ConsumedLotDetail]:
         if self.asset_category != AssetCategory.OPTION:

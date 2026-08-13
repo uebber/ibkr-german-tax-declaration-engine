@@ -1,23 +1,21 @@
 """The three stock-award operations on a FIFO ledger.
 
 Every figure here is invented. The real export is not copied, per CLAUDE.md's
-public-repo rule; what is reproduced is the SHAPE the broker's export has -- an award,
-a partial reversal of it, and a vesting that restates it -- because that shape is what
-the operations are built for.
+public-repo rule; what is reproduced is the SHAPE the broker's export has -- an award
+and a partial reversal of it -- because that shape is what the operations are built for.
+
+A vesting has no operation: Zufluss is the booking ([GT-ESTG20-064], BFH VI R 37/09), so
+the lot an award creates is already final when the condition later lapses.
 
 Calibration -- run against a deliberately broken tree, with the counts measured rather
 than assumed:
 
-* making `restate_stock_award_lot_on_vesting` also add `event.quantity` to the lot --
-  the double-count this whole design exists to avoid, and the one a reader is most
-  likely to reintroduce -- turns **2 of 10** red:
-  `test_vesting_moves_no_shares_and_restates_the_cost` and
-  `test_the_whole_sequence_leaves_the_broker_s_quantity_and_the_vested_cost`;
 * replacing the `quantity > lot.quantity` guard in `reverse_stock_award_lot` with a
-  constant false turns **1 of 10** red:
-  `test_reversing_more_than_was_awarded_stops_the_run`.
+  constant false turns **1** red: `test_reversing_more_than_was_awarded_stops_the_run`;
+* pricing the reversal at the reversal row's price rather than the lot's own turns **1**
+  red: `test_reversal_takes_units_at_the_awarded_cost_and_realises_nothing`.
 
-Both mutants were reverted and the file re-run green before this was written.
+Each mutant was reverted and the file re-run green before this was written.
 """
 import uuid
 from decimal import Decimal
@@ -71,19 +69,18 @@ def test_award_creates_a_lot_on_the_day_the_shares_arrived():
     assert led.lots[0].total_cost_basis_eur == Decimal("40")
 
 
-def test_vesting_moves_no_shares_and_restates_the_cost():
-    """The operation this design turns on. A vesting is a revaluation, not a delivery."""
+def test_the_award_lot_is_final_and_no_vesting_operation_exists():
+    """Zufluss is the booking ([GT-ESTG20-064], BFH VI R 37/09), so the lot the award
+    creates carries its FINAL date and cost. There is deliberately no ledger operation
+    for a vesting -- the earlier design restated the lot at vesting, and that reading was
+    retired when the Zufluss test was sourced."""
     led = _ledger()
     led.add_lot_for_stock_award(_award("2020-03-02", "2020-03-02", "10", "4"))
-    led.restate_stock_award_lot_on_vesting(
-        _award("2021-03-02", "2020-03-02", "10", "7",
-               kind=FinancialEventType.STOCK_AWARD_VESTED))
 
-    assert len(led.lots) == 1
-    assert led.lots[0].quantity == Decimal("10"), "a vesting delivered no new shares"
-    assert led.lots[0].acquisition_date == "2021-03-02"
-    assert led.lots[0].unit_cost_basis_eur == Decimal("7")
-    assert led.lots[0].total_cost_basis_eur == Decimal("70")
+    assert led.lots[0].acquisition_date == "2020-03-02"
+    assert led.lots[0].unit_cost_basis_eur == Decimal("4")
+    assert not hasattr(led, "restate_stock_award_lot_on_vesting"), (
+        "a restatement operation would reintroduce the retired reading")
 
 
 def test_reversal_takes_units_at_the_awarded_cost_and_realises_nothing():
@@ -110,27 +107,24 @@ def test_a_full_reversal_removes_the_lot():
     assert led.lots == []
 
 
-def test_vesting_restates_only_its_own_award():
-    """Two awards, one vesting. The award date is the only key, since the export leaves
-    SerialNumber blank on every row."""
+def test_two_awards_keep_their_own_costs():
+    """Each award is its own lot at its own price. The award date is still the matching
+    key, because a reversal names the award it undoes."""
     led = _ledger()
     led.add_lot_for_stock_award(_award("2020-03-02", "2020-03-02", "10", "4"))
     led.add_lot_for_stock_award(_award("2020-06-01", "2020-06-01", "20", "5"))
-    led.restate_stock_award_lot_on_vesting(
-        _award("2021-03-02", "2020-03-02", "10", "7",
-               kind=FinancialEventType.STOCK_AWARD_VESTED))
 
     by_award = {lot.source_transaction_id: lot for lot in led.lots}
-    assert by_award["STOCK_AWARD:2020-03-02"].unit_cost_basis_eur == Decimal("7")
-    assert by_award["STOCK_AWARD:2020-06-01"].unit_cost_basis_eur == Decimal("5"), \
-        "the unvested award keeps its provisional cost"
+    assert by_award["STOCK_AWARD:2020-03-02"].unit_cost_basis_eur == Decimal("4")
+    assert by_award["STOCK_AWARD:2020-06-01"].unit_cost_basis_eur == Decimal("5")
 
 
-def test_the_whole_sequence_leaves_the_broker_s_quantity_and_the_vested_cost():
-    """Award, award, partial reversal, then both vest -- the shape the export has.
+def test_the_whole_sequence_leaves_the_broker_s_quantity_and_the_awarded_cost():
+    """Award, award, partial reversal -- the shape the export has, minus the vestings,
+    which no longer touch the ledger.
 
-    The point of the assertion is that the quantity follows the awards and reversals
-    ALONE while the cost follows the vestings alone.
+    Quantity follows the awards and reversals; cost follows the AWARD prices, because
+    that is where Zufluss fell.
     """
     led = _ledger()
     led.add_lot_for_stock_award(_award("2020-03-02", "2020-03-02", "10", "4"))
@@ -138,25 +132,10 @@ def test_the_whole_sequence_leaves_the_broker_s_quantity_and_the_vested_cost():
     led.reverse_stock_award_lot(
         _award("2020-09-01", "2020-03-02", "4", "4",
                kind=FinancialEventType.STOCK_AWARD_REVERSED))
-    led.restate_stock_award_lot_on_vesting(
-        _award("2021-03-02", "2020-03-02", "6", "7",
-               kind=FinancialEventType.STOCK_AWARD_VESTED))
-    led.restate_stock_award_lot_on_vesting(
-        _award("2021-06-01", "2020-06-01", "20", "9",
-               kind=FinancialEventType.STOCK_AWARD_VESTED))
 
     assert sum(lot.quantity for lot in led.lots) == Decimal("26"), "10 + 20 - 4"
-    assert sum(lot.total_cost_basis_eur for lot in led.lots) == Decimal("222"), \
-        "6 x 7 + 20 x 9 -- the vested values, not the awarded ones"
-
-
-def test_a_vesting_naming_an_unknown_award_stops_the_run():
-    led = _ledger()
-    led.add_lot_for_stock_award(_award("2020-03-02", "2020-03-02", "10", "4"))
-    with pytest.raises(ProcessingError, match="no lot in this account's ledger"):
-        led.restate_stock_award_lot_on_vesting(
-            _award("2021-01-01", "2019-01-01", "10", "7",
-                   kind=FinancialEventType.STOCK_AWARD_VESTED))
+    assert sum(lot.total_cost_basis_eur for lot in led.lots) == Decimal("124"), \
+        "6 x 4 + 20 x 5 -- the awarded values"
 
 
 def test_reversing_more_than_was_awarded_stops_the_run():

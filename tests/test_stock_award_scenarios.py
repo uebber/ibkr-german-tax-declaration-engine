@@ -70,15 +70,14 @@ class TestAwardedSharesReachTheLedger(FifoTestCaseBase):
         assert len(rgls) == 1, f"expected one disposal, got {len(rgls)}"
         return rgls[0]
 
-    def test_a_vesting_inside_the_tax_year_sets_the_cost_the_sale_is_measured_against(self):
-        """The defect this file exists for.
+    def test_a_vesting_inside_the_tax_year_does_not_move_the_cost(self):
+        """Zufluss was the booking ([GT-ESTG20-064]), so the award's price is final and a
+        later vesting changes nothing.
 
-        The award is booked before the tax year at 4; it vests INSIDE the tax year at 7;
-        the shares are sold later that same year at 10. The gain is 10 - 7 = 3 per unit.
-
-        If the vesting is not applied in the current year, the lot keeps its provisional
-        cost of 4 and the gain reads 6 per unit -- with the quantity, and therefore the
-        end-of-year reconciliation, identical either way.
+        The award is booked before the tax year at 4 and vests INSIDE the tax year at 7;
+        the shares are sold that year at 10. The gain is 10 - 4 = 6 per unit. A build that
+        restated the lot at vesting would read 3 -- the retired reading -- with the
+        quantity, and therefore the reconciliation, identical either way.
         """
         results = self._run_pipeline(
             tax_year=TAX_YEAR,
@@ -95,12 +94,12 @@ class TestAwardedSharesReachTheLedger(FifoTestCaseBase):
             positions_end_data=[],
         )
         rgl = self._sale_gain(results)
-        assert rgl.total_cost_basis_eur == Decimal("70"), (
-            "the disposal must be measured against the VESTED cost. 40 means the vesting "
-            "never reached the ledger and the provisional award price was used.")
-        assert rgl.gross_gain_loss_eur == Decimal("30")
-        assert rgl.acquisition_date == "2023-04-01", (
-            "acquisition falls at Zufluss, which is the vesting ([GT-ESTG20-064])")
+        assert rgl.total_cost_basis_eur == Decimal("40"), (
+            "the AWARD price is the Anschaffungskosten; 70 would be the retired "
+            "vesting-restatement reading")
+        assert rgl.gross_gain_loss_eur == Decimal("60")
+        assert rgl.acquisition_date == "2022-03-02", (
+            "acquisition falls at Zufluss, which is the booking ([GT-ESTG20-064])")
 
     def test_an_award_before_the_tax_year_gives_the_sale_a_real_basis(self):
         """Covers the historical bucket and the replay dispatch.
@@ -120,12 +119,12 @@ class TestAwardedSharesReachTheLedger(FifoTestCaseBase):
             trades_data=[
                 trade_row(ACCOUNT, ISIN, "2023-06-01", "-10", "10", "SELL", "C", "T_SELL"),
             ],
-            positions_start_data=[position_row(ACCOUNT, ISIN, "10", "60", price="6")],
+            positions_start_data=[position_row(ACCOUNT, ISIN, "10", "40", price="4")],
             positions_end_data=[],
         )
         rgl = self._sale_gain(results)
-        assert rgl.total_cost_basis_eur == Decimal("60")
-        assert rgl.acquisition_date == "2022-09-02"
+        assert rgl.total_cost_basis_eur == Decimal("40")
+        assert rgl.acquisition_date == "2022-03-02"
 
     def test_a_reversal_is_not_a_disposal(self):
         """It produces no RealizedGainLoss of its own, and leaves the survivors at the
@@ -143,12 +142,12 @@ class TestAwardedSharesReachTheLedger(FifoTestCaseBase):
             trades_data=[
                 trade_row(ACCOUNT, ISIN, "2023-06-01", "-6", "10", "SELL", "C", "T_SELL"),
             ],
-            positions_start_data=[position_row(ACCOUNT, ISIN, "6", "36", price="6")],
+            positions_start_data=[position_row(ACCOUNT, ISIN, "6", "24", price="4")],
             positions_end_data=[],
         )
         rgl = self._sale_gain(results)
         assert rgl.quantity_realized == Decimal("6"), "4 of the 10 were taken back"
-        assert rgl.total_cost_basis_eur == Decimal("36")
+        assert rgl.total_cost_basis_eur == Decimal("24"), "at the awarded price"
 
     def test_a_currency_award_is_converted_at_the_event_date_not_left_foreign(self):
         """Covers the enrichment link. A non-EUR award whose price is never converted
@@ -245,42 +244,16 @@ class TestTheGuardsAreObserved(FifoTestCaseBase):
             trades_data=[
                 trade_row(ACCOUNT, ISIN, "2023-06-01", "-10", "10", "SELL", "C", "T_SELL"),
             ],
-            positions_start_data=[position_row(ACCOUNT, ISIN, "10", "60", price="6")],
+            positions_start_data=[position_row(ACCOUNT, ISIN, "10", "40", price="4")],
             positions_end_data=[],
         )
         rgls = [r for r in results.realized_gains_losses]
         assert len(rgls) == 1
         # The lot is created on the award date; a lot created on the report date would
         # still reconcile, because the quantity is the same either way.
-        assert rgls[0].total_cost_basis_eur == Decimal("60")
+        assert rgls[0].total_cost_basis_eur == Decimal("40")
 
-    def test_a_same_day_sale_is_measured_after_the_vesting_not_before_it(self):
-        """The sort-key band. Awards share the corporate-action intra-day slot so a
-        vesting restates the lot BEFORE that day's disposals read its cost. Without the
-        band the event falls to the unknown-type fallback, which sorts after trades, and
-        the sale is measured against the provisional award price."""
-        results = self._run_pipeline(
-            tax_year=TAX_YEAR,
-            grants_data=[
-                grant_row("Stock Award Grant for Cash Deposit",
-                          "20220302", "20220302", "20230401", "10", "4"),
-                grant_row("Stock Award Vesting",
-                          "20230401", "20220302", "20230401", "10", "7"),
-            ],
-            trades_data=[
-                # Sold the same day it vested.
-                trade_row(ACCOUNT, ISIN, "2023-04-01", "-10", "10", "SELL", "C", "T_SELL"),
-            ],
-            positions_start_data=[position_row(ACCOUNT, ISIN, "10", "40", price="4")],
-            positions_end_data=[],
-        )
-        rgls = [r for r in results.realized_gains_losses]
-        assert len(rgls) == 1
-        assert rgls[0].total_cost_basis_eur == Decimal("70"), (
-            "40 means the sale was applied before the vesting restated the lot")
-
-
-def test_a_vesting_in_the_tax_year_reports_the_receipt_it_does_not_declare():
+def test_an_award_in_the_tax_year_reports_the_receipt_it_does_not_declare():
     """The one thing standing between a user and an understated return.
 
     The engine takes the vesting value as the Anschaffungskosten -- which LOWERS the
@@ -305,25 +278,19 @@ def test_a_vesting_in_the_tax_year_reports_the_receipt_it_does_not_declare():
                             event_type=T.STOCK_AWARD_GRANTED, award_date="2023-01-02",
                             quantity=D("10"), unit_price_foreign=D("4"), currency="EUR")
     award.unit_cost_basis_eur = D("4")
-    ledger.add_lot_for_stock_award(award)
-
-    vesting = StockAwardEvent(ASSET_ID, "2023-09-01",
-                              event_type=T.STOCK_AWARD_VESTED, award_date="2023-01-02",
-                              quantity=D("10"), unit_price_foreign=D("7"), currency="EUR")
-    vesting.unit_cost_basis_eur = D("7")
 
     collector = DataGapCollector()
-    StockAwardProcessor().process(vesting, ledger, {'data_gap_collector': collector})
+    StockAwardProcessor().process(award, ledger, {'data_gap_collector': collector})
 
     gaps = [g for g in collector.gaps if g.code == STOCK_AWARD_RECEIPT_NOT_DECLARED]
     assert len(gaps) == 1, "the undeclared receipt must reach the report"
     assert gaps[0].severity is GapSeverity.WARNING
-    assert "70" in gaps[0].detail, "the amount to declare has to be in it, not just the fact"
+    assert "40" in gaps[0].detail, "the amount to declare has to be in it, not just the fact"
 
 
-def test_an_award_and_a_reversal_report_no_receipt():
-    """Only the vesting is the Zufluss. Reporting a receipt on the booking would tell the
-    user to declare the same shares twice."""
+def test_a_vesting_and_a_reversal_report_no_receipt():
+    """Only the award is the Zufluss. Reporting a receipt again on the vesting would tell
+    the user to declare the same shares twice."""
     from decimal import Decimal as D
     from src.domain.enums import FinancialEventType as T
     from src.domain.events import StockAwardEvent
@@ -338,7 +305,13 @@ def test_an_award_and_a_reversal_report_no_receipt():
                             event_type=T.STOCK_AWARD_GRANTED, award_date="2023-01-02",
                             quantity=D("10"), unit_price_foreign=D("4"), currency="EUR")
     award.unit_cost_basis_eur = D("4")
-    StockAwardProcessor().process(award, ledger, {'data_gap_collector': collector})
+    ledger.add_lot_for_stock_award(award)
+
+    vesting = StockAwardEvent(ASSET_ID, "2023-06-01",
+                              event_type=T.STOCK_AWARD_VESTED, award_date="2023-01-02",
+                              quantity=D("10"), unit_price_foreign=D("7"), currency="EUR")
+    vesting.unit_cost_basis_eur = D("7")
+    StockAwardProcessor().process(vesting, ledger, {'data_gap_collector': collector})
 
     reversal = StockAwardEvent(ASSET_ID, "2023-03-01",
                                event_type=T.STOCK_AWARD_REVERSED, award_date="2023-01-02",

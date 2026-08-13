@@ -68,8 +68,8 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
         # Same intra-day slot as a corporate action, for the same reason a transfer takes
         # it: the shares must be in the ledger before that day's disposals, or a sale on
         # the award date hits a lot that does not exist yet. A vesting shares the band
-        # because it must restate the lot before any sale that day reads its cost basis
-        # -- selling first would measure the gain against the provisional award price.
+        # although it changes nothing, so that all three kinds of one export sort the same
+        # way and a future kind that DOES touch the ledger inherits the safe order.
         #
         # The band decides this only because the event carries no `ibkr_transaction_id`:
         # the export's SerialNumber is blank on every row, so there is none to carry, and

@@ -56,7 +56,9 @@ class StockAwardProcessor(EventProcessor):
         elif event.event_type == FinancialEventType.STOCK_AWARD_REVERSED:
             ledger.reverse_stock_award_lot(event)
         elif event.event_type == FinancialEventType.STOCK_AWARD_VESTED:
-            ledger.restate_stock_award_lot_on_vesting(event)
+            # Deliberately inert. Zufluss was the booking ([GT-ESTG20-064]), so the lot
+            # already carries its final date and cost and a vesting has nothing to change.
+            pass
         else:
             # A fourth kind must stop the run rather than fall through. Falling through
             # is what left the vesting unapplied in the first place, and the cost of it
@@ -64,11 +66,10 @@ class StockAwardProcessor(EventProcessor):
             raise ProcessingError(
                 f"StockAwardProcessor has no handler for {event.event_type.name} on "
                 f"{event.event_date}. It reached the current-year dispatch, so it is "
-                f"expected to affect the ledger; leaving it unapplied would put a "
-                f"provisional acquisition cost on a lot that a disposal then measures "
-                f"against.")
+                f"expected to affect the ledger; leaving it unapplied would leave a "
+                f"holding or a cost basis that a later disposal is measured against.")
 
-        if event.event_type == FinancialEventType.STOCK_AWARD_VESTED:
+        if event.event_type == FinancialEventType.STOCK_AWARD_GRANTED:
             self._record_undeclared_receipt(event, context)
 
         # No RealizedGainLoss from any of the three. See the module docstring: the
@@ -107,8 +108,9 @@ class StockAwardProcessor(EventProcessor):
         collector.record(
             STOCK_AWARD_RECEIPT_NOT_DECLARED,
             f"Anlage SO (Einkuenfte aus Leistungen), {event.event_date}",
-            f"Shares awarded for capital placed with the broker vested on "
-            f"{event.event_date}. That receipt is a Leistung under § 22 Nr. 3 EStG "
+            f"Shares awarded for capital placed with the broker were booked into the "
+            f"account on {event.event_date}, which is where Zufluss falls "
+            f"([GT-ESTG20-064]). That receipt is a Leistung under § 22 Nr. 3 EStG "
             f"([GT-ESTG20-063]) and belongs on Anlage SO; this engine has no line for "
             f"it and has NOT declared it (issue #76). Its value at Zufluss is "
             f"{'EUR ' + str(gross) if gross is not None else 'not computable here'}, "

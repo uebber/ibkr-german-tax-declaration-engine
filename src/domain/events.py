@@ -597,13 +597,14 @@ class StockAwardEvent(FinancialEvent):
     to the lot the award created. `award_date` is therefore the matching key on all
     three kinds, and on an award row it equals the day the lot is created.
 
-    **The position and the tax acquisition part company between the two dates.** The
-    shares sit in the account from the award, which is what the broker's year-end
-    snapshot reports and what the ledger must reconcile against. They are not acquired
-    for tax until the condition lapses, because Zufluss follows wirtschaftliche
-    Verfuegungsmacht and the grantor may still take them back ([GT-ESTG20-064]). So the
-    award creates the lot and the vesting restates its acquisition date and cost basis
-    ([GT-ESTG20-065]) -- two events on one lot, not one event with two dates.
+    **The position and the tax acquisition coincide, and that is a decided position
+    rather than an obvious one.** The shares sit in the account from the award, and
+    Zufluss falls there too: a contractual condition under which the grantor may reclaim
+    them does not postpone it, only a disposal being *rechtlich unmoeglich* would
+    ([GT-ESTG20-064], BFH VI R 37/09). So the award creates the lot with its final date
+    and cost ([GT-ESTG20-065]) and a vesting has nothing to change. An earlier revision
+    restated the lot at vesting; that reading was retired when the Zufluss test was
+    sourced, and Q17 records what remains uncertain about it.
 
     **A reversal realises nothing.** The condition failed and the award is undone, so
     there is no disposal and no `RealizedGainLoss`. It carries no proceeds for that
@@ -611,8 +612,8 @@ class StockAwardEvent(FinancialEvent):
     path would produce a realised gain the law does not recognise here.
 
     `unit_price_foreign` is the broker's price on the row, in `currency`. On an award it
-    is the provisional cost; on a vesting it is the ueblicher Endpreis at Zufluss
-    (§ 8 Abs. 2 Satz 1) and becomes the Anschaffungskosten. It is converted to EUR by
+    is the ueblicher Endpreis at Zufluss (§ 8 Abs. 2 Satz 1) and becomes the
+    Anschaffungskosten; on a vesting it is read and unused. It is converted to EUR by
     the enrichment step like any other foreign amount, at the ECB rate for the row's own
     date -- never at the broker's rate, which the export does not carry here anyway.
 

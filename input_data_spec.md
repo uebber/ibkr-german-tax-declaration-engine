@@ -383,19 +383,23 @@ dropped one would reconcile until the year the dropped kind mattered.
 
 **Each kind takes its date from a different column.**
 
-- An **award** is dated on `AwardDate` — the day the shares entered the account, which is what the
-  position snapshot counts and what the ledger reconciles against.
+- An **award** is dated on `AwardDate` — the day the shares entered the account. That is both what
+  the position snapshot counts and where Zufluss falls ([GT-ESTG20-064]), so it is the acquisition
+  date.
 - A **reversal** is dated on `ReportDate`. Its `AwardDate` names the *original* award and is the
   matching key, not its own date.
-- A **vesting** is dated on `VestingDate`, **not** `ReportDate`. The broker books the row a day or
-  more later, and booking is not the legal event. Taking `ReportDate` here would silently move the
-  acquisition date and the year it falls in.
+- A **vesting** is dated on `VestingDate` and **has no ledger effect**. It is read so that an
+  unrecognised kind can still be refused, and inert because the acquisition already happened.
 
-**The award creates the lot; the vesting restates it.** The position and the tax acquisition part
-company between the two dates, so neither alone works: creating lots at vesting reconstructs short
-of every snapshot in between, and creating them at the award price carries a cost basis the store
-rejects. A reversal reduces the matching lot **at that lot's own unit cost** and realises nothing —
-it is not a disposal and produces no `RealizedGainLoss`.
+**The award creates the lot and the lot is final.** BFH VI R 37/09 Rn. 4 holds that a Sperr- or
+Haltefrist does not prevent Zufluss, and Leitsatz 2 that what does is a disposal being *rechtlich
+unmöglich* — so a contractual clawback does not postpone the acquisition. A reversal reduces the
+matching lot **at that lot's own unit cost** and realises nothing: it is not a disposal and
+produces no `RealizedGainLoss`.
+
+> **The position rests on a fact, not only on law.** The citation exempts an *obligatorisch*
+> restraint. Where a particular award makes disposal legally impossible until vesting, Leitsatz 2
+> puts Zufluss at the lapse instead and these dates are wrong for it.
 
 **Column Specifications** — `GRANTS_COLUMNS` in `src/parsers/column_validator.py` declares the
 export's full header so that a column appearing or disappearing is caught at the boundary.

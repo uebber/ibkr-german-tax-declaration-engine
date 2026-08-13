@@ -359,12 +359,14 @@ class RawGrantRecord(RawBaseRecord):
     would silently drop a future kind, and the drop would reconcile against the broker's
     snapshot only until the kind was one that moved the position.
 
-    **Why both dates are mapped.** The award is booked on `AwardDate` but remains
-    forfeitable until `VestingDate`, so the position and the tax acquisition part company
-    between the two. Zufluss falls where wirtschaftliche Verfuegungsmacht arrives, which
-    while the grantor may still take the shares back is not the booking -- see
-    [GT-ESTG20-064]. `ReportDate` is the day the broker booked the row and is mapped for
-    ordering only; it is not `VestingDate` and must not be substituted for it.
+    **Why both dates are mapped.** `AwardDate` is where Zufluss falls -- a contractual
+    condition under which the grantor may reclaim the shares does not postpone it, only a
+    disposal being *rechtlich unmoeglich* would ([GT-ESTG20-064]) -- so it is the
+    acquisition date and the matching key. `VestingDate` is mapped because it is what
+    identifies a vesting row as the lapse of THAT award's condition, and because the
+    claim's own test turns on whether disposal was possible before it, which a reader
+    checking this engine's position has to be able to see. `ReportDate` is the broker's
+    booking day, mapped for ordering only.
 
     **`SerialNumber` is not mapped.** The export carries the column and leaves it blank,
     so there is no identity to read from it. It stays in `GRANTS_COLUMNS` so that its

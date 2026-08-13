@@ -394,15 +394,26 @@ second rate alongside creates a plausible wrong path.
 
 **Three row kinds share this report and they are not interchangeable.** A *Grant* books shares in,
 a *Return* takes some back if you withdraw the cash that earned them, and a *Vesting* moves no
-shares at all — it records the day the shares stopped being forfeitable and restates what they were
-worth. Adding the vesting rows to your position would roughly double it. If your broker ever
-introduces a fourth kind, the run stops and names it rather than guessing which sort it is.
+shares at all — it records the day they stopped being forfeitable. Adding the vesting rows to your
+position would roughly double it. If your broker ever introduces a fourth kind, the run stops and
+names it rather than guessing which sort it is.
+
+**The award date is what counts, not the vesting date.** Your shares are acquired for tax purposes
+on the day they are booked into your account, at that day's value. A promise to give them back if
+you withdraw the cash does not postpone that — the BFH holds that a contractual lock-up or
+forfeiture clause does not delay Zufluss, only being *legally unable to sell* would. So a vesting
+row changes nothing the engine computes.
+
+**One thing to check against your own award terms:** if you were legally unable to sell the shares
+until they vested, that test comes out the other way and the engine's dates would be wrong for you.
+A holding period you merely promised to observe is not the same thing.
 
 **What the engine does with it.** The award gives your shares a real acquisition date and cost, so
 when you eventually sell them the gain on **Anlage KAP** is measured properly instead of against an
 invented basis. What it does **not** do is declare the award itself as income in the year you
 received it — that belongs on **Anlage SO** under *Einkünfte aus Leistungen*, and this engine has no
-line for it yet. If your broker has awarded you shares, that part is still yours to handle.
+line for it yet. The run now says so, naming the year and the amount, but **declaring it is still
+yours to do.**
 
 ## Preparing Input Data
 

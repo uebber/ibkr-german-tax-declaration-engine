@@ -20,6 +20,10 @@ area table itself and is left to a `ks-maint`.
   [gesetze-im-internet.de/estg/__11.html](https://www.gesetze-im-internet.de/estg/__11.html)
 - **Tier 1 -- § 8 Abs. 1, Abs. 2 EStG**, retrieved 2026-08-13 from
   [gesetze-im-internet.de/estg/__8.html](https://www.gesetze-im-internet.de/estg/__8.html)
+- **Tier 4 -- BFH v. 30.06.2011 -- VI R 37/09**, retrieved 2026-08-13 from
+  [bundesfinanzhof.de](https://www.bundesfinanzhof.de/en/entscheidungen/entscheidungen-online/decision-detail/STRE201110231/).
+  Cited for the Zufluss test only, alongside § 11 Abs. 1 Satz 1, never alone --
+  Validation Protocol item 1.
 
 Applicable tax years: unrestricted within the Abgeltungsteuer regime. None of the three provisions
 carries a first year of application relevant here, and the 256-Euro figure in Nr. 3 Satz 2 is not
@@ -110,19 +114,43 @@ am Abgabeort** -- for an exchange-traded share, its market price.
 > *"Einnahmen sind innerhalb des Kalenderjahres bezogen, in dem sie dem Steuerpflichtigen
 > zugeflossen sind."*
 
-Satz 1 fixes the year by Zufluss and does not define it. **Where the sources run out.** No Tier 1
-or Tier 2 source was located addressing a benefit that is booked into the recipient's custody
-account but remains **subject to a condition under which the grantor may take it back**. Both
-readings are recorded in `../research/open-legal-questions.md` as **Q17**:
+Satz 1 fixes the year by Zufluss and does not define it. **The test is wirtschaftliche
+Verfuegungsmacht, and BFH VI R 37/09 states both halves of it.**
 
-- **Zufluss at the lapse of the condition** -- the recipient does not hold unconditionally until
-  then, so wirtschaftliche Verfuegungsmacht arrives with the lapse, and § 8 Abs. 2 values what is
-  *zugeflossen* on that day.
-- **Zufluss at the booking** -- the benefit is in the recipient's account and disposable from that
-  day, and a resolutive condition does not postpone what has already accrued.
+Leitsatz 1, verbatim:
 
-Which reading is applied, and why, belongs in `docs/legal-implementation-map.md` against this
-claim. **Choosing is an implementation act and is not settled here.**
+> *"Dem Arbeitnehmer fliesst der geldwerte Vorteil in Form verbilligter Aktien in dem Zeitpunkt
+> zu, in dem er die wirtschaftliche Verfuegungsmacht ueber die Aktien erlangt."*
+
+Leitsatz 2, verbatim:
+
+> *"Ein solcher Zufluss liegt nicht vor, solange dem Arbeitnehmer eine Verfuegung ueber die
+> Aktien rechtlich unmoeglich ist."*
+
+And the point that decides a restricted benefit, Rn. 4:
+
+> *"Einem solchen Zufluss im vorgenannten Sinne steht nicht entgegen, dass der Arbeitnehmer
+> aufgrund einer Sperr- bzw. Haltefrist die Aktien fuer eine bestimmte Zeit nicht veraeussern
+> kann."*
+
+**So the line is not restricted versus unrestricted, but obligatorisch versus dinglich.** A
+contractual restraint -- a holding period, a promise to give the shares back on some future
+event -- does **not** postpone Zufluss. What postpones it is the disposal being *rechtlich
+unmoeglich*: Rn. 7, *"Aktien sind daher nicht zugeflossen, solange dem Arbeitnehmer eine
+Verfuegung darueber rechtlich unmoeglich ist."*
+
+**Applied to a benefit in shares booked into the recipient's account:** Zufluss falls on the
+booking, and a condition under which the grantor may later reclaim the shares does not defer it,
+**unless the recipient is legally unable to dispose of them until the condition lapses**. That
+last clause is a question of fact about the particular award's terms, not of law, and it is
+what a reader must check before relying on this claim.
+
+**What the cited unit also contains, and the limit of the citation.** VI R 37/09 is decided
+under § 19 Abs. 1 Satz 1 Nr. 1 in Verbindung mit § 8 Abs. 1 and § 11 Abs. 1 Satz 1 EStG -- an
+employee receiving shares from an employer. § 11's Zufluss concept is general and is what is
+borrowed here; **no located source applies the test to a benefit granted by a broker under
+§ 22 Nr. 3**, and that step is recorded as the residual uncertainty in
+`../research/open-legal-questions.md` under Q17.
 
 **What the cited unit also contains.** § 11 Abs. 1 has five sentences: Satz 2 on regularly
 recurring income falling either side of the year end, Satz 3 on spreading income from a
