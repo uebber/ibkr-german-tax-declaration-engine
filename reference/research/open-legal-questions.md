@@ -21,6 +21,7 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q9 | [GT-FX-007], [GT-FX-001] | Is a currency movement embedded in another transaction a separate disposal, measured in EUR? Two instances: the leg of a securities trade, and a balance spent on a fee or withholding. | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q11 | [GT-ESTG20-038] | How is unallocated spot precious metal held at a broker taxed -- Termingeschaeft, privates Veraeusserungsgeschaeft, or sonstige Kapitalforderung? | this file |
 | Q15 | [GT-FX-010] | Rz. 131 makes an Umbuchung between two foreign-currency accounts a Veraeusserung. What is the Veraeusserungspreis, when nothing is paid? | `../bmf-guidance/fremdwaehrung-konten.md` |
+| Q17 | [GT-ESTG20-064] | Does a benefit booked into the recipient's account but revocable until a condition lapses zufliessen on the booking, or on the lapse? | this file |
 | Q16 | [GT-ESTG20-065] | Does a benefit in kind left untaxed by the Freigrenze of § 22 Nr. 3 Satz 2 still supply Anschaffungskosten at its full value on the later disposal? | this file |
 
 **Retired on the same terms, and for the same reason -- a source that settles the point was found,
@@ -267,6 +268,30 @@ operate on the taxpayer's total income of their kind from every source, so neith
 weigh a reading. Nor is the practice of brokers and the firms preparing their reports, which enter
 such amounts on Anlage KAP; that is habit, not authority, and it is the likeliest source of a wrong
 answer here.
+
+## Q17 -- when a revocable benefit in kind zufliesst
+
+**What is settled.** § 11 Abs. 1 Satz 1 fixes the year by Zufluss ([GT-ESTG20-064]) and § 8
+Abs. 2 Satz 1 values a Sachbezug at the ueblicher Endpreis. **What no located Tier 1 or Tier 2
+source settles is when a benefit that the grantor may still take back is zugeflossen.**
+
+**Reading A (at the lapse of the condition).** Zufluss requires wirtschaftliche
+Verfuegungsmacht, and a holding the grantor can reclaim is not held unconditionally. On this
+reading the benefit accrues when the condition lapses, and § 8 Abs. 2 values it that day --
+which is later, and normally at a different price.
+**Against it:** no located source applies the doctrine to this configuration; it is reasoning
+from the general requirement rather than a rule about conditional benefits.
+
+**Reading B (at the booking).** The benefit is in the recipient's account from the booking and
+is theirs to dispose of; a condition that merely *might* undo it is resolutive, and what has
+accrued is not postponed by the possibility of its being reversed.
+**Against it:** it attributes to the recipient a benefit they may have to give back, and the
+possibility is not hypothetical -- a reversal is one of the row kinds the export carries.
+
+**What the choice moves.** The two readings put the acquisition date roughly a vesting period
+apart and take the Anschaffungskosten from two different days' prices, so both the declared gain
+on a later disposal and the size of the untaxed receipt move with it. The direction is not fixed:
+it depends on which way the price moved between the two days.
 
 ## Q16 -- Anschaffungskosten from a receipt the Freigrenze left untaxed
 

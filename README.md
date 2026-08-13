@@ -342,9 +342,11 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
 `--download` fetches every query that has an ID here, so a report with no ID is a report
 that never arrives. Set the Transfers ID before you rely on a downloaded year: without it
 the download completes and looks fine, and the run then tells you which years it could not
-see a move in. The same applies to Grants, and there the consequence is louder: a year of
-awards that does not arrive is a year whose holding cannot be reconstructed, and the run
-stops with every figure withheld rather than being quietly wrong.
+see a move in. The same applies to Grants. A year of awards that does not arrive is a year whose holding
+cannot be reconstructed — and whether that stops the run depends on where the gap falls:
+between two position snapshots it refuses, but in the earliest year of your input window it
+warns, invents an acquisition date and gives you a figure anyway. Set the ID rather than rely
+on being told.
 
 ### Query 8: Grants (needed if your broker has awarded you shares)
 
@@ -382,7 +384,7 @@ Select these fields:
 | 13 | Vesting Date | The day the shares become unconditionally yours |
 | 14 | Quantity | Shares, negative on a return |
 | 15 | Price | Per-share value |
-| 16 | Value | Quantity x Price, used as a cross-check |
+| 16 | Value | Quantity x Price, to the cent. Requested so the column is accounted for; the engine computes from the unrounded Price and does not read it |
 | 17 | Serial Number | Blank in practice; requested so that its ever being filled is noticed |
 
 Do **not** select the rest. The engine checks the header against exactly this list and rejects a

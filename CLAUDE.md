@@ -216,6 +216,16 @@ run.
   opening snapshot, which does not list it. Anything whose only effect is confined to an interval
   the final reconciliation overwrites is invisible the same way.
 
+- **The intra-day sort band of a new event kind.** Deleting the stock-award branch from
+  `get_event_sort_key` leaves the suite green, including a scenario built to sort a
+  same-day disposal against it. The event falls to the unknown-type band, which orders it
+  after that day's trades — so a sale on the vesting day would be measured against the
+  provisional cost — and nothing observes the change.
+- **Which date column an event is built from, where the export's columns agree.** Dating a
+  stock award on the broker's report date instead of the award date leaves the suite
+  green. The two coincide on every award row of the current export, so no fixture
+  distinguishes them, and the scenario written to do so passes either way.
+
 Add to this list whenever a probe finds a site the suite cannot observe.
 
 Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support/`;

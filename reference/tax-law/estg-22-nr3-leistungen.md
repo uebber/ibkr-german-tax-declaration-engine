@@ -110,11 +110,19 @@ am Abgabeort** -- for an exchange-traded share, its market price.
 > *"Einnahmen sind innerhalb des Kalenderjahres bezogen, in dem sie dem Steuerpflichtigen
 > zugeflossen sind."*
 
-Zufluss requires the recipient to obtain **wirtschaftliche Verfuegungsmacht**. Where a benefit is
-booked into the recipient's custody account but remains **subject to a condition under which the
-grantor may take it back**, the recipient does not yet hold it unconditionally, and Zufluss falls
-on the date the condition lapses rather than the date of the booking. The valuation under § 8
-Abs. 2 is then taken at that same date, because § 8 values what is *zugeflossen*.
+Satz 1 fixes the year by Zufluss and does not define it. **Where the sources run out.** No Tier 1
+or Tier 2 source was located addressing a benefit that is booked into the recipient's custody
+account but remains **subject to a condition under which the grantor may take it back**. Both
+readings are recorded in `../research/open-legal-questions.md` as **Q17**:
+
+- **Zufluss at the lapse of the condition** -- the recipient does not hold unconditionally until
+  then, so wirtschaftliche Verfuegungsmacht arrives with the lapse, and § 8 Abs. 2 values what is
+  *zugeflossen* on that day.
+- **Zufluss at the booking** -- the benefit is in the recipient's account and disposable from that
+  day, and a resolutive condition does not postpone what has already accrued.
+
+Which reading is applied, and why, belongs in `docs/legal-implementation-map.md` against this
+claim. **Choosing is an implementation act and is not settled here.**
 
 **What the cited unit also contains.** § 11 Abs. 1 has five sentences: Satz 2 on regularly
 recurring income falling either side of the year end, Satz 3 on spreading income from a

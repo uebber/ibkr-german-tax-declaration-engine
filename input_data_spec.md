@@ -417,7 +417,7 @@ export's full header so that a column appearing or disappearing is caught at the
 | `VestingDate`         | `vesting_date`         | `str`               | The day the condition lapses.                  | Required. The event date for a **vesting** — where Zufluss falls. |
 | `Quantity`            | `quantity`             | `Decimal`           | Shares. Negative on a reversal.                | Required. Read as an absolute value, with the direction carried by the kind. Zero stops the run. |
 | `Price`               | `price`                | `Decimal`           | Per-share value the broker assigned.           | Required. On a vesting this is the übliche Endpreis at Zufluss (§ 8 Abs. 2 Satz 1) and becomes the Anschaffungskosten. |
-| `Value`               | `value`                | `Decimal`           | `Quantity` x `Price`, to the cent.             | Required. Mapped although derivable: the two disagree by rounding, and the cross-check is what shows which of them the broker's own cost basis was built from. |
+| `Value`               | `value`                | `Decimal`           | `Quantity` x `Price`, to the cent.             | Required, and **deliberately not read**. It can only differ from `Quantity` x `Price` by the broker's own rounding, and the cost basis is computed from the unrounded `Price`. Declared so the column is accounted for at the boundary rather than discarded by `extra = 'ignore'`. |
 | `SerialNumber`        | *(not mapped)*         | —                   | Row identifier.                                | **Blank on every row measured.** Declared in the tuple so that its ever being populated is caught at the boundary, and deliberately absent from the model so nothing reads an identity that is not there. |
 
 **Notes:**

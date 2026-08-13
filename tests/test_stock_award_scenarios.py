@@ -7,10 +7,27 @@ disposal. Both in reference/tax-law/estg-22-nr3-leistungen.md.
 
 **What the unit tests beside this file cannot see.** `test_stock_award_lots.py` calls the
 three `FifoLedger` methods directly, so it stays green while the events never reach the
-ledger at all. Deleting any one of the four links in the chain -- the sort-key band, the
-EUR conversion, the historical bucket entry, the current-year processor -- left the whole
-suite green before this file existed. Each scenario below is built so that the link it
-covers changes a DECLARED FIGURE when it is removed, not merely a call count.
+ledger at all. Deleting any one of the links in the chain left the whole suite green
+before this file existed.
+
+**Calibration, measured link by link -- and two are still not covered.** Deleting each and
+running this file:
+
+| link deleted | caught |
+|---|---|
+| current-year processor entry | yes -- 1 of 4 red |
+| historical bucket entry | yes -- 2 of 4 red |
+| EUR conversion in enrichment | yes -- 4 of 4 red |
+| parser's unclassified-kind refusal | yes |
+| factory's zero-quantity guard | yes |
+| **sort-key band in `get_event_sort_key`** | **no -- still green** |
+| **award dated on `ReportDate` instead of `AwardDate`** | **no -- still green** |
+
+The last two are written up in CLAUDE.md's *Where the suite is blind*. The scenarios
+aimed at them (`test_a_same_day_sale_is_measured_after_the_vesting_not_before_it` and
+`test_an_award_is_dated_on_its_award_date_not_the_broker_s_report_date`) assert the right
+figures and pass, but they pass with the code broken too, so they document the intent
+without instrumenting it. Do not read them as guards.
 
 The vesting-inside-the-tax-year case is the one that motivated the file: an award or a
 reversal that goes unapplied is caught by the end-of-year quantity reconciliation, but a
@@ -158,3 +175,106 @@ class TestAwardedSharesReachTheLedger(FifoTestCaseBase):
             "an unconverted award would have stopped the run, not produced a zero basis")
         assert rgl.total_cost_basis_eur != Decimal("60"), (
             "60 is the FOREIGN figure taken as EUR -- the conversion did not happen")
+
+
+def test_an_unclassified_activity_kind_stops_the_run(tmp_path):
+    """The parser's headline promise, and nothing observed its removal.
+
+    An award and a vesting differ in nothing a parser can see except this text, so a kind
+    nobody classified is as likely to move the position as not. Tested at the parser
+    rather than through the pipeline because the scenario harness converts an exception
+    into a test failure, which would make the refusal unassertable.
+    """
+    from src.domain.exceptions import DataIntegrityError
+    from src.parsers.grants_parser import parse_grants_csv
+    from tests.support.csv_creators import create_grants_csv_string
+
+    path = tmp_path / "grants.csv"
+    path.write_text(create_grants_csv_string([
+        grant_row("Stock Award Reinvestment For Something New",
+                  "20220302", "20220302", "20220902", "10", "4"),
+    ]), encoding="utf-8-sig")
+
+    with pytest.raises(DataIntegrityError, match="does not classify"):
+        parse_grants_csv(str(path))
+
+
+def test_an_award_of_zero_shares_stops_the_run():
+    """A no-op award would leave the ledger disagreeing with the broker for a reason
+    nothing recorded. Tested at the factory, for the reason above."""
+    from unittest.mock import MagicMock
+    from src.domain.enums import AssetCategory
+    from src.domain.exceptions import DataIntegrityError
+    from src.identification.asset_resolver import AssetResolver
+    from src.parsers.domain_event_factory import DomainEventFactory
+    from src.parsers.raw_models import RawGrantRecord
+
+    classifier = MagicMock()
+    classifier.preliminary_classify.return_value = (AssetCategory.STOCK, None)
+    factory = DomainEventFactory(AssetResolver(classifier))
+    row = RawGrantRecord(**dict(zip(
+        [c for c in __import__("src.parsers.column_validator", fromlist=["x"]).GRANTS_COLUMNS],
+        grant_row("Stock Award Grant for Cash Deposit",
+                  "20220302", "20220302", "20220902", "0", "4"))))
+
+    with pytest.raises(DataIntegrityError, match="zero shares"):
+        factory.create_events_from_grants([row])
+
+
+class TestTheGuardsAreObserved(FifoTestCaseBase):
+    """The guards the suite could not see removed.
+
+    Each of these was probed by deleting the guard and running the whole suite: before
+    this class, all three left it green. A guard nothing would notice the removal of is
+    the instrument-nobody-broke-on-purpose case CLAUDE.md names.
+    """
+
+    def test_an_award_is_dated_on_its_award_date_not_the_broker_s_report_date(self):
+        """Load-bearing whenever the two differ, which the maintainer's export does not
+        exercise -- every award row there has them equal. Built here so the choice is
+        pinned by something rather than by that coincidence."""
+        results = self._run_pipeline(
+            tax_year=TAX_YEAR,
+            grants_data=[
+                # Awarded in March, booked by the broker in May.
+                grant_row("Stock Award Grant for Cash Deposit",
+                          "20220510", "20220302", "20220902", "10", "4"),
+                grant_row("Stock Award Vesting",
+                          "20220905", "20220302", "20220902", "10", "6"),
+            ],
+            trades_data=[
+                trade_row(ACCOUNT, ISIN, "2023-06-01", "-10", "10", "SELL", "C", "T_SELL"),
+            ],
+            positions_start_data=[position_row(ACCOUNT, ISIN, "10", "60", price="6")],
+            positions_end_data=[],
+        )
+        rgls = [r for r in results.realized_gains_losses]
+        assert len(rgls) == 1
+        # The lot is created on the award date; a lot created on the report date would
+        # still reconcile, because the quantity is the same either way.
+        assert rgls[0].total_cost_basis_eur == Decimal("60")
+
+    def test_a_same_day_sale_is_measured_after_the_vesting_not_before_it(self):
+        """The sort-key band. Awards share the corporate-action intra-day slot so a
+        vesting restates the lot BEFORE that day's disposals read its cost. Without the
+        band the event falls to the unknown-type fallback, which sorts after trades, and
+        the sale is measured against the provisional award price."""
+        results = self._run_pipeline(
+            tax_year=TAX_YEAR,
+            grants_data=[
+                grant_row("Stock Award Grant for Cash Deposit",
+                          "20220302", "20220302", "20230401", "10", "4"),
+                grant_row("Stock Award Vesting",
+                          "20230401", "20220302", "20230401", "10", "7"),
+            ],
+            trades_data=[
+                # Sold the same day it vested.
+                trade_row(ACCOUNT, ISIN, "2023-04-01", "-10", "10", "SELL", "C", "T_SELL"),
+            ],
+            positions_start_data=[position_row(ACCOUNT, ISIN, "10", "40", price="4")],
+            positions_end_data=[],
+        )
+        rgls = [r for r in results.realized_gains_losses]
+        assert len(rgls) == 1
+        assert rgls[0].total_cost_basis_eur == Decimal("70"), (
+            "40 means the sale was applied before the vesting restated the lot")
