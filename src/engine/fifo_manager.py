@@ -6,7 +6,7 @@ import uuid
 from datetime import date as date_obj, datetime
 
 from src.domain.assets import Asset, MarkPosition, Option
-from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights
+from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights, StockAwardEvent
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError, ProcessingError
@@ -1396,6 +1396,131 @@ class FifoLedger:
 
         logger.info(f"Added new lot for stock dividend event {event.event_id} for asset {self.asset_internal_id}: Qty={new_lot.quantity}, Cost/Unit={new_lot.unit_cost_basis_eur} (FMV)") # Renamed
 
+
+    # --- Stock awards: shares a broker granted for capital placed with it ---
+    #
+    # Three operations on one lot, keyed by the award date. The export's SerialNumber is
+    # blank on every row, so the award date is the only thing tying a vesting or a
+    # reversal back to the lot its award created; `_STOCK_AWARD_SOURCE_PREFIX` puts it
+    # into `source_transaction_id` where it can be matched.
+    _STOCK_AWARD_SOURCE_PREFIX = "STOCK_AWARD:"
+
+    def _find_stock_award_lot(self, award_date: str) -> Optional[FifoLot]:
+        """The lot an award created, or None. Match is on the award date alone."""
+        wanted = f"{self._STOCK_AWARD_SOURCE_PREFIX}{award_date}"
+        for lot in self.lots:
+            if lot.source_transaction_id == wanted:
+                return lot
+        return None
+
+    def add_lot_for_stock_award(self, event: StockAwardEvent):
+        """Book an award into the ledger on the day the shares entered the account.
+
+        The lot is created here and not at vesting because the shares are in the account
+        from this day: the broker's year-end snapshot counts them, and a ledger that
+        waited for vesting would reconstruct a smaller holding and fail reconciliation at
+        every mark in between.
+
+        Its acquisition date and cost basis are PROVISIONAL and are restated when the
+        award vests ([GT-ESTG20-064], [GT-ESTG20-065]). They are not marked unknown: the
+        date is a real day on which real shares arrived, unlike the placeholder a
+        snapshot fallback carries, and `acquisition_date_is_known` means that other
+        thing.
+        """
+        if event.unit_cost_basis_eur is None:
+            raise ProcessingError(
+                f"Stock award {event.event_id} on asset {self.asset_internal_id} reached "
+                f"the ledger without a EUR cost basis. The award price is a foreign "
+                f"amount and the enrichment step converts it; a lot created without one "
+                f"would carry an invented acquisition cost into a later disposal."
+            )
+        quantity = event.quantity.quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
+        source_id = f"{self._STOCK_AWARD_SOURCE_PREFIX}{event.award_date}"
+        if self._find_stock_award_lot(event.award_date) is not None:
+            raise ProcessingError(
+                f"Two stock awards on asset {self.asset_internal_id} share the award "
+                f"date {event.award_date}. That date is the only key a vesting or a "
+                f"reversal has to find its lot by, so a duplicate would let one restate "
+                f"or reverse the wrong award's shares."
+            )
+        self.lots.append(FifoLot(
+            acquisition_date=event.event_date, quantity=quantity,
+            unit_cost_basis_eur=event.unit_cost_basis_eur,
+            total_cost_basis_eur=self.ctx.multiply(quantity, event.unit_cost_basis_eur),
+            source_transaction_id=source_id,
+        ))
+        self.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(),
+                                        lot.source_transaction_id))
+        logger.info("Stock award %s: added lot on %s, qty %s, provisional cost/unit %s",
+                    event.award_date, event.event_date, quantity, event.unit_cost_basis_eur)
+
+    def reverse_stock_award_lot(self, event: StockAwardEvent):
+        """Take back part or all of an award whose condition failed.
+
+        **Realises nothing.** The award is undone rather than disposed of, so no
+        `RealizedGainLoss` is produced and none is returned. The units leave at the
+        lot's own unit cost, which is what the broker does too -- it removes the basis
+        at the original award price rather than the price on the day of the reversal.
+        """
+        lot = self._find_stock_award_lot(event.award_date)
+        if lot is None:
+            raise ProcessingError(
+                f"A stock award reversal on asset {self.asset_internal_id} names award "
+                f"date {event.award_date}, and no lot in this account's ledger came from "
+                f"an award on that day. The reversal cannot be applied to some other "
+                f"lot: it would take units at a cost basis that was never awarded."
+            )
+        quantity = event.quantity.quantize(global_config.PRECISION_QUANTITY, context=self.ctx)
+        if quantity > lot.quantity:
+            raise ProcessingError(
+                f"A stock award reversal on asset {self.asset_internal_id} would take "
+                f"{quantity} units from the award of {event.award_date}, which holds "
+                f"{lot.quantity}. Reversing more than was awarded means the export and "
+                f"the ledger disagree about the award itself."
+            )
+        if quantity == lot.quantity:
+            self.lots.remove(lot)
+        else:
+            lot.quantity = lot.quantity - quantity
+            lot.total_cost_basis_eur = self.ctx.multiply(lot.quantity, lot.unit_cost_basis_eur)
+        logger.info("Stock award %s: reversed %s units, no gain realised",
+                    event.award_date, quantity)
+
+    def restate_stock_award_lot_on_vesting(self, event: StockAwardEvent):
+        """Move the lot's acquisition date and cost basis to the vesting values.
+
+        This is where the acquisition actually happens for tax: Zufluss falls when the
+        recipient gets wirtschaftliche Verfuegungsmacht, which while the grantor may
+        still take the shares back is not the booking ([GT-ESTG20-064]), and the value
+        brought to tax then is the Anschaffungskosten on a later disposal
+        ([GT-ESTG20-065]).
+
+        The lot's quantity is NOT touched. A vesting moves no shares -- they have been
+        in the account since the award -- and adding its quantity would count the same
+        shares twice.
+        """
+        if event.unit_cost_basis_eur is None:
+            raise ProcessingError(
+                f"Stock award vesting {event.event_id} on asset {self.asset_internal_id} "
+                f"reached the ledger without a EUR cost basis. This is the figure that "
+                f"becomes the Anschaffungskosten; without it the disposal would be "
+                f"measured against the provisional award price instead."
+            )
+        lot = self._find_stock_award_lot(event.award_date)
+        if lot is None:
+            raise ProcessingError(
+                f"A stock award vesting on asset {self.asset_internal_id} names award "
+                f"date {event.award_date}, and no lot in this account's ledger came from "
+                f"an award on that day. Restating some other lot would put this award's "
+                f"cost basis on shares that did not come from it."
+            )
+        lot.acquisition_date = event.event_date
+        lot.unit_cost_basis_eur = event.unit_cost_basis_eur
+        lot.total_cost_basis_eur = self.ctx.multiply(lot.quantity, event.unit_cost_basis_eur)
+        self.lots.sort(key=lambda lot_: (parse_ibkr_date(lot_.acquisition_date) or datetime.min.date(),
+                                         lot_.source_transaction_id))
+        logger.info("Stock award %s: vested on %s, cost/unit restated to %s",
+                    event.award_date, event.event_date, event.unit_cost_basis_eur)
 
     def consume_long_option_get_cost(self, quantity_contracts_to_consume: Decimal) -> List[ConsumedLotDetail]:
         if self.asset_category != AssetCategory.OPTION:
