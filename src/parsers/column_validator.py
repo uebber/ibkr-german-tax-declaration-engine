@@ -57,6 +57,18 @@ TRANSFERS_COLUMNS = (
     "TransactionID", "SerialNumber", "DeliveryType", "CommodityType",
 )
 
+# Stock Grant Activity export -- shares a broker awards for placing capital with it.
+# Declared in full rather than as the subset the engine maps, for the reason given on
+# TRANSFERS_COLUMNS: a column appearing or disappearing is then caught at the boundary.
+# `SerialNumber` is the case that needs it -- the export carries the column and leaves it
+# blank, so it is declared here and deliberately absent from `RawGrantRecord`.
+GRANTS_COLUMNS = (
+    "ClientAccountID", "CurrencyPrimary", "AssetClass", "SubCategory", "Symbol",
+    "Description", "Conid", "ISIN", "Multiplier", "ReportDate",
+    "ActivityDescription", "AwardDate", "VestingDate", "Quantity", "Price",
+    "Value", "SerialNumber",
+)
+
 OPTIONS_EAE_COLUMNS = (
     "ClientAccountID", "CurrencyPrimary", "FXRateToBase", "AssetClass",
     "Symbol", "Description", "Conid", "ISIN", "UnderlyingConid",

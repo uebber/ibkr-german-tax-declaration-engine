@@ -38,6 +38,7 @@ MODELS = [
     ("RawOptionsEAERecord", cv.OPTIONS_EAE_COLUMNS, "data_import/Options_EAE-*.csv"),
     ("RawCashBalanceRecord", cv.CASH_BALANCE_COLUMNS, "data_import/Cash_Balance-*.csv"),
     ("RawTransferRecord", cv.TRANSFERS_COLUMNS, "data_import/Transfers-*.csv"),
+    ("RawGrantRecord", cv.GRANTS_COLUMNS, "data_import/Grants-*.csv"),
 ]
 
 
@@ -172,6 +173,11 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
             "TransferAccountName", "TransferPrice", "UnderlyingConid",
             "UnderlyingSymbol",
         ],
+        # `SerialNumber` is requested and arrives blank on every row of the export, so
+        # there is no identity to read from it. It stays in `GRANTS_COLUMNS` for the
+        # reason `RawTransferRecord`'s full-header declaration gives: if the broker ever
+        # starts populating it, that is caught at the boundary and not downstream.
+        "RawGrantRecord": ["SerialNumber"],
     }, (
         f"the set of requested-but-unmapped columns changed: {dropped}. If a column "
         f"gained a field, remove it from this list. If one was dropped, decide whether "

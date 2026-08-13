@@ -341,6 +341,75 @@ class RawTransferRecord(RawBaseRecord):
         extra = 'ignore'
 
 
+class RawGrantRecord(RawBaseRecord):
+    """One row of the Stock Grant Activity export -- shares awarded for placing capital.
+
+    **Three activity kinds share this export and only two of them move the position.**
+    `ActivityDescription` is the discriminator:
+
+    * an **award** ("... Grant ...") books shares into the account;
+    * a **reversal** ("... Return ...") takes some back when the condition fails, with a
+      negative `Quantity` and the ORIGINAL award's `AwardDate`;
+    * a **vesting** ("... Vesting ...") moves nothing. It records the lapse of the
+      condition and restates the value, and a consumer that added its `Quantity` to the
+      position would count the same shares twice.
+
+    The third is why `GrantsParser` refuses an `ActivityDescription` it does not
+    recognise instead of skipping it. A dispatch that falls through without an `else`
+    would silently drop a future kind, and the drop would reconcile against the broker's
+    snapshot only until the kind was one that moved the position.
+
+    **Why both dates are mapped.** The award is booked on `AwardDate` but remains
+    forfeitable until `VestingDate`, so the position and the tax acquisition part company
+    between the two. Zufluss falls where wirtschaftliche Verfuegungsmacht arrives, which
+    while the grantor may still take the shares back is not the booking -- see
+    [GT-ESTG20-064]. `ReportDate` is the day the broker booked the row and is mapped for
+    ordering only; it is not `VestingDate` and must not be substituted for it.
+
+    **`SerialNumber` is not mapped.** The export carries the column and leaves it blank,
+    so there is no identity to read from it. It stays in `GRANTS_COLUMNS` so that its
+    ever being populated is caught at the boundary rather than downstream.
+
+    **`Value` is mapped although it is derivable** from `Quantity` and `Price`. The two
+    disagree by rounding -- the broker writes `Value` to the cent -- and the cross-check
+    is what shows which of the two the broker's own cost basis was built from.
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    asset_class: str = Field(alias="AssetClass")
+    sub_category: Optional[str] = Field(None, alias="SubCategory")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    report_date: str = Field(alias="ReportDate")
+    activity_description: str = Field(alias="ActivityDescription")
+    award_date: str = Field(alias="AwardDate")
+    vesting_date: str = Field(alias="VestingDate")
+    quantity: Decimal = Field(alias="Quantity")
+    price: Decimal = Field(alias="Price")
+    value: Decimal = Field(alias="Value")
+
+    @validator('multiplier', 'quantity', 'price', 'value', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Any:
+        """Blank becomes absent; anything else is handed to pydantic to parse or reject.
+
+        Deliberately NOT the `safe_decimal(v, default=Decimal("0.0"))` pattern of the
+        older models. A quantity, price or value of zero here is a real statement -- an
+        award of nothing, or one worth nothing -- so defaulting an unparseable figure to
+        zero would put an invented acquisition cost on a lot, which is the substitution
+        CLAUDE.md's fallback rule forbids. `quantity`, `price` and `value` are required,
+        so a blank one still raises; `multiplier` is optional.
+        """
+        if v is None or str(v).strip() == "":
+            return None
+        return v
+
+    class Config:
+        extra = 'ignore'
+
+
 class RawCashBalanceRecord(RawBaseRecord):
     """Raw record for currency cash balances from IBKR Cash Report."""
     client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
