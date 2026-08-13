@@ -16,6 +16,7 @@ from src.domain.events import (
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
     WithholdingTaxEvent, CurrencyConversionEvent, InternalTransferEvent,
+    StockAwardEvent,
     InternalCashTransferEvent
 )
 from src.domain.assets import (
@@ -657,7 +658,7 @@ def run_main_calculations(
                 historical_transfer_events.append(event)
             elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend,
                                     OptionLifecycleEvent, CorpActionMergerCash,
-                                    CorpActionExpireDividendRights)):
+                                    CorpActionExpireDividendRights, StockAwardEvent)):
                 # OptionLifecycleEvent joined this bucket when checkpointing exposed what its
                 # absence cost: an option opened and closed inside the historical window kept
                 # its lots forever, because nothing removed them. Nine option ledgers on the

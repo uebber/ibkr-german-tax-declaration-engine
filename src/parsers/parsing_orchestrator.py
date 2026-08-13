@@ -28,7 +28,7 @@ import src.config as global_config
 
 from .raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawPositionRecord, RawCorporateActionRecord,
-    RawCashBalanceRecord, RawOptionsEAERecord, RawTransferRecord
+    RawCashBalanceRecord, RawOptionsEAERecord, RawTransferRecord, RawGrantRecord
 )
 from .trades_parser import parse_trades_csv
 from .cash_transactions_parser import parse_cash_transactions_csv
@@ -37,6 +37,7 @@ from .corporate_actions_parser import parse_corporate_actions_csv
 from .cash_balance_parser import parse_cash_balance_csv
 from .options_eae_parser import parse_options_eae_csv
 from .transfers_parser import parse_transfers_csv
+from .grants_parser import parse_grants_csv
 from .domain_event_factory import DomainEventFactory
 # NEW IMPORTS
 from src.processing.option_trade_linker import perform_option_trade_linking
@@ -198,6 +199,11 @@ class ParsingOrchestrator:
         # that happened is then invisible. Only the multi-account warning's wording turns
         # on the difference -- no figure does.
         self.transfers_file_supplied: bool = False
+        # Shares a broker awarded for capital placed with it. Three row kinds, of which
+        # only two move the position -- see RawGrantRecord. An absent export says nothing
+        # was ever awarded; the awards a missing YEAR would have carried are what
+        # `data_preparation`'s missing-years record is for.
+        self.raw_grants: List[RawGrantRecord] = []
         # Whether an OptionEAE file was offered at all, as opposed to offered and empty.
         # Only the wording of _require_option_cash_settlements' error depends on it: the
         # requirement itself comes from the trades, never from the file's presence.
@@ -223,6 +229,7 @@ class ParsingOrchestrator:
                            cash_balance_file: Optional[str] = None,
                            options_eae_file: Optional[str] = None,
                            transfers_file: Optional[str] = None,
+                           grants_file: Optional[str] = None,
                            positions_mark_files: Optional[Dict[int, str]] = None):
         # ... (implementation is the same)
         if trades_file:
@@ -260,6 +267,9 @@ class ParsingOrchestrator:
             self.transfers_file_supplied = True
             self.raw_transfers = parse_transfers_csv(transfers_file)
             logger.info(f"Loaded {len(self.raw_transfers)} raw transfer records.")
+        if grants_file:
+            self.raw_grants = parse_grants_csv(grants_file)
+            logger.info(f"Loaded {len(self.raw_grants)} raw stock-award records.")
         for mark_year, mark_file in sorted((positions_mark_files or {}).items()):
             self.raw_positions_marks[mark_year] = parse_positions_csv(mark_file)
             logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
@@ -638,6 +648,19 @@ class ParsingOrchestrator:
                 description_source_type="transfer",
                 raw_multiplier=rtr.multiplier,
             )
+        # Awards discover assets too. An instrument a broker only ever GAVE the taxpayer
+        # -- never bought, never sold in the window -- appears in no other export, so
+        # without this it would be created after classification had finished.
+        for rg in self.raw_grants:
+            if not (rg.isin or rg.conid or rg.symbol):
+                continue
+            self.asset_resolver.get_or_create_asset(
+                raw_isin=rg.isin, raw_conid=rg.conid, raw_symbol=rg.symbol,
+                raw_currency=rg.currency_primary,
+                raw_ibkr_asset_class=rg.asset_class, raw_description=rg.description,
+                description_source_type="grant",
+                raw_multiplier=rg.multiplier,
+            )
         logger.info(f"Asset discovery complete. Total unique assets identified: {len(self.asset_resolver.assets_by_internal_id)}")
 
     def finalize_asset_classifications(self):
@@ -998,6 +1021,7 @@ class ParsingOrchestrator:
         ca_events = event_factory.create_events_from_corporate_actions(self.raw_corporate_actions)
         options_eae_events = event_factory.create_events_from_options_eae(self.raw_options_eae) if self.raw_options_eae else []
         transfer_events = event_factory.create_events_from_transfers(self.raw_transfers)
+        grant_events = event_factory.create_events_from_grants(self.raw_grants)
 
         # Populate the main list of events
         self.domain_financial_events.clear() # Clear if run multiple times (though not typical)
@@ -1006,6 +1030,7 @@ class ParsingOrchestrator:
         self.domain_financial_events.extend(ca_events)
         self.domain_financial_events.extend(options_eae_events)
         self.domain_financial_events.extend(transfer_events)
+        self.domain_financial_events.extend(grant_events)
 
         self._require_option_cash_settlements(all_trade_events, options_eae_events)
 
@@ -1170,6 +1195,7 @@ class ParsingOrchestrator:
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
                              transfers_file: Optional[str] = None,
+                             grants_file: Optional[str] = None,
                              positions_mark_files: Optional[Dict[int, str]] = None,
                              tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
@@ -1187,6 +1213,7 @@ class ParsingOrchestrator:
                 cash_balance_file=cash_balance_file,
                 options_eae_file=options_eae_file,
                 transfers_file=transfers_file,
+                grants_file=grants_file,
                 positions_mark_files=positions_mark_files,
             )
             self.process_positions(tax_year=tax_year)

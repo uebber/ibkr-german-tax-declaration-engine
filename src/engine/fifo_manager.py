@@ -359,6 +359,22 @@ class FifoLedger:
                         self.add_short_lot(sub)
                     elif sub.event_type == FinancialEventType.TRADE_BUY_SHORT_COVER:
                         self.consume_short_lots_for_cover(sub, is_historical_simulation=True)
+            elif isinstance(hist_event, StockAwardEvent):
+                # Three kinds, three effects, and an unhandled fourth stops the run for
+                # the reason the CorporateActionEvent branch below gives: a kind that
+                # reaches the ledger and does nothing leaves a phantom holding, or a
+                # provisional cost basis, in every later year.
+                if hist_event.event_type == FinancialEventType.STOCK_AWARD_GRANTED:
+                    self.add_lot_for_stock_award(hist_event)
+                elif hist_event.event_type == FinancialEventType.STOCK_AWARD_REVERSED:
+                    self.reverse_stock_award_lot(hist_event)
+                elif hist_event.event_type == FinancialEventType.STOCK_AWARD_VESTED:
+                    self.restate_stock_award_lot_on_vesting(hist_event)
+                else:
+                    raise ProcessingError(
+                        f"Historical replay has no handler for stock-award kind "
+                        f"{hist_event.event_type.name} on "
+                        f"{asset.get_classification_key()} at {hist_event.event_date}.")
             elif isinstance(hist_event, CorpActionSplitForward):
                 self.adjust_lots_for_split(hist_event)
             elif isinstance(hist_event, CorpActionStockDividend):

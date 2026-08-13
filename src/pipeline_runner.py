@@ -73,6 +73,7 @@ def run_core_processing_pipeline(
     # Moves of a holding between the taxpayer's own accounts. Optional: a person who has
     # never exported the report has no rows.
     transfers_file_path: Optional[str] = None,
+    grants_file_path: Optional[str] = None,
     # Years of the replayed window the Transfers export does not cover, comma-joined.
     # Only the multi-account warning reads it, and only to refuse to call a partly
     # exported window complete. "" means either complete or absent, which the path above
@@ -120,6 +121,7 @@ def run_core_processing_pipeline(
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
             transfers_file=transfers_file_path,
+            grants_file=grants_file_path,
             positions_mark_files=positions_mark_file_paths,
             tax_year=tax_year_to_process
         )

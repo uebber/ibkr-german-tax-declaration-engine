@@ -13,14 +13,15 @@ from src.domain.events import (
     OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
     CurrencyConversionEvent, FeeEvent, InternalTransferEvent,
-    InternalCashTransferEvent
+    InternalCashTransferEvent, StockAwardEvent
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord,
-    RawOptionsEAERecord, RawTransferRecord
+    RawOptionsEAERecord, RawTransferRecord, RawGrantRecord
 )
+from . import grants_parser
 from src.domain.exceptions import DataIntegrityError
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
 
@@ -1314,3 +1315,121 @@ class DomainEventFactory:
             )
         logger.info(f"Created {len(cash_settlement_events)} OptionCashSettlementEvents from OptionEAE data.")
         return cash_settlement_events
+
+    def create_events_from_grants(
+        self, raw_grants: List[RawGrantRecord]
+    ) -> List[StockAwardEvent]:
+        """Turn the grant export's rows into the three stock-award events.
+
+        **Each kind takes its date from a different column, and the choice is load-bearing.**
+
+        * An **award** is dated on `AwardDate`. That is the day the shares entered the
+          account, which is what the broker's snapshot counts and therefore what the
+          ledger must reconcile against.
+        * A **reversal** is dated on `ReportDate` -- the day the shares were taken back.
+          Its `AwardDate` names the ORIGINAL award and is the matching key, not its date.
+        * A **vesting** is dated on `VestingDate`, NOT `ReportDate`. Zufluss falls when
+          the condition lapses ([GT-ESTG20-064]); the broker books the row a day or more
+          later, and booking is not the legal event. Measured on the export: the two
+          differ on most vesting rows, so taking `ReportDate` here would silently move
+          the acquisition date and the year it falls in.
+
+        **What the export does not say, and what is done about it.** § 8 Abs. 2 Satz 1
+        wants the ueblicher Endpreis *on the day of Zufluss*, and the row's `Price` is
+        the broker's figure with no column stating which day it was struck on. Where
+        `ReportDate` and `VestingDate` differ, the price may be either day's. It is used
+        as given -- it is a measurement, and the alternative is to invent one from market
+        data this engine does not hold -- but it is not silently equated with the vesting
+        day's close, and the residual uncertainty is recorded at [GT-ESTG20-064]'s map
+        row rather than left for a reader to notice.
+
+        Every offending row is collected before raising, so one run names the whole
+        problem.
+        """
+        events: List[StockAwardEvent] = []
+        data_errors: List[str] = []
+
+        for rg in raw_grants:
+            what = f"{rg.symbol or rg.isin or 'unknown instrument'} on {rg.report_date}"
+            description = rg.activity_description
+
+            if grants_parser.VESTING_MARKER in description:
+                event_type = FinancialEventType.STOCK_AWARD_VESTED
+                raw_event_date = rg.vesting_date
+            elif grants_parser.REVERSAL_MARKER in description:
+                event_type = FinancialEventType.STOCK_AWARD_REVERSED
+                raw_event_date = rg.report_date
+            elif grants_parser.AWARD_MARKER in description:
+                event_type = FinancialEventType.STOCK_AWARD_GRANTED
+                raw_event_date = rg.award_date
+            else:
+                # Unreachable while `parse_grants_csv` is the only way in -- it raises on
+                # an unclassified kind. Kept because this method is reachable from a test
+                # or a future caller that did not go through the parser, and a silent
+                # `else`-less fall-through here is the exact shape of the defect the
+                # parser's guard exists to prevent.
+                data_errors.append(
+                    f"Grant row for {what} has activity '{description}', which is none "
+                    f"of the three known kinds.")
+                continue
+
+            parsed = parse_ibkr_date(raw_event_date)
+            if not parsed:
+                data_errors.append(
+                    f"Grant row for {what} has an unparseable date '{raw_event_date}' "
+                    f"for a {event_type.name} row. The award is applied in "
+                    f"chronological order and cannot be placed without one.")
+                continue
+
+            parsed_award = parse_ibkr_date(rg.award_date)
+            if not parsed_award:
+                data_errors.append(
+                    f"Grant row for {what} has an unparseable AwardDate "
+                    f"'{rg.award_date}'. It is the only key tying a vesting or a "
+                    f"reversal to the lot its award created -- SerialNumber is blank on "
+                    f"every row of this export.")
+                continue
+
+            if rg.quantity == Decimal(0):
+                data_errors.append(
+                    f"Grant row for {what} moves zero shares. An award, a reversal and "
+                    f"a vesting of nothing are all meaningless, and reading one as a "
+                    f"no-op would leave the ledger disagreeing with the broker for a "
+                    f"reason nothing recorded.")
+                continue
+
+            asset = self.asset_resolver.get_or_create_asset(
+                raw_isin=rg.isin, raw_conid=rg.conid, raw_symbol=rg.symbol,
+                raw_currency=rg.currency_primary,
+                raw_ibkr_asset_class=rg.asset_class, raw_description=rg.description,
+                description_source_type="grant",
+                raw_multiplier=rg.multiplier,
+            )
+
+            events.append(StockAwardEvent(
+                asset.internal_asset_id,
+                parsed.isoformat(),
+                event_type=event_type,
+                award_date=parsed_award.isoformat(),
+                # Absolute: the export writes a reversal negative, and the event type
+                # carries the direction so no consumer has to infer one from the other.
+                quantity=rg.quantity.copy_abs(),
+                unit_price_foreign=rg.price,
+                currency=(rg.currency_primary or "").strip().upper(),
+                # The account the broker awarded into, so the lot is created in,
+                # reversed from and restated in THAT account's ledger. Dropping it would
+                # put the lot in the DEFAULT pot, which a single-account export would
+                # never notice.
+                account_id=rg.client_account_id,
+                local_currency=(rg.currency_primary or "").strip().upper(),
+                ibkr_activity_description=description,
+            ))
+
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} grant row(s) could not be turned into an award "
+                f"event:\n  " + "\n  ".join(data_errors))
+
+        logger.info("Created %d stock-award event(s) from %d grant row(s).",
+                    len(events), len(raw_grants))
+        return events
