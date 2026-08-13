@@ -278,3 +278,72 @@ class TestTheGuardsAreObserved(FifoTestCaseBase):
         assert len(rgls) == 1
         assert rgls[0].total_cost_basis_eur == Decimal("70"), (
             "40 means the sale was applied before the vesting restated the lot")
+
+
+def test_a_vesting_in_the_tax_year_reports_the_receipt_it_does_not_declare():
+    """The one thing standing between a user and an understated return.
+
+    The engine takes the vesting value as the Anschaffungskosten -- which LOWERS the
+    gain declared on a later disposal -- and cannot declare the matching § 22 Nr. 3
+    receipt, because there is no Anlage SO line for it (issue #76). Taking the half that
+    reduces a figure and dropping the half that adds one is understatement, so the
+    omission has to reach the report rather than only the README.
+
+    Asserted on the collector rather than through the scenario harness: the gap is a
+    WARNING, so the run completes and the harness returns before the report is rendered.
+    """
+    from decimal import Decimal as D
+    from src.domain.enums import FinancialEventType as T
+    from src.domain.events import StockAwardEvent
+    from src.engine.event_processors.stock_award_processor import (
+        StockAwardProcessor, STOCK_AWARD_RECEIPT_NOT_DECLARED)
+    from src.processing.data_gaps import DataGapCollector, GapSeverity
+    from tests.test_stock_award_lots import _ledger, ASSET_ID
+
+    ledger = _ledger()
+    award = StockAwardEvent(ASSET_ID, "2023-01-02",
+                            event_type=T.STOCK_AWARD_GRANTED, award_date="2023-01-02",
+                            quantity=D("10"), unit_price_foreign=D("4"), currency="EUR")
+    award.unit_cost_basis_eur = D("4")
+    ledger.add_lot_for_stock_award(award)
+
+    vesting = StockAwardEvent(ASSET_ID, "2023-09-01",
+                              event_type=T.STOCK_AWARD_VESTED, award_date="2023-01-02",
+                              quantity=D("10"), unit_price_foreign=D("7"), currency="EUR")
+    vesting.unit_cost_basis_eur = D("7")
+
+    collector = DataGapCollector()
+    StockAwardProcessor().process(vesting, ledger, {'data_gap_collector': collector})
+
+    gaps = [g for g in collector.gaps if g.code == STOCK_AWARD_RECEIPT_NOT_DECLARED]
+    assert len(gaps) == 1, "the undeclared receipt must reach the report"
+    assert gaps[0].severity is GapSeverity.WARNING
+    assert "70" in gaps[0].detail, "the amount to declare has to be in it, not just the fact"
+
+
+def test_an_award_and_a_reversal_report_no_receipt():
+    """Only the vesting is the Zufluss. Reporting a receipt on the booking would tell the
+    user to declare the same shares twice."""
+    from decimal import Decimal as D
+    from src.domain.enums import FinancialEventType as T
+    from src.domain.events import StockAwardEvent
+    from src.engine.event_processors.stock_award_processor import (
+        StockAwardProcessor, STOCK_AWARD_RECEIPT_NOT_DECLARED)
+    from src.processing.data_gaps import DataGapCollector
+    from tests.test_stock_award_lots import _ledger, ASSET_ID
+
+    ledger = _ledger()
+    collector = DataGapCollector()
+    award = StockAwardEvent(ASSET_ID, "2023-01-02",
+                            event_type=T.STOCK_AWARD_GRANTED, award_date="2023-01-02",
+                            quantity=D("10"), unit_price_foreign=D("4"), currency="EUR")
+    award.unit_cost_basis_eur = D("4")
+    StockAwardProcessor().process(award, ledger, {'data_gap_collector': collector})
+
+    reversal = StockAwardEvent(ASSET_ID, "2023-03-01",
+                               event_type=T.STOCK_AWARD_REVERSED, award_date="2023-01-02",
+                               quantity=D("4"), unit_price_foreign=D("9"), currency="EUR")
+    reversal.unit_cost_basis_eur = D("9")
+    StockAwardProcessor().process(reversal, ledger, {'data_gap_collector': collector})
+
+    assert not [g for g in collector.gaps if g.code == STOCK_AWARD_RECEIPT_NOT_DECLARED]

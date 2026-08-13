@@ -32,10 +32,13 @@ from src.domain.events import FinancialEvent, StockAwardEvent
 from src.domain.exceptions import ProcessingError
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger
+from src.processing.data_gaps import GapSeverity
 
 from .base_processor import EventProcessor
 
 logger = logging.getLogger(__name__)
+
+STOCK_AWARD_RECEIPT_NOT_DECLARED = "STOCK_AWARD_RECEIPT_NOT_DECLARED"
 
 
 class StockAwardProcessor(EventProcessor):
@@ -65,7 +68,53 @@ class StockAwardProcessor(EventProcessor):
                 f"provisional acquisition cost on a lot that a disposal then measures "
                 f"against.")
 
+        if event.event_type == FinancialEventType.STOCK_AWARD_VESTED:
+            self._record_undeclared_receipt(event, context)
+
         # No RealizedGainLoss from any of the three. See the module docstring: the
         # receipt is Anlage SO income this engine does not yet declare, and the effect on
         # a declared figure runs through the lot's cost basis.
         return []
+
+    @staticmethod
+    def _record_undeclared_receipt(event: StockAwardEvent,
+                                   context: Dict[str, Any]) -> None:
+        """Say, in the report, that a taxable receipt fell in this year and is not in it.
+
+        **The gap exists because the omission is otherwise invisible and points one way.**
+        The engine takes the vesting value as the lot's Anschaffungskosten, which LOWERS
+        the declared gain on a later disposal, and omits the matching § 22 Nr. 3 receipt
+        ([GT-ESTG20-063]) because the reporting layer has no Anlage SO *Einkuenfte aus
+        Leistungen* category -- issue #76. Taking the half that reduces a figure and
+        dropping the half that adds one is understatement, and a run that did it in
+        silence would produce a complete-looking declaration that is not complete.
+
+        WARNING and not FAIL_FAST: the figures the engine does emit are correct under the
+        reading it applies, and every other Kapitalertrag in the year is unaffected.
+        Refusing the year would withhold sound figures over a line the engine has never
+        been able to produce. What the severity asserts is exactly that -- the declared
+        figures are safe, and something outside them is not computed here.
+
+        The amount is stated so the reader can enter it themselves rather than recompute
+        it from the export.
+        """
+        collector = context.get('data_gap_collector')
+        if collector is None:
+            return
+        gross = None
+        if event.unit_cost_basis_eur is not None:
+            gross = event.quantity * event.unit_cost_basis_eur
+        collector.record(
+            STOCK_AWARD_RECEIPT_NOT_DECLARED,
+            f"Anlage SO (Einkuenfte aus Leistungen), {event.event_date}",
+            f"Shares awarded for capital placed with the broker vested on "
+            f"{event.event_date}. That receipt is a Leistung under § 22 Nr. 3 EStG "
+            f"([GT-ESTG20-063]) and belongs on Anlage SO; this engine has no line for "
+            f"it and has NOT declared it (issue #76). Its value at Zufluss is "
+            f"{'EUR ' + str(gross) if gross is not None else 'not computable here'}, "
+            f"which is also the acquisition cost the engine has used for these units -- "
+            f"so the gain declared on their later disposal is reduced by it while the "
+            f"receipt itself is absent. Declare it yourself, or the return understates. "
+            f"§ 22 Nr. 3 Satz 2's Freigrenze is not applied here ([GT-ESTG23-009]).",
+            severity=GapSeverity.WARNING,
+        )
