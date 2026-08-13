@@ -18,7 +18,8 @@ from src.classification.asset_classifier import AssetClassifier
 from tests.support.csv_creators import (
     create_trades_csv_string, create_positions_csv_string,
     create_cash_transactions_csv_string, create_corporate_actions_csv_string,
-    create_cash_balance_csv_string, create_transfers_csv_string
+    create_cash_balance_csv_string, create_transfers_csv_string,
+    create_grants_csv_string
 )
 from tests.support.expected import ScenarioExpectedOutput
 
@@ -77,6 +78,7 @@ class FifoTestCaseBase:
                       corporate_actions_data: Optional[List[List[Any]]] = None,
                       cash_balance_data: Optional[List[List[Any]]] = None,
                       transfers_data: Optional[List[List[Any]]] = None,
+                      grants_data: Optional[List[List[Any]]] = None,
                       transfers_missing_years: str = "",
                       custom_rate_provider: Optional[ExchangeRateProvider] = None,
                       tax_year: int = 2023,
@@ -138,6 +140,15 @@ class FifoTestCaseBase:
             with open(transfers_path, "w", encoding="utf-8-sig") as f:
                 f.write(create_transfers_csv_string(transfers_data))
 
+        # Grants: written and passed ONLY when the scenario supplies rows, the same way
+        # Transfers is. Without this parameter no scenario could express an award at all,
+        # which is how a vesting inside the tax year went unapplied with the suite green.
+        grants_path = None
+        if grants_data is not None:
+            grants_path = os.path.join(os.path.dirname(paths["trades"]), "grants.csv")
+            with open(grants_path, "w", encoding="utf-8-sig") as f:
+                f.write(create_grants_csv_string(grants_data))
+
         prior_paths = {"positions_prior_start_file_path": None,
                        "positions_prior_end_file_path": None}
         for key, path_key, data in (
@@ -166,6 +177,7 @@ class FifoTestCaseBase:
                 custom_rate_provider=custom_rate_provider,
                 cash_balance_file_path=paths["cash_balance"],
                 transfers_file_path=transfers_path,
+                grants_file_path=grants_path,
                 transfers_missing_years=transfers_missing_years,
                 **prior_paths,
             )

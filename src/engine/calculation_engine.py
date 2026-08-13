@@ -58,6 +58,9 @@ from .event_processors.currency_conversion_processor import CurrencyConversionPr
 from .event_processors.transfer_processor import (
     InternalTransferProcessor, InternalCashTransferProcessor, apply_internal_transfer
 )
+from src.engine.event_processors.stock_award_processor import (
+    StockAwardProcessor
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1319,6 +1322,7 @@ def run_main_calculations(
     option_expiration_processor = OptionExpirationWorthlessProcessor()
     option_cash_settlement_processor = OptionCashSettlementProcessor()
     internal_transfer_processor = InternalTransferProcessor()
+    stock_award_processor = StockAwardProcessor()
     internal_cash_transfer_processor = InternalCashTransferProcessor()
 
     # Currency conversion processor for FX trades
@@ -1344,6 +1348,13 @@ def run_main_calculations(
         FinancialEventType.OPTION_CASH_SETTLEMENT: option_cash_settlement_processor,
         FinancialEventType.INTERNAL_TRANSFER: internal_transfer_processor,
         FinancialEventType.INTERNAL_CASH_TRANSFER: internal_cash_transfer_processor,
+        # All three, and the vesting is the one that matters. An award or a reversal
+        # dated inside the tax year is caught by the EoY reconciliation if it goes
+        # unapplied; a vesting moves no shares, so it reconciled clean while leaving the
+        # provisional award price on the lot for a later disposal to be measured against.
+        FinancialEventType.STOCK_AWARD_GRANTED: stock_award_processor,
+        FinancialEventType.STOCK_AWARD_REVERSED: stock_award_processor,
+        FinancialEventType.STOCK_AWARD_VESTED: stock_award_processor,
     }
 
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")
