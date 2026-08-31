@@ -824,6 +824,90 @@ class TestAFundTheEngineCannotPrice:
 # Tests: TF on negative distributions (loss_offsetting fix)
 # ---------------------------------------------------------------------------
 
+class TestUnitsTheReconstructionCouldNotDate:
+    """A lot with no acquisition date, and a report that answers Abs. 2 anyway.
+
+    legal_basis: GT-INVSTG-011. Abs. 2 reduces the Vorabpauschale by a twelfth
+    for each full month preceding the month of acquisition, and the store settles
+    what that means for units held when the year opened --
+    reference/investment-tax-law/invstg-18-vorabpauschale.md:131-135: *"units
+    already held when the year opened are not in their year of acquisition and
+    keep twelve twelfths"*.
+
+    Where reconciliation replaced the reconstruction, its lots carry a date the
+    engine invented, and no Vorabpauschale may be computed from one. But Abs. 2
+    asks a narrower question than "which month": it asks whether the units were
+    acquired *during* the year. The preceding snapshot answers that for units the
+    broker already reported at the close of the year before -- evidence, not a
+    guess -- and only above that count is the question unanswerable.
+    """
+
+    def _fund_with_an_undated_lot(self, held_before):
+        fund = _make_fund()
+        fund.prior_opening = snapshot_row(fund.internal_asset_id,
+                                          quantity=Decimal(held_before))
+        return fund
+
+    def _run(self, fund):
+        resolver = _make_resolver_with_fund(fund)
+        ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION,
+                      rounding=config.DECIMAL_ROUNDING_MODE)
+        lots = {fund.internal_asset_id: [FundUnitTranche(
+            quantity=Decimal("100"), acquisition_date=dt_date(2023, 12, 31),
+            acquisition_date_is_known=False)]}
+        return _calculate_vorabpauschale(
+            asset_resolver=resolver,
+            distributions_by_asset={},
+            currency_converter=_eur_converter(),
+            vorabpauschale_year=2024,
+            opening_lots_by_asset=lots,
+            prior_soy_positions=fund.prior_soy,
+            prior_eoy_positions=fund.prior_eoy,
+            prior_opening_positions=fund.prior_opening,
+            ctx=ctx,
+            data_gap_collector=None,
+        )
+
+    def test_units_the_report_shows_were_held_keep_the_full_year(self):
+        """The whole holding was on the broker's books before the year began."""
+        results = self._run(self._fund_with_an_undated_lot("100"))
+
+        assert len(results) == 1
+        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+
+    def test_units_the_report_cannot_account_for_are_refused(self):
+        """Above the reported count the question is unanswerable, and a figure
+        computed from an invented month would be indistinguishable from a real
+        one."""
+        assert self._run(self._fund_with_an_undated_lot("60")) == []
+
+    def test_no_acquisition_date_is_invented_to_reach_the_answer(self):
+        """The date stays unknown; only the Abs. 2 question is answered.
+
+        Substituting 31 December of the preceding year would give the same
+        twelfths and leave a well-formed date on a lot nobody observed -- which
+        is the failure CLAUDE.md's fallback rule names.
+        """
+        fund = self._fund_with_an_undated_lot("100")
+        lots = {fund.internal_asset_id: [FundUnitTranche(
+            quantity=Decimal("100"), acquisition_date=dt_date(2023, 12, 31),
+            acquisition_date_is_known=False)]}
+        resolver = _make_resolver_with_fund(fund)
+        ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION,
+                      rounding=config.DECIMAL_ROUNDING_MODE)
+
+        _calculate_vorabpauschale(
+            asset_resolver=resolver, distributions_by_asset={},
+            currency_converter=_eur_converter(), vorabpauschale_year=2024,
+            opening_lots_by_asset=lots, prior_soy_positions=fund.prior_soy,
+            prior_eoy_positions=fund.prior_eoy,
+            prior_opening_positions=fund.prior_opening, ctx=ctx,
+            data_gap_collector=None)
+
+        [tranche] = lots[fund.internal_asset_id]
+        assert tranche.acquisition_date_is_known is False
+
+
 class TestTeilfreistellungNegativeDistribution:
     """Verify TF is applied symmetrically for negative distributions."""
 

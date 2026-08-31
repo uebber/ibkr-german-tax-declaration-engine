@@ -690,6 +690,83 @@ class TestTheAssetPositionsDiagnostic:
         assert "processing_results.eoy_positions" in source
 
 
+class TestTheAbs2ThresholdIsThePersonsHolding:
+    """Units the reconstruction could not date, weighed against what was held.
+
+    § 18 Abs. 2 asks whether a tranche was acquired *during* the Vorabpauschale
+    year. Where the replay could not place a lot in time, the engine answers from
+    the report instead: units the broker already showed at the close of the year
+    before were demonstrably acquired before this year began, so no reduction
+    applies to them. Above that count the question is unanswerable and the fund
+    is refused rather than computed from an invented date.
+
+    That count is the person's, summed over their accounts ([GT-ESTG20-061]).
+    Read from one account's row it is too small, and a Vorabpauschale that is
+    due is refused -- deemed income missing from KAP-INV Zeilen 9-13.
+    """
+    ISIN = "IE00PERSVP01"
+
+    def _run(self, opening_rows):
+        from src.engine.calculation_engine import (
+            FundUnitTranche, _calculate_vorabpauschale)
+        from decimal import Context
+        from src.domain.enums import InvestmentFundType
+        from src.domain.assets import InvestmentFund
+        from tests.support.prior_year_snapshots import snapshot_row
+        import src.config as config
+
+        fund = InvestmentFund(fund_type=InvestmentFundType.AKTIENFONDS,
+                              description="Two Account Fund", currency="EUR",
+                              ibkr_isin=self.ISIN, ibkr_symbol="TAF")
+        resolver = MagicMock()
+        resolver.assets_by_internal_id = {fund.internal_asset_id: fund}
+        resolver.get_asset_by_id.return_value = fund
+
+        prior_opening = {}
+        for account, quantity in opening_rows:
+            prior_opening.update(snapshot_row(
+                fund.internal_asset_id, quantity=Decimal(quantity), account=account))
+
+        converter = MagicMock()
+        converter.convert_to_eur.side_effect = lambda amount, currency, dt: amount
+        ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION,
+                      rounding=config.DECIMAL_ROUNDING_MODE)
+        # One lot the replay could not date, for the whole holding.
+        lots = {fund.internal_asset_id: [FundUnitTranche(
+            quantity=Decimal("100"), acquisition_date=date(2023, 12, 31),
+            acquisition_date_is_known=False)]}
+
+        return _calculate_vorabpauschale(
+            asset_resolver=resolver,
+            distributions_by_asset={},
+            currency_converter=converter,
+            vorabpauschale_year=2024,
+            opening_lots_by_asset=lots,
+            prior_soy_positions=snapshot_row(
+                fund.internal_asset_id, mark_price=Decimal("100"),
+                mark_price_currency="EUR", mark_price_date=date(2024, 1, 2)),
+            prior_eoy_positions=snapshot_row(
+                fund.internal_asset_id, quantity=Decimal("100"),
+                mark_price=Decimal("110"), mark_price_currency="EUR",
+                mark_price_date=date(2024, 12, 30)),
+            prior_opening_positions=prior_opening,
+            ctx=ctx,
+            data_gap_collector=None,
+        )
+
+    def test_the_units_of_both_accounts_answer_for_the_undated_lot(self):
+        results = self._run([(A, "60"), (B, "40")])
+        assert len(results) == 1, (
+            "100 undated units were all held at the close of the year before, "
+            "across two accounts, so 18 Abs. 2 does not reduce them")
+        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+
+    def test_one_accounts_row_is_not_enough_and_the_fund_is_refused(self):
+        """The other reading, stated so the difference is visible."""
+        results = self._run([(A, "60")])
+        assert results == []
+
+
 class TestTheEndsOfThePriorYearChannel:
     """The three preceding-year registries have to reach the code that reads them.
 

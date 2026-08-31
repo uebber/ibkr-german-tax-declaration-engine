@@ -4,7 +4,7 @@ from typing import Callable, List, Tuple, Dict, DefaultDict, Optional, Set, Any
 import uuid
 from decimal import Decimal, getcontext, Context
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, date
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
@@ -1954,9 +1954,6 @@ def _calculate_vorabpauschale(
                     vorabpauschale_year, vorabpauschale_year - 1, held_before_the_year)
                 continue
 
-            tranches = [t if t.acquisition_date_is_known
-                        else replace(t, acquisition_date=date(vorabpauschale_year - 1, 12, 31))
-                        for t in tranches]
             logger.info(
                 "Fund %s: %s undated units were already held at the close of %d, "
                 "so 18 Abs. 2 does not reduce them.",
@@ -2058,7 +2055,18 @@ def _calculate_vorabpauschale(
         # reduced by a twelfth for every full month before its month of acquisition.
         gross_vp = Decimal(0)
         for tranche in tranches:
-            twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
+            if tranche.acquisition_date_is_known:
+                twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
+            else:
+                # An undated tranche only reaches here past the check above, which
+                # established from the report that these units were already held
+                # when the year opened. They are therefore not in their year of
+                # acquisition and keep twelve twelfths -- [GT-INVSTG-011],
+                # reference/investment-tax-law/invstg-18-vorabpauschale.md:131-135.
+                # Answered without a date because none was observed and none may be
+                # invented: every date before the year gives this same answer, so
+                # the question Abs. 2 asks has been settled without one.
+                twelfths = 12
             tranche_vp = ctx.multiply(vp_per_unit, tranche.quantity)
             if twelfths != 12:
                 tranche_vp = ctx.divide(

@@ -333,6 +333,12 @@ The five that stay green were each measured, not assumed:
   that same day, because it comes from the file the row was read out of and nothing substitutes a
   closing price. The two coincide by construction.
 
+**The § 18 Abs. 2 correction is latent on this export.** It changes what happens to units the
+reconstruction could not date but the preceding snapshot places before the Vorabpauschale year.
+VZ 2023 is the only year that reaches the Vorabpauschale computation at all, and it produces 0
+records for calendar 2022, so no fund on this data has such a lot. Covered by scenarios only, and
+the parity capture is unchanged by it.
+
 **Two Positions rows for one instrument: 0 occurrences.** The counting gate for the rule that a
 per-unit price is recorded only where the rows agree on it. Measured three ways over the eight
 Positions files: no ISIN appears under more than one `Conid` in any file; no `(account, resolved
