@@ -252,6 +252,10 @@ change is to call it at each mark, parameterising the three inputs it currently 
 |---|---|
 | `asset.soy_quantity` (`:318`) | the mark's reported quantity |
 | `asset.soy_cost_basis_amount` / `_currency` (`:403-408`) | the mark's reported basis |
+<!-- Since August 2026 no snapshot is on `Asset` at all: the opening one is a `PositionSnapshot`
+     per (account, asset), passed into `reconcile_with_soy_position`, and the checkpoint marks are
+     `MarkPosition` records keyed the same way. The left column is the code as it stood when this
+     was written. -->
 | `tax_year`, used for `f"{tax_year-1}-12-31"` (`:425`) and `date_obj(tax_year,1,1)` (`:412`) | the mark date |
 
 Reused unchanged: the comparison, the fallback lot construction, `acquisition_date_is_known=False`

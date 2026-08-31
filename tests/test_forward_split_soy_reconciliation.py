@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 
+from src.domain.assets import person_snapshot
 from tests.support.base import FifoTestCaseBase
 from tests.support.mock_providers import MockECBExchangeRateProvider
 
@@ -74,7 +75,8 @@ class TestForwardSplitAcrossSoy(FifoTestCaseBase):
         assert out.eoy_mismatch_error_count == 0
 
         ledger_quantities = {
-            asset.get_classification_key(): asset.eoy_quantity
+            asset.get_classification_key(): person_snapshot(
+                out.eoy_positions, asset.internal_asset_id)
             for asset in out.final_assets_by_id.values()
         }
         assert any(ISIN in key for key in ledger_quantities), ledger_quantities

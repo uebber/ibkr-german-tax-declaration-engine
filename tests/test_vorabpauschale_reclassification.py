@@ -32,30 +32,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.domain.assets import InvestmentFund
+from src.domain.assets import InvestmentFund, person_snapshot
 from src.domain.enums import AssetCategory, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.parsing_orchestrator import ParsingOrchestrator
 from tests.support.base import FifoTestCaseBase
-
-
-# The five snapshot fields 18 Abs. 1 reads for the Vorabpauschale year: the
-# year-start Ruecknahmepreis (Satz 2) and the last price set in the year (the
-# Satz 3 cap), each with the currency it is quoted in, plus the quantity that
-# establishes the fund was held at the year's start.
-PRIOR_YEAR_SNAPSHOT_FIELDS = (
-    "prior_year_soy_quantity",
-    "prior_year_soy_position_value",
-    "prior_year_soy_mark_price_currency",
-    "prior_year_eoy_position_value",
-    "prior_year_eoy_mark_price_currency",
-)
+from tests.support.prior_year_snapshots import snapshot_row
 
 
 def _stock_resolver_with_prior_year_snapshot():
-    """A resolver holding one asset that arrived as a Stock and carries the
-    prior-year snapshot, exactly as `process_positions()` leaves it."""
+    """A resolver holding one asset that arrived as a Stock, plus the preceding
+    year's snapshot of it, exactly as `process_positions()` leaves the two."""
     classifier = MagicMock()
     classifier.preliminary_classify.return_value = (AssetCategory.STOCK, None)
     resolver = AssetResolver(asset_classifier=classifier)
@@ -64,23 +52,25 @@ def _stock_resolver_with_prior_year_snapshot():
         raw_currency="SGD", raw_ibkr_asset_class="STK",
         raw_description="XYZ1 BOND INDEX", description_source_type="position",
     )
-    asset.prior_year_soy_quantity = Decimal("100")
-    asset.prior_year_soy_position_value = Decimal("14891")
-    asset.prior_year_soy_mark_price_currency = "SGD"
-    asset.prior_year_eoy_position_value = Decimal("15197")
-    asset.prior_year_eoy_mark_price_currency = "SGD"
-    return resolver, asset
+    prior_soy = snapshot_row(
+        asset.internal_asset_id, quantity=Decimal("100"),
+        position_value=Decimal("7300"), mark_price=Decimal("73.00"),
+        mark_price_currency="SGD")
+    return resolver, asset, prior_soy
 
 
 def test_prior_year_snapshot_survives_a_classification_retype():
     """Applying the user's classification must not discard the year-start price.
 
-    `replace_asset_type` builds a new object of the classified type and copies
-    the old one's fields across. Every field 18 Abs. 1 reads has to be among
-    them, or the Vorabpauschale is computed from nothing.
+    `replace_asset_type` builds a new object of the classified type. It used to
+    carry the prior-year snapshot across by copying a hand-maintained list of
+    fields, and a field left off that list was dropped silently. There is no
+    list now: the snapshot is a registry row keyed by `internal_asset_id`, so
+    what has to hold is that the rebuild keeps the id. It does, and the whole
+    class of loss goes with it.
     """
-    resolver, asset = _stock_resolver_with_prior_year_snapshot()
-    before = {f: getattr(asset, f) for f in PRIOR_YEAR_SNAPSHOT_FIELDS}
+    resolver, asset, prior_soy = _stock_resolver_with_prior_year_snapshot()
+    before = person_snapshot(prior_soy, asset.internal_asset_id)
 
     reclassified = resolver.replace_asset_type(
         asset.internal_asset_id,
@@ -90,11 +80,12 @@ def test_prior_year_snapshot_survives_a_classification_retype():
     )
 
     assert isinstance(reclassified, InvestmentFund)
-    after = {f: getattr(reclassified, f) for f in PRIOR_YEAR_SNAPSHOT_FIELDS}
-    assert after == before, (
-        "the prior-year snapshot 18 Abs. 1 reads was lost when the asset was "
-        f"retyped: {[f for f in PRIOR_YEAR_SNAPSHOT_FIELDS if after[f] != before[f]]}"
+    assert reclassified.internal_asset_id == asset.internal_asset_id, (
+        "the retyped asset must keep its id, or every snapshot registry keyed by "
+        "it -- the opening and closing positions, the checkpoint marks, and the "
+        "three the Vorabpauschale reads -- stops resolving for this instrument"
     )
+    assert person_snapshot(prior_soy, reclassified.internal_asset_id) == before
 
 
 def test_a_fund_merged_into_another_asset_is_followed_to_it():
@@ -116,14 +107,15 @@ def test_a_fund_merged_into_another_asset_is_followed_to_it():
     losing_fund = InvestmentFund(fund_type=InvestmentFundType.SONSTIGE_FONDS,
                                  description="XYZ1", currency="EUR", ibkr_conid="900001")
     losing_fund.aliases.add("CONID:900001")
-    losing_fund.prior_year_soy_quantity = Decimal("100")
-    losing_fund.prior_year_soy_position_value = Decimal("14891")
     resolver.assets_by_internal_id[losing_fund.internal_asset_id] = losing_fund
     resolver.alias_map["CONID:900001"] = losing_fund
-    orchestrator._record_prior_year_snapshot_fields(
-        losing_fund, ("prior_year_soy_quantity", "prior_year_soy_position_value"))
+    orchestrator.prior_soy_positions.update(snapshot_row(
+        losing_fund.internal_asset_id, quantity=Decimal("100"),
+        position_value=Decimal("7300")))
+    orchestrator._record_prior_year_snapshot_asset(losing_fund)
 
-    # The merge, as `get_or_create_asset` performs it: aliases move, values do not.
+    # The merge, as `get_or_create_asset` performs it: aliases move, the losing
+    # asset is deleted, and the registry row stays filed under its id.
     surviving_fund = InvestmentFund(fund_type=InvestmentFundType.SONSTIGE_FONDS,
                                     description="XYZ1", currency="EUR",
                                     ibkr_isin="LU0000000001")
@@ -136,10 +128,35 @@ def test_a_fund_merged_into_another_asset_is_followed_to_it():
         orchestrator._verify_prior_year_snapshot_survived_classification()
 
     message = str(excinfo.value)
-    assert "prior_year_soy_position_value" in message
+    assert surviving_fund.get_classification_key() in message
     assert "merge" in message, (
-        "the message must offer the merge as a cause, not only the copy list"
+        "the message must name the merge as the cause, which is now the only "
+        "way a prior-year snapshot can stop reaching the asset that owns it"
     )
+
+
+def _break_the_retype(monkeypatch):
+    """Make `replace_asset_type` give the rebuilt asset a fresh internal id.
+
+    The snapshot registries are keyed by that id, and `replace_asset_type`
+    re-uses it deliberately -- the line saying so calls itself crucial. Breaking
+    it is the whole class of loss the keying rests on not happening: the rows
+    stay filed under an id nothing looks up again, the fund reaches 18 Abs. 1
+    with no year-start Ruecknahmepreis, and its deemed income leaves the
+    declaration with nothing recorded anywhere.
+    """
+    import uuid as _uuid
+
+    original = AssetResolver.replace_asset_type
+
+    def _with_a_fresh_id(self_resolver, internal_asset_id, *args, **kwargs):
+        rebuilt = original(self_resolver, internal_asset_id, *args, **kwargs)
+        rebuilt.internal_asset_id = _uuid.uuid4()
+        self_resolver.assets_by_internal_id.pop(internal_asset_id, None)
+        self_resolver.assets_by_internal_id[rebuilt.internal_asset_id] = rebuilt
+        return rebuilt
+
+    monkeypatch.setattr(AssetResolver, "replace_asset_type", _with_a_fresh_id)
 
 
 class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
@@ -218,10 +235,9 @@ class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
     def test_losing_the_snapshot_at_classification_is_fatal(self, monkeypatch):
         """Calibration: with the snapshot dropped again, the run must stop.
 
-        This reproduces the defect deliberately — the field-copy list loses the
-        prior-year snapshot — and holds that the guard sees it. Without the
-        guard the run completes and declares nothing, which is exactly what it
-        did before.
+        This reproduces the defect deliberately and holds that the guard sees
+        it. Without the guard the run completes and declares nothing, which is
+        exactly what it did before.
 
         The raise surfaces as `pytest.fail.Exception`: `_run_pipeline` converts
         every exception but `DataGapError` into a test failure, and
@@ -230,18 +246,7 @@ class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
         """
         self._seed_classification()
 
-        original = AssetResolver._extract_common_asset_fields
-
-        def _dropping_the_prior_year_snapshot(self_resolver, asset):
-            common = original(self_resolver, asset)
-            for field in PRIOR_YEAR_SNAPSHOT_FIELDS:
-                common.pop(field, None)
-            return common
-
-        monkeypatch.setattr(
-            AssetResolver, "_extract_common_asset_fields",
-            _dropping_the_prior_year_snapshot,
-        )
+        _break_the_retype(monkeypatch)
 
         with pytest.raises(pytest.fail.Exception) as excinfo:
             self._run_pipeline(
@@ -254,8 +259,8 @@ class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
 
         message = str(excinfo.value)
         assert self.ISIN in message, "the guard must name the affected instrument"
-        assert "prior_year_soy_position_value" in message, (
-            "the guard must name which snapshot field was lost"
+        assert "no longer owns the instrument" in message, (
+            "the guard must say how the snapshot stopped reaching the fund"
         )
         assert "Zeilen 9-13" in message, (
             "the guard must say which declared figure would have gone missing"
@@ -277,18 +282,7 @@ class TestVorabpauschaleAcrossClassification(FifoTestCaseBase):
         """
         self._seed_classification("BOND", "NONE")
 
-        original = AssetResolver._extract_common_asset_fields
-
-        def _dropping_the_prior_year_snapshot(self_resolver, asset):
-            common = original(self_resolver, asset)
-            for field in PRIOR_YEAR_SNAPSHOT_FIELDS:
-                common.pop(field, None)
-            return common
-
-        monkeypatch.setattr(
-            AssetResolver, "_extract_common_asset_fields",
-            _dropping_the_prior_year_snapshot,
-        )
+        _break_the_retype(monkeypatch)
 
         results = self._run_pipeline(
             tax_year=2025,

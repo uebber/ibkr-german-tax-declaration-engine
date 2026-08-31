@@ -1,5 +1,6 @@
 # src/parsers/parsing_orchestrator.py
 import uuid
+from dataclasses import replace as dataclasses_replace
 from decimal import Decimal, getcontext
 from typing import List, Dict, Optional, Any, Set, Tuple
 from datetime import datetime, date
@@ -8,7 +9,8 @@ import sys
 
 from src.domain.assets import (
     Asset, InvestmentFund, Option, CashBalance, Derivative, Stock, Bond, PrivateSaleAsset, Cfd, # Changed Section23EstgAsset to PrivateSaleAsset
-    MarkPosition,
+    MarkPosition, MarksByAccount, PositionSnapshot, SnapshotsByAccount,
+    person_snapshot, snapshots_for_asset,
 )
 # FinancialEvent, OptionLifecycleEvent, TradeEvent for type hinting
 from src.domain.events import (
@@ -19,6 +21,7 @@ from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundTy
 from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.classification.asset_classifier import AssetClassifier
+from src.utils.account_utils import DEFAULT_ACCOUNT, account_key
 from src.utils.snapshot_dates import (
     first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
@@ -122,6 +125,118 @@ def _drop_cancelled_trade_pairs(raw_trades: List[RawTradeRecord]) -> List[RawTra
 
     return [r for r in raw_trades if id(r) not in removed]
 
+
+def _sum_snapshot_column(total: Optional[Decimal],
+                         addend: Optional[Decimal]) -> Optional[Decimal]:
+    """Accumulate one snapshot column across the rows of several accounts.
+
+    A person's holding is the total across their accounts -- [GT-ESTG20-061] --
+    and one Flex Query covering several accounts emits one row per account, so a
+    quantity or an amount is read by adding rather than by assigning.
+
+    `None` on the left is "nothing recorded yet"; on the right it is "the broker
+    left the column blank". A blank is skipped rather than read as zero, so an
+    asset whose every row is blank keeps `None` and reaches the guard in
+    `_ensure_soy_quantities_are_set`, which refuses a holding reported with no
+    cost basis rather than declaring its whole proceeds as gain.
+
+    What that cannot distinguish is one account blank and another filled: the
+    total is then the filled one alone, understating the basis and so
+    overstating the gain, and nothing downstream detects it -- the guard refuses
+    only a total of `None`, which one filled row is enough to prevent. This
+    rests on the assumption that every account's row carries the column, which
+    is an assumption and not a checked condition. Filling the blank instead is
+    not the answer: a substituted cost basis is an invented figure.
+    """
+    if addend is None:
+        return total
+    if total is None:
+        return addend
+    return total + addend
+
+
+def _replace_snapshot_quantity(existing: Optional[PositionSnapshot],
+                               quantity: Optional[Decimal]) -> PositionSnapshot:
+    """Take the balance from the cash-balance report, keeping the rest of the record.
+
+    Only the quantity: a currency reported in BOTH the Positions snapshot and the
+    cash-balance report gets its balance from the second, which is the report written
+    for it, while the cost basis and value stay as the Positions row gave them. That
+    is the precedence the engine has always had -- the cash-balance pass ran second and
+    assigned the two quantities -- and the basis it preserves is what a currency ledger
+    that disagrees with its opening balance is reconciled against.
+    """
+    if existing is None:
+        return PositionSnapshot(quantity=quantity)
+    return dataclasses_replace(existing, quantity=quantity)
+
+
+def _one_snapshot_price(existing: Optional[PositionSnapshot],
+                        row_price: Optional[Decimal]) -> Optional[Decimal]:
+    """The per-unit price the accumulated rows agree on, or `None` where they do not.
+
+    Quantities and amounts belong to the account and are added. A per-unit price is
+    not: it describes the instrument, and two rows for one (account, asset) can carry
+    two different ones. That happens when the broker reports two contracts the resolver
+    treats as one instrument -- the same ISIN listed on two exchanges, both quoted in
+    the same currency, so the currency refusal does not catch it. The quantities and
+    values still add, because one ISIN is one holding for FIFO ([GT-ESTG20-012]); the
+    prices do not, because neither exchange's is the other's.
+
+    Taking one of them would put an arbitrary venue's price on the record, and nothing
+    downstream could tell. The end-of-year reconciliation compares quantities, not
+    prices, so it would reconcile clean. **The one figure a snapshot price reaches is
+    the Vorabpauschale** -- 18 Abs. 1 Satz 2's Ruecknahmepreis where nothing better is
+    available, and Satz 3's cap on the Basisertrag. Neither wants a market price from
+    one exchange, and no arithmetic turns two of them into the Ruecknahmepreis the
+    statute asks for, which is a number the fund sets and not an average of venues.
+
+    So an ambiguous price is recorded as no price, and each consumer already does the
+    right thing with that: the diagnostic report prints N/A; `resolve_year_start_prices`
+    goes to the stored figure, the issuer's NAV, then the taxpayer, and stops naming the
+    fund if nobody can answer; and the Satz 3 cap records `VORABPAUSCHALE_PRICE_UNUSABLE`,
+    which stops the run naming the fund rather than capping with a wrong number.
+
+    A row reporting no price adds nothing and leaves the accumulated one standing: a
+    blank is the broker omitting a figure, not a second venue disagreeing about it.
+    Once dropped the price stays dropped, however many further rows arrive -- which is
+    why a price arriving after a blank FIRST row is dropped too, the record having no
+    way to tell that state from an earlier disagreement. That needs a blank price to
+    exist at all: `MarkPrice` is populated on every row of every Positions export in
+    the window, so nothing measurable rests on it, and the direction it errs in is
+    towards fetching the Ruecknahmepreis rather than towards guessing it.
+    """
+    if existing is None:
+        return row_price
+    if row_price is None:
+        return existing.mark_price
+    if existing.mark_price is None:
+        return None
+    return existing.mark_price if existing.mark_price == row_price else None
+
+
+def _one_snapshot_currency(existing: Optional[str], row_currency: Optional[str],
+                           asset: Asset, snapshot_label: str) -> Optional[str]:
+    """The single currency the accumulated amounts above are denominated in.
+
+    A currency is a property of the instrument, not of the account holding it,
+    so every account's row for one instrument reports the same one and this
+    returns what they agree on. Were they ever to disagree, the accumulated
+    total would be two currencies added together -- a figure with no meaning
+    that no consumer could tell from a real one -- so the disagreement raises
+    instead of being resolved by taking one of them.
+    """
+    if row_currency is None:
+        return existing
+    if existing is not None and existing != row_currency:
+        raise DataIntegrityError(
+            f"{snapshot_label} for {asset.get_classification_key()} reports two "
+            f"currencies across accounts ({existing} and {row_currency}). The "
+            f"person's holding is the total across their accounts, and amounts in "
+            f"two currencies cannot be added.")
+    return row_currency
+
+
 class ParsingOrchestrator:
     def __init__(self, asset_resolver: AssetResolver, asset_classifier: AssetClassifier, interactive_classification: bool = True):
         self.asset_resolver = asset_resolver
@@ -132,18 +247,51 @@ class ParsingOrchestrator:
         self.raw_cash_transactions: List[RawCashTransactionRecord] = []
         self.raw_positions_start: List[RawPositionRecord] = []
         self.raw_positions_end: List[RawPositionRecord] = []
-        # Preceding calendar year's snapshots -- Vorabpauschale only. See Asset.prior_year_*.
+        # Preceding calendar year's snapshots -- Vorabpauschale only.
         self.raw_positions_prior_start: List[RawPositionRecord] = []
         self.raw_positions_prior_end: List[RawPositionRecord] = []
         self.raw_positions_prior_opening: List[RawPositionRecord] = []
         # Checkpoint marks for the historical replay: {year: rows of Positions-{year}-EoY.csv}.
-        # Resolved into `mark_positions` (keyed by asset) once assets exist.
+        # Resolved into `mark_positions` once assets exist.
         self.raw_positions_marks: Dict[int, List[RawPositionRecord]] = {}
-        self.mark_positions: Dict[int, Dict[uuid.UUID, MarkPosition]] = {}
-        # Which prior-year snapshot fields were read onto which asset, so the pipeline can
-        # verify they are still there once classification has run. See
+        self.mark_positions: Dict[int, MarksByAccount] = {}
+        # Every snapshot the engine reads, each one record per (account, asset). These
+        # registries are the ONLY place any of them is held: FIFO is applied per Depot
+        # ([GT-ESTG20-013]) and the person declares the total across their accounts
+        # ([GT-ESTG20-061]), and both readings are taken from here -- the second through
+        # `person_snapshot`, which derives it rather than storing it.
+        self.soy_positions: SnapshotsByAccount = {}
+        self.eoy_positions: SnapshotsByAccount = {}
+        # The PRECEDING calendar year's snapshots, used ONLY for the Vorabpauschale.
+        #
+        # The Vorabpauschale declared in VZ Y is the one computed for calendar year Y-1: it is
+        # deemed to flow on the first working day of Y (18 Abs. 3 InvStG), and Zeilen 9-13 of
+        # the VZ Y Anlage KAP-INV take "die Ihnen im Jahr Y als zugeflossen geltenden
+        # Vorabpauschalen". See reference/investment-tax-law/invstg-18-vorabpauschale.md and
+        # reference/tax-forms/anlage-kap-inv-zeilen.md. The Basisertrag therefore needs the
+        # Ruecknahmepreis at the START of Y-1 and the cap needs the last price set IN Y-1 --
+        # neither of which is the tax year's own SoY/EoY snapshot. `prior_opening_positions`
+        # is the close of the year BEFORE that: the units the Vorabpauschale year opened
+        # with, and the last price set before it began.
+        #
+        # Abs. 1 is written per Investmentanteil: the prices here are PER UNIT and the unit
+        # count enters separately, at the close of 31 December (Rz. 18.4). A single position
+        # value carrying both cannot be right for both.
+        #
+        # Each price carries the day it was set, in `mark_price_date`. Rz. 18.6 converts a
+        # foreign-currency figure at the ECB rate of its OWN Stichtag (GT-INVSTG-018), and a
+        # Stichtag is a day a price was set -- never a fixed calendar date. Without the day
+        # the engine had to assume one, and assumed 2 January: a Saturday in 2021 and a
+        # Sunday in 2022. It matters most on the substitution path, where the price comes
+        # from the close of the PRECEDING year and a date derived from the Vorabpauschale
+        # year would put price and rate in different years.
+        self.prior_soy_positions: SnapshotsByAccount = {}
+        self.prior_eoy_positions: SnapshotsByAccount = {}
+        self.prior_opening_positions: SnapshotsByAccount = {}
+        # Which assets a prior-year snapshot was read for, so the pipeline can verify the
+        # record still reaches the engine once classification has run. See
         # _verify_prior_year_snapshot_survived_classification.
-        self._prior_year_snapshot_fields: Dict[uuid.UUID, Dict[str, Any]] = {}
+        self._prior_year_snapshot_assets: Dict[uuid.UUID, Optional[str]] = {}
         # Funds whose Satz 2 price had to be taken from the wrong day. Drained into the
         # data-gap channel by the pipeline, so it reaches the report rather than the log.
         self.vorabpauschale_price_substitutions: List[Tuple[str, str]] = []
@@ -212,6 +360,112 @@ class ParsingOrchestrator:
             logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
                         f"for the {mark_year}-12-31 checkpoint mark.")
 
+    @staticmethod
+    def _record_snapshot_row(snapshots: SnapshotsByAccount, raw_pos: RawPositionRecord,
+                             asset: Asset, snapshot_label: str,
+                             mark_price_date: Optional[date] = None) -> None:
+        """Record one Positions row under the account that reported it.
+
+        A repeat of the same (account, asset) is accumulated rather than overwritten:
+        two rows for one instrument in one account are two parts of one holding, and the
+        last of them is not the holding. Accumulating across ACCOUNTS is not done here --
+        that is `person_snapshot`, and it is the derived view.
+
+        `mark_price_date` is the day the price was set, which the export does not carry:
+        it comes from the file the row was read out of, so the caller supplies it. Only
+        the preceding year's snapshots need it -- see `prior_soy_positions`.
+        """
+        key = (account_key(raw_pos.client_account_id), asset.internal_asset_id)
+        existing = snapshots.get(key)
+        if existing is None:
+            snapshots[key] = PositionSnapshot(
+                quantity=raw_pos.position,
+                cost_basis_amount=raw_pos.cost_basis_money,
+                cost_basis_currency=raw_pos.currency_primary,
+                position_value=raw_pos.position_value,
+                mark_price=raw_pos.mark_price,
+                mark_price_currency=raw_pos.currency_primary,
+                mark_price_date=mark_price_date,
+            )
+            return
+        snapshots[key] = PositionSnapshot(
+            quantity=_sum_snapshot_column(existing.quantity, raw_pos.position),
+            cost_basis_amount=_sum_snapshot_column(
+                existing.cost_basis_amount, raw_pos.cost_basis_money),
+            cost_basis_currency=_one_snapshot_currency(
+                existing.cost_basis_currency, raw_pos.currency_primary, asset, snapshot_label),
+            position_value=_sum_snapshot_column(
+                existing.position_value, raw_pos.position_value),
+            # Per unit, so it is not added -- and not simply taken either, since two
+            # rows can disagree. See `_one_snapshot_price`.
+            mark_price=_one_snapshot_price(existing, raw_pos.mark_price),
+            mark_price_currency=_one_snapshot_currency(
+                existing.mark_price_currency, raw_pos.currency_primary, asset, snapshot_label),
+            mark_price_date=mark_price_date,
+        )
+
+    @staticmethod
+    def _record_mark_row(marks: MarksByAccount, raw_pos: RawPositionRecord,
+                         asset: Asset, mark_label: str) -> None:
+        """Record one checkpoint-mark row under the account that reported it.
+
+        The `MarkPosition` counterpart of `_record_snapshot_row`, and it accumulates a
+        repeat of the same (account, asset) for the same reason. Quantity and cost basis
+        accumulate together: a quantity added up over two rows and a cost basis taken
+        from one of them imply a per-unit cost belonging to no holding anybody had, and
+        that is the figure a disagreeing reconstruction is replaced by.
+        """
+        key = (account_key(raw_pos.client_account_id), asset.internal_asset_id)
+        existing = marks.get(key)
+        quantity = raw_pos.position
+        cost_basis = raw_pos.cost_basis_money
+        currency = raw_pos.currency_primary
+        if existing is not None:
+            quantity += existing.quantity
+            cost_basis = _sum_snapshot_column(existing.cost_basis_amount, cost_basis)
+            currency = _one_snapshot_currency(
+                existing.cost_basis_currency, currency, asset, mark_label)
+        marks[key] = MarkPosition(
+            quantity=quantity,
+            cost_basis_amount=cost_basis,
+            cost_basis_currency=currency,
+        )
+
+    @staticmethod
+    def _refuse_mixed_snapshot_currencies(snapshots: Dict[Tuple[str, uuid.UUID], Any],
+                                          asset_resolver: AssetResolver,
+                                          snapshot_label: str) -> None:
+        """One asset, one currency, however many accounts hold it.
+
+        Runs over every snapshot registry -- `PositionSnapshot` and `MarkPosition`
+        alike -- because both carry a `cost_basis_currency` and both are summed
+        across accounts by their person-level view.
+
+        A currency belongs to the instrument, not to the account holding it, so the rows
+        agree. Were they ever to disagree, `person_snapshot` would add two currencies
+        together and hand downstream a figure in neither -- one no consumer could tell
+        from a real one. Checked here rather than there because this is where the row that
+        carried the disagreement can still be named.
+        """
+        by_asset: Dict[uuid.UUID, Dict[str, str]] = {}
+        for (account, asset_id), snap in snapshots.items():
+            if snap.cost_basis_currency is None:
+                continue
+            by_asset.setdefault(asset_id, {})[account] = snap.cost_basis_currency
+        offenders = []
+        for asset_id, per_account in by_asset.items():
+            if len(set(per_account.values())) <= 1:
+                continue
+            asset = asset_resolver.get_asset_by_id(asset_id)
+            key = asset.get_classification_key() if asset else str(asset_id)
+            offenders.append(f"{key} ({', '.join(sorted(set(per_account.values())))})")
+        if offenders:
+            raise DataIntegrityError(
+                f"{snapshot_label} reports more than one currency for an instrument across "
+                f"accounts. The person's holding is the total across their accounts, and "
+                f"amounts in two currencies cannot be added. "
+                f"{len(offenders)} instrument(s): " + "; ".join(sorted(offenders)))
+
     def process_positions(self, tax_year: Optional[int] = None):
         # ... (implementation is the same)
         logger.info("Processing start-of-year positions...")
@@ -225,12 +479,8 @@ class ParsingOrchestrator:
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.soy_quantity = raw_pos.position # Changed from initial_quantity_soy
-            asset.soy_cost_basis_amount = raw_pos.cost_basis_money # Changed from initial_cost_basis_money_soy
-            asset.soy_cost_basis_currency = raw_pos.currency_primary # Changed from initial_cost_basis_currency_soy
-            asset.soy_position_value = raw_pos.position_value
-            asset.soy_mark_price_currency = raw_pos.currency_primary
-            logger.debug(f"Asset {asset.get_classification_key()} SOY: Qty={asset.soy_quantity}, Cost={asset.soy_cost_basis_amount} {asset.soy_cost_basis_currency}")
+            self._record_snapshot_row(self.soy_positions, raw_pos, asset,
+                                      "The opening snapshot")
 
         logger.info("Processing end-of-year positions...")
         for raw_pos in self.raw_positions_end:
@@ -243,11 +493,13 @@ class ParsingOrchestrator:
                 raw_underlying_conid=raw_pos.underlying_conid,
                 raw_underlying_symbol=raw_pos.underlying_symbol
             )
-            asset.eoy_quantity = raw_pos.position
-            asset.eoy_market_price = raw_pos.mark_price # Changed from eoy_mark_price
-            asset.eoy_position_value = raw_pos.position_value
-            asset.eoy_mark_price_currency = raw_pos.currency_primary
-            logger.debug(f"Asset {asset.get_classification_key()} EOY: Qty={asset.eoy_quantity}, Val={asset.eoy_position_value} {asset.currency}")
+            self._record_snapshot_row(self.eoy_positions, raw_pos, asset,
+                                      "The closing snapshot")
+
+        self._refuse_mixed_snapshot_currencies(
+            self.soy_positions, self.asset_resolver, "The opening snapshot")
+        self._refuse_mixed_snapshot_currencies(
+            self.eoy_positions, self.asset_resolver, "The closing snapshot")
 
         # Preceding calendar year's snapshots. Used ONLY by the Vorabpauschale, which for a VZ Y
         # declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). These must not
@@ -269,64 +521,53 @@ class ParsingOrchestrator:
         eoy_snapshot_date = (last_business_day_of_year(vorabpauschale_year)
                              if vorabpauschale_year is not None else None)
 
+        # Recorded per (account, asset) like every other snapshot. The person's unit
+        # count and value are `person_snapshot` over the rows ([GT-ESTG20-061]); each
+        # price is per unit and common to every account.
         for raw_pos in self.raw_positions_prior_start:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_soy_quantity = raw_pos.position
-            asset.prior_year_soy_position_value = raw_pos.position_value
-            asset.prior_year_soy_mark_price = raw_pos.mark_price
-            asset.prior_year_soy_mark_price_currency = raw_pos.currency_primary
-            asset.prior_year_soy_mark_price_date = soy_snapshot_date
-            self._record_prior_year_snapshot_fields(asset, (
-                "prior_year_soy_quantity", "prior_year_soy_position_value",
-                "prior_year_soy_mark_price", "prior_year_soy_mark_price_currency",
-                "prior_year_soy_mark_price_date",
-            ))
+            self._record_snapshot_row(self.prior_soy_positions, raw_pos, asset,
+                                      "The preceding year's opening snapshot",
+                                      mark_price_date=soy_snapshot_date)
+            self._record_prior_year_snapshot_asset(asset)
 
         for raw_pos in self.raw_positions_prior_end:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_eoy_quantity = raw_pos.position
-            asset.prior_year_eoy_position_value = raw_pos.position_value
-            asset.prior_year_eoy_mark_price = raw_pos.mark_price
-            asset.prior_year_eoy_mark_price_currency = raw_pos.currency_primary
-            asset.prior_year_eoy_mark_price_date = eoy_snapshot_date
-            self._record_prior_year_snapshot_fields(asset, (
-                "prior_year_eoy_quantity", "prior_year_eoy_position_value",
-                "prior_year_eoy_mark_price", "prior_year_eoy_mark_price_currency",
-                "prior_year_eoy_mark_price_date",
-            ))
+            self._record_snapshot_row(self.prior_eoy_positions, raw_pos, asset,
+                                      "The preceding year's closing snapshot",
+                                      mark_price_date=eoy_snapshot_date)
+            self._record_prior_year_snapshot_asset(asset)
 
-        # Checkpoint marks. Resolved to asset-keyed MarkPositions rather than written onto
-        # Asset: there is one of these per year in the window, and the SoY record on Asset is a
-        # single opening snapshot for the tax year. Keeping them apart is deliberate -- conflating
-        # a mark with the SoY record is how a mid-window snapshot would end up feeding the tax
-        # year's cost basis.
+        # Checkpoint marks. Kept in their own registry rather than in `soy_positions`:
+        # there is one of these per year in the window, and `soy_positions` is a single
+        # opening snapshot for the tax year. Keeping them apart is deliberate --
+        # conflating a mark with the opening snapshot is how a mid-window snapshot would
+        # end up feeding the tax year's cost basis.
         for mark_year, raw_rows in sorted(self.raw_positions_marks.items()):
-            by_asset: Dict[uuid.UUID, MarkPosition] = {}
+            marks: MarksByAccount = {}
+            mark_label = f"The {mark_year}-12-31 checkpoint mark"
             for raw_pos in raw_rows:
                 asset = self._resolve_asset_from_position(raw_pos)
-                quantity = raw_pos.position
-                existing = by_asset.get(asset.internal_asset_id)
-                if existing is not None:
-                    # Same instrument reported on more than one row at the same mark.
-                    quantity += existing.quantity
-                by_asset[asset.internal_asset_id] = MarkPosition(
-                    quantity=quantity,
-                    cost_basis_amount=raw_pos.cost_basis_money,
-                    cost_basis_currency=raw_pos.currency_primary,
-                )
-            self.mark_positions[mark_year] = by_asset
-            logger.info("Checkpoint mark %d-12-31: %d instrument(s) reported.",
-                        mark_year, len(by_asset))
+                self._record_mark_row(marks, raw_pos, asset, mark_label)
+            self._refuse_mixed_snapshot_currencies(
+                marks, self.asset_resolver, mark_label)
+            self.mark_positions[mark_year] = marks
+            logger.info("Checkpoint mark %d-12-31: %d (account, instrument) row(s) reported.",
+                        mark_year, len(marks))
 
         for raw_pos in self.raw_positions_prior_opening:
             asset = self._resolve_asset_from_position(raw_pos)
-            asset.prior_year_opening_quantity = raw_pos.position
-            asset.prior_year_opening_mark_price = raw_pos.mark_price
-            asset.prior_year_opening_mark_price_currency = raw_pos.currency_primary
-            self._record_prior_year_snapshot_fields(asset, (
-                "prior_year_opening_quantity", "prior_year_opening_mark_price",
-                "prior_year_opening_mark_price_currency",
-            ))
+            self._record_snapshot_row(self.prior_opening_positions, raw_pos, asset,
+                                      "The snapshot before the Vorabpauschale year")
+            self._record_prior_year_snapshot_asset(asset)
+
+        for registry, label in ((self.prior_soy_positions,
+                                 "The preceding year's opening snapshot"),
+                                (self.prior_eoy_positions,
+                                 "The preceding year's closing snapshot"),
+                                (self.prior_opening_positions,
+                                 "The snapshot before the Vorabpauschale year")):
+            self._refuse_mixed_snapshot_currencies(registry, self.asset_resolver, label)
 
         self._resolve_vorabpauschale_start_price(vorabpauschale_year)
 
@@ -356,25 +597,53 @@ class ParsingOrchestrator:
         opening_price_date = (last_business_day_of_year(vorabpauschale_year - 1)
                               if vorabpauschale_year is not None else None)
 
-        for asset in self.asset_resolver.assets_by_internal_id.values():
-            if getattr(asset, "prior_year_soy_mark_price", None) is not None:
+        # Whether a price is missing is asked of the person's holding, not of one
+        # account's row: the Ruecknahmepreis is a property of the fund, so one account
+        # reporting it settles it for all of them. Which accounts the substituted price
+        # is then written under is a storage question, answered below.
+        # Walked in asset order rather than in registry order so the substitutions are
+        # reported in the order the instruments were first seen, which is an order the
+        # input fixes; a set of registry keys is not.
+        reported_at_open = {asset_id for _account, asset_id in self.prior_opening_positions}
+        for asset_id in self.asset_resolver.assets_by_internal_id:
+            if asset_id not in reported_at_open:
+                continue
+            reported = person_snapshot(self.prior_soy_positions, asset_id)
+            if reported is not None and reported.mark_price is not None:
                 continue
 
-            fallback = getattr(asset, "prior_year_opening_mark_price", None)
-            if fallback is None:
+            opening = person_snapshot(self.prior_opening_positions, asset_id)
+            if opening is None or opening.mark_price is None:
                 continue
 
             # Only funds held when the year opened can have lost their price
             # this way; anything else never had one to begin with, and
             # inventing one would be a plausible wrong number.
-            units_at_open = getattr(asset, "prior_year_opening_quantity", None)
-            if units_at_open is None or units_at_open <= Decimal(0):
+            if opening.quantity is None or opening.quantity <= Decimal(0):
                 continue
 
-            asset.prior_year_soy_mark_price = fallback
-            asset.prior_year_soy_mark_price_currency = getattr(
-                asset, "prior_year_opening_mark_price_currency", None)
-            asset.prior_year_soy_mark_price_date = opening_price_date
+            # Written under every account that reported the fund at the year's start,
+            # or -- where the start-of-year report omits it entirely -- under the
+            # accounts that held it when the year opened. Both are accounts the export
+            # names; no account is invented to hold the record.
+            accounts = [account for account, _snap
+                        in snapshots_for_asset(self.prior_soy_positions, asset_id)]
+            if not accounts:
+                accounts = [account for account, _snap
+                            in snapshots_for_asset(self.prior_opening_positions, asset_id)]
+            for account in accounts:
+                key = (account, asset_id)
+                base = self.prior_soy_positions.get(key) or PositionSnapshot(quantity=None)
+                self.prior_soy_positions[key] = dataclasses_replace(
+                    base,
+                    mark_price=opening.mark_price,
+                    mark_price_currency=opening.mark_price_currency,
+                    mark_price_date=opening_price_date,
+                )
+
+            asset = self.asset_resolver.get_asset_by_id(asset_id)
+            if asset is None:
+                continue
             self.vorabpauschale_price_substitutions.append(
                 (asset.get_classification_key(), asset.description or ""))
             logger.warning(
@@ -384,32 +653,33 @@ class ParsingOrchestrator:
                 asset.get_classification_key(),
             )
 
-    def _record_prior_year_snapshot_fields(self, asset: Asset, field_names: Tuple[str, ...]) -> None:
-        """Note which prior-year snapshot values this asset now carries.
+    def _record_prior_year_snapshot_asset(self, asset: Asset) -> None:
+        """Note that a prior-year snapshot record was written for this asset.
 
-        An alias is kept alongside the field names because the asset object recorded here need
-        not be the one the engine sees. Two later rows whose identifiers overlap are merged, and
-        the merge deletes the losing asset and repoints its aliases at the winner. Looking the
-        alias up again resolves to whichever asset ends up owning the instrument.
+        An alias is kept alongside the id because the asset object recorded here need not
+        be the one the engine sees. Two later rows whose identifiers overlap are merged,
+        and the merge deletes the losing asset and repoints its aliases at the winner --
+        while the record stays filed under the losing id, where nothing will look for it.
+        Looking the alias up again resolves to whichever asset ends up owning the
+        instrument, so the loss can be named.
         """
-        present = {name for name in field_names if getattr(asset, name, None) is not None}
-        if not present:
+        if asset.internal_asset_id in self._prior_year_snapshot_assets:
             return
-        record = self._prior_year_snapshot_fields.setdefault(
-            asset.internal_asset_id, {"fields": set(), "alias": None})
-        record["fields"].update(present)
-        if record["alias"] is None and asset.aliases:
-            record["alias"] = next(iter(asset.aliases))
+        self._prior_year_snapshot_assets[asset.internal_asset_id] = (
+            next(iter(asset.aliases)) if asset.aliases else None)
 
     def _verify_prior_year_snapshot_survived_classification(self) -> None:
-        """Every prior-year snapshot value read above must still be on its asset.
+        """Every prior-year snapshot read above must still reach the asset that owns it.
 
-        Classification replaces an asset's Python type by building a new object and copying
-        the old one's fields across (`AssetResolver.replace_asset_type`). A field the copy
-        does not list is dropped, and the drop is invisible: the Vorabpauschale then finds no
-        year-start Ruecknahmepreis and skips the fund, so its deemed income leaves the
-        declaration with nothing recorded anywhere. This checks the values that were read are
-        the values the engine will see, and reports every affected asset at once.
+        The registries are keyed by `internal_asset_id`, which a reclassification
+        preserves, so rebuilding a Stock as an InvestmentFund cannot lose a record --
+        that is what moving the snapshot off the Asset bought. A MERGE still can: two
+        rows whose identifiers overlap resolve to one asset, the loser is deleted from
+        `assets_by_internal_id`, and any record filed under its id becomes unreachable.
+        The drop is invisible -- the Vorabpauschale then finds no year-start
+        Ruecknahmepreis and skips the fund, so its deemed income leaves the declaration
+        with nothing recorded anywhere. This checks every asset a record was written for
+        and reports all of them at once.
 
         Two conditions bound what it reports, and both are deliberate:
 
@@ -417,39 +687,48 @@ class ParsingOrchestrator:
           declared figure this way. The prior-year snapshot is read for every instrument in the
           file, and aborting a run because a share or a bond lost a value it has no use for
           would stop a declaration that is not at risk.
-        - **Only where a value was actually read.** A fund bought during the Vorabpauschale year
-          has no prior-year snapshot row and is never registered, so a legitimate absence cannot
-          trip this.
+        - **Only where a record was actually written.** A fund bought during the Vorabpauschale
+          year has no prior-year snapshot row and is never registered, so a legitimate absence
+          cannot trip this.
 
-        The asset is looked up by alias rather than by id, so an instrument that was merged into
-        another after its snapshot was read is followed to the asset that now owns it.
+        The owner is looked up by id, falling back to the alias for an id that no longer
+        resolves -- which is what a merge leaves behind, the losing asset having been
+        deleted. Resolving through the alias first would be equivalent: probed on
+        2026-08-31, the two orders agree on every reachable path, because
+        `replace_asset_type` re-uses the id and a merge deletes the loser rather than
+        leaving a stale entry beside it.
         """
+        registries = (self.prior_soy_positions, self.prior_eoy_positions,
+                      self.prior_opening_positions)
         losses: List[str] = []
         checked = 0
-        for asset_id, record in self._prior_year_snapshot_fields.items():
-            asset = self.asset_resolver.assets_by_internal_id.get(asset_id)
-            if asset is None and record["alias"] is not None:
-                # Merged into another asset; the surviving one is what the engine will read.
-                asset = self.asset_resolver.alias_map.get(record["alias"])
-            if not isinstance(asset, InvestmentFund):
+        for asset_id, alias in self._prior_year_snapshot_assets.items():
+            owner = self.asset_resolver.assets_by_internal_id.get(asset_id)
+            if owner is None and alias is not None:
+                owner = self.asset_resolver.alias_map.get(alias)
+            if not isinstance(owner, InvestmentFund):
                 continue
             checked += 1
-            lost = sorted(name for name in record["fields"] if getattr(asset, name, None) is None)
-            if lost:
-                losses.append(f"{asset.get_classification_key()} ({asset.description}): {', '.join(lost)}")
+            if owner.internal_asset_id == asset_id:
+                continue
+            # The instrument changed hands between assets, and the rows are still filed
+            # under the id nothing will look up again.
+            if any(snapshots_for_asset(reg, asset_id) for reg in registries):
+                losses.append(f"{owner.get_classification_key()} ({owner.description})")
 
         if losses:
             raise DataIntegrityError(
                 "The preceding year's position snapshot was read for "
                 f"{checked} investment fund(s) but no longer reaches the calculation for "
                 f"{len(losses)} of them. The Vorabpauschale for that year (18 Abs. 1 InvStG) is "
-                "computed from these values, so the affected funds would drop out of Anlage "
+                "computed from these snapshots, so the affected funds would drop out of Anlage "
                 "KAP-INV Zeilen 9-13 without a figure and without a warning. This is an engine "
-                "defect, not an input problem: the values were read and then lost -- either by a "
-                "field missing from AssetResolver._extract_common_asset_fields, or by a merge of "
-                "two identifiers that carried the aliases across but not the values. Affected: "
-                + "; ".join(losses)
+                "defect, not an input problem: the snapshot was read and filed under an "
+                "internal asset id that no longer owns the instrument -- by a merge of two "
+                "identifiers that carried the aliases across but not the records, or by a "
+                "reclassification that failed to re-use the id. Affected: " + "; ".join(losses)
             )
+
 
     def _resolve_asset_from_position(self, raw_pos):
         """Resolve (or create) the Asset a raw position record refers to.
@@ -775,9 +1054,23 @@ class ParsingOrchestrator:
                 description_source_type="cash_balance_csv"
             )
 
-            # Set SOY/EOY quantities (can be negative for short positions)
-            cash_asset.soy_quantity = raw_balance.starting_cash
-            cash_asset.eoy_quantity = raw_balance.ending_cash
+            # Record the opening and closing balance (can be negative for short positions)
+            # under the account that reported it. One currency held in two accounts is
+            # reported on two rows and the person's balance is both of them
+            # ([GT-ESTG20-061]); `person_snapshot` adds them. The threshold above still
+            # applies per row, which is what it was written for: it drops rounding dust,
+            # and dust is dust in each account separately.
+            #
+            # These REPLACE whatever a Positions row said about this currency, which is
+            # what they have always done by running second -- a currency reported in both
+            # reports is one balance, and the cash-balance report is the one written for
+            # it. Keyed by account, so a Positions row for a currency in a DIFFERENT
+            # account survives; there is no such row in any export this engine has seen.
+            key = (account_key(raw_balance.client_account_id), cash_asset.internal_asset_id)
+            self.soy_positions[key] = _replace_snapshot_quantity(
+                self.soy_positions.get(key), raw_balance.starting_cash)
+            self.eoy_positions[key] = _replace_snapshot_quantity(
+                self.eoy_positions.get(key), raw_balance.ending_cash)
 
             position_type = "LONG" if raw_balance.starting_cash >= Decimal("0") else "SHORT"
             eoy_position_type = "LONG" if raw_balance.ending_cash >= Decimal("0") else "SHORT"
@@ -795,16 +1088,27 @@ class ParsingOrchestrator:
         assets_updated_count = 0
         for asset_id, asset_obj in self.asset_resolver.assets_by_internal_id.items():
             if asset_obj.asset_category != AssetCategory.CASH_BALANCE:
-                if asset_obj.soy_quantity is None: # Changed from initial_quantity_soy
-                    asset_obj.soy_quantity = Decimal(0) # Changed from initial_quantity_soy
-                    asset_obj.soy_cost_basis_amount = Decimal(0) # Changed from initial_cost_basis_money_soy
-                    asset_obj.soy_cost_basis_currency = None # Changed from initial_cost_basis_currency_soy
+                opening = person_snapshot(self.soy_positions, asset_id)
+                if opening is None or opening.quantity is None:
+                    # Absent from the opening report, so the year opened holding none of
+                    # it. Recorded under DEFAULT_ACCOUNT because it belongs to no account:
+                    # no account reported it, and a zero holding is the same zero in every
+                    # one of them.
+                    #
+                    # Removing this moves no figure -- `reconcile_with_mark` coerces a
+                    # `None` reported quantity to zero itself, and every declared figure
+                    # is identical either way. What it buys is that the zero is *stated*
+                    # rather than inferred two layers down, and that the warning that
+                    # coercion emits stays for the cases it was written for. Do not delete
+                    # it on the strength of a green suite: the suite is green without it.
+                    self.soy_positions[(DEFAULT_ACCOUNT, asset_id)] = PositionSnapshot(
+                        quantity=Decimal(0), cost_basis_amount=Decimal(0))
                     logger.debug(
                         f"Asset {asset_obj.get_classification_key()} (ID: {asset_id}) was not in SOY report. "
-                        f"Set soy_quantity to 0, soy_cost_basis_amount to 0."
+                        f"Recorded an opening holding of 0 at zero cost."
                     )
                     assets_updated_count +=1
-                elif asset_obj.soy_quantity != Decimal(0) and asset_obj.soy_cost_basis_amount is None:
+                elif opening.quantity != Decimal(0) and opening.cost_basis_amount is None:
                     # Held at the start of the year with no reported cost basis. This used to
                     # set the basis to zero, which makes the whole of a later disposal a gain.
                     # `CostBasisMoney` is blank in 0 of 87 position rows across 2021-2025, so
@@ -812,7 +1116,7 @@ class ParsingOrchestrator:
                     # missing one, and the run must not carry it.
                     raise ProcessingError(
                         f"Asset {asset_obj.get_classification_key()}: the start-of-year "
-                        f"snapshot reports {asset_obj.soy_quantity} units with no cost basis. "
+                        f"snapshot reports {opening.quantity} units with no cost basis. "
                         f"Their gain on disposal cannot be computed, and a zero basis would "
                         f"declare the whole proceeds as gain.")
 
