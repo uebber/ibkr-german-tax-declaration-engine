@@ -224,7 +224,8 @@ class DomainEventFactory:
                 "local_currency": raw_trade.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": raw_trade.description,
-                "ibkr_notes_codes": raw_trade.notes_codes
+                "ibkr_notes_codes": raw_trade.notes_codes,
+                "account_id": raw_trade.client_account_id,
             }
 
             option_event: Optional[OptionLifecycleEvent] = None
@@ -382,7 +383,8 @@ class DomainEventFactory:
                         exchange_rate=rate,
                         ibkr_transaction_id=tx_id_primary,
                         ibkr_activity_description=f"FX Pair Trade: {rt.description}",
-                        ibkr_notes_codes=rt.notes_codes
+                        ibkr_notes_codes=rt.notes_codes,
+                        account_id=rt.client_account_id,
                     )
                     all_created_events.append(conv_event)
                     continue
@@ -443,6 +445,7 @@ class DomainEventFactory:
                     ibkr_activity_description=rt.description,
                     ibkr_notes_codes=rt.notes_codes,
                     is_position_flip=is_position_flip,
+                    account_id=rt.client_account_id,
                 )
 
                 if trade_event.gross_amount_foreign_currency is not None and trade_event.gross_amount_foreign_currency < Decimal("0"):
@@ -549,7 +552,8 @@ class DomainEventFactory:
                 "local_currency": rct.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": rct.description,
-                "ibkr_notes_codes": None  # `Code` is not exported; see RawCashTransactionRecord.
+                "ibkr_notes_codes": None,  # `Code` is not exported; see RawCashTransactionRecord.
+                "account_id": rct.client_account_id,
             }
 
             if "DIVIDEND" in event_type_str_upper:
@@ -741,7 +745,8 @@ class DomainEventFactory:
                 "ibkr_transaction_id": None,  # TransactionID is not exported for CAs
                 "ibkr_activity_description": rca.description,
                 "local_currency": rca.currency_primary or affected_asset.currency,
-                "gross_amount_foreign_currency": None # Will be set by specific CA type if applicable
+                "gross_amount_foreign_currency": None, # Will be set by specific CA type if applicable
+                "account_id": rca.client_account_id,
             }
             logger.debug(f"CA Record {idx+1}: common_ca_params_kw_base (pre-gross): {common_ca_params_kw_base}")
 
@@ -972,6 +977,7 @@ class DomainEventFactory:
                     gross_amount_foreign_currency=maturity_proceeds.copy_abs(),
                     ibkr_transaction_id=f"BM-{rca.action_id_ibkr}",
                     ibkr_activity_description=rca.description,
+                    account_id=rca.client_account_id,
                 )
                 domain_ca_events.append(bm_event)
                 continue
@@ -1081,6 +1087,7 @@ class DomainEventFactory:
                     local_currency=settle_row.currency_primary,
                     gross_amount_foreign_currency=proceeds.copy_abs(),
                     ibkr_activity_description=f"Cash Settlement: {settle_row.description}",
+                    account_id=settle_row.client_account_id,
                 )
 
                 cash_settlement_events.append(event)

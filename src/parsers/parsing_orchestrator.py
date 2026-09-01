@@ -141,12 +141,19 @@ def _sum_snapshot_column(total: Optional[Decimal],
     cost basis rather than declaring its whole proceeds as gain.
 
     What that cannot distinguish is one account blank and another filled: the
-    total is then the filled one alone, understating the basis and so
-    overstating the gain, and nothing downstream detects it -- the guard refuses
-    only a total of `None`, which one filled row is enough to prevent. This
-    rests on the assumption that every account's row carries the column, which
-    is an assumption and not a checked condition. Filling the blank instead is
-    not the answer: a substituted cost basis is an invented figure.
+    total is then the filled one alone, understating the basis. This rests on the
+    assumption that every account's row carries the column, which is an assumption
+    and not a checked condition. Filling the blank instead is not the answer: a
+    substituted cost basis is an invented figure.
+
+    That gap no longer reaches the SoY/EoY reconciliation, which is now per
+    account: each ledger reconciles against its own account's record, so an
+    account with a blank cost basis is examined on its own -- its reconstruction
+    either disagrees with its reported quantity and `_create_fallback_long_lot`
+    refuses a holding reported with no basis, or agrees and the reported basis is
+    never read. The undetected mixed case is confined to the PERSON-LEVEL view
+    this sum still feeds -- `person_snapshot`, i.e. the `prior_year_*` fields and
+    the funds-held set -- not to any account's ledger basis.
     """
     if addend is None:
         return total

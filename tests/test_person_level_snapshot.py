@@ -176,17 +176,22 @@ class TestACurrencyHeldInTwoAccounts(FifoTestCaseBase):
         assert gaps == []
 
 
-class TestACheckpointMarkIsEveryAccountsRow(FifoTestCaseBase):
-    """The same reading, at a mid-window checkpoint mark.
+class TestACheckpointMarksBasisCarriesIntoALaterSale(FifoTestCaseBase):
+    """A mid-window checkpoint mark's cost basis reaches a sale four years later.
 
-    A mark carried the summed quantity already but one account's cost basis, so
-    the per-unit basis it implied belonged to no holding anybody had. The
-    reconstruction is compared against the mark and, where they disagree, the
-    mark's figures are what the ledger carries forward -- here into a sale four
-    years later.
+    The mark is where the ledger's cost basis is set for units acquired before the
+    import window: the reconstruction is compared against the reported mark and, where
+    they disagree, the mark's figures are what the ledger carries forward. This checks
+    that carry end to end -- from a 2021 mark to a 2024 disposal.
 
-        the person's mark : 100 units at 1400 -> 3500 - 1400 = 2100 gain
-        one account's row : 100 units at  800 -> 3500 -  800 = 2700 gain
+    Per Depot ([GT-ESTG20-013]) the mark, the carried lots and the sale are all one
+    account's: the disposal consumes the lots of the account it was made from, at the
+    basis that account's own mark set. (The two-account storage of a mark -- one row per
+    account, `person_mark` the derived view -- is pinned at the seam in
+    TestTheCheckpointMarkRegistry; here what matters is that an account's own mark basis
+    is what its later sale costs.)
+
+        A's 2021 mark : 100 units at 1400 -> 3500 - 1400 = 2100 gain
     """
     ISIN = "US000000PS03"
     RATES = MockECBExchangeRateProvider(Decimal("1.00"))
@@ -194,36 +199,34 @@ class TestACheckpointMarkIsEveryAccountsRow(FifoTestCaseBase):
     def _run(self):
         return self._run_pipeline(
             trades_data=[
-                trade_row(A, self.ISIN, "2022-05-04", "40", "25", "BUY", "O", "T1"),
-                trade_row(A, self.ISIN, "2024-03-12", "-100", "35", "SELL", "C", "T2"),
+                # No opening trade: the 100 units are carried from the 2021 mark, which is
+                # exactly the basis-setting path under test.
+                trade_row(A, self.ISIN, "2024-03-12", "-100", "35", "SELL", "C", "T1"),
             ],
             positions_mark_data={
-                2021: [
-                    position_row(A, self.ISIN, "60", "600", price="10"),
-                    position_row(B, self.ISIN, "40", "800", price="20"),
-                ],
+                2021: [position_row(A, self.ISIN, "100", "1400", price="14")],
             },
-            positions_start_data=[position_row(A, self.ISIN, "140", "2400", price="30")],
-            positions_end_data=[position_row(A, self.ISIN, "40", "1000", price="30")],
+            positions_start_data=[position_row(A, self.ISIN, "100", "1400", price="14")],
+            positions_end_data=[],  # A sold all 100; IBKR omits a zero holding
             custom_rate_provider=self.RATES,
             tax_year=2024,
         )
 
-    def test_the_units_carried_forward_cost_what_both_accounts_paid(self):
+    def test_a_marks_basis_is_what_the_later_sale_costs(self):
         rgls = [r for r in self._run().realized_gains_losses
                 if r.quantity_realized == Decimal("100")]
         assert len(rgls) == 1
         assert rgls[0].total_cost_basis_eur == Decimal("1400")
+        assert rgls[0].gross_gain_loss_eur == Decimal("2100")
 
 
 class TestTheCheckpointMarkRegistry:
     """A mark is stored per account, and `person_mark` is the derived view.
 
-    Asserted at the seam because nothing downstream can see it yet: every ledger
-    is still keyed to one pooled account, so it reads the person's figure and a
-    mark registry that summed the rows on the way in would give the same answer.
-    What changes is that each account's row survives, which is what the ledger
-    keyed by its own account will reconcile against.
+    Asserted at the seam: this pins the storage shape directly -- each account's
+    row survives and `person_mark` sums them -- independently of the engine, which
+    now reconciles each account's ledger against its own mark row
+    (`mark_positions[year][(account, asset)]`).
     """
     ISIN = "US000000PS06"
 

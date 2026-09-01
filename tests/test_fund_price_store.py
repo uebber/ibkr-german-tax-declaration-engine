@@ -204,9 +204,9 @@ class TestTheOrderOfSources:
     def test_the_settled_price_reaches_every_account_holding_the_fund(self, tmp_path):
         """The price is per unit, so it belongs on every account's row.
 
-        Invisible while ledgers are pooled -- the person's view takes whichever
-        row carries it -- and load-bearing as soon as a ledger reads its own
-        account's record.
+        A per-unit price is the same value whichever account's row a per-account
+        ledger reads, so it must be written to every row -- a fund held in one
+        account of two would otherwise leave the other's row without it.
         """
         fund = InvestmentFund(
             fund_type=InvestmentFundType.AKTIENFONDS, description="A Fund",
