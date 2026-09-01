@@ -18,7 +18,7 @@ from src.classification.asset_classifier import AssetClassifier
 from tests.support.csv_creators import (
     create_trades_csv_string, create_positions_csv_string,
     create_cash_transactions_csv_string, create_corporate_actions_csv_string,
-    create_cash_balance_csv_string
+    create_cash_balance_csv_string, create_transfers_csv_string
 )
 from tests.support.expected import ScenarioExpectedOutput
 
@@ -76,6 +76,8 @@ class FifoTestCaseBase:
                       cash_transactions_data: Optional[List[List[Any]]] = None,
                       corporate_actions_data: Optional[List[List[Any]]] = None,
                       cash_balance_data: Optional[List[List[Any]]] = None,
+                      transfers_data: Optional[List[List[Any]]] = None,
+                      transfers_missing_years: str = "",
                       custom_rate_provider: Optional[ExchangeRateProvider] = None,
                       tax_year: int = 2023,
                       monkeypatch_global_tax_year: bool = True
@@ -126,6 +128,16 @@ class FifoTestCaseBase:
                 f.write(create_positions_csv_string(mark_rows))
             mark_file_paths[mark_year] = mark_path
 
+        # Transfers is passed by path only when the scenario supplies rows (or an empty
+        # list, which is a supplied-but-empty export -- a person who has the report and
+        # moved nothing). None means no Transfers export at all, and the path is not
+        # passed, so `transfers_file_supplied` stays False.
+        transfers_path = None
+        if transfers_data is not None:
+            transfers_path = paths["transfers"]
+            with open(transfers_path, "w", encoding="utf-8-sig") as f:
+                f.write(create_transfers_csv_string(transfers_data))
+
         prior_paths = {"positions_prior_start_file_path": None,
                        "positions_prior_end_file_path": None}
         for key, path_key, data in (
@@ -153,6 +165,8 @@ class FifoTestCaseBase:
                 tax_year_to_process=tax_year,
                 custom_rate_provider=custom_rate_provider,
                 cash_balance_file_path=paths["cash_balance"],
+                transfers_file_path=transfers_path,
+                transfers_missing_years=transfers_missing_years,
                 **prior_paths,
             )
             return results

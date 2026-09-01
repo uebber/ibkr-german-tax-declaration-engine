@@ -83,6 +83,11 @@ def run_core_processing_pipeline(
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
     options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
+    transfers_file_path: Optional[str] = None,  # Moves between the taxpayer's own accounts
+    # Years of the replayed window for which no Transfers file was offered (from
+    # data_preparation). A hole in a supplied export stops the run; an absent export
+    # only warns. Empty when the export is complete or absent altogether.
+    transfers_missing_years: str = "",
     # Preceding calendar year's position snapshots. Required for the Vorabpauschale, which for
     # a VZ Y declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). Optional at
     # this boundary: the engine decides what a missing snapshot means once it knows whether any
@@ -124,6 +129,7 @@ def run_core_processing_pipeline(
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
+            transfers_file=transfers_file_path,
             positions_mark_files=positions_mark_file_paths,
             tax_year=tax_year_to_process
         )
@@ -242,6 +248,8 @@ def run_core_processing_pipeline(
             # src/processing/vorabpauschale_declarations.py.
             ask_for_declared_vorabpauschale=(
                 make_declaration_prompt() if interactive_classification_mode else None),
+            transfers_file_supplied=orchestrator.transfers_file_supplied,
+            transfers_missing_years=transfers_missing_years,
         )
     except Exception as e:
         logger.critical(f"Calculation engine failed with unexpected error: {e}", exc_info=True)

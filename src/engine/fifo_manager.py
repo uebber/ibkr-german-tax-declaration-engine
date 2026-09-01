@@ -795,6 +795,40 @@ class FifoLedger:
         self.short_lots.extend(prepared_short_lots)
         self.short_lots.sort(key=lambda l: (parse_ibkr_date(l.opening_date) or datetime.min.date(), l.source_transaction_id))
 
+    def remove_relocated_lots(self, long_lots: List[FifoLot],
+                              short_lots: List[ShortFifoLot]) -> None:
+        """Remove the given lot objects (by identity) -- the sending side of a transfer.
+
+        Identity, not equality: two lots acquired on one day with the same quantity and
+        basis would be equal as dataclasses, and removing "one of them" by value could
+        drop the wrong object. The transfer coordinator has already chosen the exact
+        objects.
+        """
+        long_ids = {id(lot) for lot in long_lots}
+        short_ids = {id(lot) for lot in short_lots}
+        self.lots = [lot for lot in self.lots if id(lot) not in long_ids]
+        self.short_lots = [lot for lot in self.short_lots if id(lot) not in short_ids]
+
+    def receive_relocated_lots(self, long_lots: List[FifoLot],
+                               short_lots: List[ShortFifoLot]) -> None:
+        """Receive lot objects relocated from another account by an internal transfer.
+
+        The objects move INTACT -- their acquisition date, cost basis,
+        `acquisition_date_is_known` flag and accumulated Vorabpauschale travel with them,
+        because a move between the taxpayer's own accounts is not a disposal
+        ([GT-ESTG20-014]): nothing is closed and reopened. This is the difference from
+        `receive_all_lots_from_merger`, which REBUILDS the lots because a merger rescales
+        the quantities by a ratio. Here the same objects are re-parented, so the holding
+        period and basis are preserved by construction rather than by care.
+
+        A list `extend` + `sort`, so it cannot fail: the transfer coordinator validates
+        the move before any ledger is touched, and removal + receipt are pure list ops.
+        """
+        self.lots.extend(long_lots)
+        self.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
+        self.short_lots.extend(short_lots)
+        self.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
+
     def add_long_lot(self, trade_event: TradeEvent):
         if trade_event.event_type != FinancialEventType.TRADE_BUY_LONG: return
         if trade_event.quantity is None or trade_event.quantity <= Decimal(0): return

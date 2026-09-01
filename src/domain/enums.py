@@ -53,6 +53,7 @@ class FinancialEventType(Enum):
     WITHHOLDING_TAX = auto()
     FEE_TRANSACTION = auto()
     CURRENCY_CONVERSION = auto() # From FX trades or explicit conversions
+    INTERNAL_TRANSFER = auto() # A move of a holding between the taxpayer's own accounts ([GT-ESTG20-014])
 
 class RealizationType(Enum):
     """Defines how a gain or loss was realized."""

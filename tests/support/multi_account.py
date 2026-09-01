@@ -36,6 +36,7 @@ from src.parsers.column_validator import (
     POSITIONS_COLUMNS,
     CORPORATE_ACTIONS_COLUMNS,
     CASH_BALANCE_COLUMNS,
+    TRANSFERS_COLUMNS,
 )
 
 
@@ -126,10 +127,45 @@ def cash_transaction_row(account: str, currency: str, amount, tx_type: str, date
             isin, country_code, tx_id]
 
 
+def transfer_row(account: str, other_account: str, direction: str, date: str,
+                 isin: str = "", quantity="0", asset_class: str = "STK",
+                 currency: str = "EUR", symbol: Optional[str] = None,
+                 transfer_type: str = "INTERNAL", tx_id: str = "",
+                 level_of_detail: str = "TRANSFER",
+                 open_date_time: str = "", cost_basis=None, transfer_price=None,
+                 code: str = "", cash_transfer=None, multiplier="1") -> List[Any]:
+    """One Transfers row (TRANSFERS_COLUMNS order, the 35-column shape).
+
+    `account` is the account the row is written FROM the point of view of, and
+    `other_account` is the counterparty; `direction` ("OUT"/"IN") is what says which
+    way the units went, exactly as in the export. The sign of `quantity` is deliberately
+    a free parameter and carries nothing on a summary row; on a LOT row it marks
+    long (+) versus short (-).
+
+    `level_of_detail` discriminates, replacing the old `Code`/`TransactionID` heuristic:
+    "TRANSFER" is a summary row (one per side, carrying `tx_id`); "LOT" is a per-lot
+    detail row carrying `open_date_time` (the acquisition day) and `cost_basis`.
+    """
+    def _amount(value):
+        return None if value is None or str(value).strip() == "" else Decimal(str(value))
+
+    sym = symbol or (isin[:6] if isin else currency)
+    return [account, None, currency, asset_class, sym,
+            f"{sym} transfer", conid_for(isin) if isin else None, isin,
+            None, None, _amount(multiplier), date,
+            date, f"{date};000000", None, transfer_type,
+            direction, other_account, None, _amount(quantity),
+            _amount(transfer_price), None, None, None,
+            None, _amount(cash_transfer),
+            code, None,
+            tx_id, None, None, None,
+            _amount(cost_basis), open_date_time, level_of_detail]
+
+
 __all__ = [
     "write_csv", "conid_for", "trade_row", "position_row", "fx_trade_row",
     "cash_balance_row",
-    "cash_transaction_row",
+    "cash_transaction_row", "transfer_row",
     "TRADES_COLUMNS", "CASH_TRANSACTIONS_COLUMNS", "POSITIONS_COLUMNS",
-    "CORPORATE_ACTIONS_COLUMNS", "CASH_BALANCE_COLUMNS",
+    "CORPORATE_ACTIONS_COLUMNS", "CASH_BALANCE_COLUMNS", "TRANSFERS_COLUMNS",
 ]

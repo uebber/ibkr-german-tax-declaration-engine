@@ -531,3 +531,63 @@ All three already aborted before any figure on the base, so no figure is lost. R
 export (the next change) relocates the moved lots and makes VZ 2023 and VZ 2025 complete again. These
 counts and instrument identifiers stay here, not in a commit message, per CLAUDE.md's public-repo
 rule and the PR-hygiene rule against a portfolio census in published text.
+
+## 2026-09-01 — PR-C (own-account transfers) real-data validation
+
+Run against the maintainer's export with the 35-column Transfers report
+(`data_import/data_new_transfers/`) copied into `data_import/`; `cache/` present so no
+early classification abort. Baseline is PR-B (`2c8c45b`), which does not read Transfers.
+No account numbers here (public-repo rule); ISINs identify instruments, not wealth.
+
+**The run gets further — the observable goal.** No year reaches a figure yet (PR-E is not
+in), so each parity point compares the run up to its abort:
+
+| VZ | PR-B stop | PR-C stop |
+|---|---|---|
+| 2023 | a cross-account **sale** aborts the tax-year dispatch (insufficient long lots) | the sale's lots are relocated, so the run reaches **EoY reconciliation** — 3 positions remain |
+| 2024 | `VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN` (one account) | identical — no transfers, unchanged |
+| 2025 | `REPLAY_MARK_MISMATCH`, **19 ledgers** | `REPLAY_MARK_MISMATCH`, **3 ledgers** |
+
+The 9 transferred instruments (BNS, ERNE, SGO, D05, KV4, DEM, GME, TIO, TUP) now relocate
+and reconcile, which is what moves VZ 2025 from 19 disagreeing ledgers to 3 and lets VZ 2023
+past the cross-account sale. The moves include 6 short lots and four distinct acquisition
+days on one instrument (GME) — all matched day by day.
+
+**The 3 that remain in both VZ 2023 and VZ 2025 are outside PR-C:**
+- `US45841N1072` (a share grant) — the grant report is not read until PR-E; its quantity is
+  short by the granted units.
+- `DE000LEG1110` (LEG IMMOBILIEN) — traded in one account and reported at 2023 year-end in
+  the other, so it **moved between accounts**, but it is **not in the Transfers export** (the
+  export covers 9 instruments and this is not one). The engine correctly stops rather than
+  inventing the move. This is a completeness gap in the re-exported report, recorded so the
+  maintainer knows a move is missing from it; it is not a defect in PR-C.
+
+**Mutation probes (transfer test files + merger sort test), full run, failing ids recorded,
+no `-x`.** 12 sites, all RED (observable). Highlights: removing the transfer's sort band →
+only the txid-carrying band test fails (the plain before-a-trade test stays green on the
+empty-txid fallback — measured, explained); reverting the precedence partition → the band
+test AND the merger de-fragilisation test fail; ignoring the `LOT` rows → the breakdown,
+partial-move and sub-day-split tests fail; dropping the historical deferral → 8 pre-tax-year
+tests fail; dropping the tax-year dispatch entry → the in-year tests fail; no-op the
+incomplete-window guard → the window test fails; dropping the historical deferral → the
+mark-reconcile test fails.
+
+**Note.** `test_the_column_tuples_match_the_real_exports` fails on any developer tree once
+`data_import/Transfers-*.csv` holds the 35-column shape only while `RawTransferRecord`'s
+tuple is checked against it — it matches the 35-column export and mismatches the 32-column
+one. It skips on a clean clone (no `data_import/`), where the suite is 1232 passed / 1
+skipped. This is the same pre-existing skip class as the Cash_Balance tuple.
+
+### 2026-09-01 — sort-key precedence change: currency-neutrality (confirmed at cold review)
+
+The same-day precedence partition in `get_event_sort_key` is neutral for currency FIFO **by
+construction**, not merely by the passing suite: the only lot-delivering event kind that touches
+a currency ledger is a cash merger (`CorpActionMergerCash`, a corporate action), whose export
+carries no `TransactionID`, so its sort txid is always empty and it already sorted ahead of the
+same day's currency events under the old key. Every other currency-affecting event (trades, FX
+conversions, dividends, interest, fees) stays in the non-delivering partition, where the
+secondary key is byte-identical to before. So no currency lot's consumption order changes. The
+one behaviour change is on securities: an option-lifecycle event now sorts before a same-day
+trade regardless of transaction id (previously a smaller-id trade could precede it) — the
+intended dependency, declared. The full suite (every currency/FX/option figure test) is green
+and VZ 2024 is byte-identical to the baseline, consistent with no unintended movement.

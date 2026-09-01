@@ -15,7 +15,7 @@ from src.domain.events import (
     CorpActionExpireDividendRights, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
-    WithholdingTaxEvent, CurrencyConversionEvent
+    WithholdingTaxEvent, CurrencyConversionEvent, InternalTransferEvent
 )
 from src.domain.assets import (
     Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance,
@@ -54,6 +54,8 @@ from .event_processors.option_processor import (
     OptionCashSettlementProcessor
 )
 from .event_processors.currency_conversion_processor import CurrencyConversionProcessor
+from .event_processors.transfer_processor import (
+    InternalTransferProcessor, apply_internal_transfer)
 
 
 logger = logging.getLogger(__name__)
@@ -287,41 +289,72 @@ def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
 MULTI_ACCOUNT_LIMITATIONS = "MULTI_ACCOUNT_LIMITATIONS"
 
 
-def _report_multi_account_limitations(accounts, data_gap_collector) -> None:
+def _report_multi_account_limitations(accounts, data_gap_collector,
+                                      transfers_file_supplied: bool = False) -> None:
     """Say what per-Depot lot tracking does NOT yet cover, whenever it is in play.
 
-    Raised for every run that sees more than one account, not only for one that hits the
-    gap: a transfer in an earlier year re-dates lots this year still holds, and nothing in
-    the input marks that it happened. A person who has never moved anything between their
-    accounts is told so in the text -- the cheaper error of the two.
+    A WARNING, because the run still produces figures. The text carries what the
+    severity does not, and **what it has to carry depends on whether a Transfers export
+    was read**, which is why that is a parameter rather than a constant:
 
-    A WARNING, because the run must still produce figures for the case where nothing was ever
-    transferred, so the text carries what the severity does not and says outright that the
-    securities figures cannot otherwise be relied on. Removed piece by piece as each
-    limitation is closed -- the securities half with the Transfers change, the currency half
-    with per-account currency.
+    * read -- moves between the taxpayer's own accounts are applied, the lots keep their
+      date and cost, and only the currency limitation is left.
+    * not read at all -- a move that happened is invisible. The receiving account holds
+      units it never bought and the sending one still shows units it never sold, the
+      reconciliation rebuilds both from the broker's snapshot, and the acquisition dates
+      it substitutes are invented. This is exactly the run whose reader most needs the
+      caveat, so the text must not tell them the moves were read.
+
+    **The third case is not here, because it is not a warning.** An export that covers
+    some years and not others is refused by `_require_a_complete_transfers_window` before
+    this runs: the person plainly has the report, so a missing year is something to fix
+    rather than to work around.
+
+    Defaults to not-read: a caller that has not been updated says the cautious thing.
+
+    Removed piece by piece as each limitation is closed. The securities clause became
+    conditional with the change that reads the Transfers export and relocates lots
+    between accounts ([GT-ESTG20-014]); the currency clause is the last one, and it
+    takes this function and its tests with it.
     """
     named = sorted(a for a in accounts if a != DEFAULT_ACCOUNT)
     if len(named) < 2:
         return
+    if transfers_file_supplied:
+        transfers_clause = (
+            "Überträge zwischen Ihren eigenen Konten werden eingelesen; die Bestände "
+            "wechseln dabei das Konto und behalten Anschaffungsdatum und "
+            "Anschaffungskosten. "
+        )
+        closing_clause = (
+            "Die Wertpapier-Zahlen dieses Berichts sind davon nicht betroffen."
+        )
+    else:
+        transfers_clause = (
+            "ES WURDE KEIN TRANSFERS-BERICHT EINGELESEN. "
+            "Wurde in einem nicht abgedeckten Jahr eine Position zwischen Ihren Konten "
+            "übertragen, kann die Engine den Übertrag nicht sehen: sie rekonstruiert "
+            "den Bestand aus dem Positionsbericht -- die Stückzahl ist die des "
+            "Brokers, das Anschaffungsdatum ist erfunden. Betroffen sind die "
+            "Haltefrist (§ 23 EStG) und die FIFO-Reihenfolge, im Jahr des Übertrags "
+            "UND in allen Folgejahren. Exportieren Sie den Transfers-Bericht für jedes "
+            "Jahr (siehe README), dann entfällt dieser Punkt. AUSSERDEM: "
+        )
+        closing_clause = (
+            "Wurde in den nicht abgedeckten Jahren nie eine Position zwischen Ihren "
+            "Konten übertragen, ist der erste Punkt für Sie ohne Bedeutung. Andernfalls "
+            "sind die Wertpapier-Zahlen dieses Berichts NICHT BELASTBAR -- prüfen Sie "
+            "sie, bevor Sie sie übernehmen."
+        )
     detail = (
         "Die Depot-bezogene FIFO-Zuordnung ist aktiv (BMF 14.05.2025 Rz. 97 Satz 2): "
-        "Ein Verkauf verbraucht die Bestände des Kontos, aus dem er erfolgte. EINE "
-        "EINSCHRÄNKUNG BESTEHT WEITERHIN UND KANN DIE AUSGEWIESENEN WERTPAPIER-ZAHLEN "
-        "UNZUTREFFEND MACHEN: Überträge zwischen Ihren eigenen Konten werden nicht "
-        "eingelesen. Wurde jemals eine Position zwischen Ihren Konten übertragen, kann "
-        "die Engine den Übertrag nicht sehen: sie rekonstruiert den Bestand aus dem "
-        "Positionsbericht -- die Stückzahl ist die des Brokers, das Anschaffungsdatum "
-        "ist erfunden. Betroffen sind die Haltefrist (§ 23 EStG) und die FIFO-Reihenfolge, "
-        "im Jahr des Übertrags UND in allen Folgejahren. "
+        "Ein Verkauf verbraucht die Bestände des Kontos, aus dem er erfolgte. "
+        + transfers_clause +
         "HINWEIS ZUR WÄHRUNG: Fremdwährungsbestände werden je Person geführt, nicht je "
-        "Konto. Das ist die derzeit vom Regelwerk gestützte Lesart, keine bekannte "
-        "Fehlbuchung: für die FIFO-Bildung gleichartiger Fremdwährungsbeträge nennt BMF "
-        "Rz. 131 keine Depotgrenze; ob jeder Kontostand eine eigene Kapitalforderung ist, "
-        "ist offen und wird gesondert entschieden. "
-        "Wurde nie eine Position zwischen Ihren Konten übertragen, ist die Einschränkung "
-        "für Sie ohne Bedeutung. Andernfalls sind die Wertpapier-Zahlen dieses Berichts "
-        "NICHT BELASTBAR -- prüfen Sie sie, bevor Sie sie übernehmen."
+        "Konto. Devisengewinne werden gegen den zusammengefassten Bestand gerechnet, und "
+        "eine Umbuchung von Geld zwischen Ihren Konten bleibt dabei ohne Wirkung. Das ist "
+        "die derzeit vom Regelwerk gestützte Lesart, keine bekannte Fehlbuchung. "
+        + closing_clause
     )
     subject = f"{len(named)} Konten im Export"
     if data_gap_collector is not None:
@@ -330,6 +363,116 @@ def _report_multi_account_limitations(accounts, data_gap_collector) -> None:
             severity=GapSeverity.WARNING)
     else:
         logger.warning("[%s] %s: %s", MULTI_ACCOUNT_LIMITATIONS, subject, detail)
+
+
+TRANSFERS_WINDOW_INCOMPLETE = "TRANSFERS_WINDOW_INCOMPLETE"
+
+
+def _require_a_complete_transfers_window(accounts, transfers_file_supplied: bool,
+                                         transfers_missing_years: str,
+                                         data_gap_collector) -> None:
+    """A Transfers export that covers some years and not others stops the run.
+
+    **A hole is not the same as an absence, and only the hole is refused.** A person who
+    has never created the query has no Transfers file at all, and that has to stay a
+    warning -- it is the ordinary state of everyone who holds one account or has never
+    moved anything, and refusing would stop them for nothing. A person whose export
+    covers 2022 to 2024 but not 2025 plainly HAS the query: a year of it is simply
+    missing, and a move made in that year is invisible, silently, in that year and every
+    year after it. There is nothing to weigh there -- exporting the year is cheap and the
+    figure it protects is not recoverable afterwards.
+
+    Only for a run that sees more than one account, which is the same condition the
+    warning uses: a move between the taxpayer's own accounts needs two of them, so with
+    one account there is no per-Depot placement for a missing year to get wrong.
+
+    The years are named because the reader's next action is to export exactly those.
+    """
+    named = sorted(a for a in accounts if a != DEFAULT_ACCOUNT)
+    missing = (transfers_missing_years or "").strip()
+    if len(named) < 2 or not transfers_file_supplied or not missing:
+        return
+
+    subject = f"Transfers export missing for: {missing}"
+    detail = (
+        f"The Transfers export covers some years of the replayed window and not "
+        f"{missing}. A move between your own accounts in an uncovered year cannot be "
+        f"seen: the receiving account holds units it never bought and the sending one "
+        f"still shows units it never sold, so the reconstruction is discarded and "
+        f"rebuilt from the position snapshot -- the broker's quantity with an invented "
+        f"acquisition date. That date decides the holding period (§ 23 EStG) and which "
+        f"units a later sale consumes, in the year of the move AND in every year after "
+        f"it. Because the export exists for other years, the query exists too: export "
+        f"{missing} as well (see README) and this stops. An export absent for every "
+        f"year is a different case and is reported as a warning, not a refusal."
+    )
+    if data_gap_collector is not None:
+        data_gap_collector.record(
+            code=TRANSFERS_WINDOW_INCOMPLETE, subject=subject, detail=detail,
+            severity=GapSeverity.FAIL_FAST,
+        )  # records, logs CRITICAL and raises DataGapError
+    else:
+        raise DataGapError(f"[{TRANSFERS_WINDOW_INCOMPLETE}] {subject}: {detail}")
+
+
+TRANSFER_COUNTERPARTY_UNKNOWN = "TRANSFER_COUNTERPARTY_UNKNOWN"
+
+
+def _require_transfer_counterparties_are_the_persons_own(
+        transfer_events, own_accounts, asset_resolver, data_gap_collector) -> None:
+    """Every account a move names must be one the taxpayer's own exports name too.
+
+    [GT-ESTG20-014] covers a move between *the taxpayer's own depots*, and that is what
+    the engine does with one: relocate the lots, realise nothing. The export's `Type` is
+    not that test. `INTERNAL` is IBKR's word for "between IBKR accounts", which says
+    nothing about who owns the other one -- a gift, a spousal transfer or any move to a
+    third party is `INTERNAL` too, and each of those may well be a disposal that no claim
+    in `reference/` decides.
+
+    So the ownership test is made from the input instead: an account the person holds is
+    an account their own exports report -- it trades, it is snapshotted, or it is marked.
+    An account named only by a transfer is either not theirs or was never exported, and
+    the run must not compute through either. Without this, a move OUT to such an account
+    before the tax year completes in silence: the units leave the person's holdings with
+    no disposal anywhere, and the opening snapshot never lists the account, so nothing
+    disagrees with anything. (A move inside the tax year is caught by the per-account
+    end-of-year check, which is a narrower guard than it looks.)
+
+    Every offender is collected before raising, so one run names the whole problem.
+    """
+    unknown = []
+    for event in transfer_events:
+        for account, role in ((event.account_id, "sending"),
+                              (event.to_account_id, "receiving")):
+            if account_key(account) in own_accounts:
+                continue
+            asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
+            name = asset.get_classification_key() if asset else str(event.asset_internal_id)
+            unknown.append(
+                f"{name} on {event.event_date}: the {role} account {account} appears "
+                f"nowhere else in the input")
+    if not unknown:
+        return
+
+    subject = f"{len(unknown)} transfer side(s) name an account the input does not report"
+    detail = (
+        "A move is treated as tax-neutral because it stays within the taxpayer's own "
+        "depots ([GT-ESTG20-014]). The export's Type of INTERNAL does not establish "
+        "that -- it means the counterparty is an IBKR account, not that it is yours. "
+        "Every account named here is absent from the trades, the snapshots and the "
+        "checkpoint marks, so either it is not yours, in which case the move may be a "
+        "disposal and no rule here decides which, or it is yours and was not exported, "
+        "in which case its own holdings are missing too. Export every account you hold "
+        "in every query, or the move needs a rule this engine does not have. "
+        + "; ".join(unknown)
+    )
+    if data_gap_collector is not None:
+        data_gap_collector.record(
+            code=TRANSFER_COUNTERPARTY_UNKNOWN, subject=subject, detail=detail,
+            severity=GapSeverity.FAIL_FAST,
+        )  # records, logs CRITICAL and raises DataGapError
+    else:
+        raise DataGapError(f"[{TRANSFER_COUNTERPARTY_UNKNOWN}] {subject}: {detail}")
 
 
 def run_main_calculations(
@@ -382,6 +525,14 @@ def run_main_calculations(
     # and the year is reported unanswered. The year this return itself declares is
     # never asked about; its figures are on the form being produced.
     ask_for_declared_vorabpauschale: Optional[Callable] = None,
+    # Whether a Transfers export was offered at all, as opposed to offered and empty. Only
+    # the difference between "no report" (a warning) and "report present but a year is
+    # missing" (a refusal) turns on it -- see `_require_a_complete_transfers_window` and
+    # `_report_multi_account_limitations`.
+    transfers_file_supplied: bool = False,
+    # Years in the replayed window for which no Transfers file was offered, comma-joined
+    # and in order. Only meaningful when a report WAS supplied (a hole, not an absence).
+    transfers_missing_years: str = "",
 ) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]:
     """
     Runs the main calculation logic:
@@ -421,6 +572,7 @@ def run_main_calculations(
 
     historical_events_by_asset: DefaultDict[uuid.UUID, List[FinancialEvent]] = defaultdict(list)
     historical_merger_events: List[CorpActionMergerStock] = []
+    historical_transfer_events: List[InternalTransferEvent] = []
     historical_currency_events: DefaultDict[str, List[FinancialEvent]] = defaultdict(list)
     current_year_events: List[FinancialEvent] = []
 
@@ -451,6 +603,10 @@ def run_main_calculations(
         if event_date_obj < tax_year_start_date_obj:
             if isinstance(event, CorpActionMergerStock):
                 historical_merger_events.append(event)
+            elif isinstance(event, InternalTransferEvent):
+                # A move made before the tax year is replayed as a stream item at its own
+                # sort position, exactly like a historical merger (both touch two ledgers).
+                historical_transfer_events.append(event)
             elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend,
                                     OptionLifecycleEvent, CorpActionMergerCash,
                                     CorpActionExpireDividendRights)):
@@ -543,6 +699,14 @@ def run_main_calculations(
         new_asset_id = getattr(event, "new_asset_internal_id", None)
         if new_asset_id:
             ledger_accounts[new_asset_id].add(account)
+        # A move between accounts names a second ACCOUNT rather than a second asset, and needs
+        # the mirror of the line above: without a ledger on the receiving side the move is
+        # refused, and the account the units arrive in may appear nowhere else -- a holding
+        # moved in and still held at year end sits only in the closing snapshot, which is
+        # deliberately not a ledger source.
+        to_account_id = getattr(event, "to_account_id", None)
+        if to_account_id:
+            ledger_accounts[asset_id].add(account_key(to_account_id))
 
     for _asset_id, _events in historical_events_by_asset.items():
         for _event in _events:
@@ -551,6 +715,8 @@ def run_main_calculations(
         _register_event_accounts(_event, _event.asset_internal_id)
     for _merger in historical_merger_events:
         _register_event_accounts(_merger, _merger.asset_internal_id)
+    for _transfer in historical_transfer_events:
+        _register_event_accounts(_transfer, _transfer.asset_internal_id)
     # The opening snapshot. A zero holding contributes no ledger: it is the record
     # `_ensure_soy_quantities_are_set` writes under DEFAULT_ACCOUNT for an asset absent from
     # the opening report, and treating it as a source would build a ledger for an account
@@ -564,11 +730,44 @@ def run_main_calculations(
         for (_account, _asset_id) in _year_marks:
             ledger_accounts[_asset_id].add(_account)
 
-    _report_multi_account_limitations(
-        {account for accounts in ledger_accounts.values() for account in accounts}
-        | {account for account, _ in eoy_positions},
-        data_gap_collector,
+    # A move may only be treated as tax-neutral if BOTH accounts it names are the person's
+    # own -- decided from the input, not from the export's `Type=INTERNAL`. Own accounts are
+    # those the person's own exports report (trades, snapshots, marks), never one named only
+    # by a transfer.
+    _require_transfer_counterparties_are_the_persons_own(
+        historical_transfer_events
+        + [e for e in current_year_events if isinstance(e, InternalTransferEvent)],
+        # An account is the taxpayer's own if their OWN exports report it -- a trade, a
+        # snapshot, a mark. A transfer event must NOT self-certify: its own account_id is
+        # the sending account, and the whole question is whether that account is the
+        # taxpayer's, so internal-transfer events are excluded from this set (both the
+        # current-year ones here and the historical ones, which live in
+        # historical_transfer_events, not historical_events_by_asset).
+        own_accounts=(
+            {account_key(e.account_id) for e in current_year_events
+             if not isinstance(e, InternalTransferEvent)}
+            | {account_key(e.account_id)
+               for events in historical_events_by_asset.values() for e in events}
+            | {account for account, _ in soy_positions}
+            | {account for account, _ in eoy_positions}
+            | {account for marks in mark_positions.values() for account, _ in marks}
+        ),
+        asset_resolver=asset_resolver,
+        data_gap_collector=data_gap_collector,
     )
+
+    _known_accounts = (
+        {account for accounts in ledger_accounts.values() for account in accounts}
+        | {account for account, _ in eoy_positions}
+    )
+    # A Transfers export that covers some years and not others stops the run before any
+    # figure rests on a move it could not see; an export absent for every year is the
+    # ordinary case and only warns.
+    _require_a_complete_transfers_window(
+        _known_accounts, transfers_file_supplied, transfers_missing_years,
+        data_gap_collector)
+    _report_multi_account_limitations(
+        _known_accounts, data_gap_collector, transfers_file_supplied)
 
     logger.info("Building unified historical replay stream (securities, mergers, currencies)...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
@@ -644,6 +843,29 @@ def run_main_calculations(
             )
     else:
         logger.info("No historical stock mergers to replay.")
+
+    # Internal transfers made before the tax year join the same chronological stream, at
+    # their own sort position -- the merger's precedent, on the account axis instead of the
+    # asset axis. The handover relocates the moved lots between the two accounts' ledgers;
+    # its sort position (the corp-action band, so before that day's trades) is what places
+    # the arriving lots before a same-day sale out of the receiving account.
+    if historical_transfer_events:
+        logger.info(f"Streaming {len(historical_transfer_events)} historical internal "
+                    f"transfer(s) chronologically...")
+        for transfer_event in historical_transfer_events:
+            try:
+                transfer_key = get_event_sort_key(transfer_event, asset_resolver)
+            except ValueError as e:
+                logger.critical(f"Fatal error sorting historical transfer events: {e}. Aborting.")
+                raise e
+            _defer(
+                Phase.LEDGER_EVENTS, transfer_key,
+                (lambda t=transfer_event: apply_internal_transfer(
+                    t, fifo_ledgers, asset_resolver, data_gap_collector)),
+                label="transfer",
+            )
+    else:
+        logger.info("No historical internal transfers to replay.")
 
     # Reconcile: securities ledgers against the reported snapshot at each mark, after every
     # ledger event of that interval (mergers included) has been applied. Currency ledgers
@@ -986,6 +1208,7 @@ def run_main_calculations(
         internal_calculation_precision=internal_calculation_precision,
         decimal_rounding_mode=decimal_rounding_mode
     )
+    internal_transfer_processor = InternalTransferProcessor()
 
     event_processor_map: Dict[FinancialEventType, EventProcessor] = {
         FinancialEventType.TRADE_BUY_LONG: trade_processor,
@@ -1001,6 +1224,7 @@ def run_main_calculations(
         FinancialEventType.OPTION_ASSIGNMENT: option_assignment_processor,
         FinancialEventType.OPTION_EXPIRATION_WORTHLESS: option_expiration_processor,
         FinancialEventType.OPTION_CASH_SETTLEMENT: option_cash_settlement_processor,
+        FinancialEventType.INTERNAL_TRANSFER: internal_transfer_processor,
     }
 
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")
@@ -1038,6 +1262,9 @@ def run_main_calculations(
                     # Phase 5a: Pass currency infrastructure for implicit FX from security trades
                     'currency_fifo_ledgers': currency_fifo_ledgers,
                     'currency_processor': currency_conversion_processor,
+                    # An internal transfer that cannot be resolved (a sub-day split) is
+                    # routed to the report through this, at FAIL_FAST -- see transfer_processor.
+                    'data_gap_collector': data_gap_collector,
                 }
                 current_ledger = ledger if ledger else None
 

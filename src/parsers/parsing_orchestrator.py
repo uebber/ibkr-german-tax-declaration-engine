@@ -30,7 +30,7 @@ import src.config as global_config
 
 from .raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawPositionRecord, RawCorporateActionRecord,
-    RawCashBalanceRecord, RawOptionsEAERecord
+    RawCashBalanceRecord, RawOptionsEAERecord, RawTransferRecord
 )
 from .trades_parser import parse_trades_csv
 from .cash_transactions_parser import parse_cash_transactions_csv
@@ -38,6 +38,7 @@ from .positions_parser import parse_positions_csv
 from .corporate_actions_parser import parse_corporate_actions_csv
 from .cash_balance_parser import parse_cash_balance_csv
 from .options_eae_parser import parse_options_eae_csv
+from .transfers_parser import parse_transfers_csv
 from .domain_event_factory import DomainEventFactory
 # NEW IMPORTS
 from src.processing.option_trade_linker import perform_option_trade_linking
@@ -309,6 +310,14 @@ class ParsingOrchestrator:
         # Only the wording of _require_option_cash_settlements' error depends on it: the
         # requirement itself comes from the trades, never from the file's presence.
         self.options_eae_file_supplied: bool = False
+        # Raw Transfers rows -- moves between the taxpayer's own accounts. Collapsed into
+        # one event per move by `DomainEventFactory.create_events_from_transfers`. See
+        # RawTransferRecord.
+        self.raw_transfers: List[RawTransferRecord] = []
+        # Whether a Transfers export was offered at all, as opposed to offered and empty.
+        # Only the difference between "no report" and "report present" turns on it -- the
+        # multi-account warning and the incomplete-window refusal in calculation_engine.
+        self.transfers_file_supplied: bool = False
 
         self.domain_financial_events: List[FinancialEvent] = []
         # NEW: Store collections for linking
@@ -329,6 +338,7 @@ class ParsingOrchestrator:
                            corporate_actions_file: Optional[str] = None,
                            cash_balance_file: Optional[str] = None,
                            options_eae_file: Optional[str] = None,
+                           transfers_file: Optional[str] = None,
                            positions_mark_files: Optional[Dict[int, str]] = None):
         # ... (implementation is the same)
         if trades_file:
@@ -362,6 +372,10 @@ class ParsingOrchestrator:
             self.options_eae_file_supplied = True
             self.raw_options_eae = parse_options_eae_csv(options_eae_file)
             logger.info(f"Loaded {len(self.raw_options_eae)} raw OptionEAE records.")
+        if transfers_file:
+            self.transfers_file_supplied = True
+            self.raw_transfers = parse_transfers_csv(transfers_file)
+            logger.info(f"Loaded {len(self.raw_transfers)} raw transfer records.")
         for mark_year, mark_file in sorted((positions_mark_files or {}).items()):
             self.raw_positions_marks[mark_year] = parse_positions_csv(mark_file)
             logger.info(f"Loaded {len(self.raw_positions_marks[mark_year])} raw position records "
@@ -800,6 +814,24 @@ class ParsingOrchestrator:
                 raw_description=rca.description,
                 description_source_type="corp_act_asset"
             )
+
+        # Transfers discover assets too, so that an instrument whose only appearance in
+        # the tax year is a move between accounts is classified with the rest rather than
+        # created after classification has finished. Lot-detail and cash rows name no
+        # instrument this step can use; `create_events_from_transfers` drops them again
+        # for its own reasons.
+        for rtr in self.raw_transfers:
+            if (rtr.asset_class or "").strip().upper() == "CASH":
+                continue
+            if not (rtr.isin or rtr.conid or rtr.symbol):
+                continue
+            self.asset_resolver.get_or_create_asset(
+                raw_isin=rtr.isin, raw_conid=rtr.conid, raw_symbol=rtr.symbol,
+                raw_currency=rtr.currency_primary,
+                raw_ibkr_asset_class=rtr.asset_class, raw_description=rtr.description,
+                description_source_type="transfer",
+                raw_multiplier=rtr.multiplier,
+            )
         logger.info(f"Asset discovery complete. Total unique assets identified: {len(self.asset_resolver.assets_by_internal_id)}")
 
     def finalize_asset_classifications(self):
@@ -1150,6 +1182,7 @@ class ParsingOrchestrator:
         cash_events = event_factory.create_events_from_cash_transactions(self.raw_cash_transactions)
         ca_events = event_factory.create_events_from_corporate_actions(self.raw_corporate_actions)
         options_eae_events = event_factory.create_events_from_options_eae(self.raw_options_eae) if self.raw_options_eae else []
+        transfer_events = event_factory.create_events_from_transfers(self.raw_transfers)
 
         # Populate the main list of events
         self.domain_financial_events.clear() # Clear if run multiple times (though not typical)
@@ -1157,6 +1190,7 @@ class ParsingOrchestrator:
         self.domain_financial_events.extend(cash_events)
         self.domain_financial_events.extend(ca_events)
         self.domain_financial_events.extend(options_eae_events)
+        self.domain_financial_events.extend(transfer_events)
 
         self._require_option_cash_settlements(all_trade_events, options_eae_events)
 
@@ -1320,6 +1354,7 @@ class ParsingOrchestrator:
                              corporate_actions_file: Optional[str] = None,
                              cash_balance_file: Optional[str] = None,
                              options_eae_file: Optional[str] = None,
+                             transfers_file: Optional[str] = None,
                              positions_mark_files: Optional[Dict[int, str]] = None,
                              tax_year: Optional[int] = None
                              ) -> List[FinancialEvent]:
@@ -1336,6 +1371,7 @@ class ParsingOrchestrator:
                 corporate_actions_file=corporate_actions_file,
                 cash_balance_file=cash_balance_file,
                 options_eae_file=options_eae_file,
+                transfers_file=transfers_file,
                 positions_mark_files=positions_mark_files,
             )
             self.process_positions(tax_year=tax_year)
