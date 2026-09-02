@@ -95,7 +95,8 @@ def generate_console_tax_report(
 
     # Multi-account limitations, printed BEFORE the figures so a reader who stops at the
     # number they came for has already passed the warning about it. The engine records the
-    # gap on any run that sees more than one account (see _report_multi_account_limitations).
+    # gap on a multi-account run for which no Transfers export was supplied — the one case
+    # a move stays invisible (see _report_multi_account_limitations).
     for _gap in (data_gaps or []):
         if _gap.code == "MULTI_ACCOUNT_LIMITATIONS":
             print(f"\n  ACHTUNG -- {_gap.subject}. Mehrkonten-Unterstützung ist unvollständig:")

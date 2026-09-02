@@ -204,16 +204,49 @@ class TestCollapsingRowsIntoMoves:
         assert len(moves) == 2
         assert sorted(m.event_date for m in moves) == ["2023-06-01", "2023-07-15"]
 
-    def test_a_cash_row_produces_no_move(self, tmp_path):
-        """Currency is held as one balance per person, so a move between two of that
-        person's accounts changes nothing in it. Reading these rows is what
-        per-account currency would need, and the engine does not do that yet."""
-        assert _moves(tmp_path, [
+    def test_a_cash_row_produces_a_move(self, tmp_path):
+        """A non-EUR cash row is a disposal of the sending account's Kapitalforderung and
+        an acquisition of the receiving account's ([GT-FX-009]); it becomes one
+        InternalCashTransferEvent. Both sides carry the SAME TransactionID -- measured on
+        the export -- so the pair collapses to one move rather than being counted twice.
+        (Rewritten for PR-D from `test_a_cash_row_produces_no_move`, which asserted the old
+        pooled reading where the rows changed nothing.)"""
+        from src.domain.events import InternalCashTransferEvent
+        moves = _moves(tmp_path, [
             transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
                          quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
             transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="500", tx_id="X1", multiplier=""),
+        ])
+        assert len(moves) == 1
+        move = moves[0]
+        assert isinstance(move, InternalCashTransferEvent)
+        assert move.account_id == A       # the sending account
+        assert move.to_account_id == B    # the receiving account
+        assert move.quantity == Decimal("500")
+        assert move.local_currency == "USD"
+
+    def test_two_distinct_cash_moves_of_one_shape_stay_two(self, tmp_path):
+        """Two genuine moves of 500 USD from A to B on the same day are two disposals, not
+        one. The cash path keys on the TransactionID, so the two moves (X1 and X2) stay
+        apart; keying on the shape (accounts, currency, day, amount) would collapse them
+        into one and understate the year in silence, because a currency ledger that runs
+        short opens a short rather than refusing ([GT-FX-006]) -- there is no whole-position
+        backstop as on the securities path. Each move's two sides share one id, so the
+        pair still collapses to one."""
+        from src.domain.events import InternalCashTransferEvent
+        moves = _moves(tmp_path, [
+            transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="500", tx_id="X1", multiplier=""),
+            transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-500", tx_id="X2", multiplier=""),
+            transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
                          quantity="0", cash_transfer="500", tx_id="X2", multiplier=""),
-        ]) == []
+        ])
+        cash = [m for m in moves if isinstance(m, InternalCashTransferEvent)]
+        assert len(cash) == 2
 
     def test_the_event_carries_no_transaction_id(self, tmp_path):
         """The two sides carry different ids, so neither names the move -- and the id

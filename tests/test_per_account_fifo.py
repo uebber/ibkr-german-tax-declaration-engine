@@ -429,34 +429,32 @@ class TestTheLimitationsAreStated(FifoTestCaseBase):
         return next((g for g in out.data_gaps
                      if g.code == "MULTI_ACCOUNT_LIMITATIONS"), None)
 
-    def test_without_a_transfers_export_the_securities_caveat_stays(self):
-        """No Transfers export read, so a move in any year is invisible and the securities
-        caveat remains. (Rewritten by PR-C from `test_two_accounts_are_told_what_is_not_
-        covered`, which asserted the old unconditional "Überträge ... werden nicht
-        eingelesen"; the caveat is now conditional on whether the export was read.)"""
+    def test_without_a_transfers_export_the_only_caveat_is_the_unread_export(self):
+        """No Transfers export read, so a move in any year is invisible -- securities OR
+        currency. The one remaining warning says so. (Rewritten for PR-D from
+        `test_without_a_transfers_export_the_securities_caveat_stays`: the "Fremdwährung
+        je Person geführt" clause is gone -- currency is now per account [GT-FX-009] -- and
+        the invisible-move caveat now names the currency gains too.)"""
         gap = self._gap(self._run([A, B]))
-        assert gap is not None, "a multi-account run must state its limitations"
+        assert gap is not None, "a multi-account run with no export must state the gap"
         assert "KEIN TRANSFERS-BERICHT EINGELESEN" in gap.detail
-        # Currency is stated as the reading the store currently supports, not as a defect the
-        # engine has yet to fix (BMF Rz. 131 sets no Depot boundary; per-person is a lawful
-        # reading, decided separately in PR-D).
-        assert "Fremdwährungsbestände werden je Person geführt" in gap.detail
-        assert "derzeit vom Regelwerk gestützte Lesart" in gap.detail
+        # Currency moves are invisible without the export in exactly the way securities are,
+        # and the caveat names them; it no longer says currency is held per person.
+        assert "Fremdwährungsgewinne" in gap.detail
+        assert "je Person geführt" not in gap.detail
+        assert "gestützte Lesart" not in gap.detail
         assert "NICHT BELASTBAR" in gap.detail, \
-            "the securities limitation is only WARNING, so the text has to carry the weight"
+            "the limitation is only WARNING, so the text has to carry the weight"
 
-    def test_with_the_transfers_export_the_securities_caveat_is_gone(self):
-        """The securities half is closed once the export is read: the warning then says
-        the moves ARE read and the securities figures are unaffected, leaving only the
-        currency note. An empty export is still an export -- the person has the report and
-        moved nothing."""
+    def test_with_the_transfers_export_nothing_is_stated(self):
+        """Once the export is read there is nothing left to warn about: securities moves
+        relocate their lots ([GT-ESTG20-014]) and currency moves are read and measured
+        ([GT-FX-009]/[GT-FX-010]). So no gap is recorded at all -- a warning that everything
+        is fine is the defect this function used to be. (Rewritten for PR-D from
+        `test_with_the_transfers_export_the_securities_caveat_is_gone`, which expected the
+        warning to remain carrying only the currency note.)"""
         gap = self._gap(self._run([A, B], transfers_data=[]))
-        assert gap is not None
-        assert "werden eingelesen" in gap.detail
-        assert "nicht eingelesen" not in gap.detail
-        assert "KEIN TRANSFERS-BERICHT" not in gap.detail
-        assert "nicht betroffen" in gap.detail, "securities figures unaffected"
-        assert "Fremdwährungsbestände werden je Person geführt" in gap.detail
+        assert gap is None, "a multi-account run WITH the export has no limitation to state"
 
     def test_one_account_is_told_nothing(self):
         """The warning must not reach the people it does not apply to — a report

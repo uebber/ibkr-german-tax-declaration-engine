@@ -340,8 +340,13 @@ class RawTransferRecord(RawBaseRecord):
     cost_basis: Optional[Decimal] = Field(None, alias="CostBasis")
     open_date_time: Optional[str] = Field(None, alias="OpenDateTime")
     level_of_detail: Optional[str] = Field(None, alias="LevelOfDetail")
+    # The amount moved, on a cash row. `Quantity`, `PositionAmount` and `TransferPrice`
+    # are all zero on such a row -- a cash move has no units -- so this is the only column
+    # that carries it, and without it a currency move could not be measured at all. Blank
+    # on a securities row, where the units are in `Quantity`.
+    cash_transfer: Optional[Decimal] = Field(None, alias="CashTransfer")
 
-    @validator('multiplier', 'quantity', 'transfer_price', 'cost_basis', pre=True)
+    @validator('multiplier', 'quantity', 'transfer_price', 'cost_basis', 'cash_transfer', pre=True)
     def parse_decimal_fields(cls, v: Any) -> Any:
         """Blank becomes absent; anything else is handed to pydantic to parse or reject.
 

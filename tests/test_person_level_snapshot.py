@@ -121,17 +121,21 @@ class TestTheClosingSnapshotIsEveryAccountsRow(FifoTestCaseBase):
 
 
 class TestACurrencyHeldInTwoAccounts(FifoTestCaseBase):
-    """A opens with 1000 USD and B with 500; 1000 more are bought in March at a
-    different rate, and 1400 are sold in September.
+    """A opens with 1000 USD and B with 500; A buys 1000 more in March at a
+    different rate and sells 1400 in September. **The buy and the sale are both A's.**
 
     A USD is worth 0.50 EUR on the last day of the preceding year and 1.00 EUR
-    from March on, so the opening lot costs 0.50 EUR per USD and the March lot
-    1.00. Which lot the September sale eats therefore decides the gain:
+    from March on, so A's opening lot costs 0.50 EUR per USD and A's March lot
+    1.00. Each account's balance is its own Kapitalforderung ([GT-FX-009]), so A's
+    sale consumes A's OWN lots and never reaches B's 500:
 
-        the person's 1500 opening : 1400 x 0.50            = 700 basis -> 700 gain
-        B's 500 alone             : 500 x 0.50 + 900 x 1.00 = 1150     -> 250 gain
+        per account (A alone) : 1000 x 0.50 + 400 x 1.00 = 900 basis -> 500 gain
+        pooled (the old bug)  : 1400 x 0.50               = 700 basis -> 700 gain
 
-    Different figures on Anlage KAP, from the same export.
+    Different figures on Anlage KAP, from the same export -- and the per-account one
+    is the reading the store settles. (Rewritten for PR-D, which keys currency ledgers
+    by account; this class previously asserted the pooled 700, the deviation [GT-FX-009]
+    records.)
     """
     RATES = MockECBExchangeRateProvider(rate_schedule=[
         (date(2022, 1, 1), Decimal("0.50")),   # 1 USD = 0.50 EUR
@@ -157,21 +161,21 @@ class TestACurrencyHeldInTwoAccounts(FifoTestCaseBase):
         return [r for r in out.realized_gains_losses
                 if r.realization_type == RealizationType.FX_CONVERSION_SALE]
 
-    def test_the_gain_is_measured_against_the_persons_own_opening_balance(self):
+    def test_the_gain_is_measured_against_the_spending_accounts_own_balance(self):
         rgls = self._fx_sales(self._run())
-        assert sum(r.gross_gain_loss_eur for r in rgls) == Decimal("700")
+        assert sum(r.gross_gain_loss_eur for r in rgls) == Decimal("500")
 
-    def test_the_whole_sale_comes_out_of_the_opening_balance(self):
-        """1400 of the person's 1500 opening units, so the March lot is
-        untouched and there is one realisation, not two."""
+    def test_the_sale_eats_the_spending_accounts_own_two_lots(self):
+        """A sells 1400: 1000 from A's opening lot (0.50) and 400 from A's March lot
+        (1.00), so there are two realisations, not one. B's 500 is untouched."""
         rgls = self._fx_sales(self._run())
-        assert len(rgls) == 1
-        assert rgls[0].quantity_realized == Decimal("1400")
+        assert len(rgls) == 2
+        assert sorted(r.quantity_realized for r in rgls) == [Decimal("400"), Decimal("1000")]
 
     def test_the_closing_balance_is_both_accounts_and_reconciles(self):
-        """1500 opened + 1000 bought - 1400 sold = 1100, which is 600 in A and
-        500 in B. Reading one row reports 500 against a calculated 100, and the
-        divergence reaches the report as a gap."""
+        """A: 1000 opened + 1000 bought - 1400 sold = 600, which A's row reports; B: 500,
+        unchanged. Each account's ledger reconciles against its own reported closing
+        balance, so nothing reaches the report as a gap."""
         gaps = [g for g in self._run().data_gaps if g.code == "CURRENCY_EOY_MISMATCH"]
         assert gaps == []
 

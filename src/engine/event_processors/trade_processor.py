@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 import uuid
 from decimal import Decimal
 
-from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
+from src.utils.account_utils import account_key
 from src.domain.events import TradeEvent
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger
@@ -284,7 +284,10 @@ class TradeProcessor(EventProcessor):
             logger.debug(f"Trade {event.event_id}: No CashBalance asset for {trade_currency}, skipping implicit FX")
             return results
 
-        currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
+        # The account that made the trade: the currency leaves or arrives in that account's
+        # balance, and each account's balance is its own Kapitalforderung ([GT-FX-009]).
+        currency_ledger = currency_fifo_ledgers.get(
+            (account_key(event.account_id), currency_asset.internal_asset_id))
         if not currency_ledger:
             logger.debug(f"Trade {event.event_id}: No currency ledger for {trade_currency}, skipping implicit FX")
             return results
@@ -447,7 +450,10 @@ class TradeProcessor(EventProcessor):
         if not currency_asset:
             return results
 
-        currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
+        # The account that made the trade: the currency leaves or arrives in that account's
+        # balance, and each account's balance is its own Kapitalforderung ([GT-FX-009]).
+        currency_ledger = currency_fifo_ledgers.get(
+            (account_key(event.account_id), currency_asset.internal_asset_id))
         if not currency_ledger:
             return results
 

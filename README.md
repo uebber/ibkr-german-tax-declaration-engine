@@ -233,7 +233,7 @@ Select these fields:
 
 ### Query 7: Transfers (Optional)
 
-This query is needed if you hold **more than one account** and have ever moved a position between them. A move between your own accounts is not a sale, so its lots must keep their acquisition date and cost basis — but without this report the engine cannot see the move, and the receiving account will look as if it holds units it never bought. If you hold one account, or have never moved a position, this query is not required.
+This query is needed if you hold **more than one account** and have ever moved a position — or a foreign-currency balance — between them. A move of a *position* is not a sale, so its lots must keep their acquisition date and cost basis; a move of a *currency balance* is the opposite — a disposal of one account's holding and an acquisition of another's — and is measured as one. Without this report the engine cannot see either kind of move: the receiving account will look as if it holds units it never bought, and the currency gain of a move goes uncounted. If you hold one account, or have never moved anything, this query is not required.
 
 Create an Activity Flex Query with only the **Transfers** section enabled, and **turn lot detail on** so the export writes one lot row per acquisition day beneath each transfer (this is what produces the `Level of Detail`, `Cost Basis` and `Open Date Time` columns below — they are **required**; an export without them stops the run).
 
@@ -243,7 +243,7 @@ Select these fields:
 |---|-----------------|-------------|
 | 1 | ClientAccountID | Account identifier |
 | 2 | CurrencyPrimary | Instrument currency |
-| 3 | AssetClass | STK, etc. (CASH rows are ignored) |
+| 3 | AssetClass | STK, etc.; a CASH row is a currency move |
 | 4 | Symbol | Instrument symbol |
 | 5 | Description | Instrument description |
 | 6 | Conid | Contract identifier |
@@ -259,6 +259,7 @@ Select these fields:
 | 16 | Cost Basis | Lot total basis (broker convention; read only to cross-check) — **required** |
 | 17 | Open Date Time | Each lot's acquisition day — **required** |
 | 18 | Level of Detail | TRANSFER (summary) / LOT (per-lot detail) — **required** |
+| 19 | CashTransfer | The amount of a currency move — the only column carrying it. **Required** in any Transfers export (the strict parser rejects a file missing it); blank on a non-cash row. |
 
 ### Enabling the Flex Web Service (for automated download)
 

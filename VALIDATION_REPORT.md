@@ -400,6 +400,38 @@ line equal to it, group the non-EUR (non-`BASE_SUMMARY`) rows by `CurrencyPrimar
 distinct `ClientAccountID`; for each Transfers file, count `AssetClass=CASH` rows by
 `CurrencyPrimary`.
 
+
+## 2026-09-02 (second) — per-account currency, real-data effect up to each year's abort
+
+PR-D keys the currency FIFO ledgers by account. Measured against `data_import/` (the default
+35-column export), comparing the run on the base (`4da165a`, pooled) with the run on the per-account
+tree, up to each year's abort. cache/ copied into the base worktree so both start from the same
+classifications and fund prices (a parity baseline without it aborts early on an unclassified asset).
+
+**No year reaches a figure** — all three still stop at the same securities reconciliation, unchanged
+by this change: VZ 2023 at `EOY_RECONCILIATION_FAILED`, VZ 2024 and VZ 2025 at `REPLAY_MARK_MISMATCH`,
+every case on `ISIN:US45841N1072` (the share grant PR-E reads) and `ISIN:DE000LEG1110` (the own-account
+move the re-exported Transfers report does not contain). So the securities half is byte-for-byte the
+same run; the currency half changes state that is computed before the abort.
+
+**The observable delta is the currency SoY reconciliation splitting per account** — GT-FX-009 in one
+line: the pool nets a balance across accounts, per-account keeps each account's own.
+
+| Year | Base (pooled): currency SoY reconciliations logged | Per-account tree |
+|---|---|---|
+| VZ 2025 | 1 (GBP only) | 3 — the same GBP, **plus two USD reconciliations, one per account** |
+| VZ 2024 | 0 | 2 — both USD, one per account |
+
+The two USD reconciliations the per-account run logs are equal and opposite (one account short by a
+unit, the other long by a unit); pooled, they cancel and the pool logs neither. The adjustment
+amounts are single-unit reconciliation dust; the account balances they sit against are not reproduced
+here (public-repo rule). VZ 2023 initialises 9 currency ledgers (one per account that holds each
+currency) where the pool would build one per currency.
+
+**Reproduce with:** run `--tax-year {2024,2025} --report-tax-declaration --no-interactive` on
+`4da165a` (cache/ copied in) and on the per-account tree; grep the log for
+`Currency [A-Z]+: SOY reconciliation`. The abort code is identical on both.
+
 ## 2026-08-07
 
 **Supersedes the 2026-08-06 row reading "2024 | aborts on
