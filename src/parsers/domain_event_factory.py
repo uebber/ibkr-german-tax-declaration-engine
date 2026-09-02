@@ -12,13 +12,14 @@ from src.domain.events import (
     CorpActionMergerStock, CorpActionStockDividend, CorpActionExpireDividendRights,
     OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
-    CurrencyConversionEvent, FeeEvent
+    CurrencyConversionEvent, FeeEvent, InternalTransferEvent, InternalCashTransferEvent,
+    TransferLot
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord,
-    RawOptionsEAERecord
+    RawOptionsEAERecord, RawTransferRecord
 )
 from src.domain.exceptions import DataIntegrityError
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
@@ -224,7 +225,8 @@ class DomainEventFactory:
                 "local_currency": raw_trade.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": raw_trade.description,
-                "ibkr_notes_codes": raw_trade.notes_codes
+                "ibkr_notes_codes": raw_trade.notes_codes,
+                "account_id": raw_trade.client_account_id,
             }
 
             option_event: Optional[OptionLifecycleEvent] = None
@@ -382,7 +384,8 @@ class DomainEventFactory:
                         exchange_rate=rate,
                         ibkr_transaction_id=tx_id_primary,
                         ibkr_activity_description=f"FX Pair Trade: {rt.description}",
-                        ibkr_notes_codes=rt.notes_codes
+                        ibkr_notes_codes=rt.notes_codes,
+                        account_id=rt.client_account_id,
                     )
                     all_created_events.append(conv_event)
                     continue
@@ -443,6 +446,7 @@ class DomainEventFactory:
                     ibkr_activity_description=rt.description,
                     ibkr_notes_codes=rt.notes_codes,
                     is_position_flip=is_position_flip,
+                    account_id=rt.client_account_id,
                 )
 
                 if trade_event.gross_amount_foreign_currency is not None and trade_event.gross_amount_foreign_currency < Decimal("0"):
@@ -549,7 +553,8 @@ class DomainEventFactory:
                 "local_currency": rct.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": rct.description,
-                "ibkr_notes_codes": None  # `Code` is not exported; see RawCashTransactionRecord.
+                "ibkr_notes_codes": None,  # `Code` is not exported; see RawCashTransactionRecord.
+                "account_id": rct.client_account_id,
             }
 
             if "DIVIDEND" in event_type_str_upper:
@@ -741,7 +746,8 @@ class DomainEventFactory:
                 "ibkr_transaction_id": None,  # TransactionID is not exported for CAs
                 "ibkr_activity_description": rca.description,
                 "local_currency": rca.currency_primary or affected_asset.currency,
-                "gross_amount_foreign_currency": None # Will be set by specific CA type if applicable
+                "gross_amount_foreign_currency": None, # Will be set by specific CA type if applicable
+                "account_id": rca.client_account_id,
             }
             logger.debug(f"CA Record {idx+1}: common_ca_params_kw_base (pre-gross): {common_ca_params_kw_base}")
 
@@ -972,6 +978,7 @@ class DomainEventFactory:
                     gross_amount_foreign_currency=maturity_proceeds.copy_abs(),
                     ibkr_transaction_id=f"BM-{rca.action_id_ibkr}",
                     ibkr_activity_description=rca.description,
+                    account_id=rca.client_account_id,
                 )
                 domain_ca_events.append(bm_event)
                 continue
@@ -1081,6 +1088,7 @@ class DomainEventFactory:
                     local_currency=settle_row.currency_primary,
                     gross_amount_foreign_currency=proceeds.copy_abs(),
                     ibkr_activity_description=f"Cash Settlement: {settle_row.description}",
+                    account_id=settle_row.client_account_id,
                 )
 
                 cash_settlement_events.append(event)
@@ -1094,3 +1102,306 @@ class DomainEventFactory:
             )
         logger.info(f"Created {len(cash_settlement_events)} OptionCashSettlementEvents from OptionEAE data.")
         return cash_settlement_events
+
+    def create_events_from_transfers(
+        self, raw_transfers: List[RawTransferRecord]
+    ) -> List[Union[InternalTransferEvent, InternalCashTransferEvent]]:
+        """Collapse the Transfers export into one event per move of a holding.
+
+        The export writes each move as a summary row per side (`LevelOfDetail` "TRANSFER")
+        plus one lot-detail row per acquisition day beneath it (`LevelOfDetail` "LOT").
+        Rows are grouped into one side of one move by
+        `(ClientAccountID, TransferAccount, Direction, asset, Date)`; each surviving side
+        is normalised through `Direction` into the same `(from, to, asset, date, quantity)`
+        and the set is deduplicated -- either side alone describes the whole move, and both
+        sides produce one. The `LOT` rows of the surviving side become the move's
+        `moved_lots`: the per-acquisition-day breakdown of which lots the handover
+        relocates.
+
+        **What deduplication cannot see, and why it is not silent.** Two genuinely distinct
+        moves of one instrument on one day between one pair of accounts, of equal size,
+        collapse into one. Nothing in the export distinguishes that from the two sides of a
+        single move. It does not pass quietly: a move relocates the sending account's lots
+        for its acquisition days, so after the first the second finds those days already
+        gone and the run stops rather than moving units that are not there.
+
+        **A cash row is the opposite event and gets its own.** Moving a foreign-currency
+        balance to another of the taxpayer's accounts is a disposal of the sending
+        account's Kapitalforderung and an acquisition of the receiving account's
+        ([GT-FX-009]), where the securities move is no disposal at all. The two are built
+        here side by side because the export writes them the same way, and they leave as
+        different event types so that nothing downstream can treat one as the other. A cash
+        row carries its amount in `CashTransfer`: `Quantity`, `PositionAmount` and
+        `TransferPrice` are all zero on one, because a balance has no units.
+
+        **The cash path keys on the `TransactionID`, not on the move's shape.** Both sides
+        of one cash move carry the same id -- measured across the export's summary rows --
+        so the id names the move and two genuinely distinct moves of one currency, one day,
+        one pair of accounts and one amount stay two. Keyed on the shape they would collapse
+        into one disposal and pass in silence, which the securities path is saved from by
+        its whole-position/lot-detail check and this one would not be: a currency ledger
+        that runs short opens a short position rather than refusing ([GT-FX-006]). The id
+        is used only to identify the move and is deliberately NOT carried onto the event:
+        `get_event_sort_key` puts `ibkr_transaction_id` ahead of the intra-day band, so an
+        id there would let a broker's string decide whether the move lands before or after
+        that day's trades.
+
+        A move of EUR produces nothing. § 20 Abs. 2 Satz 1 Nr. 7 reaches a
+        *Fremdwaehrungs*guthaben and this engine's base currency is EUR, so there is no
+        currency gain to declare either way.
+        """
+        data_errors: List[str] = []
+        # Group by ADJACENCY, not by a key: the export writes each side-move as a summary
+        # row followed by its lot rows, so a TRANSFER row opens a group and the LOT rows
+        # under it attach to it. Keying by (accounts, direction, asset, date) instead
+        # would collapse two genuinely distinct moves of one instrument on one day into
+        # one; adjacency keeps them apart (they are then deduplicated by move total, so
+        # only two moves of EQUAL size on one day -- which the export cannot tell from one
+        # move's two lot rows -- still collapse, and that case has zero measured incidence).
+        groups: List[dict] = []
+        current: Optional[dict] = None
+        # Cash rows are the opposite event and are collected here to be built after the
+        # securities moves. They carry no LOT rows -- a balance has no lots to detail -- so
+        # they never enter the adjacency grouping above; they are keyed on TransactionID
+        # rather than shape (see the docstring).
+        cash_summary_rows: List[RawTransferRecord] = []
+
+        for rtr in raw_transfers:
+            asset_class = (rtr.asset_class or "").strip().upper()
+            if asset_class == "CASH":
+                cash_summary_rows.append(rtr)
+                continue
+            lod = (rtr.level_of_detail or "").strip().upper()
+            if lod not in ("TRANSFER", "LOT"):
+                data_errors.append(
+                    f"Transfer of {rtr.symbol or rtr.isin or 'unknown instrument'} on "
+                    f"{rtr.date} has LevelOfDetail '{rtr.level_of_detail}', which is neither "
+                    f"TRANSFER (a move's summary) nor LOT (its per-lot detail). The export's "
+                    f"lot-detail option must be on; the run cannot say which lots moved "
+                    f"without it.")
+                continue
+
+            asset = self.asset_resolver.get_or_create_asset(
+                raw_isin=rtr.isin, raw_conid=rtr.conid, raw_symbol=rtr.symbol,
+                raw_currency=rtr.currency_primary,
+                raw_ibkr_asset_class=rtr.asset_class, raw_description=rtr.description,
+                description_source_type="transfer",
+                raw_multiplier=rtr.multiplier,
+            )
+            if lod == "TRANSFER":
+                current = {"summary": rtr, "lots": [], "asset": asset}
+                groups.append(current)
+            else:  # LOT
+                if current is None or current["asset"].internal_asset_id != asset.internal_asset_id:
+                    data_errors.append(
+                        f"Transfer of {asset.get_classification_key()} on {rtr.date} has a "
+                        f"lot-detail row with no summary row before it. The export writes "
+                        f"one TRANSFER row per side and its lot rows beneath it; a lot row "
+                        f"standing alone is a malformed export.")
+                    continue
+                current["lots"].append(rtr)
+
+        moves: dict = {}
+        for g in groups:
+            rtr = g["summary"]
+            asset = g["asset"]
+            asset_id = asset.internal_asset_id
+            client = (rtr.client_account_id or "").strip()
+            transfer = (rtr.transfer_account or "").strip()
+            direction = (rtr.direction or "").strip().upper()
+            parsed_date = parse_ibkr_date(rtr.date)
+            event_date = parsed_date.isoformat() if parsed_date else None
+            name = asset.get_classification_key()
+
+            # Every observed row is INTERNAL. A move to a third party or to another
+            # institution is a different question -- whether it is a disposal at all
+            # depends on who ends up owning the units -- and `reference/` settles only
+            # the own-depot case ([GT-ESTG20-014]). So it stops the run rather than being
+            # relocated as if it stayed in the family.
+            transfer_type = (rtr.transfer_type or "").strip().upper()
+            if transfer_type != "INTERNAL":
+                data_errors.append(
+                    f"Transfer of {name} on {rtr.date} has Type '{rtr.transfer_type}', not "
+                    f"INTERNAL. Only a move between the taxpayer's own accounts is covered "
+                    f"([GT-ESTG20-014]); anything else may be a disposal and no rule here "
+                    f"decides which.")
+                continue
+
+            if direction == "OUT":
+                from_account, to_account = client, transfer
+            elif direction == "IN":
+                from_account, to_account = transfer, client
+            else:
+                data_errors.append(
+                    f"Transfer of {name} on {rtr.date} has Direction '{rtr.direction}'. The "
+                    f"sign of Quantity does not carry the direction, so there is nothing "
+                    f"else to read it from.")
+                continue
+
+            if not from_account or not to_account:
+                data_errors.append(
+                    f"Transfer of {name} on {rtr.date} names only one account (from "
+                    f"'{from_account}' to '{to_account}'). Both are needed to say which "
+                    f"ledger loses the lots and which receives them.")
+                continue
+
+            if not event_date:
+                data_errors.append(
+                    f"Transfer of {name} has an unparseable Date '{rtr.date}'. The move is "
+                    f"applied in chronological order, so it cannot be placed without one.")
+                continue
+
+            total = rtr.quantity.copy_abs()
+            if total <= Decimal(0):
+                data_errors.append(
+                    f"Transfer of {name} on {event_date} moves {rtr.quantity} "
+                    f"units. A move of nothing is not a move, and reading it as one would "
+                    f"leave the holding where it was while the broker reported it "
+                    f"elsewhere.")
+                continue
+
+            moved_lots: List[TransferLot] = []
+            bad_lot = False
+            for lot in g["lots"]:
+                lot_date = parse_ibkr_date(lot.open_date_time)
+                if lot_date is None:
+                    data_errors.append(
+                        f"Transfer of {name} on {event_date} has a lot row with an "
+                        f"unreadable OpenDateTime '{lot.open_date_time}'. The acquisition "
+                        f"day decides the holding period and § 18 Abs. 2 reduction, so it "
+                        f"cannot be guessed.")
+                    bad_lot = True
+                    continue
+                moved_lots.append(TransferLot(
+                    acquisition_date=lot_date.isoformat(),
+                    quantity=lot.quantity.copy_abs(),
+                    is_short=lot.quantity < Decimal(0)))
+            if bad_lot:
+                continue
+
+            if moved_lots:
+                lot_sum = sum((lot.quantity for lot in moved_lots), Decimal(0))
+                if lot_sum != total:
+                    data_errors.append(
+                        f"Transfer of {name} on {event_date}: the lot rows sum to {lot_sum} "
+                        f"units but the move's summary says {total}. One of them is wrong, "
+                        f"and relocating either would disagree with the broker's own total.")
+                    continue
+
+            move_key = (from_account, to_account, asset_id, event_date, total)
+            if move_key in moves:
+                continue
+            moves[move_key] = InternalTransferEvent(
+                asset_internal_id=asset_id,
+                event_date=event_date,
+                to_account_id=to_account,
+                quantity=total,
+                moved_lots=moved_lots,
+                account_id=from_account,
+                ibkr_activity_description=rtr.description,
+            )
+
+        # === Cash moves: the disposal-plus-acquisition, keyed by TransactionID ===
+        cash_moves: dict = {}
+        skipped_eur_cash_rows = 0
+        for rtr in cash_summary_rows:
+            currency = (rtr.currency_primary or "").strip().upper()
+            name = f"cash {currency or 'unknown'}"
+            transfer_type = (rtr.transfer_type or "").strip().upper()
+            if transfer_type != "INTERNAL":
+                data_errors.append(
+                    f"Cash transfer of {name} on {rtr.date} has Type '{rtr.transfer_type}', "
+                    f"not INTERNAL. Only a move between the taxpayer's own accounts is a "
+                    f"disposal of a Kapitalforderung the store settles ([GT-FX-009]); "
+                    f"anything else may be a payment to someone and no rule here decides it.")
+                continue
+
+            client = (rtr.client_account_id or "").strip()
+            transfer = (rtr.transfer_account or "").strip()
+            direction = (rtr.direction or "").strip().upper()
+            if direction == "OUT":
+                from_account, to_account = client, transfer
+            elif direction == "IN":
+                from_account, to_account = transfer, client
+            else:
+                data_errors.append(
+                    f"Cash transfer of {name} on {rtr.date} has Direction "
+                    f"'{rtr.direction}'. The sign of CashTransfer does not carry the "
+                    f"direction, so there is nothing else to read it from.")
+                continue
+            if not from_account or not to_account:
+                data_errors.append(
+                    f"Cash transfer of {name} on {rtr.date} names only one account (from "
+                    f"'{from_account}' to '{to_account}'). Both are needed to say which "
+                    f"balance is disposed of and which acquires the new one.")
+                continue
+
+            parsed_date = parse_ibkr_date(rtr.date)
+            event_date = parsed_date.isoformat() if parsed_date else None
+            if not event_date:
+                data_errors.append(
+                    f"Cash transfer of {name} has an unparseable Date '{rtr.date}'. The "
+                    f"disposal is valued at that day's rate, so it cannot be placed "
+                    f"without one.")
+                continue
+
+            if not currency:
+                data_errors.append(
+                    f"Cash transfer on {event_date} names no currency. Which "
+                    f"Kapitalforderung was disposed of cannot be read without one.")
+                continue
+            if currency == "EUR":
+                # Nothing to declare: § 20 Abs. 2 Satz 1 Nr. 7 reaches a
+                # Fremdwaehrungsguthaben, and euros are this engine's base currency.
+                # Counted as handled rather than skipped in silence.
+                skipped_eur_cash_rows += 1
+                continue
+
+            amount = (rtr.cash_transfer or Decimal(0)).copy_abs()
+            if amount <= Decimal(0):
+                data_errors.append(
+                    f"Cash transfer of {currency} on {event_date} moves "
+                    f"{rtr.cash_transfer} — the only column carrying the amount is "
+                    f"CashTransfer, and a move of nothing is not a move. Reading it as one "
+                    f"would leave the balance where it was while the broker reported it "
+                    f"elsewhere.")
+                continue
+
+            cash_key = (rtr.transaction_id or "").strip()
+            if cash_key and cash_key in cash_moves:
+                continue
+            cash_asset = self.asset_resolver.get_or_create_asset(
+                raw_isin=None, raw_conid=None, raw_symbol=currency,
+                raw_currency=currency, raw_ibkr_asset_class="CASH",
+                raw_description=f"Cash Balance {currency}",
+                description_source_type="transfer_cash",
+            )
+            event = InternalCashTransferEvent(
+                asset_internal_id=cash_asset.internal_asset_id,
+                event_date=event_date,
+                to_account_id=to_account,
+                quantity=amount,
+                account_id=from_account,
+                local_currency=currency,
+                gross_amount_foreign_currency=amount,
+                ibkr_activity_description=rtr.description,
+            )
+            if cash_key:
+                cash_moves[cash_key] = event
+            else:
+                # No id to dedup on: keyed on the whole shape instead, so a genuine
+                # duplicate still collapses and two distinct moves do not.
+                cash_moves[(from_account, to_account, currency, event_date, amount)] = event
+
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} transfer record(s) have data integrity issues:\n  "
+                + "\n  ".join(data_errors)
+            )
+
+        logger.info(
+            f"Created {len(moves)} internal transfer event(s) and {len(cash_moves)} "
+            f"internal cash transfer event(s) from {len(raw_transfers)} raw transfer "
+            f"row(s) ({skipped_eur_cash_rows} EUR cash row(s) carrying no currency gain)."
+        )
+        return list(moves.values()) + list(cash_moves.values())

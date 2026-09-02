@@ -51,6 +51,17 @@ OPTIONS_EAE_COLUMNS = (
 )
 
 
+TRANSFERS_COLUMNS = (
+    "ClientAccountID", "AccountAlias", "CurrencyPrimary", "AssetClass", "Symbol",
+    "Description", "Conid", "ISIN", "UnderlyingConid", "UnderlyingSymbol", "Multiplier",
+    "ReportDate", "Date", "DateTime", "SettleDate", "Type", "Direction",
+    "TransferAccount", "TransferAccountName", "Quantity", "TransferPrice",
+    "PositionAmount", "PositionAmountInBase", "PnlAmount", "PnlAmountInBase",
+    "CashTransfer", "Code", "ClientReference", "TransactionID", "SerialNumber",
+    "DeliveryType", "CommodityType", "CostBasis", "OpenDateTime", "LevelOfDetail",
+)
+
+
 def validate_csv_columns(
     actual_headers: Sequence[str],
     expected_columns: Sequence[str],

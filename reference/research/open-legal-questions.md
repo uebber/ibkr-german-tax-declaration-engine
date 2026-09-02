@@ -20,6 +20,7 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q8 | [GT-FX-006] | How is a short (negative) currency position taxed in Privatvermoegen? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q9 | [GT-FX-007], [GT-FX-001] | Is a currency movement embedded in another transaction a separate disposal, measured in EUR? Two instances: the leg of a securities trade, and a balance spent on a fee or withholding. | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q11 | [GT-ESTG20-038] | How is unallocated spot precious metal held at a broker taxed -- Termingeschaeft, privates Veraeusserungsgeschaeft, or sonstige Kapitalforderung? | this file |
+| Q15 | [GT-FX-010] | Rz. 131 makes an Umbuchung between two foreign-currency accounts a Veraeusserung. What is the Veraeusserungspreis, when nothing is paid? | `../bmf-guidance/fremdwaehrung-konten.md` |
 
 **Retired on the same terms, and for the same reason -- a source that settles the point was found,
 or the point was never one.** Numbers are never reused. Each line says what answered it; the
@@ -265,3 +266,50 @@ operate on the taxpayer's total income of their kind from every source, so neith
 weigh a reading. Nor is the practice of brokers and the firms preparing their reports, which enter
 such amounts on Anlage KAP; that is habit, not authority, and it is the likeliest source of a wrong
 answer here.
+
+## Q15 -- what a currency Umbuchung between the taxpayer's own accounts is worth
+
+**The disposal itself is not in question.** BMF 14.05.2025 Rz. 131 ¶2 lists it among the disposing
+events: *"Das Gleiche gilt, wenn die Fremdwaehrungskapitalforderung ... auf ein anderes
+verzinsliches Konto bei demselben oder einem anderen Kreditinstitut umgebucht wird. Diese
+Vorgaenge stellen steuerlich eine Veraeusserung der urspruenglichen Kapitalforderung und zugleich
+eine Anschaffung einer neuen Kapitalforderung dar."* That is [GT-FX-009]. **What no located source
+states is the Veraeusserungspreis**, and an Umbuchung pays nothing.
+
+**Reading A (gemeiner Wert of what is received).** Where a disposal's consideration is not money,
+the administration measures it at the value of the thing received, and says so in every
+configuration it addresses: **Rn. 65/66** for a Tausch von Wertpapieren -- *"Als
+Veraeusserungserloes fuer die hingegebenen Wertpapiere ist der Boersenkurs der erlangten
+Wertpapiere am Tag der Depoteinbuchung anzusetzen"* with the mirror rule for the
+Anschaffungskosten; **Rn. 66a** for an Umschuldung; **Rn. 69** in general terms -- *"Wird die
+Gegenleistung nicht in Geld geleistet ..., ist als Veraeusserungspreis der gemeine Wert der
+erhaltenen Wirtschaftsgueter anzusetzen."* Applied here, the new Kapitalforderung is what is
+received, its gemeiner Wert is the amount moved, and § 20 Abs. 4 Satz 1 zweiter Halbsatz
+([GT-ESTG20-022]) converts the proceeds on the day of the Umbuchung and the acquisition cost on
+the day the amount entered the sending account.
+**Against it:** none of the three Randziffern is addressed to a Fremdwaehrungskonto. Rn. 65/66
+speak of Wertpapiere and a Boersenkurs, and a currency balance is neither; Rn. 69 sits in the
+Abfindung of Minderheitsaktionaere. Reading A is an extension of a principle, not the application
+of a sentence that names this case.
+
+**Reading B (no stated price, so nothing realised).** § 20 Abs. 4 EStG substitutes a value for
+absent Einnahmen in exactly two places -- Satz 2, verdeckte Einlage, and Satz 8, an abgetrennter
+Zinsschein -- and the legislature's having named those two is an argument that it did not intend a
+general gemeiner-Wert rule. On this reading the gain stays latent in the moved balance and is
+realised when that balance is genuinely spent or converted, against its original acquisition cost.
+**Against it:** it empties Rz. 131's express *"Veraeusserung der urspruenglichen Kapitalforderung"*
+of any effect, and no located source advances it. It is stated here because the alternative to
+Reading A has to be written down, not because a source was found for it.
+
+**What turns on the answer.** The two readings agree on the lifetime total where the balance is
+eventually disposed of in full. They differ on **which year** the gain falls in, on whether a
+balance that is moved and then simply held is taxed at all, and -- for a balance falling in the
+§ 23 branch ([GT-FX-002]) -- on whether the Jahresfrist restarts at the move.
+
+**Status.** § 20 Abs. 4 EStG was retrieved in full on 2026-08-12 from gesetze-im-internet.de and
+all nine Saetze read; BMF 14.05.2025 was retrieved in full the same day and searched for the
+valuation of an Umbuchung, including Rn. 59, which Rz. 131 cross-references and which defines the
+Veraeusserungsbegriff without valuing anything. **No Tier 1 or Tier 2 statement on this case has
+been located.** The asymmetry between the two readings is one of authority, not of plausibility:
+Reading A extends what the administration says everywhere else, Reading B contradicts what it says
+here.

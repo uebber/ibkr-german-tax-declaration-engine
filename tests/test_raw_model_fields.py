@@ -37,6 +37,7 @@ MODELS = [
      "data_import/Corporate_Actions-*.csv"),
     ("RawOptionsEAERecord", cv.OPTIONS_EAE_COLUMNS, "data_import/Options_EAE-*.csv"),
     ("RawCashBalanceRecord", cv.CASH_BALANCE_COLUMNS, "data_import/Cash_Balance-*.csv"),
+    ("RawTransferRecord", cv.TRANSFERS_COLUMNS, "data_import/Transfers-*.csv"),
 ]
 
 
@@ -122,7 +123,7 @@ def test_the_column_tuples_match_the_real_exports():
 
 def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
     """
-    The mirror case, pinned rather than fixed. Three columns are requested and
+    The mirror case, pinned rather than fixed. Two columns are requested and
     delivered but have no field, so `extra = 'ignore'` discards them silently.
 
     They are left alone here because correcting one could move a figure — feeding
@@ -134,8 +135,9 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
     **Tracked as issue #69**, which ranks the three and says what each needs:
     `Amount` wants a `reference/` answer before any code (at least one corporate
     action has a non-zero `Amount` disagreeing with both `Proceeds` and `Value`);
-    `SubCategory` wants its masking measured; `ClientAccountID` is inert until the
-    per-Depot flip, because `account_key()` currently has no call sites.
+    `SubCategory` wants its masking measured. `ClientAccountID` was the third and has
+    left the list: `RawPositionRecord` now maps it, because the tax year's opening and
+    closing snapshots are recorded per account and the column is what says which.
 
     This test fails when the set changes, so the next person either finds the
     decision recorded or has to record their own.
@@ -149,8 +151,24 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
     dropped = {k: v for k, v in dropped.items() if v}
 
     assert dropped == {
-        "RawPositionRecord": ["ClientAccountID", "SubCategory"],
+        "RawPositionRecord": ["SubCategory"],
         "RawCorporateActionRecord": ["Amount"],
+        # The Transfers export carries 35 columns; the model reads the 19 that place a
+        # move and its lots. The 16 below are dropped deliberately and none can move a
+        # figure -- unlike SubCategory/Amount above: they are broker metadata
+        # (AccountAlias, ClientReference, SerialNumber, DeliveryType, CommodityType,
+        # ReportDate, SettleDate, TransferAccountName, UnderlyingConid/Symbol), the
+        # broker's own position/PnL figures (PositionAmount(InBase), PnlAmount(InBase)),
+        # the `Code` "ST" marker that `LevelOfDetail` replaces, and `DateTime` -- the
+        # intraday timestamp the engine deliberately never reads (same-day order is a band
+        # rule, not a clock; see sorting_utils). `CashTransfer` is now READ, not dropped: it
+        # carries the amount of a currency move ([GT-FX-009]), the only column that does.
+        "RawTransferRecord": [
+            "AccountAlias", "ClientReference", "Code", "CommodityType",
+            "DateTime", "DeliveryType", "PnlAmount", "PnlAmountInBase", "PositionAmount",
+            "PositionAmountInBase", "ReportDate", "SerialNumber", "SettleDate",
+            "TransferAccountName", "UnderlyingConid", "UnderlyingSymbol",
+        ],
     }, (
         f"the set of requested-but-unmapped columns changed: {dropped}. If a column "
         f"gained a field, remove it from this list. If one was dropped, decide whether "

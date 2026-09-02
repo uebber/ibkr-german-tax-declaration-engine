@@ -30,6 +30,7 @@ have is worse than one with a visible hole.
 | Currency conversion of a non-EUR transaction | EStG | 20 Abs. 4 S. 1 Hs. 2 (each leg at its own date) | (every non-EUR figure) | estg-20-kapitalvermoegen.md [GT-ESTG20-022] |
 | Gain on a Termingeschaeft | EStG | 20 Abs. 4 S. 5 (Differenzausgleich less direct costs) | KAP Z21/19 | estg-20-kapitalvermoegen.md [GT-ESTG20-023] |
 | Sparer-Pauschbetrag; no actual Werbungskosten | EStG | 20 Abs. 9 | KAP Z16/17 (portion already used) | estg-20-kapitalvermoegen.md [GT-ESTG20-024] |
+| Whose holding is declared | EStG | 2 Abs. 1 S. 1 Nr. 5 i.V.m. 25 Abs. 1, Abs. 3 S. 1 (the person and the Veranlagungszeitraum are the units) | (every figure) | estg-20-kapitalvermoegen.md [GT-ESTG20-061] |
 | Lot identification (Fifo), securities | EStG | 20 Abs. 4 S. 7 + BMF 14.05.2025 Rz. 97-99 (je Depot) | (all disposals) | estg-20-kapitalvermoegen.md |
 | Lot identification (Fifo), currency | EStG / BMF | 23 Abs. 1 S. 1 Nr. 2 S. 3 (Tier 1) for the 23 branch; BMF 14.05.2025 Rz. 131 for the 20 branch | (all currency disposals) | estg-23-private-veraeusserung.md [GT-ESTG23-013], fremdwaehrung-konten.md [GT-FX-008] |
 | Bond sale | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | estg-20-kapitalvermoegen.md |
@@ -64,6 +65,8 @@ have is worse than one with a visible hole.
 | FX gain (explicit conversion) | EStG | 20 Abs. 2 S. 1 Nr. 7 i.V.m. S. 2 (verzinslich) / 23 Abs. 1 S. 1 Nr. 2 (unverzinslich) | KAP Z19/22 or SO | fremdwaehrung-konten.md |
 | FX gain (currency leg of a securities trade) | -- | **unresolved**; Rz. 131 does *not* address it | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-007], open-legal-questions.md Q9 instance (a) |
 | FX gain (currency consumed to settle a cash-flow item) | -- | **unresolved**; Rz. 131 names Veraeusserung and Rueckzahlung, not a payment out of the balance | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-001], open-legal-questions.md Q9 instance (b) |
+| Whose balance a currency disposal consumes | BMF | 14.05.2025 Rz. 131 ¶2 -- an Umbuchung between two interest-bearing accounts, at the same or a different institution, is a Veraeusserung plus an Anschaffung, so the balances are distinct Kapitalforderungen | (all currency disposals) | fremdwaehrung-konten.md [GT-FX-009] |
+| FX gain (balance moved between the taxpayer's own accounts) | BMF | Rz. 131 ¶2 settles the disposal; **the value is unresolved** -- Rn. 65/66, 66a and 69 measure a non-money consideration at the gemeiner Wert of what is received, none of them for a currency account | KAP Z19/22 | fremdwaehrung-konten.md [GT-FX-010], open-legal-questions.md Q15 |
 | Private sale (Gold ETC etc.) | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 1 | SO Z54 | estg-23-private-veraeusserung.md |
 | Jahresfrist arithmetic | AO / BGB | 108 Abs. 1 AO, 187 Abs. 1 / 188 Abs. 2-3 BGB | (decides SO Z54 vs. exempt) | estg-23-private-veraeusserung.md |
 | Jahresfrist, currency lot order | EStG | 23 Abs. 1 S. 1 Nr. 2 S. 3 | (decides which acquisition date is compared) | estg-23-private-veraeusserung.md |

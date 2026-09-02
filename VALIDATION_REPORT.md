@@ -219,6 +219,219 @@ All 28 loss offsetting test cases (LO_ALL_001 through LO_FUND_MISCH_002) were sp
 Ledger reconciliation and output parity against the maintainer's own IBKR export. Instance data —
 holdings, identifiers, amounts — stays in gitignored working copies; only outcomes are recorded here.
 
+## 2026-08-31
+
+**Incidence behind [GT-ESTG20-061]** — how often a snapshot column arrives on more than one row,
+measured against `data_import/` on this date. The claim is that the person declares the total
+across their accounts; what follows is how far the engine's reading of one row per instrument was
+from that total in fact.
+
+Two `ClientAccountID`s appear across the exports -- two, not three: the mid-file header
+repeats IBKR inserts carry the literal string `ClientAccountID` in that column, and a naive
+distinct-value count reads it as a third account. `TransferAccount` adds no further value.
+
+| snapshot | rows | multi-account subjects | reading one row differs from the total |
+|---|---|---|---|
+| `Positions-*.csv` (2022 SoY/EoY … 2025 SoY/EoY, 8 files) | 88 | **0 instruments** in any file | never — the securities half is **latent** |
+| `Cash_Balance-*.csv` (2022 … 2025) | 52 | 3 non-EUR currencies in 2023 and 2024, 4 in 2025 | 10 of 10 (file, currency) groups on the raw rows; **1 per year** once the engine's own filter has run |
+
+`BASE_SUMMARY` and `EUR` rows are excluded, and so is a row whose opening and closing balance are
+both under the 0.01 threshold `_process_cash_balance_positions` applies. That filter already
+neutralises the defect wherever the second account's balance is dust — the surviving row is then
+both the last row and the whole total. What is left after it is one currency per year, in 2023,
+2024 and 2025 alike, and that one is not dust.
+
+So the currency half of the claim bites on every assessment year in scope and the securities half
+does not bite at all on this export.
+
+**What the moved figure does.** Captured on this date against `main` (`5a64079`) and against this
+change, VZ 2023 / 2024 / 2025, `--no-interactive`, logs normalised per `scripts/parity_check.sh`.
+No year produces a console or a PDF on either tree — every one aborts first, see below — so
+`parity_check.sh compare` correctly refuses and the log is the only artifact there is to compare.
+A same-tree control was captured first: **0 differing lines in each of the three years**, so
+nothing below is ambient nondeterminism.
+
+The baseline runs from a second worktree, which moves both the source path and the line number in
+every traceback frame, and emits one `uv` warning about the virtual environment. Those are
+artefacts of how the capture is taken, and they are counted separately rather than waved away:
+
+| VZ | raw differing lines | traceback frames | `uv` warning | log wording | **figure** |
+|---|---|---|---|---|---|
+| 2023 | 15 | 14 | 1 | 0 | **0** |
+| 2024 | 17 | 14 | 1 | 2 | **0** |
+| 2025 | 24 | 18 | 1 | 4 | **1** |
+
+The log-wording lines are one INFO line per checkpoint mark, reworded from
+*"N instrument(s) reported"* to *"N (account, instrument) row(s) reported"* because the mark is now
+keyed per account. **The counts on both sides of that line are identical** — 3 at the 2022 mark, 13
+at the 2023 mark — which is itself a measurement: no instrument is reported on two rows at either
+mark, so the securities half stays latent here as the table above says.
+
+The one remaining difference is `Currency USD: SOY reconciliation …`, emitted on `main` and not
+here. That line is the defect. On `main` the year's opening USD balance is one account's row, which
+disagrees with what the historical replay reconstructs, so the engine closes the gap by
+synthesising a reconciliation lot: a quantity nobody held, dated 31 December of the preceding year,
+at a cost basis derived from that day's ECB rate. With the person's own balance the two agree
+exactly and no lot is synthesised. The gap on `main` is the balance of the account the file did not
+end with.
+
+**No run reaches a figure on either tree, and that is not this change.** All three years abort
+identically on `main` at `5a64079`: 2023 and 2025 on one instrument whose reconstruction disagrees
+with the snapshot (the share grants the engine cannot yet read), 2024 on
+`VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN`.
+
+**So the comparison reaches a different depth in each year, and the "0" for 2024 is the weakest of
+the three.** Measured by counting the log lines each phase emits, on both trees:
+
+| VZ | `Currency init` | currency `Replayed` | SoY reconciliations | securities EoY check | currency EoY check |
+|---|---|---|---|---|---|
+| 2023 | 6 | 5 | 32 | reached, aborts | **never reached** |
+| 2024 | **0** | **0** | **0** | **0** | **0** |
+| 2025 | 9 | 0 | 79 | never reached | never reached |
+
+VZ 2024 aborts during fund-price resolution, before any ledger is built, so its 0 covers parsing
+and enrichment and nothing else. VZ 2023 builds and replays the currency ledgers and reconciles
+every securities ledger against the opening snapshot, then aborts at the securities EoY check,
+which precedes the currency one. VZ 2025 reaches the checkpoint-mark grading.
+
+**One consequence, stated because a "0" invites the opposite conclusion:** in VZ 2023 the two trees
+*do* differ internally and the capture cannot see it. The last USD row of `Cash_Balance-2023.csv`
+carries a zero opening balance, so `main` opens the USD ledger at zero and this change opens it at
+the person's balance; neither state is logged at INFO, and `_reconcile_currency_soy` returns
+silently in both. The single visible difference is VZ 2025's.
+
+**No snapshot column is ever blank.** `Quantity`, `PositionValue`, `MarkPrice`, `CostBasisMoney`,
+`CurrencyPrimary` and `ClientAccountID` are populated on 88 of 88 Positions data rows;
+`StartingCash`, `EndingCash`, `ClientAccountID` and `CurrencyPrimary` on 52 of 52 Cash_Balance data
+rows. (The files hold 93 and 55 lines below the header; the differences are the mid-file header
+repeats IBKR inserts, which `src/data_preparation.py` drops before any parser sees them.) Per
+CLAUDE.md's
+counting gate the accumulation therefore builds nothing for a blank column beyond keeping `None`
+distinct from zero, and the assumption it rests on — that every account's row carries the column —
+is written at `_sum_snapshot_column` in `src/parsers/parsing_orchestrator.py`.
+
+**Asset merges: 0 in 718 rows.** The counting gate for the guard that checks a preceding year's
+snapshot still reaches the fund it was read for. A reclassification can no longer lose one — the
+registries are keyed by `internal_asset_id` and `replace_asset_type` re-uses it — so the only
+remaining way is a **merge**, where two identifiers resolve to one asset, the loser is deleted and
+rows filed under its id become unreachable. Measured by counting deletions from
+`assets_by_internal_id` while resolving every row of every export in the window through one
+resolver: 93 Positions rows, 239 Trades rows and 386 Cash_Transactions rows, 283 assets,
+**0 merges**. The guard has never fired on this data, and tightening it from the field-level check
+it replaced therefore costs nothing.
+
+**Mutation probes: 59 sites, 54 red, 5 green.** Run over the full suite with the one known
+pre-existing failure deselected, recording which test ids fail rather than reading an exit code.
+The five that stay green were each measured, not assumed:
+
+- **four are a per-unit price read from a different account's row** — in `_snapshot_price`, and in
+  the § 18 Abs. 1 Satz 2 and Satz 3 reads. A price is a property of the instrument, every account's
+  row carries the same one, and the settled year-start price is written back to every row. No
+  choice between rows can change a value; making it observable would mean giving two accounts
+  different prices for one instrument on one date, which is an input shape the invariant excludes.
+- **one is the Satz 3 Stichtag falling back to the year's last business day.** The recorded date is
+  that same day, because it comes from the file the row was read out of and nothing substitutes a
+  closing price. The two coincide by construction.
+
+**The § 18 Abs. 2 correction is latent on this export.** It changes what happens to units the
+reconstruction could not date but the preceding snapshot places before the Vorabpauschale year.
+VZ 2023 is the only year that reaches the Vorabpauschale computation at all, and it produces 0
+records for calendar 2022, so no fund on this data has such a lot. Covered by scenarios only, and
+the parity capture is unchanged by it.
+
+**Two Positions rows for one instrument: 0 occurrences.** The counting gate for the rule that a
+per-unit price is recorded only where the rows agree on it. Measured three ways over the eight
+Positions files: no ISIN appears under more than one `Conid` in any file; no `(account, resolved
+asset)` key is reported twice in 93 rows; and no `(account, currency)` pair is reported twice in
+the 52 Cash_Balance rows. `MarkPrice` is populated on 88 of 88 data rows, so the blank case does
+not arise either. The shape that would produce it is one security listed on two exchanges and
+held in one account in one currency — most plausible for a cross-listed ETF, which is also the
+only asset class whose snapshot price reaches a declared figure.
+
+**Leak scan over the Positions monetary columns: 1 file before, 0 after.** A scan of the six
+Cash_Balance columns cannot see a Positions value, so a second one was run over `PositionValue`,
+`MarkPrice`, `CostBasisMoney` and `Quantity`: every value of magnitude at least 1, exact and
+rounded to two places and to one, keeping only forms of four or more significant digits **whose
+last significant digit is non-zero** — 212 forms — matched at whole-number boundaries against
+every tracked non-PDF file. The round-number filter is what gives the scan power: `1000` and
+`100.00` are what every invented scenario uses, so a match on one carries no information, and
+without the filter the same scan reports 48 files and says nothing. Run over `5a64079` and over
+this tree: **1 file before, 0 after.** The file is
+`tests/test_vorabpauschale_reclassification.py`, whose fixture carried a position value and the
+mark price on the same export rows.
+
+**Pre-existing, and not from this measurement:** the re-exported Cash_Balance report carries four
+columns `CASH_BALANCE_COLUMNS` does not declare (`StartingCashSecurities`,
+`StartingCashCommodities`, and the two `EndingCash*` equivalents), so
+`test_the_column_tuples_match_the_real_exports` fails on a developer tree holding this export. The
+parser accepts them and nothing reads them; a clean clone has no `data_import/` and skips the test.
+Present on `main` at `5a64079` with the same data.
+
+## 2026-09-02 — incidence behind per-account currency, measured on the current data_import
+
+The counting gate for [GT-FX-009] and [GT-FX-010]. Measured on the export the train now reads —
+`data_import/` holding the 35-column lot-detail Transfers and the Cash_Balance reports — with
+repeated mid-file headers stripped the way the engine strips them. **This supersedes the
+2026-08-12 currency incidence**, which was measured on the earlier 32-column export the default no
+longer uses; the two disagree, and the difference is itself a finding (last two rows).
+
+| Measurement | Result |
+|---|---|
+| Cash-balance reports carrying `ClientAccountID` | 2022, 2023, 2024; the 2025 report has 10 columns and no `ClientAccountID`, so 2025 cash keys to the one default account |
+| Years whose cash report names more than one account | 2 (2023, 2024); 2022 is one account |
+| Non-EUR currencies held in **more than one account** in the same year | 3 in 2023 and 3 in 2024 (CAD, SGD, USD each in both accounts); 0 otherwise |
+| `Quantity`, `PositionAmount`, `TransferPrice` on the cash transfer rows | `0` on every one; the amount is in `CashTransfer` |
+| `CASH` rows in any `Positions-*.csv` | none, any year — no export supplies a cost basis for a currency balance, and none is read |
+| `AssetClass=CASH` transfer rows in the default (35-column) Transfers export | one **EUR** move (one OUT, one IN) in 2023; **no non-EUR move** |
+| The one non-EUR (USD) currency Umbuchung | present only in `data_import/obsolete/` (the 32-column export); the re-exported 35-column Transfers dropped it — the same incompleteness PR-C recorded for the LEG securities move |
+
+**What this settles.** [GT-FX-009] is **not latent**: non-EUR currencies sit in both accounts in
+2023 and 2024, so the pooled ledger measures a disposal against another account's lots today and
+the per-account split changes which lots are consumed — an observable delta up to each year's
+abort. [GT-FX-010]'s move valuation **is latent on the default export**: the only move in it is
+EUR, which is inert because the base currency is not a Fremdwährungsguthaben. The real USD
+Umbuchung the taxpayer made in 2023 survives only in the obsolete 32-column export, which the
+securities half of the train cannot read. So the currency-move code is exercised by the test
+scenarios and by the obsolete export, not by the default run — stated rather than left implicit.
+Neither half is zero, so the counting gate does not stop the work.
+
+**Reproduce with:** for each Cash_Balance file, take the header from the first line, drop any later
+line equal to it, group the non-EUR (non-`BASE_SUMMARY`) rows by `CurrencyPrimary` and count
+distinct `ClientAccountID`; for each Transfers file, count `AssetClass=CASH` rows by
+`CurrencyPrimary`.
+
+
+## 2026-09-02 (second) — per-account currency, real-data effect up to each year's abort
+
+PR-D keys the currency FIFO ledgers by account. Measured against `data_import/` (the default
+35-column export), comparing the run on the base (`4da165a`, pooled) with the run on the per-account
+tree, up to each year's abort. cache/ copied into the base worktree so both start from the same
+classifications and fund prices (a parity baseline without it aborts early on an unclassified asset).
+
+**No year reaches a figure** — all three still stop at the same securities reconciliation, unchanged
+by this change: VZ 2023 at `EOY_RECONCILIATION_FAILED`, VZ 2024 and VZ 2025 at `REPLAY_MARK_MISMATCH`,
+every case on `ISIN:US45841N1072` (the share grant PR-E reads) and `ISIN:DE000LEG1110` (the own-account
+move the re-exported Transfers report does not contain). So the securities half is byte-for-byte the
+same run; the currency half changes state that is computed before the abort.
+
+**The observable delta is the currency SoY reconciliation splitting per account** — GT-FX-009 in one
+line: the pool nets a balance across accounts, per-account keeps each account's own.
+
+| Year | Base (pooled): currency SoY reconciliations logged | Per-account tree |
+|---|---|---|
+| VZ 2025 | 1 (GBP only) | 3 — the same GBP, **plus two USD reconciliations, one per account** |
+| VZ 2024 | 0 | 2 — both USD, one per account |
+
+The two USD reconciliations the per-account run logs are equal and opposite (one account short by a
+unit, the other long by a unit); pooled, they cancel and the pool logs neither. The adjustment
+amounts are single-unit reconciliation dust; the account balances they sit against are not reproduced
+here (public-repo rule). VZ 2023 initialises 9 currency ledgers (one per account that holds each
+currency) where the pool would build one per currency.
+
+**Reproduce with:** run `--tax-year {2024,2025} --report-tax-declaration --no-interactive` on
+`4da165a` (cache/ copied in) and on the per-account tree; grep the log for
+`Currency [A-Z]+: SOY reconciliation`. The abort code is identical on both.
+
 ## 2026-08-07
 
 **Supersedes the 2026-08-06 row reading "2024 | aborts on
@@ -352,3 +565,94 @@ as German Kapitalertragsteuer, and a data-gap line appears naming that amount an
 Steuerbescheinigung requirement. The reduction equals the excluded row to the cent. VZ 2025 does
 not move, because every withholding row that year carries a non-German issuer country and is
 correctly retained as foreign tax.
+
+## 2026-09-01 — per-account FIFO (GT-ESTG20-013), measured against the real export
+
+Incidence of the input the per-account keying depends on, `ClientAccountID`, measured with
+`utf-8-sig` (the 2025 files carry a UTF-8 BOM) and skipping the mid-file header repeats IBKR
+inserts: present on every event row across the window, none blank — 236 of 236 Trades data rows,
+383 of 383 Cash_Transactions, 6 of 6 Corporate_Actions; the OptionEAE report has no rows. (Counting
+the header-repeat rows as data gives 239 / 386 / 9; either way the load-bearing figure is zero
+blank.) Two accounts appear across the window; the assumption that every account's row carries the
+column is written at `account_key` in `src/utils/account_utils.py`.
+
+**The securities half is not latent on this export** — the base's "no instrument in two accounts"
+was measured on the Positions files alone and does not describe the run. Own-account transfers, which
+the engine does not yet read, put an instrument in two accounts across the trades and the marks:
+
+- VZ 2023: two instruments are bought in one account and sold from another within the year
+  (US8998961044 and US36467W1099 — ISINs identify instruments, not wealth, so they stay; the account
+  numbers do not, per the public-repo rule). Per account the selling account's ledger is empty, so
+  the run stops at the first such sale with an insufficient-lots error. Pooled FIFO netted the buy
+  and the sale silently.
+- VZ 2025: the close-of-2023 snapshot (a checkpoint mark) reports about eight further still-held
+  instruments in a different account than the trades reconstruct them into — positions moved between
+  accounts with no sale, so a BUY/SELL scan does not see them. Per account this is a 19-ledger
+  `REPLAY_MARK_MISMATCH` and the run stops.
+- VZ 2024: one account only, so unchanged — aborts at `VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN`,
+  exactly as before, and the multi-account limitations warning does not fire.
+
+All three already aborted before any figure on the base, so no figure is lost. Reading the Transfers
+export (the next change) relocates the moved lots and makes VZ 2023 and VZ 2025 complete again. These
+counts and instrument identifiers stay here, not in a commit message, per CLAUDE.md's public-repo
+rule and the PR-hygiene rule against a portfolio census in published text.
+
+## 2026-09-01 — PR-C (own-account transfers) real-data validation
+
+Run against the maintainer's export with the 35-column Transfers report
+(`data_import/data_new_transfers/`) copied into `data_import/`; `cache/` present so no
+early classification abort. Baseline is PR-B (`2c8c45b`), which does not read Transfers.
+No account numbers here (public-repo rule); ISINs identify instruments, not wealth.
+
+**The run gets further — the observable goal.** No year reaches a figure yet (PR-E is not
+in), so each parity point compares the run up to its abort:
+
+| VZ | PR-B stop | PR-C stop |
+|---|---|---|
+| 2023 | a cross-account **sale** aborts the tax-year dispatch (insufficient long lots) | the sale's lots are relocated, so the run reaches **EoY reconciliation** — 3 positions remain |
+| 2024 | `VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN` (one account) | identical — no transfers, unchanged |
+| 2025 | `REPLAY_MARK_MISMATCH`, **19 ledgers** | `REPLAY_MARK_MISMATCH`, **3 ledgers** |
+
+The 9 transferred instruments (BNS, ERNE, SGO, D05, KV4, DEM, GME, TIO, TUP) now relocate
+and reconcile, which is what moves VZ 2025 from 19 disagreeing ledgers to 3 and lets VZ 2023
+past the cross-account sale. The moves include 6 short lots and four distinct acquisition
+days on one instrument (GME) — all matched day by day.
+
+**The 3 that remain in both VZ 2023 and VZ 2025 are outside PR-C:**
+- `US45841N1072` (a share grant) — the grant report is not read until PR-E; its quantity is
+  short by the granted units.
+- `DE000LEG1110` (LEG IMMOBILIEN) — traded in one account and reported at 2023 year-end in
+  the other, so it **moved between accounts**, but it is **not in the Transfers export** (the
+  export covers 9 instruments and this is not one). The engine correctly stops rather than
+  inventing the move. This is a completeness gap in the re-exported report, recorded so the
+  maintainer knows a move is missing from it; it is not a defect in PR-C.
+
+**Mutation probes (transfer test files + merger sort test), full run, failing ids recorded,
+no `-x`.** 12 sites, all RED (observable). Highlights: removing the transfer's sort band →
+only the txid-carrying band test fails (the plain before-a-trade test stays green on the
+empty-txid fallback — measured, explained); reverting the precedence partition → the band
+test AND the merger de-fragilisation test fail; ignoring the `LOT` rows → the breakdown,
+partial-move and sub-day-split tests fail; dropping the historical deferral → 8 pre-tax-year
+tests fail; dropping the tax-year dispatch entry → the in-year tests fail; no-op the
+incomplete-window guard → the window test fails; dropping the historical deferral → the
+mark-reconcile test fails.
+
+**Note.** `test_the_column_tuples_match_the_real_exports` fails on any developer tree once
+`data_import/Transfers-*.csv` holds the 35-column shape only while `RawTransferRecord`'s
+tuple is checked against it — it matches the 35-column export and mismatches the 32-column
+one. It skips on a clean clone (no `data_import/`), where the suite is 1232 passed / 1
+skipped. This is the same pre-existing skip class as the Cash_Balance tuple.
+
+### 2026-09-01 — sort-key precedence change: currency-neutrality (confirmed at cold review)
+
+The same-day precedence partition in `get_event_sort_key` is neutral for currency FIFO **by
+construction**, not merely by the passing suite: the only lot-delivering event kind that touches
+a currency ledger is a cash merger (`CorpActionMergerCash`, a corporate action), whose export
+carries no `TransactionID`, so its sort txid is always empty and it already sorted ahead of the
+same day's currency events under the old key. Every other currency-affecting event (trades, FX
+conversions, dividends, interest, fees) stays in the non-delivering partition, where the
+secondary key is byte-identical to before. So no currency lot's consumption order changes. The
+one behaviour change is on securities: an option-lifecycle event now sorts before a same-day
+trade regardless of transaction id (previously a smaller-id trade could precede it) — the
+intended dependency, declared. The full suite (every currency/FX/option figure test) is green
+and VZ 2024 is byte-identical to the baseline, consistent with no unintended movement.

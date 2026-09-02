@@ -6,7 +6,8 @@ from typing import Tuple, Any
 
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, WithholdingTaxEvent, CorporateActionEvent,
-    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent
+    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent, InternalTransferEvent,
+    InternalCashTransferEvent
 )
 from src.identification.asset_resolver import AssetResolver
 from src.domain.assets import Asset
@@ -63,6 +64,41 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.ibkr_activity_description or "", # PRD's event.description (FinancialEvent.ibkr_activity_description)
             event.creation_sequence
         )
+    elif isinstance(event, (InternalTransferEvent, InternalCashTransferEvent)):
+        # Same intra-day slot as a corporate action, and for the same reason a merger
+        # takes it (see engine/replay.py): the units must be in the RECEIVING account
+        # before that day's disposals, or a sale of what just arrived hits an empty
+        # ledger. The price is the other end of the day -- a sale out of the SENDING
+        # account booked on the move date is applied after the move, so the ledger then
+        # holds less than the move claims; that case is loud, not silent, because the
+        # closing reconciliation compares the sending account against the broker.
+        #
+        # A CASH move shares the band and the argument -- the balance has to be in the
+        # receiving account before that day's spending -- but not the loudness: a
+        # currency ledger that runs short opens a short position rather than refusing
+        # ([GT-FX-006]), so the sending side simply sells what it has and shorts the rest.
+        # Nothing in the export orders a move against a trade on the same day, so this is
+        # a choice between two unsourced orders, and it is the one that keeps the
+        # receiving side able to spend what it just received.
+        #
+        # This band puts the move in the lot-DELIVERING partition below, which sorts
+        # ahead of that day's trades BY THE RULE, not by the accident of an empty
+        # transaction id -- the move would sort first even if it carried one. See the
+        # precedence comment at the end of this function.
+        intra_day_order = _INTRA_DAY_SORT_ORDER_CORP_ACTION
+        # Four elements, all strings but the last, because that is the shape the
+        # corporate-action branch above produces and this event shares its band. Two
+        # items in one band whose element types differ at some position raise TypeError
+        # the moment everything before that position ties -- so `asset.asset_category`
+        # (a plain Enum, which does not compare) must be its `.name`, or two moves on
+        # one day take the whole run down. Pinned by
+        # `test_two_moves_on_one_day_sort_without_blowing_up`.
+        specific_secondary_elements = (
+            asset.asset_category.name,
+            event.account_id or "",
+            event.to_account_id,
+            event.creation_sequence,
+        )
     elif isinstance(event, OptionLifecycleEvent): # Option Lifecycles before regular trades
         intra_day_order = _INTRA_DAY_SORT_ORDER_OPTION_LIFECYCLE
         # PRD: (event.ibkr_transaction_id, asset.asset_category, event.creation_sequence)
@@ -104,12 +140,39 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.creation_sequence
         )
     
-    # For events on the same date, prioritize transaction ID over event type
-    # This ensures chronological order is preserved (IBKR assigns transaction IDs sequentially)
+    # Within a day, transaction id is IBKR's own chronology (ids are assigned
+    # sequentially), and it is the ground truth: currency FIFO is computed over this same
+    # stream, so consuming the currency lots in the true order is what makes the currency
+    # gain right.
     transaction_id_for_sort = event.ibkr_transaction_id or ""
 
-    # The final secondary key tuple: (transaction_id, intra_day_order_integer, then PRD elements)
-    # The PRD elements ALREADY end with event.creation_sequence.
-    secondary_key_tuple = (transaction_id_for_sort, intra_day_order) + specific_secondary_elements
+    # There is ONE legitimate override of that chronology: an event that DELIVERS lots
+    # must precede a same-day disposal of the lots it delivers, because a sale cannot
+    # consume what has not yet arrived. §20 Abs. 4a Satz 6 fixes a merger at the
+    # Einbuchung; an internal transfer-in must exist before a same-day sale out of the
+    # receiving account; an option exercise/assignment creates the position the resulting
+    # trade settles. So the day is partitioned: lot-DELIVERING kinds (corporate actions
+    # and mergers, internal transfers -- which share the corp-action band -- and option
+    # lifecycle events) sort ahead of everything else; WITHIN each part the true txid
+    # chronology is kept, so trades, dividends, interest and FX -- which touch the
+    # currency ledger and have no delivery dependency between them -- keep their real
+    # order and the currency figure stays correct.
+    #
+    # This is the explicit domain rule, not the accident it replaced: the old key put the
+    # transaction id ahead of the band, so a delivering event landed before a trade only
+    # when its id happened to be smaller (e.g. corporate actions, whose export carries no
+    # id, sorted to ""). An event that delivers lots AND carries an id -- an internal
+    # transfer given one, an option lifecycle event -- would otherwise sort by the
+    # broker's string rather than by the rule. See engine/replay.py on the merger, which
+    # this fixes too.
+    _LOT_DELIVERING_BANDS = (
+        _INTRA_DAY_SORT_ORDER_CORP_ACTION,      # corporate actions, mergers, internal transfers
+        _INTRA_DAY_SORT_ORDER_OPTION_LIFECYCLE,  # option exercise/assignment/expiry
+    )
+    precedence = 0 if intra_day_order in _LOT_DELIVERING_BANDS else 1
+
+    # The final secondary key tuple: (precedence, transaction_id, intra_day_order, then
+    # PRD elements). The PRD elements ALREADY end with event.creation_sequence.
+    secondary_key_tuple = (precedence, transaction_id_for_sort, intra_day_order) + specific_secondary_elements
 
     return (parsed_date, secondary_key_tuple)
