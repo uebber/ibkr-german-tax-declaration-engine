@@ -367,6 +367,39 @@ columns `CASH_BALANCE_COLUMNS` does not declare (`StartingCashSecurities`,
 parser accepts them and nothing reads them; a clean clone has no `data_import/` and skips the test.
 Present on `main` at `5a64079` with the same data.
 
+## 2026-09-02 — incidence behind per-account currency, measured on the current data_import
+
+The counting gate for [GT-FX-009] and [GT-FX-010]. Measured on the export the train now reads —
+`data_import/` holding the 35-column lot-detail Transfers and the Cash_Balance reports — with
+repeated mid-file headers stripped the way the engine strips them. **This supersedes the
+2026-08-12 currency incidence**, which was measured on the earlier 32-column export the default no
+longer uses; the two disagree, and the difference is itself a finding (last two rows).
+
+| Measurement | Result |
+|---|---|
+| Cash-balance reports carrying `ClientAccountID` | 2022, 2023, 2024; the 2025 report has 10 columns and no `ClientAccountID`, so 2025 cash keys to the one default account |
+| Years whose cash report names more than one account | 2 (2023, 2024); 2022 is one account |
+| Non-EUR currencies held in **more than one account** in the same year | 3 in 2023 and 3 in 2024 (CAD, SGD, USD each in both accounts); 0 otherwise |
+| `Quantity`, `PositionAmount`, `TransferPrice` on the cash transfer rows | `0` on every one; the amount is in `CashTransfer` |
+| `CASH` rows in any `Positions-*.csv` | none, any year — no export supplies a cost basis for a currency balance, and none is read |
+| `AssetClass=CASH` transfer rows in the default (35-column) Transfers export | one **EUR** move (one OUT, one IN) in 2023; **no non-EUR move** |
+| The one non-EUR (USD) currency Umbuchung | present only in `data_import/obsolete/` (the 32-column export); the re-exported 35-column Transfers dropped it — the same incompleteness PR-C recorded for the LEG securities move |
+
+**What this settles.** [GT-FX-009] is **not latent**: non-EUR currencies sit in both accounts in
+2023 and 2024, so the pooled ledger measures a disposal against another account's lots today and
+the per-account split changes which lots are consumed — an observable delta up to each year's
+abort. [GT-FX-010]'s move valuation **is latent on the default export**: the only move in it is
+EUR, which is inert because the base currency is not a Fremdwährungsguthaben. The real USD
+Umbuchung the taxpayer made in 2023 survives only in the obsolete 32-column export, which the
+securities half of the train cannot read. So the currency-move code is exercised by the test
+scenarios and by the obsolete export, not by the default run — stated rather than left implicit.
+Neither half is zero, so the counting gate does not stop the work.
+
+**Reproduce with:** for each Cash_Balance file, take the header from the first line, drop any later
+line equal to it, group the non-EUR (non-`BASE_SUMMARY`) rows by `CurrencyPrimary` and count
+distinct `ClientAccountID`; for each Transfers file, count `AssetClass=CASH` rows by
+`CurrencyPrimary`.
+
 ## 2026-08-07
 
 **Supersedes the 2026-08-06 row reading "2024 | aborts on

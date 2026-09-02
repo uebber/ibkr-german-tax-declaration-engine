@@ -37,7 +37,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 - [Einzelfragen Abgeltungsteuer](bmf-guidance/abgeltungsteuer-einzelfragen.md) -- Central BMF guidance (14.05.2025, Rz. 1-325); retrieved in full 2026-08-03. Index into the document, plus its version history and application rule; the day that fixes Anschaffung and Veraeusserung (Rn. 85, Rn. 317) and the acquisition data of fund units (Rn. 184a)
 - [Basiszins Vorabpauschale](bmf-guidance/basiszins-vorabpauschale.md) -- Published rates 2018-2026, one BMF-Schreiben cited per row
-- [Fremdwaehrung Konten](bmf-guidance/fremdwaehrung-konten.md) -- FX gain classification (20 vs. 23 EStG); BMF 14.05.2025 Rz. 131 verbatim
+- [Fremdwaehrung Konten](bmf-guidance/fremdwaehrung-konten.md) -- FX gain classification (20 vs. 23 EStG); BMF 14.05.2025 Rz. 131 verbatim; one account = one Kapitalforderung, and what a move between two of them is worth
 - [Wertpapierdarlehen -- Zurechnung](bmf-guidance/wertpapierdarlehen-zurechnung.md) -- who a lent security belongs to under 39 AO, and what follows: BMF 09.07.2021 in full (the Grundfall, the five Ausnahme criteria and where the burden sits, the lender's income where attribution stays, no Gewinnrealisierung on the loan), plus BMF 14.05.2025 Rn. 170-173 and the reach of its 43 Abs. 1 Satz 4 fiction
 
 ## Existing Form Instructions (OCR)
