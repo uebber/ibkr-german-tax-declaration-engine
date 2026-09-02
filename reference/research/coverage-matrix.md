@@ -30,6 +30,7 @@ have is worse than one with a visible hole.
 | Currency conversion of a non-EUR transaction | EStG | 20 Abs. 4 S. 1 Hs. 2 (each leg at its own date) | (every non-EUR figure) | estg-20-kapitalvermoegen.md [GT-ESTG20-022] |
 | Gain on a Termingeschaeft | EStG | 20 Abs. 4 S. 5 (Differenzausgleich less direct costs) | KAP Z21/19 | estg-20-kapitalvermoegen.md [GT-ESTG20-023] |
 | Sparer-Pauschbetrag; no actual Werbungskosten | EStG | 20 Abs. 9 | KAP Z16/17 (portion already used) | estg-20-kapitalvermoegen.md [GT-ESTG20-024] |
+| Whose holding is declared | EStG | 2 Abs. 1 S. 1 Nr. 5 i.V.m. 25 Abs. 1, Abs. 3 S. 1 (the person and the Veranlagungszeitraum are the units) | (every figure) | estg-20-kapitalvermoegen.md [GT-ESTG20-061] |
 | Lot identification (Fifo), securities | EStG | 20 Abs. 4 S. 7 + BMF 14.05.2025 Rz. 97-99 (je Depot) | (all disposals) | estg-20-kapitalvermoegen.md |
 | Lot identification (Fifo), currency | EStG / BMF | 23 Abs. 1 S. 1 Nr. 2 S. 3 (Tier 1) for the 23 branch; BMF 14.05.2025 Rz. 131 for the 20 branch | (all currency disposals) | estg-23-private-veraeusserung.md [GT-ESTG23-013], fremdwaehrung-konten.md [GT-FX-008] |
 | Bond sale | EStG | 20 Abs. 2 Nr. 7 | KAP Z19/22 | estg-20-kapitalvermoegen.md |

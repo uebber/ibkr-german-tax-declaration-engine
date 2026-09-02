@@ -32,10 +32,26 @@ from unittest.mock import MagicMock
 import pytest
 
 import src.config as config
-from src.domain.assets import InvestmentFund
+from dataclasses import dataclass
+
+from src.domain.assets import (
+    InvestmentFund, SnapshotsByAccount, person_snapshot)
+from tests.support.prior_year_snapshots import snapshot_row
 from src.domain.enums import InvestmentFundType
 from src.engine.calculation_engine import FundUnitTranche, _calculate_vorabpauschale
 from src.identification.asset_resolver import AssetResolver
+
+
+@dataclass
+class _FundFixture:
+    """A fixture fund with the preceding year's two price snapshots of it."""
+    asset: InvestmentFund
+    prior_soy: SnapshotsByAccount
+    prior_eoy: SnapshotsByAccount
+
+    @property
+    def internal_asset_id(self):
+        return self.asset.internal_asset_id
 
 
 def _fund(currency="USD", soy_price=Decimal("100"), eoy_price=Decimal("110"),
@@ -44,14 +60,14 @@ def _fund(currency="USD", soy_price=Decimal("100"), eoy_price=Decimal("110"),
         fund_type=InvestmentFundType.AKTIENFONDS, description="Stichtag Fund",
         currency=currency, ibkr_isin="IE00STICH001", ibkr_symbol="STCH",
     )
-    fund.prior_year_soy_mark_price = soy_price
-    fund.prior_year_soy_mark_price_currency = currency
-    fund.prior_year_eoy_mark_price = eoy_price
-    fund.prior_year_eoy_mark_price_currency = currency
-    fund.prior_year_eoy_quantity = Decimal("100")
-    if soy_price_date is not None:
-        fund.prior_year_soy_mark_price_date = soy_price_date
-    return fund
+    return _FundFixture(
+        asset=fund,
+        prior_soy=snapshot_row(fund.internal_asset_id, mark_price=soy_price,
+                               mark_price_currency=currency,
+                               mark_price_date=soy_price_date),
+        prior_eoy=snapshot_row(fund.internal_asset_id, quantity=Decimal("100"),
+                               mark_price=eoy_price, mark_price_currency=currency),
+    )
 
 
 def _conversion_dates(fund, vorabpauschale_year):
@@ -61,8 +77,8 @@ def _conversion_dates(fund, vorabpauschale_year):
     which is the only thing these tests are about.
     """
     resolver = MagicMock(spec=AssetResolver)
-    resolver.assets_by_internal_id = {fund.internal_asset_id: fund}
-    resolver.get_asset_by_id.return_value = fund
+    resolver.assets_by_internal_id = {fund.internal_asset_id: fund.asset}
+    resolver.get_asset_by_id.return_value = fund.asset
 
     converter = MagicMock()
     converter.convert_to_eur.side_effect = lambda amount, currency, dt: amount
@@ -79,6 +95,9 @@ def _conversion_dates(fund, vorabpauschale_year):
         currency_converter=converter,
         vorabpauschale_year=vorabpauschale_year,
         opening_lots_by_asset=lots,
+        prior_soy_positions=fund.prior_soy,
+        prior_eoy_positions=fund.prior_eoy,
+        prior_opening_positions={},
         ctx=ctx,
     )
 
@@ -182,8 +201,11 @@ class TestTheEndsOfTheChannel:
         orch.process_positions(tax_year=2024)      # Vorabpauschale year 2023
 
         asset = next(iter(orch.asset_resolver.assets_by_internal_id.values()))
-        assert asset.prior_year_soy_mark_price_date == date(2023, 1, 3)
-        assert asset.prior_year_eoy_mark_price_date == date(2023, 12, 29)
+        asset_id = asset.internal_asset_id
+        assert person_snapshot(orch.prior_soy_positions, asset_id).mark_price_date \
+            == date(2023, 1, 3)
+        assert person_snapshot(orch.prior_eoy_positions, asset_id).mark_price_date \
+            == date(2023, 12, 29)
 
     def test_a_substituted_price_is_dated_in_the_preceding_year(self, tmp_path):
         from src.classification.asset_classifier import AssetClassifier
@@ -208,19 +230,24 @@ class TestTheEndsOfTheChannel:
 
         orch.process_positions(tax_year=2024)      # Vorabpauschale year 2023
 
-        asset = next(a for a in orch.asset_resolver.assets_by_internal_id.values()
-                     if a.prior_year_soy_mark_price is not None)
-        assert asset.prior_year_soy_mark_price == Decimal("9")
-        assert asset.prior_year_soy_mark_price_date == date(2022, 12, 30), (
+        substituted = next(snap for snap in orch.prior_soy_positions.values()
+                           if snap.mark_price is not None)
+        assert substituted.mark_price == Decimal("9")
+        assert substituted.mark_price_date == date(2022, 12, 30), (
             "the substituted price is the last one set in 2022, so its Stichtag "
             "is in 2022 — not the first trading day of 2023")
 
     def test_the_stichtag_survives_a_classification_retype(self):
         """A positions row arrives as a Stock and becomes a fund only once the
-        user's classification is applied. `replace_asset_type` copies a
-        hand-listed set of fields; a date left off that list would be silently
-        replaced by the year-derived convention, which is wrong by a year on
-        the substitution path."""
+        user's classification is applied.
+
+        `replace_asset_type` builds a new object of the classified type. It used
+        to carry the snapshot across by copying a hand-listed set of fields, and
+        a date left off that list was silently replaced by the year-derived
+        convention -- wrong by a year on the substitution path. There is no list
+        now: the snapshot is a registry row keyed by `internal_asset_id`, and
+        the rebuild keeps that id, so the Stichtag reaches the retyped fund
+        whatever fields the new object declares."""
         from unittest.mock import MagicMock as MM
 
         from src.domain.enums import AssetCategory
@@ -233,15 +260,59 @@ class TestTheEndsOfTheChannel:
             raw_currency="SGD", raw_ibkr_asset_class="STK",
             raw_description="XYZ2 BOND INDEX", description_source_type="position",
         )
-        asset.prior_year_soy_mark_price_date = date(2022, 12, 30)
-        asset.prior_year_eoy_mark_price_date = date(2023, 12, 29)
+        prior_soy = snapshot_row(asset.internal_asset_id, mark_price=Decimal("9"),
+                                 mark_price_currency="SGD",
+                                 mark_price_date=date(2022, 12, 30))
+        prior_eoy = snapshot_row(asset.internal_asset_id, quantity=Decimal("100"),
+                                 mark_price=Decimal("12"), mark_price_currency="SGD",
+                                 mark_price_date=date(2023, 12, 29))
 
         retyped = resolver.replace_asset_type(
             asset.internal_asset_id, AssetCategory.INVESTMENT_FUND,
             InvestmentFundType.SONSTIGE_FONDS, "classified by the user as a fund")
 
-        assert retyped.prior_year_soy_mark_price_date == date(2022, 12, 30)
-        assert retyped.prior_year_eoy_mark_price_date == date(2023, 12, 29)
+        assert retyped.internal_asset_id == asset.internal_asset_id
+        assert person_snapshot(prior_soy, retyped.internal_asset_id).mark_price_date \
+            == date(2022, 12, 30)
+        assert person_snapshot(prior_eoy, retyped.internal_asset_id).mark_price_date \
+            == date(2023, 12, 29)
+
+
+def test_a_price_settled_elsewhere_is_converted_in_its_own_currency():
+    """Rz. 18.6 converts at the rate for the currency the price is quoted in.
+
+    The year-start Ruecknahmepreis need not come from the export: an issuer's
+    published NAV is preferred to it, and may be quoted in another currency than
+    the fund itself. Falling back to the fund's currency would convert a USD NAV
+    at a EUR rate -- which is no conversion at all -- and the Basisertrag would
+    be the foreign figure taken as euros.
+    """
+    fund = _fund(currency="EUR", soy_price=Decimal("100"), eoy_price=Decimal("110"))
+    # As `resolve_year_start_prices` leaves it, having taken the issuer's NAV.
+    fund.prior_soy = snapshot_row(fund.internal_asset_id, mark_price=Decimal("100"),
+                                  mark_price_currency="USD",
+                                  mark_price_date=date(2023, 1, 3))
+
+    resolver = MagicMock(spec=AssetResolver)
+    resolver.assets_by_internal_id = {fund.internal_asset_id: fund.asset}
+    resolver.get_asset_by_id.return_value = fund.asset
+    converter = MagicMock()
+    converter.convert_to_eur.side_effect = lambda amount, currency, dt: amount
+    ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION,
+                  rounding=config.DECIMAL_ROUNDING_MODE)
+    lots = {fund.internal_asset_id: [FundUnitTranche(
+        quantity=Decimal("100"), acquisition_date=date(2020, 5, 20))]}
+
+    _calculate_vorabpauschale(
+        asset_resolver=resolver, distributions_by_asset={},
+        currency_converter=converter, vorabpauschale_year=2023,
+        opening_lots_by_asset=lots, prior_soy_positions=fund.prior_soy,
+        prior_eoy_positions=fund.prior_eoy, prior_opening_positions={}, ctx=ctx)
+
+    soy_call = converter.convert_to_eur.call_args_list[0]
+    assert soy_call.args[1] == "USD", (
+        "the year-start price is converted in the currency it is quoted in, not "
+        "the one the fund is quoted in")
 
 
 def test_a_euro_fund_is_untouched_by_any_of_this():
@@ -250,8 +321,8 @@ def test_a_euro_fund_is_untouched_by_any_of_this():
     EUR-denominated fund's figure cannot move whichever day is chosen."""
     resolver = MagicMock(spec=AssetResolver)
     fund = _fund(currency="EUR")
-    resolver.assets_by_internal_id = {fund.internal_asset_id: fund}
-    resolver.get_asset_by_id.return_value = fund
+    resolver.assets_by_internal_id = {fund.internal_asset_id: fund.asset}
+    resolver.get_asset_by_id.return_value = fund.asset
 
     converter = MagicMock()
     converter.convert_to_eur.side_effect = (
@@ -264,7 +335,8 @@ def test_a_euro_fund_is_untouched_by_any_of_this():
     results = _calculate_vorabpauschale(
         asset_resolver=resolver, distributions_by_asset={},
         currency_converter=converter, vorabpauschale_year=2023,
-        opening_lots_by_asset=lots, ctx=ctx,
+        opening_lots_by_asset=lots, prior_soy_positions=fund.prior_soy,
+        prior_eoy_positions=fund.prior_eoy, prior_opening_positions={}, ctx=ctx,
     )
 
     assert len(results) == 1

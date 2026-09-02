@@ -4,7 +4,7 @@ from typing import Callable, List, Tuple, Dict, DefaultDict, Optional, Set, Any
 import uuid
 from decimal import Decimal, getcontext, Context
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, date
 
 from src.utils.account_utils import account_key, DEFAULT_ACCOUNT
@@ -18,7 +18,8 @@ from src.domain.events import (
     WithholdingTaxEvent, CurrencyConversionEvent
 )
 from src.domain.assets import (
-    Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance, MarkPosition,
+    Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance,
+    MarksByAccount, PositionSnapshot, SnapshotsByAccount, person_mark, person_snapshot,
 )
 from src.identification.asset_resolver import AssetResolver
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
@@ -60,7 +61,8 @@ logger = logging.getLogger(__name__)
 
 def _initialize_currency_soy_ledger(ledger: FifoLedger, asset: CashBalance, tax_year: int,
                                      exchange_rate_provider: ECBExchangeRateProvider,
-                                     ctx: Context) -> None:
+                                     ctx: Context,
+                                     reported: Optional[PositionSnapshot] = None) -> None:
     """
     Initialize currency FIFO ledger using SOY position with fallback cost basis.
 
@@ -74,7 +76,8 @@ def _initialize_currency_soy_ledger(ledger: FifoLedger, asset: CashBalance, tax_
     from src.engine.fifo_manager import FifoLot, ShortFifoLot
     from datetime import date as date_obj
 
-    reported_soy_qty = asset.soy_quantity
+    reported_soy_qty = reported.quantity if reported else None
+    reported_soy_cost = reported.cost_basis_amount if reported else None
     if reported_soy_qty is None or reported_soy_qty == Decimal("0"):
         logger.debug(f"Currency {asset.currency}: SOY quantity is zero or None, no lots to create")
         return
@@ -95,8 +98,8 @@ def _initialize_currency_soy_ledger(ledger: FifoLedger, asset: CashBalance, tax_
     if reported_soy_qty > Decimal("0"):
         # Positive SOY = long position
         # Use provided cost basis if available, otherwise calculate from ECB rate
-        if asset.soy_cost_basis_amount and asset.soy_cost_basis_amount > Decimal("0"):
-            total_cost_basis_eur = asset.soy_cost_basis_amount
+        if reported_soy_cost and reported_soy_cost > Decimal("0"):
+            total_cost_basis_eur = reported_soy_cost
             unit_cost_basis_eur = ctx.divide(total_cost_basis_eur, reported_soy_qty)
             logger.debug(f"Currency {asset.currency}: Using provided SOY cost basis: {total_cost_basis_eur:.2f} EUR")
         else:
@@ -292,10 +295,30 @@ def run_main_calculations(
     # their absence is a gap rather than an empty portfolio. Defaults False so a caller that
     # has not been updated fails loudly instead of silently dropping deemed income.
     prior_year_positions_available: bool = False,
-    # Checkpoint marks: {year: {asset_id: MarkPosition}} from Positions-{year}-EoY.csv, for
-    # every year strictly below the opening snapshot. Empty means the historical window is
-    # replayed as one uninterrupted interval — the behaviour before checkpointing.
-    mark_positions: Optional[Dict[int, Dict[uuid.UUID, "MarkPosition"]]] = None,
+    # Checkpoint marks: {year: {(account_key, asset_id): MarkPosition}} from
+    # Positions-{year}-EoY.csv, for every year strictly below the opening snapshot. Empty
+    # means the historical window is replayed as one uninterrupted interval — the
+    # behaviour before checkpointing. Ledgers are still pooled per person here, so what a
+    # reconstruction is graded against is `person_mark` over the accounts' rows.
+    mark_positions: Optional[Dict[int, "MarksByAccount"]] = None,
+    # The tax year's opening and closing snapshots, {(account_key, asset_id):
+    # PositionSnapshot}. A ledger reconciles against its OWN account's record; the
+    # person's total, which is what the return declares ([GT-ESTG20-061]), is
+    # `person_snapshot` over them. Empty means no snapshot was supplied at all, which
+    # `_ensure_soy_quantities_are_set` has already turned into an explicit zero holding
+    # for every non-cash asset, so an empty registry here means an empty portfolio.
+    soy_positions: Optional["SnapshotsByAccount"] = None,
+    eoy_positions: Optional["SnapshotsByAccount"] = None,
+    # The PRECEDING calendar year's snapshots, read only by the Vorabpauschale: the close
+    # of that year (the Rz. 18.4 unit count and the Satz 3 cap price) and the close of the
+    # year before it (the units the year opened with). Recorded per (account, asset) like
+    # every other snapshot; the Vorabpauschale reads the person's figure over them.
+    prior_eoy_positions: Optional["SnapshotsByAccount"] = None,
+    prior_opening_positions: Optional["SnapshotsByAccount"] = None,
+    # The year-start Ruecknahmepreis 18 Abs. 1 Satz 2 asks for, settled a layer up by
+    # `resolve_year_start_prices` and written back into the preceding year's opening
+    # snapshot. Passed in as that registry.
+    prior_soy_positions: Optional["SnapshotsByAccount"] = None,
     # What was DECLARED as Vorabpauschale on earlier returns, per fund and calendar year.
     # Feeds the Anlage KAP-INV Zeile 53 deduction (19 Abs. 1 Satz 3 InvStG), which may only
     # rest on declared amounts. None means no record is available: the deduction then covers
@@ -325,6 +348,18 @@ def run_main_calculations(
     """
     logger.info(f"Starting main calculation engine for tax year {tax_year} with {len(financial_events)} events.")
     mark_positions = mark_positions or {}
+    soy_positions = soy_positions if soy_positions is not None else {}
+    eoy_positions = eoy_positions if eoy_positions is not None else {}
+    prior_soy_positions = prior_soy_positions if prior_soy_positions is not None else {}
+    prior_eoy_positions = prior_eoy_positions if prior_eoy_positions is not None else {}
+    prior_opening_positions = (prior_opening_positions
+                               if prior_opening_positions is not None else {})
+
+    def person_soy(asset_id: uuid.UUID) -> Optional["PositionSnapshot"]:
+        return person_snapshot(soy_positions, asset_id)
+
+    def person_eoy(asset_id: uuid.UUID) -> Optional["PositionSnapshot"]:
+        return person_snapshot(eoy_positions, asset_id)
     ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode) # Renamed internal_working_precision
 
     realized_gains_losses: List[RealizedGainLoss] = []
@@ -411,7 +446,8 @@ def run_main_calculations(
         asset_id
         for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items()
         if isinstance(asset_obj, InvestmentFund)
-        and (asset_obj.soy_quantity or Decimal(0)) > Decimal(0)
+        and ((person_soy(asset_id) or PositionSnapshot(quantity=None)).quantity
+             or Decimal(0)) > Decimal(0)
     }
 
     fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # keyed by (account_key, asset_id); seam: all DEFAULT_ACCOUNT until the per-Depot flip
@@ -510,7 +546,12 @@ def run_main_calculations(
 
     def _reconcile_security_soy(ledger, asset_obj):
         try:
-            mark_outcomes.append((asset_obj, ledger.reconcile_with_soy_position(asset_obj, tax_year)))
+            # The person's total, because every ledger is still keyed DEFAULT_ACCOUNT and
+            # so holds the whole holding. Once ledgers are keyed by the real account this
+            # becomes that account's own record -- which is why the registry is passed in
+            # per (account, asset) rather than as one figure per asset.
+            mark_outcomes.append((asset_obj, ledger.reconcile_with_soy_position(
+                asset_obj, tax_year, person_soy(asset_obj.internal_asset_id))))
         except ValueError as e:
             logger.critical(f"Fatal error reconciling SOY for asset {asset_obj.get_classification_key()} (ID: {asset_obj.internal_asset_id}): {e}. Aborting.")
             raise e
@@ -612,7 +653,8 @@ def run_main_calculations(
             currency_reconcilers.append(
                 (lambda l=currency_ledger, a=currency_asset, c=currency_code:
                     (f"reconcile-ccy:{c}",
-                     _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx)))
+                     _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx,
+                                             person_soy(a.internal_asset_id))))
             )
 
     # === Run the historical replay, one interval per checkpoint mark ===
@@ -669,7 +711,7 @@ def run_main_calculations(
                 )
             else:
                 mark_year = mark_years[index]
-                reported = mark_positions.get(mark_year, {}).get(asset_id)
+                reported = person_mark(mark_positions.get(mark_year, {}), asset_id)
                 stream.add(
                     Phase.RECONCILE, (0,),
                     (lambda l=ledger, a=asset_obj, y=mark_year, r=reported:
@@ -775,6 +817,9 @@ def run_main_calculations(
         tax_year=tax_year,
         opening_lots_by_asset=vorabpauschale_opening_lots,
         prior_year_positions_available=prior_year_positions_available,
+        prior_soy_positions=prior_soy_positions,
+        prior_eoy_positions=prior_eoy_positions,
+        prior_opening_positions=prior_opening_positions,
         ctx=ctx,
         data_gap_collector=data_gap_collector,
     )
@@ -1027,10 +1072,12 @@ def run_main_calculations(
             calculated_eoy_qty = ledger.get_current_position_quantity()
         else:
             calculated_eoy_qty = Decimal(0)
-            if asset_obj.soy_quantity is not None and asset_obj.soy_quantity != Decimal(0): # Renamed
-                logger.warning(f"EOY Validation: Asset {asset_obj.get_classification_key()} had SOY qty {asset_obj.soy_quantity} but no ledger found at EOY. Calculated EOY assumed 0.") # Renamed
+            opening = person_soy(asset_id)
+            if opening is not None and opening.quantity not in (None, Decimal(0)):
+                logger.warning(f"EOY Validation: Asset {asset_obj.get_classification_key()} had SOY qty {opening.quantity} but no ledger found at EOY. Calculated EOY assumed 0.")
 
-        reported_eoy_qty = asset_obj.eoy_quantity
+        closing = person_eoy(asset_id)
+        reported_eoy_qty = closing.quantity if closing else None
         try:
             tolerance_exponent = -(ctx.prec // 2)
             comparison_tolerance = Decimal('1e' + str(tolerance_exponent))
@@ -1128,7 +1175,8 @@ def run_main_calculations(
         if asset_obj.currency and asset_obj.currency.upper() == "EUR":
             continue
 
-        reported_eoy = asset_obj.eoy_quantity
+        closing = person_eoy(asset_id)
+        reported_eoy = closing.quantity if closing else None
         if reported_eoy is None:
             continue
 
@@ -1199,6 +1247,9 @@ def _compute_vorabpauschale_for_prior_year(
     tax_year: int,
     opening_lots_by_asset: Dict[uuid.UUID, List["FundUnitTranche"]],
     prior_year_positions_available: bool,
+    prior_soy_positions: "SnapshotsByAccount",
+    prior_eoy_positions: "SnapshotsByAccount",
+    prior_opening_positions: "SnapshotsByAccount",
     ctx: Context,
     data_gap_collector: Optional[DataGapCollector],
 ) -> List[VorabpauschaleData]:
@@ -1253,6 +1304,9 @@ def _compute_vorabpauschale_for_prior_year(
         currency_converter=currency_converter,
         vorabpauschale_year=vorabpauschale_year,
         opening_lots_by_asset=opening_lots_by_asset,
+        prior_soy_positions=prior_soy_positions,
+        prior_eoy_positions=prior_eoy_positions,
+        prior_opening_positions=prior_opening_positions,
         ctx=ctx,
         data_gap_collector=data_gap_collector,
     )
@@ -1764,6 +1818,9 @@ def _calculate_vorabpauschale(
     currency_converter: CurrencyConverter,
     vorabpauschale_year: int,
     opening_lots_by_asset: Dict[uuid.UUID, List[FundUnitTranche]],
+    prior_soy_positions: "SnapshotsByAccount",
+    prior_eoy_positions: "SnapshotsByAccount",
+    prior_opening_positions: "SnapshotsByAccount",
     ctx: Context,
     data_gap_collector: Optional[DataGapCollector] = None,
 ) -> List[VorabpauschaleData]:
@@ -1774,7 +1831,10 @@ def _calculate_vorabpauschale(
     to flow on the first working day of X+1 (18 Abs. 3 InvStG) and is declared on Zeilen 9-13
     of the *X+1* Anlage KAP-INV. Callers preparing a VZ Y return must pass Y-1. All position
     values and distributions read here are therefore those of `vorabpauschale_year`, taken from
-    the `Asset.prior_year_*` fields, not the tax year's own SoY/EoY snapshot.
+    the `prior_*_positions` registries, not the tax year's own SoY/EoY snapshot. Each is
+    recorded per (account, asset); what 18 reads is the person's figure over them
+    ([GT-ESTG20-061]), and it is the same figure whichever accounts the units sit in
+    because Abs. 1 is written per unit.
 
     **Everything up to the last step is per Investmentanteil**, because that is how Abs. 1 is
     written -- every quantity in Saetze 1 to 3 is a Ruecknahmepreis or a distribution *of one
@@ -1840,7 +1900,7 @@ def _calculate_vorabpauschale(
     # converter's fallback quietly supplied one from another day. 31 December falls
     # on a weekend in 2022 and 2023 and had the same defect, unrecorded until then.
     #
-    # The day travels with the price, on Asset.prior_year_*_mark_price_date, because
+    # The day travels with the price, in the snapshot's `mark_price_date`, because
     # the substitution path takes its price from the close of the PRECEDING year and
     # no rule keyed on `vorabpauschale_year` can know that.
     eoy_conversion_date_default = last_business_day_of_year(vorabpauschale_year)
@@ -1878,7 +1938,9 @@ def _calculate_vorabpauschale(
             # demonstrably acquired before this year began -- the snapshot is
             # the evidence, and no reduction applies to them. That is a
             # derivation from a report actually held, not a guess at a date.
-            held_before_the_year = asset_obj.prior_year_opening_quantity or Decimal(0)
+            opened_with = person_snapshot(prior_opening_positions, asset_id)
+            held_before_the_year = (
+                (opened_with.quantity if opened_with is not None else None) or Decimal(0))
             undated_units = sum((t.quantity for t in undated), Decimal(0))
             if undated_units > held_before_the_year:
                 funds_without_acquisition_dates.append(
@@ -1892,9 +1954,6 @@ def _calculate_vorabpauschale(
                     vorabpauschale_year, vorabpauschale_year - 1, held_before_the_year)
                 continue
 
-            tranches = [t if t.acquisition_date_is_known
-                        else replace(t, acquisition_date=date(vorabpauschale_year - 1, 12, 31))
-                        for t in tranches]
             logger.info(
                 "Fund %s: %s undated units were already held at the close of %d, "
                 "so 18 Abs. 2 does not reduce them.",
@@ -1908,11 +1967,13 @@ def _calculate_vorabpauschale(
             continue
 
         # Abs. 1 S. 2: the Ruecknahmepreis at the start of the year, PER UNIT.
+        prior_soy = person_snapshot(prior_soy_positions, asset_id)
         soy_conversion_date = _price_stichtag(
-            asset_obj.prior_year_soy_mark_price_date,
+            prior_soy.mark_price_date if prior_soy is not None else None,
             first_business_day_of_year(vorabpauschale_year))
-        soy_price_foreign = asset_obj.prior_year_soy_mark_price
-        soy_currency = asset_obj.prior_year_soy_mark_price_currency or asset_obj.currency
+        soy_price_foreign = prior_soy.mark_price if prior_soy is not None else None
+        soy_currency = ((prior_soy.mark_price_currency if prior_soy is not None else None)
+                        or asset_obj.currency)
         if soy_price_foreign is None or soy_currency is None:
             logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No start-of-{vorabpauschale_year} price. No VP; collected for the gap report.")
             funds_without_a_usable_price.append((
@@ -1932,10 +1993,13 @@ def _calculate_vorabpauschale(
             continue
 
         # Abs. 1 S. 3: the last Ruecknahmepreis set in the year, PER UNIT.
+        prior_eoy = person_snapshot(prior_eoy_positions, asset_id)
         eoy_conversion_date = _price_stichtag(
-            asset_obj.prior_year_eoy_mark_price_date, eoy_conversion_date_default)
-        eoy_price_foreign = asset_obj.prior_year_eoy_mark_price
-        eoy_currency = asset_obj.prior_year_eoy_mark_price_currency or asset_obj.currency
+            prior_eoy.mark_price_date if prior_eoy is not None else None,
+            eoy_conversion_date_default)
+        eoy_price_foreign = prior_eoy.mark_price if prior_eoy is not None else None
+        eoy_currency = ((prior_eoy.mark_price_currency if prior_eoy is not None else None)
+                        or asset_obj.currency)
         if eoy_price_foreign is None or eoy_currency is None:
             logger.warning(f"Fund {asset_obj.description} (ID: {asset_id}): No end-of-{vorabpauschale_year} price though units were held at the close. No VP; collected for the gap report.")
             funds_without_a_usable_price.append((
@@ -1991,7 +2055,18 @@ def _calculate_vorabpauschale(
         # reduced by a twelfth for every full month before its month of acquisition.
         gross_vp = Decimal(0)
         for tranche in tranches:
-            twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
+            if tranche.acquisition_date_is_known:
+                twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
+            else:
+                # An undated tranche only reaches here past the check above, which
+                # established from the report that these units were already held
+                # when the year opened. They are therefore not in their year of
+                # acquisition and keep twelve twelfths -- [GT-INVSTG-011],
+                # reference/investment-tax-law/invstg-18-vorabpauschale.md:131-135.
+                # Answered without a date because none was observed and none may be
+                # invented: every date before the year gives this same answer, so
+                # the question Abs. 2 asks has been settled without one.
+                twelfths = 12
             tranche_vp = ctx.multiply(vp_per_unit, tranche.quantity)
             if twelfths != 12:
                 tranche_vp = ctx.divide(
@@ -2698,7 +2773,8 @@ def _create_lot_historical(
 
 def _reconcile_currency_soy(
     ledger: 'FifoLedger', asset: CashBalance, tax_year: int,
-    exchange_rate_provider, ctx: Context
+    exchange_rate_provider, ctx: Context,
+    reported_snapshot: Optional[PositionSnapshot] = None,
 ) -> None:
     """
     Reconcile currency FIFO ledger against SOY reported balance.
@@ -2712,7 +2788,8 @@ def _reconcile_currency_soy(
     from .fifo_manager import FifoLot, ShortFifoLot
     from datetime import date as date_type
 
-    reported_soy = asset.soy_quantity
+    reported_soy = reported_snapshot.quantity if reported_snapshot else None
+    reported_soy_cost = reported_snapshot.cost_basis_amount if reported_snapshot else None
     if reported_soy is None or reported_soy == Decimal("0"):
         return
 
@@ -2742,10 +2819,10 @@ def _reconcile_currency_soy(
     if diff > Decimal("0"):
         # FIFO < SOY: need more currency, create adjustment long lot
         # Use provided cost basis if available and this is the full SOY amount
-        if (asset.soy_cost_basis_amount and asset.soy_cost_basis_amount > Decimal("0")
+        if (reported_soy_cost and reported_soy_cost > Decimal("0")
                 and abs(diff - reported_soy) <= Decimal("0.01")):
             # Full SOY amount missing - use the provided total cost basis
-            total_cost = asset.soy_cost_basis_amount
+            total_cost = reported_soy_cost
             unit_eur = ctx.divide(total_cost, diff)
             logger.debug(f"Currency {asset.currency}: Using provided SOY cost basis: {total_cost:.2f} EUR")
         else:

@@ -27,7 +27,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.domain.assets import InvestmentFund, MarkPosition
+from src.domain.assets import InvestmentFund, MarkPosition, PositionSnapshot
+from tests.support.prior_year_snapshots import snapshot_row
+from src.utils.account_utils import DEFAULT_ACCOUNT
 from src.domain.enums import (
     AssetCategory, FinancialEventType, InvestmentFundType, TaxReportingCategory,
 )
@@ -57,7 +59,7 @@ def _eur_converter():
     return converter
 
 
-def _fund(*, eoy_qty=Decimal("60")) -> InvestmentFund:
+def _fund(*, eoy_qty=Decimal("60"), soy_qty=Decimal("100")) -> InvestmentFund:
     """One Aktienfonds, priced for the calendar 2024 Vorabpauschale.
 
     Prices are invented round numbers: 100.00 at the start of 2024 and 110.00 at
@@ -70,22 +72,33 @@ def _fund(*, eoy_qty=Decimal("60")) -> InvestmentFund:
         description="Test Aktienfonds", currency="EUR",
         ibkr_isin=ISIN, ibkr_symbol="TFUND",
     )
-    # The opening snapshot for VZ 2025 = the close of 2024.
-    fund.soy_quantity = Decimal("100")
-    fund.soy_cost_basis_amount = Decimal("1000")
-    fund.soy_cost_basis_currency = "EUR"
-    fund.eoy_quantity = eoy_qty
-    # Calendar 2024's own snapshots, which the Vorabpauschale for 2024 reads.
-    fund.prior_year_opening_quantity = Decimal("100")
-    fund.prior_year_soy_quantity = Decimal("100")
-    fund.prior_year_soy_mark_price = Decimal("100.00")
-    fund.prior_year_soy_mark_price_currency = "EUR"
-    fund.prior_year_soy_mark_price_date = date(2024, 1, 2)
-    fund.prior_year_eoy_quantity = Decimal("100")
-    fund.prior_year_eoy_mark_price = Decimal("110.00")
-    fund.prior_year_eoy_mark_price_currency = "EUR"
-    fund.prior_year_eoy_mark_price_date = date(2024, 12, 30)
+    # The opening snapshot for VZ 2025 = the close of 2024. These are not fields of
+    # Asset: the engine reads them from the per-(account, asset) registries, which
+    # `_snapshots` builds. They ride on the fund here so one helper hands the scenario
+    # back whole.
+    fund.reported_opening = PositionSnapshot(
+        quantity=soy_qty, cost_basis_amount=Decimal("1000"), cost_basis_currency="EUR")
+    fund.reported_closing = PositionSnapshot(quantity=eoy_qty)
+    # Calendar 2024's own snapshots, which the Vorabpauschale for 2024 reads. Kept
+    # per (account, asset) like the two above, and on the fund for the same reason.
+    fund.prior_opening = snapshot_row(fund.internal_asset_id, quantity=Decimal("100"))
+    fund.prior_soy = snapshot_row(
+        fund.internal_asset_id, quantity=Decimal("100"), mark_price=Decimal("100.00"),
+        mark_price_currency="EUR", mark_price_date=date(2024, 1, 2))
+    fund.prior_eoy = snapshot_row(
+        fund.internal_asset_id, quantity=Decimal("100"), mark_price=Decimal("110.00"),
+        mark_price_currency="EUR", mark_price_date=date(2024, 12, 30))
     return fund
+
+
+def _snapshots(fund):
+    """The opening and closing registries the engine reads for this scenario.
+
+    One unattributed account: these scenarios are about the Vorabpauschale, which is
+    attributed per person, and none of them turns on which Depot the units sit in.
+    """
+    key = (DEFAULT_ACCOUNT, fund.internal_asset_id)
+    return {key: fund.reported_opening}, {key: fund.reported_closing}
 
 
 def _resolver(fund) -> AssetResolver:
@@ -131,6 +144,7 @@ def _store(tmp_path, entries=()) -> VorabpauschaleDeclarationStore:
 def _run(store, *, fund=None, events=None, collector=None, ask=None):
     fund = fund or _fund()
     collector = collector if collector is not None else DataGapCollector()
+    soy_positions, eoy_positions = _snapshots(fund)
     rgls, vp_items, _income, _mismatches = run_main_calculations(
         financial_events=events if events is not None else [_buy(fund), _sell(fund)],
         asset_resolver=_resolver(fund),
@@ -141,9 +155,14 @@ def _run(store, *, fund=None, events=None, collector=None, ask=None):
         decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
         data_gap_collector=collector,
         prior_year_positions_available=True,
-        mark_positions={2023: {fund.internal_asset_id: MarkPosition(
+        mark_positions={2023: {(DEFAULT_ACCOUNT, fund.internal_asset_id): MarkPosition(
             quantity=Decimal("100"), cost_basis_amount=Decimal("1000"),
             cost_basis_currency="EUR")}},
+        soy_positions=soy_positions,
+        eoy_positions=eoy_positions,
+        prior_soy_positions=fund.prior_soy,
+        prior_eoy_positions=fund.prior_eoy,
+        prior_opening_positions=fund.prior_opening,
         declaration_store=store,
         ask_for_declared_vorabpauschale=ask,
     )
@@ -188,8 +207,7 @@ class TestTheDeductionReachesTheFormLine:
 
     def test_units_bought_inside_the_tax_year_carry_no_deduction(self, tmp_path):
         """Nothing was held at any year end, so § 18 never reached these units."""
-        fund = _fund(eoy_qty=Decimal("160"))
-        fund.soy_quantity = Decimal("100")
+        fund = _fund(eoy_qty=Decimal("160"), soy_qty=Decimal("100"))
         _f, rgls, _v, _c = _run(
             _store(tmp_path, [(2023, "120.00")]), fund=fund,
             events=[_buy(fund), _buy(fund, "100", "2025-03-01"),
@@ -281,8 +299,7 @@ class TestAskingAboutEarlierYears:
         put were about funds whose opening position was zero. Asking someone to
         look up a filed return for nothing is how the prompts that matter get
         dismissed."""
-        fund = _fund(eoy_qty=Decimal("0"))
-        fund.soy_quantity = Decimal("0")           # gone before 2025 opened
+        fund = _fund(eoy_qty=Decimal("0"), soy_qty=Decimal("0"))  # gone before 2025 opened
         ask = self._recorder()
         _f, _r, _v, _c = _run(
             _store(tmp_path), fund=fund, ask=ask,
@@ -404,6 +421,11 @@ class TestAYearEndWithNoSnapshot:
             data_gap_collector=collector,
             prior_year_positions_available=True,
             mark_positions={},          # no 2023 mark
+            soy_positions=_snapshots(fund)[0],
+            eoy_positions=_snapshots(fund)[1],
+            prior_soy_positions=fund.prior_soy,
+            prior_eoy_positions=fund.prior_eoy,
+            prior_opening_positions=fund.prior_opening,
             declaration_store=store,
         )
         fund_rgl = next(r for r in rgls
@@ -430,10 +452,10 @@ class TestUnitsDroppedAtACheckpointMark:
         # snapshot reports only 60, so 40 left in a disposal the input does not have.
         # The 2024 price falls, so the Satz 3 cap leaves 2024 with no Vorabpauschale
         # and the only accumulation on the lot is 2023's declared 120.00.
-        fund = _fund(eoy_qty=Decimal("0"))
-        fund.soy_quantity = Decimal("60")
-        fund.prior_year_eoy_quantity = Decimal("60")
-        fund.prior_year_eoy_mark_price = Decimal("95.00")
+        fund = _fund(eoy_qty=Decimal("0"), soy_qty=Decimal("60"))
+        fund.prior_eoy = snapshot_row(
+            fund.internal_asset_id, quantity=Decimal("60"), mark_price=Decimal("95.00"),
+            mark_price_currency="EUR", mark_price_date=date(2024, 12, 30))
         _f, rgls, _vp, _c = _run(
             _store(tmp_path, [(2023, "120.00")]), fund=fund,
             events=[_buy(fund, "100", "2023-02-01"), _sell(fund, "60", "2025-06-02")])
@@ -456,9 +478,10 @@ class TestUnitsWhoseHoldingPeriodIsUnknown:
         # build, so reconciliation discards the reconstruction and synthesises an
         # undated lot. The 2024 price falls, so the Satz 3 cap leaves no
         # Vorabpauschale for 2024 and the run reaches the disposal.
-        fund = _fund(eoy_qty=Decimal("60"))
-        fund.soy_quantity = Decimal("100")
-        fund.prior_year_eoy_mark_price = Decimal("95.00")
+        fund = _fund(eoy_qty=Decimal("60"), soy_qty=Decimal("100"))
+        fund.prior_eoy = snapshot_row(
+            fund.internal_asset_id, quantity=Decimal("100"), mark_price=Decimal("95.00"),
+            mark_price_currency="EUR", mark_price_date=date(2024, 12, 30))
         collector = DataGapCollector()
         _f, _rgls, _vp, _c = _run(
             _store(tmp_path, [(2023, "120.00")]), fund=fund, collector=collector,
@@ -524,12 +547,38 @@ class TestCommittingTheDeclaration:
         fund, _rgls, vp_items, _c = _run(store)
         commit_declared_vorabpauschale(
             store=store, asset_resolver=_resolver(fund),
+            prior_eoy_positions=fund.prior_eoy,
             vorabpauschale_items=vp_items, vorabpauschale_year=TAX_YEAR - 1,
             declared_on=date(2026, 5, 1), source=f"VZ {TAX_YEAR} Anlage KAP-INV")
 
         entry = store.get(fund.get_classification_key(), 2024)
         assert entry.gross_eur == Decimal("160.30")
         assert entry.declared_on == date(2026, 5, 1)
+
+    def test_units_in_either_account_count_as_held(self, tmp_path):
+        """Which funds get an entry is the person's holding at the close.
+
+        Rz. 18.4's count is the person's ([GT-ESTG20-061]). Read from one
+        account's row, a fund the taxpayer still holds in the other would be
+        left off the record -- and a later run could not tell "declared nothing"
+        from "never declared", which is what the zero entry exists to prevent.
+        """
+        fund = _fund()
+        # The account the export lists last holds nothing of this fund.
+        fund.prior_eoy = dict(snapshot_row(
+            fund.internal_asset_id, quantity=Decimal("100"), account="U1111111"))
+        fund.prior_eoy.update(snapshot_row(
+            fund.internal_asset_id, quantity=Decimal("0"), account="U2222222"))
+        store = _store(tmp_path)
+
+        written = commit_declared_vorabpauschale(
+            store=store, asset_resolver=_resolver(fund),
+            prior_eoy_positions=fund.prior_eoy,
+            vorabpauschale_items=[], vorabpauschale_year=2024,
+            declared_on=date(2026, 5, 1), source="VZ 2025")
+
+        assert len(written) == 1
+        assert store.get(KEY, 2024).gross_eur == Decimal("0.00")
 
     def test_a_fund_held_with_no_vorabpauschale_is_recorded_as_a_zero(self, tmp_path):
         """Otherwise a later run cannot tell 'declared nothing' from 'never
@@ -538,6 +587,7 @@ class TestCommittingTheDeclaration:
         store = _store(tmp_path)
         commit_declared_vorabpauschale(
             store=store, asset_resolver=_resolver(fund),
+            prior_eoy_positions=fund.prior_eoy,
             vorabpauschale_items=[], vorabpauschale_year=2024,
             declared_on=date(2026, 5, 1), source="VZ 2025")
         assert store.get(fund.get_classification_key(), 2024).gross_eur == Decimal("0.00")
