@@ -72,6 +72,7 @@ FILENAME_PREFIXES = {
     "corporate_actions": "Corporate_Actions",
     "cash_balance": "Cash_Balance",
     "options_eae": "Options_EAE",
+    "transfers": "Transfers",
     "positions": "Positions",
 }
 
@@ -88,6 +89,7 @@ QUERY_KEYS_BY_NAME = {
     "options eae": "options_eae",
     "option exercises assignments expirations": "options_eae",
     "options exercises assignments expirations": "options_eae",
+    "transfers": "transfers",
 }
 
 # How long to wait for a manual login before giving up.

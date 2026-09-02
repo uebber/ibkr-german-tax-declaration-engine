@@ -69,7 +69,7 @@ This document outlines the test scenarios for the FIFO (First-In, First-Out) cal
 **PRD Coverage:** 2.4 (EOY Quantity Validation), 2.10 (Critical Error Report: EOY Quantity Mismatch), 5.12 (Perform EOY Quantity Validation).
 
 **A non-zero "Expected: Errors" means the run ABORTS.** The start-of-year quantity is
-authoritative — `reconcile_with_soy_position` pins the ledger to the reported `soy_quantity`
+authoritative — `reconcile_with_soy_position` pins the ledger to the reported opening quantity
 in every branch, using the historical reconstruction only for cost basis and acquisition
 dates — so the end-of-year quantity follows from that snapshot plus the year's own events and
 has exactly one correct answer. A residual is not a reporting nuance: an event is missing or

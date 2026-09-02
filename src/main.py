@@ -79,6 +79,7 @@ def _commit_vorabpauschale_declaration(processing_results: ProcessingOutput,
         written = commit_declared_vorabpauschale(
             store=store,
             asset_resolver=processing_results.asset_resolver,
+            prior_eoy_positions=processing_results.prior_eoy_positions,
             vorabpauschale_items=processing_results.vorabpauschale_items,
             vorabpauschale_year=vorabpauschale_year,
             declared_on=_date.today(),
@@ -155,6 +156,8 @@ def main_application():
             tax_year_to_process=tax_year,
             cash_balance_file_path=data_paths.get("cash_balance", ""),
             options_eae_file_path=data_paths.get("options_eae", "") or None,
+            transfers_file_path=data_paths.get("transfers", "") or None,
+            transfers_missing_years=data_paths.get("transfers_missing_years", ""),
             positions_mark_file_paths={
                 int(key.rsplit("_", 1)[1]): path
                 for key, path in data_paths.items()
@@ -197,7 +200,9 @@ def main_application():
 
     if args.group_by_type:
         print_assets_by_category_diagnostic(asset_resolver)
-        print_asset_positions_diagnostic(asset_resolver)
+        print_asset_positions_diagnostic(asset_resolver,
+                                         processing_results.soy_positions,
+                                         processing_results.eoy_positions)
         # For diagnostic output, it might still be useful to see all events
         print_grouped_event_details(processing_results.all_financial_events_enriched, asset_resolver)
         print_realized_gains_losses_diagnostic(processing_results.realized_gains_losses, asset_resolver)

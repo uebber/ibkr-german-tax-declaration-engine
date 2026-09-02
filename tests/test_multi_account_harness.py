@@ -43,19 +43,18 @@ def test_position_rows_per_account(tmp_path):
     recs = parse_positions_csv(str(p))
     assert len(recs) == 2
     assert recs[0].position == Decimal("100") and recs[1].position == Decimal("50")
-    # NOTE: the per-account assertion ({A, B} on the records) is intentionally
-    # absent here: RawPositionRecord currently drops ClientAccountID (wrong
-    # alias "AccountId") — the multi-account aggregation fix (train item B2)
-    # corrects the alias and strengthens this test.
+    # Each row keeps its own account through the parser -- the finest identifier the
+    # per-Depot ledger key reaches (BMF Rz. 98, sub-depots).
+    assert [r.client_account_id for r in recs] == [A, B]
 
 
 def test_cash_balance_rows_per_account(tmp_path):
     p = tmp_path / "cash_bal.csv"
     write_csv(str(p), CASH_BALANCE_COLUMNS, [
         cash_balance_row(A, "USD", "1000", "900"),
-        cash_balance_row(B, "USD", "-121.24", "0"),
+        cash_balance_row(B, "USD", "-37.58", "0"),
     ])
     recs = parse_cash_balance_csv(str(p))
     assert [(r.client_account_id, r.starting_cash) for r in recs] == [
-        (A, Decimal("1000")), (B, Decimal("-121.24")),
+        (A, Decimal("1000")), (B, Decimal("-37.58")),
     ]

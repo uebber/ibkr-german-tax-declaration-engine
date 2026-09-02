@@ -42,14 +42,15 @@ Items are processed in ascending (phase, sort_key, seq) order:
    acquisition date. See issue #56 and
    ``test_merged_in_shares_sold_inside_the_historical_window``.
 
-   **The intra-day rule currently holds by accident and is pinned by a test.**
-   ``sorting_utils.py`` places the transaction id ahead of the type priority
-   in the secondary key, so ``_INTRA_DAY_SORT_ORDER_CORP_ACTION`` does not
-   decide anything between events with different ids. Corporate actions sort
-   first only because ``Corporate_Actions-*.csv`` carries no ``TransactionID``
-   column, leaving ``ibkr_transaction_id`` None and the key element ``""``.
-   Should IBKR ever supply that column the order would flip silently, which is
-   what ``test_merger_sorts_before_same_day_trades`` exists to catch.
+   **That rule is explicit, not accidental.** ``sorting_utils.py`` partitions
+   the same-day secondary key by precedence: lot-DELIVERING kinds (corporate
+   actions and mergers, internal transfers, option lifecycle events) sort ahead
+   of that day's disposals regardless of transaction id, and only within a part
+   does IBKR's txid chronology decide. So a merger sorts before that day's
+   trades by the rule -- it would still do so if IBKR ever gave the corporate
+   action export a ``TransactionID`` column. Pinned by
+   ``test_merger_sorts_before_same_day_trades`` and
+   ``test_a_transaction_id_on_the_merger_does_not_break_it``.
 2. ``Phase.RECONCILE`` — start-of-year reconciliation against the reported
    snapshots, after all lot state exists: securities ledgers against SoY
    positions, currency ledgers against SoY cash balances.

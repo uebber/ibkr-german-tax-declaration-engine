@@ -74,6 +74,13 @@ class FinancialEvent:
     ibkr_activity_description: Optional[str] = None # From Cash Transactions "Description" or Trades "Description"
     ibkr_notes_codes: Optional[str] = None # From Trades "Notes/Codes" column
 
+    # The custody account (Depot) this event was booked in — IBKR's ClientAccountID.
+    # A disposal consumes the lots of the account it was made from: FIFO is applied
+    # per single Depot (BMF 14.05.2025 Rz. 97 Satz 2, [GT-ESTG20-013]). Normalised to
+    # a ledger key by `account_key()`, which collapses an absent id to one DEFAULT
+    # account, so an export without the column behaves exactly as before.
+    account_id: Optional[str] = None # From ClientAccountID
+
     def __post_init__(self):
         if not isinstance(self.event_type, FinancialEventType):
             raise TypeError(f"FinancialEvent.event_type must be a FinancialEventType enum member, got {type(self.event_type)}")
@@ -449,6 +456,92 @@ class FeeEvent(FinancialEvent):
         super().__init__(asset_internal_id, event_date,
                          event_type=FinancialEventType.FEE_TRANSACTION,
                          **kwargs_for_parent_kw_only)
+
+    def __post_init__(self):
+        super().__post_init__()
+
+
+@dataclass
+class TransferLot:
+    """One acquisition-day's worth of a moved holding, read from a Transfers `LOT` row.
+
+    The export writes one `LOT` row per acquisition day beneath each move's summary row
+    (measured: one row per day, not per trade -- three same-day trades collapse to one
+    row). Carries the day (`OpenDateTime`), the units moved that day, and the per-lot sign.
+    The handover uses all three: the day and quantity are matched against the sending
+    ledger to find the lots that moved, and the sign is cross-checked against the ledger's
+    own long-versus-short. The `LOT` row's `CostBasis` is NOT carried here -- it is in
+    IBKR's convention (an option-assignment premium netted into the basis, contrary to
+    [GT-ESTG20-004]) and the German basis is the ledger's own reconstruction, so it is
+    parsed on `RawTransferRecord` to complete the required export shape and not consumed.
+    See `src/parsers/raw_models.py::RawTransferRecord`.
+    """
+    acquisition_date: str  # YYYY-MM-DD, the export's OpenDateTime for this lot
+    quantity: Decimal      # units moved on that day, always positive
+    # The export's per-lot sign: negative on a short position, positive on a long one
+    # (measured -- 6 of 13 real lot rows are shorts opened by SELL). The sending ledger is
+    # authoritative for long-versus-short; this is the cross-check the export now permits.
+    is_short: bool = False
+
+
+@dataclass
+class InternalTransferEvent(FinancialEvent):
+    """A holding moved from one of the taxpayer's own accounts to another.
+
+    **Not a disposal** -- no change of beneficial owner and no consideration, so
+    acquisition date and acquisition cost carry over and the lots RELOCATE between the
+    two accounts' ledgers rather than being closed and reopened ([GT-ESTG20-014];
+    reference/tax-law/estg-20-kapitalvermoegen.md, "Abs. 2"). It therefore realises
+    nothing: no proceeds, no cost, no amount of any kind, which is why this event carries
+    none.
+
+    `account_id` (from `FinancialEvent`) is the SENDING account and `to_account_id` the
+    receiving one -- the same convention as every other event, where `account_id` is the
+    account whose ledger the event acts on first.
+
+    `quantity` is the total number of units moved, always positive. `moved_lots` breaks
+    that total down by acquisition day, from the export's `LOT` rows: the handover
+    relocates the sending ledger's lots for each of those days. The export's sign carries
+    neither the direction nor long-versus-short of the total (see `RawTransferRecord`);
+    the per-lot sign in `moved_lots` does state long-versus-short, and it is cross-checked
+    against the sending ledger, which is authoritative.
+
+    **`ibkr_transaction_id` is deliberately left unset.** The export records each move
+    once per side and the two sides carry different ids, so neither names the move. It
+    would also decide more than identity: `get_event_sort_key` places
+    `ibkr_transaction_id` ahead of the intra-day band, so an id here would let a broker's
+    string decide whether the move lands before or after the same day's trades. That
+    order is fixed deliberately by the band branch in `sorting_utils.py` instead.
+    """
+    _: KW_ONLY
+    to_account_id: str
+    quantity: Decimal
+    moved_lots: list = field(default_factory=list)
+
+    def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
+                 to_account_id: str, quantity: Decimal,
+                 moved_lots: Optional[list] = None,
+                 **kwargs_for_parent_kw_only):
+        super().__init__(asset_internal_id, event_date,
+                         event_type=FinancialEventType.INTERNAL_TRANSFER,
+                         **kwargs_for_parent_kw_only)
+        self.to_account_id = to_account_id
+        self.quantity = quantity
+        self.moved_lots = moved_lots if moved_lots is not None else []
+        # Checked here and not in `__post_init__`: the parent's generated `__init__`
+        # calls `__post_init__` before the three lines above have run, so none of the
+        # fields exist yet at that point.
+        if quantity is None or quantity <= Decimal(0):
+            raise ValueError(
+                f"InternalTransferEvent quantity must be positive, got {quantity}. "
+                f"The export's sign does not carry the direction; callers pass the "
+                f"absolute quantity and the direction separately."
+            )
+        if not to_account_id or not str(to_account_id).strip():
+            raise ValueError(
+                "InternalTransferEvent requires a receiving account. Without it the "
+                "units have nowhere to go and would be lost rather than relocated."
+            )
 
     def __post_init__(self):
         super().__post_init__()

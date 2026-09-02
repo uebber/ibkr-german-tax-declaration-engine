@@ -48,12 +48,14 @@ value is still the taxpayer's, and a fund nothing can price still stops the run.
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import date
 from decimal import Decimal
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from src.domain.assets import Asset, InvestmentFund
+from src.domain.assets import (
+    Asset, InvestmentFund, PositionSnapshot, SnapshotsByAccount, person_snapshot,
+    snapshots_for_asset)
 from src.domain.exceptions import ProcessingError
 from src.processing.data_gaps import DataGapCollector, GapSeverity
 
@@ -177,7 +179,7 @@ class FundPriceStore:
         return len(self._prices)
 
 
-def _owes_a_vorabpauschale(asset: Asset) -> bool:
+def _owes_a_vorabpauschale(asset: Asset, prior_eoy: SnapshotsByAccount) -> bool:
     """Whether this fund's figure turns on a year-start price at all.
 
     Two conditions, and each keeps a fund off the network and off the
@@ -191,26 +193,67 @@ def _owes_a_vorabpauschale(asset: Asset) -> bool:
     **Whether the fund appears in the start-of-year snapshot is not one of
     them.** It was, until 2026-08-08. The snapshot records what the taxpayer
     held; § 18 Abs. 1 Satz 2 asks for a property of the fund.
+
+    The count is the person's, summed over their accounts ([GT-ESTG20-061]):
+    units held in either account are units held.
     """
     if not isinstance(asset, InvestmentFund):
         return False
-    return (asset.prior_year_eoy_quantity or Decimal(0)) > Decimal(0)
+    held = person_snapshot(prior_eoy, asset.internal_asset_id)
+    quantity = held.quantity if held is not None else None
+    return (quantity or Decimal(0)) > Decimal(0)
 
 
-def _snapshot_price(asset: Asset) -> Optional["FundPrice"]:
-    """The start-of-year position report's price, where the fund is in it."""
-    if asset.prior_year_soy_mark_price is None:
+def _snapshot_price(asset: Asset, prior_soy: SnapshotsByAccount) -> Optional["FundPrice"]:
+    """The start-of-year position report's price, where the fund is in it.
+
+    Per unit, so it is a property of the instrument and every account's row carries
+    the same one; `person_snapshot` takes it rather than summing.
+    """
+    reported = person_snapshot(prior_soy, asset.internal_asset_id)
+    if reported is None or reported.mark_price is None:
         return None
     return FundPrice(
-        price=asset.prior_year_soy_mark_price,
-        currency=asset.prior_year_soy_mark_price_currency or asset.currency or "EUR",
-        date_set=asset.prior_year_soy_mark_price_date,
+        price=reported.mark_price,
+        currency=reported.mark_price_currency or asset.currency or "EUR",
+        date_set=reported.mark_price_date,
         source="Positionsbericht zum Jahresanfang (Boersen- bzw. Marktpreis)",
     )
 
 
+def _record_year_start_price(prior_soy: SnapshotsByAccount,
+                             prior_eoy: SnapshotsByAccount,
+                             asset: Asset, price: "FundPrice") -> None:
+    """Write the settled year-start price into the start-of-year snapshot registry.
+
+    The price is per unit and so is a property of the fund, not of the holding: it
+    goes under every account whose row for this fund the start-of-year report
+    carries. Where that report omits the fund altogether -- it was bought during
+    the Vorabpauschale year -- the accounts come from the closing report, which
+    named them, because `_owes_a_vorabpauschale` has already established the fund
+    was held at the close. No account is invented, and no record is created for a
+    fund neither report mentions.
+    """
+    asset_id = asset.internal_asset_id
+    accounts = [account for account, _snap in snapshots_for_asset(prior_soy, asset_id)]
+    if not accounts:
+        accounts = [account for account, _snap in snapshots_for_asset(prior_eoy, asset_id)]
+    for account in accounts:
+        key = (account, asset_id)
+        existing = prior_soy.get(key)
+        base = existing if existing is not None else PositionSnapshot(quantity=None)
+        prior_soy[key] = dataclasses_replace(
+            base,
+            mark_price=price.price,
+            mark_price_currency=price.currency,
+            mark_price_date=price.date_set,
+        )
+
+
 def resolve_year_start_prices(
     assets: Iterable[Asset],
+    prior_soy_positions: SnapshotsByAccount,
+    prior_eoy_positions: SnapshotsByAccount,
     vorabpauschale_year: int,
     store: "FundPriceStore",
     interactive: bool,
@@ -248,6 +291,12 @@ def resolve_year_start_prices(
 
     Steps 3 and 4 both record that a market price stood in for the
     Ruecknahmepreis, so a reader can see which funds rest on the substitute.
+
+    The price settled here is written back into `prior_soy_positions`, under every
+    account whose row the fund appears on -- the price is per unit and common to all
+    of them. A fund the start-of-year report omits entirely gets its record under the
+    accounts that held it at the year's close, which the closing report names; no
+    account is invented to hold one.
     """
     from src.tax_law.registry import basiszins_pct
 
@@ -261,7 +310,7 @@ def resolve_year_start_prices(
             vorabpauschale_year, basiszins)
         return 0
 
-    wanted = [a for a in assets if _owes_a_vorabpauschale(a)]
+    wanted = [a for a in assets if _owes_a_vorabpauschale(a, prior_eoy_positions)]
     if not wanted:
         return 0
 
@@ -274,7 +323,7 @@ def resolve_year_start_prices(
 
     for asset in wanted:
         key = asset.get_classification_key()
-        snapshot = _snapshot_price(asset)
+        snapshot = _snapshot_price(asset, prior_soy_positions)
         price: Optional[FundPrice] = None
         code = ISSUER_NAV_CODE
         newly_given = False
@@ -313,9 +362,7 @@ def resolve_year_start_prices(
         if price.source.startswith("Positionsbericht"):
             code = MARKET_FALLBACK_CODE
 
-        asset.prior_year_soy_mark_price = price.price
-        asset.prior_year_soy_mark_price_currency = price.currency
-        asset.prior_year_soy_mark_price_date = price.date_set
+        _record_year_start_price(prior_soy_positions, prior_eoy_positions, asset, price)
         priced += 1
 
         # Only a figure obtained from outside the export is worth storing. The

@@ -7,7 +7,7 @@ from typing import Any, Optional, Tuple, List, Dict # Python 3.8 compatibility f
 import src.config as config
 
 # Domain objects and Enums (assuming they are accessible)
-from src.domain.assets import Asset # For type hinting if needed
+from src.domain.assets import Asset, SnapshotsByAccount # For type hinting if needed
 from src.domain.events import FinancialEvent
 from src.domain.results import RealizedGainLoss, VorabpauschaleData
 
@@ -39,7 +39,10 @@ class ProcessingOutput:
                  asset_resolver: AssetResolver,
                  eoy_mismatch_error_count: int,
                  data_gaps: Optional[List["DataGap"]] = None,
-                 declaration_store: Optional["VorabpauschaleDeclarationStore"] = None):
+                 declaration_store: Optional["VorabpauschaleDeclarationStore"] = None,
+                 soy_positions: Optional["SnapshotsByAccount"] = None,
+                 eoy_positions: Optional["SnapshotsByAccount"] = None,
+                 prior_eoy_positions: Optional["SnapshotsByAccount"] = None):
         self.realized_gains_losses = realized_gains_losses
         self.vorabpauschale_items = vorabpauschale_items
         self.processed_income_events = processed_income_events
@@ -52,6 +55,16 @@ class ProcessingOutput:
         # The record of what was declared as Vorabpauschale, carried out so that the
         # commit step at filing writes to the same store the run read from.
         self.declaration_store = declaration_store
+        # The tax year's opening and closing snapshots, {(account_key, asset_id):
+        # PositionSnapshot}. Carried out because they are not on the Asset: what a
+        # snapshot reports belongs to an account, and the person's figure is
+        # `person_snapshot` over these ([GT-ESTG20-061]).
+        self.soy_positions: "SnapshotsByAccount" = soy_positions or {}
+        self.eoy_positions: "SnapshotsByAccount" = eoy_positions or {}
+        # The PRECEDING calendar year's closing snapshot. Carried out for the same
+        # reason and for one consumer: `--commit-vorabpauschale-declaration` records an
+        # entry for every fund held at that close (Rz. 18.4, [GT-INVSTG-017]).
+        self.prior_eoy_positions: "SnapshotsByAccount" = prior_eoy_positions or {}
         # For EOY state checks in tests, final assets can be fetched from asset_resolver
         self.final_assets_by_id: Dict[Any, Asset] = asset_resolver.assets_by_internal_id
 
@@ -70,6 +83,11 @@ def run_core_processing_pipeline(
     custom_rate_provider: Optional[ExchangeRateProvider] = None, # For testing ECB mock
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
     options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
+    transfers_file_path: Optional[str] = None,  # Moves between the taxpayer's own accounts
+    # Years of the replayed window for which no Transfers file was offered (from
+    # data_preparation). A hole in a supplied export stops the run; an absent export
+    # only warns. Empty when the export is complete or absent altogether.
+    transfers_missing_years: str = "",
     # Preceding calendar year's position snapshots. Required for the Vorabpauschale, which for
     # a VZ Y declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). Optional at
     # this boundary: the engine decides what a missing snapshot means once it knows whether any
@@ -111,6 +129,7 @@ def run_core_processing_pipeline(
             corporate_actions_file=corporate_actions_file_path,
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
+            transfers_file=transfers_file_path,
             positions_mark_files=positions_mark_file_paths,
             tax_year=tax_year_to_process
         )
@@ -180,6 +199,8 @@ def run_core_processing_pipeline(
         # which then sees a price like any other. See src/processing/fund_prices.py.
         resolve_year_start_prices(
             assets=list(orchestrator.asset_resolver.assets_by_internal_id.values()),
+            prior_soy_positions=orchestrator.prior_soy_positions,
+            prior_eoy_positions=orchestrator.prior_eoy_positions,
             vorabpauschale_year=tax_year_to_process - 1,
             store=FundPriceStore(),
             # The resolved run setting, not config.IS_INTERACTIVE_CLASSIFICATION:
@@ -212,6 +233,11 @@ def run_core_processing_pipeline(
             decimal_rounding_mode=config.DECIMAL_ROUNDING_MODE,
             data_gap_collector=data_gap_collector,
             mark_positions=orchestrator.mark_positions,
+            soy_positions=orchestrator.soy_positions,
+            eoy_positions=orchestrator.eoy_positions,
+            prior_soy_positions=orchestrator.prior_soy_positions,
+            prior_eoy_positions=orchestrator.prior_eoy_positions,
+            prior_opening_positions=orchestrator.prior_opening_positions,
             prior_year_positions_available=bool(
                 positions_prior_start_file_path and positions_prior_end_file_path
             ),
@@ -222,6 +248,8 @@ def run_core_processing_pipeline(
             # src/processing/vorabpauschale_declarations.py.
             ask_for_declared_vorabpauschale=(
                 make_declaration_prompt() if interactive_classification_mode else None),
+            transfers_file_supplied=orchestrator.transfers_file_supplied,
+            transfers_missing_years=transfers_missing_years,
         )
     except Exception as e:
         logger.critical(f"Calculation engine failed with unexpected error: {e}", exc_info=True)
@@ -241,4 +269,7 @@ def run_core_processing_pipeline(
         eoy_mismatch_error_count=eoy_mismatch_error_count_calc,
         data_gaps=data_gap_collector.gaps,
         declaration_store=declaration_store,
+        soy_positions=orchestrator.soy_positions,
+        eoy_positions=orchestrator.eoy_positions,
+        prior_eoy_positions=orchestrator.prior_eoy_positions,
     )
