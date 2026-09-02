@@ -24,8 +24,8 @@ Adding a field therefore means adding the column to the Flex Query *and* to the
 `*_COLUMNS` tuple. Leaving it declared-but-unrequested is the one state to avoid.
 
 Note the mirror case, which is *not* corrected here because changing it could move a
-figure: `Positions` exports `ClientAccountID` and `SubCategory`, and `Corporate_Actions`
-exports `Amount`, none of which have a field below, so `extra = 'ignore'` discards them.
+figure: `Positions` exports `SubCategory` and `Corporate_Actions` exports `Amount`,
+neither of which has a field below, so `extra = 'ignore'` discards them.
 """
 from typing import Optional, Any
 from decimal import Decimal
@@ -141,8 +141,8 @@ class RawCashTransactionRecord(RawBaseRecord):
         extra = 'ignore'
 
 class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
-    """One row of a Positions snapshot. Mirrors `POSITIONS_COLUMNS`, less the two
-    columns noted in the module docstring that this model does not map at all.
+    """One row of a Positions snapshot. Mirrors `POSITIONS_COLUMNS`, less the one
+    column noted in the module docstring that this model does not map at all.
 
     Carries no option contract terms. `Strike`, `Expiry` and `Put/Call` were declared here
     and read by `process_positions` until August 2026, but the Positions query does not
@@ -153,6 +153,7 @@ class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
     been an option's only source. Restoring the capability means adding the three columns
     to the Flex Query and to POSITIONS_COLUMNS together, not re-declaring them here.
     """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed for consistency
     asset_class: str = Field(alias="AssetClass")
     symbol: str = Field(alias="Symbol")

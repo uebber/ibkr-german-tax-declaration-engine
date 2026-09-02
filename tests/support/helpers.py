@@ -97,7 +97,8 @@ def get_eoy_file_quantity(spec: FifoTestSpec) -> Decimal:
 
     This separation ensures:
     - positions_eoy_report represents what the broker says (input)
-    - expected_eoy_quantity represents what asset.eoy_quantity should be (output)
+    - expected_eoy_quantity represents the person's closing holding, which the engine
+      reads from the per-(account, asset) closing registry (output)
     - For most tests they're equal, but the semantic distinction is clear
     """
     if spec.positions_eoy_report is not None:
