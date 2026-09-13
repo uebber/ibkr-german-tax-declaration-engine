@@ -20,6 +20,9 @@ An unresolved question recorded is ground truth. An unresolved question silently
 | Q8 | [GT-FX-006] | How is a short (negative) currency position taxed in Privatvermoegen? | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q9 | [GT-FX-007], [GT-FX-001] | Is a currency movement embedded in another transaction a separate disposal, measured in EUR? Two instances: the leg of a securities trade, and a balance spent on a fee or withholding. | `../bmf-guidance/fremdwaehrung-konten.md` |
 | Q11 | [GT-ESTG20-038] | How is unallocated spot precious metal held at a broker taxed -- Termingeschaeft, privates Veraeusserungsgeschaeft, or sonstige Kapitalforderung? | this file |
+| Q15 | [GT-FX-010] | Rz. 131 makes an Umbuchung between two foreign-currency accounts a Veraeusserung. What is the Veraeusserungspreis, when nothing is paid? | `../bmf-guidance/fremdwaehrung-konten.md` |
+| Q17 | [GT-ESTG20-064] | Does a benefit booked into the recipient's account but revocable until a condition lapses zufliessen on the booking, or on the lapse? | this file |
+| Q16 | [GT-ESTG20-065] | Does a benefit in kind left untaxed by the Freigrenze of § 22 Nr. 3 Satz 2 still supply Anschaffungskosten at its full value on the later disposal? | this file |
 
 **Retired on the same terms, and for the same reason -- a source that settles the point was found,
 or the point was never one.** Numbers are never reused. Each line says what answered it; the
@@ -265,3 +268,130 @@ operate on the taxpayer's total income of their kind from every source, so neith
 weigh a reading. Nor is the practice of brokers and the firms preparing their reports, which enter
 such amounts on Anlage KAP; that is habit, not authority, and it is the likeliest source of a wrong
 answer here.
+
+## Q17 -- when a revocable benefit in kind zufliesst
+
+**What is settled.** § 11 Abs. 1 Satz 1 fixes the year by Zufluss ([GT-ESTG20-064]) and § 8
+Abs. 2 Satz 1 values a Sachbezug at the ueblicher Endpreis. **What no located Tier 1 or Tier 2
+source settles is when a benefit that the grantor may still take back is zugeflossen.**
+
+**Reading A (at the lapse of the condition).** Zufluss requires wirtschaftliche
+Verfuegungsmacht, and a holding the grantor can reclaim is not held unconditionally. On this
+reading the benefit accrues when the condition lapses, and § 8 Abs. 2 values it that day --
+which is later, and normally at a different price.
+**Against it:** no located source applies the doctrine to this configuration; it is reasoning
+from the general requirement rather than a rule about conditional benefits.
+
+**Reading B (at the booking).** The benefit is in the recipient's account from the booking and
+is theirs to dispose of; a condition that merely *might* undo it is resolutive, and what has
+accrued is not postponed by the possibility of its being reversed.
+**Against it:** it attributes to the recipient a benefit they may have to give back, and the
+possibility is not hypothetical -- a reversal is one of the row kinds the export carries.
+
+**What the choice moves.** The two readings put the acquisition date roughly a vesting period
+apart and take the Anschaffungskosten from two different days' prices, so both the declared gain
+on a later disposal and the size of the untaxed receipt move with it. The direction is not fixed:
+it depends on which way the price moved between the two days.
+
+**Research run 2026-08-13, and it points at Reading B.** A search of Tier 4 (bundesfinanzhof.de)
+and Tier 1/2 domains for Zufluss of shares subject to a Sperrfrist, a Verfallklausel or a
+return obligation returns a consistent line of BFH decisions on *verbilligte Aktien*, of which
+the closest read in full is **BFH VI R 30/07 of 29.07.2010**: the advantage accrues *"erst, wenn
+der Arbeitnehmer auch die wirtschaftliche Verfuegungsmacht ueber die Aktien erlangt"*, and that
+is the delivery of the shares, not the grant of a right to them. Summaries of the neighbouring
+decisions state that a Sperr- or Verfallklausel does **not** postpone Zufluss, and that a
+possible obligation to give the shares back does not either, because the recipient obtains
+Verfuegungsmacht first. **On that line, shares actually booked into the recipient's account
+zufliessen on the booking, and a resolutive condition does not defer it** -- which is Reading B.
+
+**Why this is recorded and not applied.** Three things stand in the way of treating it as
+settled:
+
+1. **Tier 4 never stands alone** (Validation Protocol item 1), and VI R 30/07 decides the
+   valuation date of a capital increase; it does not analyse the repurchase right its own
+   Tatbestand mentions. The passages that would settle the point are known here only from
+   search summaries, not from the decisions read in full and cited to the Randnummer.
+2. **Every located decision is § 19 EStG** -- Arbeitslohn, an employee receiving shares from an
+   employer. § 11's Zufluss concept is general, but whether the same result carries to a
+   § 22 Nr. 3 benefit from a broker is the step no located source takes.
+3. **The distinction the cases turn on is delivery versus expectancy**, and this fact pattern
+   sits on the delivered side: the shares are in the account and their dividends are paid to the
+   recipient from the booking. That is an argument for Reading B, and it is an argument, not a
+   citation.
+
+**What it moves, if applied:** the acquisition date of every awarded lot returns to the award
+day, the Anschaffungskosten to the award price, and the declared gain on a later disposal rises
+correspondingly -- measured at about a third on the maintainer's VZ 2025 position.
+
+## Q16 -- Anschaffungskosten from a receipt the Freigrenze left untaxed
+
+**What is settled.** A benefit in kind granted for placing capital is a Leistung under § 22 Nr. 3
+([GT-ESTG20-063]), valued at the ueblicher Endpreis on the day of Zufluss ([GT-ESTG20-064]), and
+the amount brought to tax is the Anschaffungskosten of the securities received ([GT-ESTG20-065]).
+**What no located Tier 1 or Tier 2 source settles is what happens when Satz 2's Freigrenze means
+no amount is brought to tax at all** -- because the year's Leistungen together stayed below
+256 Euro.
+
+**Reading A (full value regardless).** The Freigrenze exempts the *Einkuenfte*; it does not say the
+receipt was worth nothing. § 20 Abs. 4 Satz 1 measures a later gain against the Anschaffungskosten,
+and what was acquired had a value, ascertained under § 8 Abs. 2 on the day it accrued. On this
+reading the exemption is a relief on the receipt and leaves the acquisition side untouched.
+**Against it:** nothing located states it for a receipt that never entered an assessment.
+
+**Reading B (no taxed amount, no Anschaffungskosten).** [GT-ESTG20-065]'s ground is that taxing the
+receipt and then the whole disposal proceeds would tax one accretion twice. Where the Freigrenze
+means the receipt was never taxed, that ground does not arise, and the acquisition is unentgeltlich
+in substance. On this reading the whole disposal proceeds are the gain.
+**Against it:** it makes the Anschaffungskosten of an asset depend on the taxpayer's *other*
+Leistungen in the year of receipt, which no provision located ties together.
+
+**Why it is open rather than decided.** The two readings diverge only in a year whose Leistungen
+total stayed below the Freigrenze, and neither § 22 Nr. 3, § 8 nor § 20 Abs. 4 addresses the
+interaction. The Freigrenze itself is recorded at [GT-ESTG23-009].
+
+## Q15 -- what a currency Umbuchung between the taxpayer's own accounts is worth
+
+**The disposal itself is not in question.** BMF 14.05.2025 Rz. 131 ¶2 lists it among the disposing
+events: *"Das Gleiche gilt, wenn die Fremdwaehrungskapitalforderung ... auf ein anderes
+verzinsliches Konto bei demselben oder einem anderen Kreditinstitut umgebucht wird. Diese
+Vorgaenge stellen steuerlich eine Veraeusserung der urspruenglichen Kapitalforderung und zugleich
+eine Anschaffung einer neuen Kapitalforderung dar."* That is [GT-FX-009]. **What no located source
+states is the Veraeusserungspreis**, and an Umbuchung pays nothing.
+
+**Reading A (gemeiner Wert of what is received).** Where a disposal's consideration is not money,
+the administration measures it at the value of the thing received, and says so in every
+configuration it addresses: **Rn. 65/66** for a Tausch von Wertpapieren -- *"Als
+Veraeusserungserloes fuer die hingegebenen Wertpapiere ist der Boersenkurs der erlangten
+Wertpapiere am Tag der Depoteinbuchung anzusetzen"* with the mirror rule for the
+Anschaffungskosten; **Rn. 66a** for an Umschuldung; **Rn. 69** in general terms -- *"Wird die
+Gegenleistung nicht in Geld geleistet ..., ist als Veraeusserungspreis der gemeine Wert der
+erhaltenen Wirtschaftsgueter anzusetzen."* Applied here, the new Kapitalforderung is what is
+received, its gemeiner Wert is the amount moved, and § 20 Abs. 4 Satz 1 zweiter Halbsatz
+([GT-ESTG20-022]) converts the proceeds on the day of the Umbuchung and the acquisition cost on
+the day the amount entered the sending account.
+**Against it:** none of the three Randziffern is addressed to a Fremdwaehrungskonto. Rn. 65/66
+speak of Wertpapiere and a Boersenkurs, and a currency balance is neither; Rn. 69 sits in the
+Abfindung of Minderheitsaktionaere. Reading A is an extension of a principle, not the application
+of a sentence that names this case.
+
+**Reading B (no stated price, so nothing realised).** § 20 Abs. 4 EStG substitutes a value for
+absent Einnahmen in exactly two places -- Satz 2, verdeckte Einlage, and Satz 8, an abgetrennter
+Zinsschein -- and the legislature's having named those two is an argument that it did not intend a
+general gemeiner-Wert rule. On this reading the gain stays latent in the moved balance and is
+realised when that balance is genuinely spent or converted, against its original acquisition cost.
+**Against it:** it empties Rz. 131's express *"Veraeusserung der urspruenglichen Kapitalforderung"*
+of any effect, and no located source advances it. It is stated here because the alternative to
+Reading A has to be written down, not because a source was found for it.
+
+**What turns on the answer.** The two readings agree on the lifetime total where the balance is
+eventually disposed of in full. They differ on **which year** the gain falls in, on whether a
+balance that is moved and then simply held is taxed at all, and -- for a balance falling in the
+§ 23 branch ([GT-FX-002]) -- on whether the Jahresfrist restarts at the move.
+
+**Status.** § 20 Abs. 4 EStG was retrieved in full on 2026-08-12 from gesetze-im-internet.de and
+all nine Saetze read; BMF 14.05.2025 was retrieved in full the same day and searched for the
+valuation of an Umbuchung, including Rn. 59, which Rz. 131 cross-references and which defines the
+Veraeusserungsbegriff without valuing anything. **No Tier 1 or Tier 2 statement on this case has
+been located.** The asymmetry between the two readings is one of authority, not of plausibility:
+Reading A extends what the administration says everywhere else, Reading B contradicts what it says
+here.

@@ -5,7 +5,7 @@ from uuid import UUID
 
 # Domain specific enums and classes for type hints and comparisons
 from src.domain.results import RealizedGainLoss
-from src.domain.assets import Asset # For type hint of actual_asset
+from src.domain.assets import Asset, SnapshotsByAccount, person_snapshot # For type hint of actual_asset
 from src.domain.enums import AssetCategory, TaxReportingCategory, InvestmentFundType, RealizationType
 from src.identification.asset_resolver import AssetResolver # For type hint
 # Import config to access OUTPUT_PRECISION_AMOUNTS
@@ -149,7 +149,8 @@ class ExpectedAssetEoyState:
     def __repr__(self) -> str:
         return f"ExpectedEoyState(identifier={self.asset_identifier}, qty={self.eoy_quantity})"
 
-    def matches(self, actual_asset: Asset) -> bool:
+    def matches(self, actual_asset: Asset,
+                eoy_positions: Optional[SnapshotsByAccount] = None) -> bool:
         identifier_type, identifier_value = self.asset_identifier.split(":", 1) if ":" in self.asset_identifier else ("SYMBOL", self.asset_identifier)
         asset_matched = False
         if identifier_type == "ISIN" and actual_asset.ibkr_isin == identifier_value:
@@ -169,11 +170,14 @@ class ExpectedAssetEoyState:
                   f"ConID '{actual_asset.ibkr_conid}', Symbol '{actual_asset.ibkr_symbol}'.")
             return False
 
-        actual_eoy_qty = actual_asset.eoy_quantity if actual_asset.eoy_quantity is not None else Decimal("0")
+        # The closing snapshot is recorded per (account, asset); what a scenario asserts
+        # is the person's holding, which is `person_snapshot` over those.
+        reported = person_snapshot(eoy_positions or {}, actual_asset.internal_asset_id)
+        actual_eoy_qty = reported.quantity if reported and reported.quantity is not None else Decimal("0")
         qty_match = actual_eoy_qty.compare(self.eoy_quantity) == Decimal("0")
 
         if not qty_match:
-            print(f"EOY Qty Mismatch for '{self.asset_identifier}': expected {self.eoy_quantity}, got {actual_asset.eoy_quantity}")
+            print(f"EOY Qty Mismatch for '{self.asset_identifier}': expected {self.eoy_quantity}, got {actual_eoy_qty}")
             return False
 
         for field_name, expected_value in self.additional_fields.items():

@@ -43,6 +43,7 @@ against every real export by `tests/test_raw_model_fields.py`:
 | `UnderlyingConid`      | `underlying_conid`          | `Optional[str]`             | IBKR's contract identifier for the underlying asset.                        | Optional, relevant for OPT/FUT/CFD. Example: "900003959.0" (parsed as string)                                                                                              |
 | `Multiplier`           | `multiplier`                | `Optional[Decimal]`         | The contract multiplier (e.g., for options, futures).                     | Optional. Example: "1", "100"                                                                                                                                              |
 | `Open/CloseIndicator`  | `open_close_indicator`      | `Optional[str]`             | Indicates if trade opens or closes a position ('O' or 'C').                 | Crucial for determining `FinancialEventType` for standard financial instrument trades in conjunction with `Buy/Sell` (refer to PRD Section 5, Step 7). Expected values: 'O' (Open), 'C' (Close). Missing or invalid values for relevant trades constitute a data inconsistency. Not applicable to currency pair trades (e.g., FX 'CASH' asset class trades like EUR.USD). The exports carry the column. Measured 2021–2025: blank on 586 rows, 584 of them `AssetClass=CASH` — **the other two are the data inconsistency this note describes, and they are real rows, not a hypothetical.** |
+| `Taxes`                | `taxes`                     | `Optional[Decimal]`         | Transaction tax the broker charged on the trade itself (e.g. UK Stamp Duty, Hong Kong stamp duty). In `CurrencyPrimary` — it has no currency column of its own. A charge is negative. On a purchase it is an Anschaffungsnebenkosten and joins the cost basis [GT-ESTG20-066]. | **Required column** — an export missing it stops the run rather than treating the tax as zero. Almost always "0". Measured 2021–2025: non-zero on 2 of 239 trade rows — one UK, one Hong Kong purchase. A non-zero value on a **sale** stops the run (not handled). |
 
 ### A trade has one date, and it is the contract date
 
@@ -130,7 +131,7 @@ Missing transaction types cause currency EOY balance mismatches (FIFO-tracked ba
 
 | CSV Header         | Model Field Name (Pydantic) | Model Data Type   | Description                                                                 | Notes (Optionality, Example, Parsing Detail)                                                                                                                                           |
 |--------------------|-----------------------------|-------------------|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ClientAccountID`  | (Ignored by model)          | `N/A`             | The client's account identifier.                                            | Present in CSV. `RawPositionRecord` declares no field for it, so `Config.extra = 'ignore'` discards it. (Until August 2026 the model carried an `account_id` field aliased `AccountId`, which is a different header and therefore never populated.) Example: "U1234567" |
+| `ClientAccountID`  | `client_account_id`         | `Optional[str]`   | The client's account identifier.                                            | Required in the query. The snapshot is recorded per `(account, asset)` -- a Flex Query covering several accounts emits one row per account, and this column is what says which. (Until August 2026 the model carried an `account_id` field aliased `AccountId`, a different header, so nothing populated it and `Config.extra = 'ignore'` discarded the real column.) Example: "U1234567" |
 | `CurrencyPrimary`  | `currency_primary`          | `str`             | The currency of the position.                                               | Required. Example: "CAD", "EUR", "SGD"                                                                                                                                                 |
 | `AssetClass`       | `asset_class`               | `str`             | The asset class of the instrument (e.g., STK, OPT).                         | Required. Example: "STK", "OPT"                                                                                                                                                        |
 | `SubCategory`      | (Ignored by model)          | `N/A`             | Sub-category of the asset (e.g., COMMON, ETF).                              | Present in CSV. Ignored by `RawPositionRecord` due to `Config.extra = 'ignore'`. Example: "COMMON", "ETF"                                                                                |
@@ -253,3 +254,138 @@ settles it.
 **Notes:**
 - Only rows with `TransactionType = "Cash Settlement"` are processed by the engine. Other rows (Exercise, Assignment, Expiration) duplicate information already present in the Trades CSV.
 - Cash-settled options (e.g. SPX, ESTX50 index options) have no underlying stock delivery; the settlement amount is the option's intrinsic value at expiration.
+
+## 7. Transfers File (Optional)
+- **Input:** `data_import/Transfers-{YYYY}.csv`, concatenated across every year <= the tax year
+- **Purpose:** Records moves of a holding between the taxpayer's own accounts. A move is **not** a disposal ([GT-ESTG20-014]): the lots relocate from the sending account's ledger to the receiving one, keeping their acquisition date and cost basis. Without this file, per-account tracking cannot see the move — the receiving account shows units it never bought and the sending one units it never sold — so a multi-account run that moved a position needs it. If you hold one account, or have never moved a position between accounts, it is not needed.
+- **A supplied export must be lot-detailed.** The columns `Level of Detail`, `Cost Basis` and `Open Date Time` are **required**; an export without them stops the run. They are what let the engine say which lots moved, at acquisition-day granularity, so a move of *part* of a position is supported rather than refused.
+- **Associated Pydantic Model:** `RawTransferRecord`
+
+**How the export is shaped, and what is read:** the export writes each move as a **summary** row per side (`LevelOfDetail = TRANSFER`, `Direction` OUT on the sending account and IN on the receiving one, carrying a `TransactionID`) followed by one **lot** row per acquisition day (`LevelOfDetail = LOT`, no `TransactionID`, carrying `OpenDateTime` and `CostBasis`). Each summary names both accounts, so either side alone describes the whole move; the two sides are deduplicated into one event and the lot rows become its per-day breakdown.
+
+**Column Specifications (based on IBKR Transfers Flex Query, lot detail enabled):**
+
+| CSV Header         | Model Field Name (Pydantic) | Model Data Type     | Description                                              | Notes (Optionality, Example, Parsing Detail)                                                                 |
+|--------------------|-----------------------------|---------------------|----------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| `ClientAccountID`  | `client_account_id`         | `Optional[str]`     | The account this row is written from the view of.        | Optional. Example: "U1234567"                                                                                |
+| `CurrencyPrimary`  | `currency_primary`          | `str`               | Instrument currency.                                     | Required. Example: "USD", "CAD"                                                                              |
+| `AssetClass`       | `asset_class`               | `str`               | Asset class. A `CASH` row is a currency move, not a securities relocation ([GT-FX-009]); see below. | Required. Example: "STK", "CASH"                                                                             |
+| `Symbol`           | `symbol`                    | `Optional[str]`     | Instrument symbol.                                       | Optional.                                                                                                    |
+| `Description`      | `description`               | `Optional[str]`     | Instrument description.                                  | Optional.                                                                                                    |
+| `Conid`            | `conid`                     | `Optional[str]`     | Contract identifier.                                     | Optional.                                                                                                    |
+| `ISIN`             | `isin`                      | `Optional[str]`     | ISIN.                                                    | Optional.                                                                                                    |
+| `Multiplier`       | `multiplier`                | `Optional[Decimal]` | Contract multiplier.                                     | Optional. Blank on a cash row.                                                                               |
+| `Date`             | `date`                      | `str`               | The move date.                                           | Required. The move is applied in chronological order.                                                        |
+| `Type`             | `transfer_type`             | `Optional[str]`     | Transfer type.                                           | Only `INTERNAL` is handled; anything else stops the run ([GT-ESTG20-014] covers own-depot moves only).       |
+| `Direction`        | `direction`                 | `Optional[str]`     | OUT (sending) or IN (receiving).                         | Required. The **sign of `Quantity` does not carry the direction**; `Direction` does.                          |
+| `TransferAccount`  | `transfer_account`          | `Optional[str]`     | The counterparty account.                                | Required. With `ClientAccountID` it names both ends of the move.                                             |
+| `Quantity`         | `quantity`                  | `Decimal`           | Units moved. On a summary row the magnitude is the move total; on a lot row the sign marks long (+) / short (-). | Required. A blank one is rejected (not defaulted to zero). The engine reads `abs()`.                          |
+| `TransferPrice`    | `transfer_price`            | `Optional[Decimal]` | Per-unit basis in the broker's convention.               | Parsed to complete the required shape; not consumed (see below).                                             |
+| `TransactionID`    | `transaction_id`            | `Optional[str]`     | Summary-row id; blank on lot rows.                       | Not carried onto the event (see below).                                                                      |
+| `CostBasis`        | `cost_basis`                | `Optional[Decimal]` | Lot total basis in the broker's convention.              | Parsed to complete the required shape; not consumed (see below).                                             |
+| `CashTransfer`     | `cash_transfer`             | `Optional[Decimal]` | The amount moved, on a **cash** row.                     | The only column carrying a cash move's amount — `Quantity`, `PositionAmount` and `TransferPrice` are all zero on one. Blank on a securities row. A zero or blank on a cash row stops the run. |
+| `OpenDateTime`     | `open_date_time`            | `Optional[str]`     | The lot's acquisition day (lot rows).                    | Required on lot rows; it decides the holding period and the § 18 Abs. 2 month.                               |
+| `LevelOfDetail`    | `level_of_detail`           | `Optional[str]`     | `TRANSFER` (summary) or `LOT` (per-lot detail).          | Required. Discriminates the two row kinds, replacing an older `Code`/`TransactionID` heuristic.              |
+
+**Notes:**
+- **`TransferPrice` and `CostBasis` are parsed but never consumed.** They *are* a cost basis, but in IBKR's convention: an option-assignment premium is netted into the basis of the assigned shares, which German law rejects ([GT-ESTG20-004], BMF 14.05.2025 Rz. 26). The German-correct basis is the sending account's own reconstruction, so the lots relocate with *that* basis and these two values are read to satisfy the required-column contract, not to compute or check a figure. What the `LOT` rows are used for -- the acquisition day, the quantity, and the long/short sign -- is matched and cross-checked against the sending ledger.
+- **`TransactionID` is not carried onto the move event.** For a securities move the two sides carry different ids, so neither names the move; for a cash move the two sides carry the **same** id, which is used to pair them into one move (and to keep two genuinely distinct same-shape moves apart). Either way the id is not put on the event, because it would decide the intra-day order (which the engine fixes by rule — a move sorts before that day's trades so units or a balance that arrived can be spent).
+- **A `CASH` row is a currency Umbuchung, and the opposite of a securities move.** Moving a foreign-currency balance to another of the taxpayer's own accounts is a disposal of the sending account's Kapitalforderung and an acquisition of the receiving account's ([GT-FX-009]); the securities move is no disposal at all. The row becomes an `InternalCashTransferEvent`, valued at the amount moved converted on the move day (Reading A of [GT-FX-010]). A move of **EUR** produces nothing — § 20 Abs. 2 Satz 1 Nr. 7 reaches a *Fremdwährungs*guthaben and EUR is the base currency.
+- Columns the export carries but the engine does not read (broker PnL figures, `DateTime`, `Code`, and account/instrument metadata) are ignored deliberately; see `tests/test_raw_model_fields.py`.
+
+---
+
+## 8. Grants File (Optional)
+- **Input:** `data_import/Grants-{YYYY}.csv`, concatenated across every year <= the tax year
+- **Purpose:** Records shares a broker awarded for capital placed with it. The award is the only
+  record that those shares arrived and what they were worth; no other export carries it. Without
+  this file the historical replay reconstructs a holding smaller than the broker reports. **What
+  happens then depends on the interval**, and only one of the two cases is a stop:
+  - the interval **began at a reported snapshot** — `REPLAY_MARK_MISMATCH`, FAIL_FAST, and the run
+    produces no figures at all;
+  - the interval is the **earliest one**, with nothing confirming its start —
+    `REPLAY_MARK_UNCONFIRMED_START`, severity WARNING. The broker's quantity is taken, a lot is
+    synthesised dated `{tax_year-1}-12-31`, and **the run completes**. A user whose award falls in
+    the first year of their input window gets a figure, not a refusal, and the acquisition date
+    behind it is invented. This is the fallback rule's case, and the report is what avoids it.
+- **Legal ground:** shares granted for placing capital are a *Leistung* under § 22 Nr. 3 EStG, not
+  Kapitalertrag ([GT-ESTG20-063]). Zufluss falls where wirtschaftliche Verfügungsmacht arrives,
+  which is the booking into the account: a contractual condition under which the grantor may still
+  take the shares back does not postpone it ([GT-ESTG20-064]), and the amount brought to tax then
+  is the Anschaffungskosten on a later disposal ([GT-ESTG20-065]).
+- **What this engine does and does not do with it.** It supplies the **acquisition** — the lot, its
+  date and its cost basis — so a later disposal is measured correctly on Anlage KAP. It does **not**
+  declare the **receipt** as income in the year it accrued: that belongs on Anlage SO under
+  *Einkünfte aus Leistungen*, the reporting layer has no such category, and this library holds no
+  Zeilen for that half of the form. Tracked as issue #76, which closes it for this and for the
+  securities-lending fee together.
+- **Optional as a whole, but not per year.** A person whose broker has never awarded them shares
+  has no rows. A window with a hole is different: a year of awards that does not arrive is a year
+  whose holding cannot be reconstructed. `prepare_data_for_tax_year` counts the missing years the
+  same way it does for Transfers.
+- **Associated Pydantic Model:** `RawGrantRecord`
+
+**Three activity kinds share the file and only two move the position.**
+
+| `ActivityDescription` contains | Meaning | Moves the position? |
+|---|---|---|
+| `Stock Award Grant` | Shares booked into the account | Yes, positive |
+| `Stock Award Return` | Taken back when the condition fails | Yes, negative |
+| `Stock Award Vesting` | The condition lapsed | **No** |
+
+Adding the vesting quantities to the position roughly doubles the holding against the broker's
+snapshot. `parse_grants_csv` therefore **raises** on an `ActivityDescription` it does not
+recognise rather than skipping it: an award and a vesting differ in nothing a parser can see
+except this text, so an unclassified kind is as likely to move the position as not, and a run that
+dropped one would reconcile until the year the dropped kind mattered.
+
+**Each kind takes its date from a different column.**
+
+- An **award** is dated on `AwardDate` — the day the shares entered the account. That is both what
+  the position snapshot counts and where Zufluss falls ([GT-ESTG20-064]), so it is the acquisition
+  date.
+- A **reversal** is dated on `ReportDate`. Its `AwardDate` names the *original* award and is the
+  matching key, not its own date.
+- A **vesting** is dated on `VestingDate` and **has no ledger effect**. It is read so that an
+  unrecognised kind can still be refused, and inert because the acquisition already happened.
+
+**The award creates the lot and the lot is final.** BFH VI R 37/09 Rn. 4 holds that a Sperr- or
+Haltefrist does not prevent Zufluss, and Leitsatz 2 that what does is a disposal being *rechtlich
+unmöglich* — so a contractual clawback does not postpone the acquisition. A reversal reduces the
+matching lot **at that lot's own unit cost** and realises nothing: it is not a disposal and
+produces no `RealizedGainLoss`.
+
+**Column Specifications** — `GRANTS_COLUMNS` in `src/parsers/column_validator.py` declares the
+export's full header so that a column appearing or disappearing is caught at the boundary.
+
+| CSV Column            | Model Field            | Type                | Description                                    | Notes |
+|-----------------------|------------------------|---------------------|------------------------------------------------|-------|
+| `ClientAccountID`     | `client_account_id`    | `Optional[str]`     | The account the shares were awarded into.      | Decides which account's ledger holds the lot. A single-account export would not notice it being dropped, which is what makes getting it wrong latent. |
+| `CurrencyPrimary`     | `currency_primary`     | `str`               | Currency of `Price` and `Value`.               | Required. The award price is converted at the ECB rate for the event's own date, never at a broker rate. |
+| `AssetClass`          | `asset_class`          | `str`               | `STK` on every observed row.                   | Required. |
+| `SubCategory`         | `sub_category`         | `Optional[str]`     | e.g. `COMMON`.                                 | |
+| `Symbol`              | `symbol`               | `Optional[str]`     | Instrument symbol.                             | |
+| `Description`         | `description`          | `Optional[str]`     | Instrument name.                               | |
+| `Conid`               | `conid`                | `Optional[str]`     | IBKR contract identifier.                      | |
+| `ISIN`                | `isin`                 | `Optional[str]`     | Instrument ISIN.                               | |
+| `Multiplier`          | `multiplier`           | `Optional[Decimal]` | 1 for shares.                                  | |
+| `ReportDate`          | `report_date`          | `str`               | The day the broker booked the row.             | Required. The event date for a **reversal** only; for a vesting it is the booking day and is deliberately not used. |
+| `ActivityDescription` | `activity_description` | `str`               | Which of the three kinds this row is.          | Required, and the **only** thing distinguishing them. An unrecognised value stops the run. |
+| `AwardDate`           | `award_date`           | `str`               | The originating award's date.                  | Required. **The matching key** on all three kinds, since `SerialNumber` is blank. The event date for an **award**. |
+| `VestingDate`         | `vesting_date`         | `str`               | The day the condition lapses.                  | Required. The event date for a **vesting**, which the engine reads but does not act on — Zufluss already fell on the award ([GT-ESTG20-064]). |
+| `Quantity`            | `quantity`             | `Decimal`           | Shares. Negative on a reversal.                | Required. Read as an absolute value, with the direction carried by the kind. Zero stops the run. |
+| `Price`               | `price`                | `Decimal`           | Per-share value the broker assigned.           | Required. On an **award** this is the übliche Endpreis at Zufluss (§ 8 Abs. 2 Satz 1) and becomes the Anschaffungskosten. |
+| `Value`               | `value`                | `Decimal`           | `Quantity` x `Price`, to the cent.             | Required, and **deliberately not read**. It can only differ from `Quantity` x `Price` by the broker's own rounding, and the cost basis is computed from the unrounded `Price`. Declared so the column is accounted for at the boundary rather than discarded by `extra = 'ignore'`. |
+| `SerialNumber`        | *(not mapped)*         | —                   | Row identifier.                                | **Blank on every row measured.** Declared in the tuple so that its ever being populated is caught at the boundary, and deliberately absent from the model so nothing reads an identity that is not there. |
+
+**Notes:**
+- **The price's own date is not stated.** § 8 Abs. 2 Satz 1 wants the übliche Endpreis on the day of
+  Zufluss, and no column says which day `Price` was struck on. Where `ReportDate` and `VestingDate`
+  differ it may be either day's. It is used as given — it is a measurement, and the alternative is
+  to invent one from market data this engine does not hold — and the residual uncertainty is
+  recorded against [GT-ESTG20-064] rather than left for a reader to notice.
+- **Two awards sharing an award date stop the run.** That date is the only key a vesting or a
+  reversal has, so a duplicate would let one restate or reverse the wrong award's shares.
+- **A lot is never created without a EUR cost basis.** The award price is a foreign amount the
+  enrichment step converts; an unconvertible award stops the run rather than acquiring shares at an
+  invented price.

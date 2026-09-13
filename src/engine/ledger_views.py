@@ -14,11 +14,11 @@ question this engine sits on: § 5 DepotG is a German statute and Rz. 97-99 are
 written for a German depotfuehrende Stelle, so whether the "einzelnes Depot"
 boundary transposes to a foreign broker's sub-accounts is reasoned, not sourced.
 
-Disposals therefore consume the OWN account's ledger. Per-PERSON figures
-(Vorabpauschale, EOY validation, return totals) are DERIVED views across all of
-a person's accounts and must go through these helpers, never iterate the raw
-dicts. While the seam holds everything under DEFAULT_ACCOUNT the views are
-trivial; after the per-Depot flip they are the only correct way to aggregate.
+Disposals therefore consume the OWN account's ledger, and the registry holds one
+ledger per (account, asset). Per-PERSON figures that still span accounts (the
+Vorabpauschale tranche set, return totals) are DERIVED views through these helpers
+and must never iterate the raw dicts: with the ledgers keyed per account these
+views are the only correct way to aggregate across a person's accounts.
 """
 from datetime import datetime
 from typing import Dict, List, Tuple
@@ -54,8 +54,8 @@ def aggregate_lots(ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger],
       iteration order of the ledger registry, i.e. to the order the ledgers
       happened to be constructed in. That is run-dependent input, not content
       -- the same conflation of "unique" with "deterministic" recorded against
-      PRD 5.8 event ordering. Once the per-Depot flip makes this the input to
-      the Vorabpauschale tranche calculation, lot order picks the figure.
+      PRD 5.8 event ordering. This is the input to the Vorabpauschale tranche
+      calculation across a person's accounts, so lot order picks the figure.
     """
     lots: List[FifoLot] = []
     for ledger in ledgers_for_asset(ledgers, asset_id):

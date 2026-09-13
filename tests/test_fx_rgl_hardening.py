@@ -14,10 +14,11 @@ import pytest
 import uuid
 import logging
 from decimal import Decimal, Context
+from typing import Tuple
 from datetime import date
 from unittest.mock import MagicMock
 
-from src.domain.assets import CashBalance
+from src.domain.assets import CashBalance, PositionSnapshot
 from src.domain.enums import AssetCategory, FinancialEventType
 from src.engine.fifo_manager import FifoLedger, FifoLot
 from src.engine.calculation_engine import (
@@ -34,13 +35,14 @@ CTX = Context(prec=28, rounding="ROUND_HALF_UP")
 
 
 def _make_cash_balance(currency: str, soy_quantity: Decimal,
-                       soy_cost_basis: Decimal = None) -> CashBalance:
-    """Create a CashBalance asset for testing."""
-    return CashBalance(
-        currency=currency,
-        soy_quantity=soy_quantity,
-        soy_cost_basis_amount=soy_cost_basis,
-    )
+                       soy_cost_basis: Decimal = None) -> Tuple[CashBalance, PositionSnapshot]:
+    """A CashBalance asset and the opening snapshot reported for it.
+
+    The snapshot is no longer carried on the asset -- it is recorded per account and
+    passed to whichever function needs it -- so these two travel together.
+    """
+    return CashBalance(currency=currency), PositionSnapshot(
+        quantity=soy_quantity, cost_basis_amount=soy_cost_basis)
 
 
 def _make_empty_ledger() -> FifoLedger:
@@ -89,63 +91,63 @@ class TestIssueA_SoyRateFallback:
 
     def test_initialize_soy_raises_when_ecb_rate_is_none(self):
         """SOY initialization must fail loudly when ECB rate is None."""
-        asset = _make_cash_balance("USD", Decimal("10000"))
+        asset, reported = _make_cash_balance("USD", Decimal("10000"))
         ledger = _make_empty_ledger()
 
         with pytest.raises(ValueError, match="No ECB rate available for SOY date"):
-            _initialize_currency_soy_ledger(ledger, asset, 2023, NoneRateProvider(), CTX)
+            _initialize_currency_soy_ledger(ledger, asset, 2023, NoneRateProvider(), CTX, reported)
 
     def test_initialize_soy_raises_when_ecb_rate_is_zero(self):
         """SOY initialization must fail loudly when ECB rate is zero."""
-        asset = _make_cash_balance("USD", Decimal("10000"))
+        asset, reported = _make_cash_balance("USD", Decimal("10000"))
         ledger = _make_empty_ledger()
         provider = SelectiveRateProvider({"USD": Decimal("0")})
 
         with pytest.raises(ValueError, match="No ECB rate available for SOY date"):
-            _initialize_currency_soy_ledger(ledger, asset, 2023, provider, CTX)
+            _initialize_currency_soy_ledger(ledger, asset, 2023, provider, CTX, reported)
 
     def test_initialize_soy_succeeds_with_valid_rate(self):
         """SOY initialization works normally when ECB rate is available."""
-        asset = _make_cash_balance("USD", Decimal("10000"))
+        asset, reported = _make_cash_balance("USD", Decimal("10000"))
         ledger = _make_empty_ledger()
         # 1 EUR = 1.10 USD => rate returned is 1.10
         provider = SelectiveRateProvider({"USD": Decimal("1.10")})
 
-        _initialize_currency_soy_ledger(ledger, asset, 2023, provider, CTX)
+        _initialize_currency_soy_ledger(ledger, asset, 2023, provider, CTX, reported)
 
         assert len(ledger.lots) == 1
         assert ledger.lots[0].quantity == Decimal("10000")
 
     def test_initialize_soy_skips_zero_quantity(self):
         """SOY initialization does nothing for zero quantity (no error needed)."""
-        asset = _make_cash_balance("USD", Decimal("0"))
+        asset, reported = _make_cash_balance("USD", Decimal("0"))
         ledger = _make_empty_ledger()
 
         # Should not raise even with NoneRateProvider since qty is 0
-        _initialize_currency_soy_ledger(ledger, asset, 2023, NoneRateProvider(), CTX)
+        _initialize_currency_soy_ledger(ledger, asset, 2023, NoneRateProvider(), CTX, reported)
         assert len(ledger.lots) == 0
 
     def test_reconcile_soy_raises_when_ecb_rate_is_none(self):
         """SOY reconciliation must fail loudly when ECB rate is None."""
-        asset = _make_cash_balance("USD", Decimal("5000"))
+        asset, reported = _make_cash_balance("USD", Decimal("5000"))
         ledger = _make_empty_ledger()
         # Ledger has no lots, SOY says 5000 => diff of 5000 => needs rate
 
         with pytest.raises(ValueError, match="No ECB rate available for SOY reconciliation"):
-            _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX)
+            _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX, reported)
 
     def test_reconcile_soy_raises_when_ecb_rate_is_zero(self):
         """SOY reconciliation must fail loudly when ECB rate is zero."""
-        asset = _make_cash_balance("USD", Decimal("5000"))
+        asset, reported = _make_cash_balance("USD", Decimal("5000"))
         ledger = _make_empty_ledger()
         provider = SelectiveRateProvider({"USD": Decimal("0")})
 
         with pytest.raises(ValueError, match="No ECB rate available for SOY reconciliation"):
-            _reconcile_currency_soy(ledger, asset, 2023, provider, CTX)
+            _reconcile_currency_soy(ledger, asset, 2023, provider, CTX, reported)
 
     def test_reconcile_soy_skips_when_balanced(self):
         """SOY reconciliation does nothing when FIFO matches reported SOY."""
-        asset = _make_cash_balance("USD", Decimal("5000"))
+        asset, reported = _make_cash_balance("USD", Decimal("5000"))
         ledger = _make_empty_ledger()
         # Pre-populate ledger to match SOY
         ledger.lots.append(FifoLot(
@@ -157,7 +159,7 @@ class TestIssueA_SoyRateFallback:
         ))
 
         # Should not raise even with NoneRateProvider since diff is 0
-        _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX)
+        _reconcile_currency_soy(ledger, asset, 2023, NoneRateProvider(), CTX, reported)
 
 
 # =============================================================================

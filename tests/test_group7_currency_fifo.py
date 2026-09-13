@@ -55,6 +55,7 @@ from tests.fixtures import (
     CurrencyPositionSpec,
 )
 
+from src.domain.assets import person_snapshot
 from src.domain.enums import RealizationType, TaxReportingCategory
 
 
@@ -832,14 +833,14 @@ class TestCurrencyFifoRGLs(FifoTestCaseBase):
         for expected_eoy_state in expected_test_outcome.expected_eoy_states:
             found_match = False
             for actual_asset in currency_assets:
-                if expected_eoy_state.matches(actual_asset):
+                if expected_eoy_state.matches(actual_asset, actual_results.eoy_positions):
                     found_match = True
                     break
 
             assert found_match, \
                 (f"EOY state check failed for '{expected_eoy_state.asset_identifier}': "
                  f"expected quantity {expected_eoy_state.eoy_quantity}. "
-                 f"Currency assets: {[(a.ibkr_symbol, a.eoy_quantity) for a in currency_assets]}")
+                 f"Currency assets: {[(a.ibkr_symbol, person_snapshot(actual_results.eoy_positions, a.internal_asset_id)) for a in currency_assets]}")
 
     @pytest.mark.parametrize(
         "group_spec",

@@ -9,13 +9,16 @@ See reference/investment-tax-law/invstg-18-vorabpauschale.md and
 docs/legal-implementation-map.md.
 """
 import uuid
+from dataclasses import dataclass
 import pytest
 from decimal import Decimal, Context
 from datetime import date
 from unittest.mock import MagicMock
 from collections import defaultdict
 
-from src.domain.assets import InvestmentFund, Asset
+from src.domain.assets import (
+    InvestmentFund, Asset, SnapshotsByAccount, person_snapshot)
+from tests.support.prior_year_snapshots import snapshot_row
 from src.domain.enums import (
     AssetCategory, InvestmentFundType, FinancialEventType, TaxReportingCategory,
 )
@@ -41,6 +44,24 @@ import src.config as config
 # Helpers
 # ---------------------------------------------------------------------------
 
+@dataclass
+class _FundFixture:
+    """A fixture fund together with the preceding year's snapshots of it.
+
+    The two travel as one object because they are read together: the fund
+    supplies its type and currency, the snapshots supply the prices and the unit
+    count. Neither is on the other -- a snapshot belongs to an account, and the
+    registries below are keyed that way.
+    """
+    asset: InvestmentFund
+    prior_soy: SnapshotsByAccount
+    prior_eoy: SnapshotsByAccount
+
+    @property
+    def internal_asset_id(self):
+        return self.asset.internal_asset_id
+
+
 def _make_fund(
     fund_type=InvestmentFundType.AKTIENFONDS,
     soy_qty=Decimal("100"),
@@ -51,7 +72,7 @@ def _make_fund(
     eoy_qty=Decimal("100"),
     currency="EUR",
     description="Test Fund",
-) -> InvestmentFund:
+) -> "_FundFixture":
     fund = InvestmentFund(
         fund_type=fund_type,
         description=description,
@@ -59,21 +80,29 @@ def _make_fund(
         ibkr_isin="IE00TEST1234",
         ibkr_symbol="TFUND",
     )
-    # The Vorabpauschale reads the PRECEDING calendar year's snapshot: the VP declared in
-    # VZ Y is the one for calendar Y-1 (18 Abs. 3 InvStG). These fixtures therefore populate
-    # `prior_year_*` and deliberately leave `soy_*` / `eoy_*` unset -- if the engine ever
-    # reverts to reading the tax year's own snapshot, every test in this module fails.
-    fund.prior_year_soy_quantity = soy_qty
-    fund.prior_year_soy_position_value = soy_position_value
-    fund.prior_year_soy_mark_price = (soy_position_value / soy_qty
-                                      if soy_position_value is not None and soy_qty else None)
-    fund.prior_year_soy_mark_price_currency = soy_mark_price_currency
-    fund.prior_year_eoy_position_value = eoy_position_value
-    fund.prior_year_eoy_mark_price = (eoy_position_value / eoy_qty
-                                      if eoy_position_value is not None and eoy_qty else None)
-    fund.prior_year_eoy_mark_price_currency = eoy_mark_price_currency
-    fund.prior_year_eoy_quantity = eoy_qty
-    return fund
+    # The Vorabpauschale reads the PRECEDING calendar year's snapshots: the VP declared in
+    # VZ Y is the one for calendar Y-1 (18 Abs. 3 InvStG). These fixtures therefore build
+    # the `prior_*` registries and supply no opening or closing snapshot at all -- if the
+    # engine ever reverts to reading the tax year's own snapshot, every test here fails.
+    return _FundFixture(
+        asset=fund,
+        prior_soy=snapshot_row(
+            fund.internal_asset_id,
+            quantity=soy_qty,
+            position_value=soy_position_value,
+            mark_price=(soy_position_value / soy_qty
+                        if soy_position_value is not None and soy_qty else None),
+            mark_price_currency=soy_mark_price_currency,
+        ),
+        prior_eoy=snapshot_row(
+            fund.internal_asset_id,
+            quantity=eoy_qty,
+            position_value=eoy_position_value,
+            mark_price=(eoy_position_value / eoy_qty
+                        if eoy_position_value is not None and eoy_qty else None),
+            mark_price_currency=eoy_mark_price_currency,
+        ),
+    )
 
 
 def _make_distribution(asset_id: uuid.UUID, gross_eur: Decimal, event_date: str = "2024-06-15") -> CashFlowEvent:
@@ -167,9 +196,9 @@ def _make_fund_disposal(category=AssetCategory.INVESTMENT_FUND,
     return rgl
 
 
-def _make_resolver_with_fund(fund: InvestmentFund) -> AssetResolver:
+def _make_resolver_with_fund(fund: "_FundFixture") -> AssetResolver:
     resolver = MagicMock(spec=AssetResolver)
-    resolver.assets_by_internal_id = {fund.internal_asset_id: fund}
+    resolver.assets_by_internal_id = {fund.internal_asset_id: fund.asset}
     return resolver
 
 
@@ -193,7 +222,7 @@ def _run_vp(fund, events=None, vorabpauschale_year=2024, converter=None,
     # defaults to well before the year, so no 18 Abs. 2 reduction applies -- the shape
     # every test here assumed when the count came from the snapshot. Pass it to exercise
     # a mid-year purchase, which is the only way Abs. 2 reaches a declared figure.
-    held_at_year_end = fund.prior_year_eoy_quantity
+    held_at_year_end = person_snapshot(fund.prior_eoy, fund.internal_asset_id).quantity
     if acquisition_date is None:
         acquisition_date = dt_date(vorabpauschale_year - 3, 5, 20)
     lots = {fund.internal_asset_id: [FundUnitTranche(
@@ -205,6 +234,9 @@ def _run_vp(fund, events=None, vorabpauschale_year=2024, converter=None,
         currency_converter=converter,
         vorabpauschale_year=vorabpauschale_year,
         opening_lots_by_asset=lots,
+        prior_soy_positions=fund.prior_soy,
+        prior_eoy_positions=fund.prior_eoy,
+        prior_opening_positions={},
         ctx=ctx,
         data_gap_collector=collector,
     )
@@ -218,20 +250,27 @@ def _run_vp_over(funds, vorabpauschale_year=2024, converter=None, collector=None
     engine iterates `assets_by_internal_id`.
     """
     resolver = MagicMock(spec=AssetResolver)
-    resolver.assets_by_internal_id = {f.internal_asset_id: f for f in funds}
+    resolver.assets_by_internal_id = {f.internal_asset_id: f.asset for f in funds}
     ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION, rounding=config.DECIMAL_ROUNDING_MODE)
+    held = {f.internal_asset_id: person_snapshot(f.prior_eoy, f.internal_asset_id).quantity
+            for f in funds}
     lots = {
         f.internal_asset_id: [FundUnitTranche(
-            quantity=f.prior_year_eoy_quantity,
+            quantity=held[f.internal_asset_id],
             acquisition_date=dt_date(vorabpauschale_year - 3, 5, 20))]
-        for f in funds if f.prior_year_eoy_quantity
+        for f in funds if held[f.internal_asset_id]
     }
+    prior_soy = {k: v for f in funds for k, v in f.prior_soy.items()}
+    prior_eoy = {k: v for f in funds for k, v in f.prior_eoy.items()}
     return _calculate_vorabpauschale(
         asset_resolver=resolver,
         distributions_by_asset={},
         currency_converter=converter or _eur_converter(),
         vorabpauschale_year=vorabpauschale_year,
         opening_lots_by_asset=lots,
+        prior_soy_positions=prior_soy,
+        prior_eoy_positions=prior_eoy,
+        prior_opening_positions={},
         ctx=ctx,
         data_gap_collector=collector,
     )
@@ -511,8 +550,10 @@ class TestAFundAcquiredDuringTheYear:
     def test_the_units_counted_are_those_held_at_the_close(self):
         """Rz. 18.4. Holding nothing when the year opened does not reduce the
         count; only Abs. 2's twelfths reduce, and they are a separate step."""
+        # The fund had a price at the year's start; we did not hold it then.
         fund = _make_fund(soy_qty=Decimal("0"))
-        fund.prior_year_soy_mark_price = Decimal("100")   # the fund had a price; we did not hold it
+        fund.prior_soy = snapshot_row(fund.internal_asset_id, quantity=Decimal("0"),
+                                      mark_price=Decimal("100"), mark_price_currency="EUR")
 
         results = _run_vp(fund, acquisition_date=dt_date(2024, 7, 15))
 
@@ -783,11 +824,95 @@ class TestAFundTheEngineCannotPrice:
 # Tests: TF on negative distributions (loss_offsetting fix)
 # ---------------------------------------------------------------------------
 
+class TestUnitsTheReconstructionCouldNotDate:
+    """A lot with no acquisition date, and a report that answers Abs. 2 anyway.
+
+    legal_basis: GT-INVSTG-011. Abs. 2 reduces the Vorabpauschale by a twelfth
+    for each full month preceding the month of acquisition, and the store settles
+    what that means for units held when the year opened --
+    reference/investment-tax-law/invstg-18-vorabpauschale.md:131-135: *"units
+    already held when the year opened are not in their year of acquisition and
+    keep twelve twelfths"*.
+
+    Where reconciliation replaced the reconstruction, its lots carry a date the
+    engine invented, and no Vorabpauschale may be computed from one. But Abs. 2
+    asks a narrower question than "which month": it asks whether the units were
+    acquired *during* the year. The preceding snapshot answers that for units the
+    broker already reported at the close of the year before -- evidence, not a
+    guess -- and only above that count is the question unanswerable.
+    """
+
+    def _fund_with_an_undated_lot(self, held_before):
+        fund = _make_fund()
+        fund.prior_opening = snapshot_row(fund.internal_asset_id,
+                                          quantity=Decimal(held_before))
+        return fund
+
+    def _run(self, fund):
+        resolver = _make_resolver_with_fund(fund)
+        ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION,
+                      rounding=config.DECIMAL_ROUNDING_MODE)
+        lots = {fund.internal_asset_id: [FundUnitTranche(
+            quantity=Decimal("100"), acquisition_date=dt_date(2023, 12, 31),
+            acquisition_date_is_known=False)]}
+        return _calculate_vorabpauschale(
+            asset_resolver=resolver,
+            distributions_by_asset={},
+            currency_converter=_eur_converter(),
+            vorabpauschale_year=2024,
+            opening_lots_by_asset=lots,
+            prior_soy_positions=fund.prior_soy,
+            prior_eoy_positions=fund.prior_eoy,
+            prior_opening_positions=fund.prior_opening,
+            ctx=ctx,
+            data_gap_collector=None,
+        )
+
+    def test_units_the_report_shows_were_held_keep_the_full_year(self):
+        """The whole holding was on the broker's books before the year began."""
+        results = self._run(self._fund_with_an_undated_lot("100"))
+
+        assert len(results) == 1
+        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+
+    def test_units_the_report_cannot_account_for_are_refused(self):
+        """Above the reported count the question is unanswerable, and a figure
+        computed from an invented month would be indistinguishable from a real
+        one."""
+        assert self._run(self._fund_with_an_undated_lot("60")) == []
+
+    def test_no_acquisition_date_is_invented_to_reach_the_answer(self):
+        """The date stays unknown; only the Abs. 2 question is answered.
+
+        Substituting 31 December of the preceding year would give the same
+        twelfths and leave a well-formed date on a lot nobody observed -- which
+        is the failure CLAUDE.md's fallback rule names.
+        """
+        fund = self._fund_with_an_undated_lot("100")
+        lots = {fund.internal_asset_id: [FundUnitTranche(
+            quantity=Decimal("100"), acquisition_date=dt_date(2023, 12, 31),
+            acquisition_date_is_known=False)]}
+        resolver = _make_resolver_with_fund(fund)
+        ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION,
+                      rounding=config.DECIMAL_ROUNDING_MODE)
+
+        _calculate_vorabpauschale(
+            asset_resolver=resolver, distributions_by_asset={},
+            currency_converter=_eur_converter(), vorabpauschale_year=2024,
+            opening_lots_by_asset=lots, prior_soy_positions=fund.prior_soy,
+            prior_eoy_positions=fund.prior_eoy,
+            prior_opening_positions=fund.prior_opening, ctx=ctx,
+            data_gap_collector=None)
+
+        [tranche] = lots[fund.internal_asset_id]
+        assert tranche.acquisition_date_is_known is False
+
+
 class TestTeilfreistellungNegativeDistribution:
     """Verify TF is applied symmetrically for negative distributions."""
 
     def _run_net_distribution(self, gross_eur: Decimal, fund_type=InvestmentFundType.AKTIENFONDS):
-        fund = _make_fund(fund_type=fund_type)
+        fund = _make_fund(fund_type=fund_type).asset
         resolver = MagicMock(spec=AssetResolver)
         resolver.assets_by_internal_id = {fund.internal_asset_id: fund}
         resolver.get_asset_by_id.return_value = fund
@@ -1038,7 +1163,7 @@ class TestMissingPriorYearSnapshotIsFatal:
         from src.engine.calculation_engine import run_main_calculations
         resolver = MagicMock(spec=AssetResolver)
         resolver.assets_by_internal_id = (
-            {(f := _make_fund()).internal_asset_id: f} if with_fund else {}
+            {(f := _make_fund().asset).internal_asset_id: f} if with_fund else {}
         )
         resolver.get_asset_by_id.return_value = None
         collector = DataGapCollector()
