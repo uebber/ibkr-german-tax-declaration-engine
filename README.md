@@ -93,6 +93,7 @@ Select these fields (order matters for readability, but the parser matches by he
 | 21 | UnderlyingConid | Contract ID of the underlying |
 | 22 | Multiplier | Contract multiplier (e.g. 100 for options) |
 | 23 | **Open/CloseIndicator** | **O** (open) or **C** (close) -- **CRITICAL** |
+| 24 | Taxes | Transaction tax on the trade (e.g. UK Stamp Duty, HK stamp duty); required |
 
 **CRITICAL:** The `Open/CloseIndicator` field is essential for accurate trade classification. Without it, the engine cannot distinguish opening from closing trades. IBKR also uses composite values like `C;O` for position flips (a single trade that closes one position and opens the opposite direction), which the engine handles automatically.
 

@@ -403,7 +403,7 @@ Applies to `AssetCategory.PRIVATE_SALE_ASSET` if sold within 1 year (holding per
 - **Zeile 43 / 49 (Veräußerung am; Anschaffung am):** `RealizedGainLoss.realization_date`, `RealizedGainLoss.acquisition_date`.
 - **Zeile 44 / 50 (Veräußerungspreis):** `RealizedGainLoss.total_realization_value_eur`.
 - **Zeile 45 / 51 (Anschaffungskosten):** `RealizedGainLoss.total_cost_basis_eur`.
-- **Zeile 46 / 52 (Werbungskosten):** Expenses EUR (Note: Trade commissions are part of cost basis/proceeds. Other Werbungskosten are not currently handled beyond this).
+- **Zeile 46 / 52 (Werbungskosten):** Expenses EUR (Note: Trade commissions and purchase transaction taxes (Anschaffungsnebenkosten, [GT-ESTG20-066]) are part of cost basis/proceeds. Other Werbungskosten are not currently handled beyond this).
 - **Zeile 47 / 53 (Gewinn / Verlust):** `RealizedGainLoss.gross_gain_loss_eur`.
 
 *Aggregated §23 EStG Results (from 2023 realizations):*
@@ -710,7 +710,7 @@ Diagnostic messages (current implementation provides detailed event/asset printi
 - Interprets IBKR 'Notes/Codes' based on common usage (e.g., for identifying Stückzinsen, WHT details from cash transaction descriptions, or for identifying option exercises/assignments as per Section 2.4 and Section 5, Step 7). However, for the primary classification of *standard trade direction* (opening/closing, long/short of a financial instrument trade itself, as opposed to an exercise/assignment event derived from an option trade line), the system relies primarily on the 'Open/CloseIndicator' column from the Trades CSV (as detailed in Section 5, Step 7).
 - Stückzinsen are netted, and the net result contributes to `kap_other_income_positive` or `kap_other_losses_abs`.
 - **Currency Conversion:** FX trading pair instruments (e.g., IBKR asset class "CASH", symbol "EUR.USD") are identified, and their trades directly generate `CurrencyConversionEvent` objects.
-- **Fees:** Trade commissions are part of cost basis/proceeds. `FinancialEventType.FEE_TRANSACTION` can capture other fees, but their direct mapping to specific lines on Anlage KAP/KAP-INV (beyond potential Werbungskosten for Anlage SO if applicable) is not in scope for tax form line item generation.
+- **Fees:** Trade commissions and purchase transaction taxes (Anschaffungsnebenkosten, [GT-ESTG20-066]) are part of cost basis/proceeds. `FinancialEventType.FEE_TRANSACTION` can capture other fees, but their direct mapping to specific lines on Anlage KAP/KAP-INV (beyond potential Werbungskosten for Anlage SO if applicable) is not in scope for tax form line item generation.
 - **Numerical Precision:** All financial calculations and storage of monetary values and quantities use the `Decimal` type with a high internal calculation precision as specified in Section 2.0. EUR values are quantized to specific output precisions (e.g., `OUTPUT_PRECISION_AMOUNTS`) only for final reporting.
 - **Tax Year Scope:** The tool supports configurable tax years via TAX_YEAR setting in config.py. All financial events considered for calculations and reporting (e.g., dividends, interest, sales, corporate actions) must have an `event_date` or `realization_date` within the configured tax year period, inclusive.
 
