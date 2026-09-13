@@ -656,3 +656,39 @@ one behaviour change is on securities: an option-lifecycle event now sorts befor
 trade regardless of transaction id (previously a smaller-id trade could precede it) — the
 intended dependency, declared. The full suite (every currency/FX/option figure test) is green
 and VZ 2024 is byte-identical to the baseline, consistent with no unintended movement.
+
+## 2026-09-02 — PR-E: the share-grant report read, real-data effect
+
+**Base = the per-account train (snapshot+fifo+transfers+currency), no grants.** On the real
+export, VZ 2023 aborts at `EOY_RECONCILIATION_FAILED` naming three positions: the share grant
+`ISIN:US45841N1072` (short by the granted units, and given a synthesised fallback lot dated
+`{tax_year-1}-12-31` via `REPLAY_MARK_UNCONFIRMED_START`) and `ISIN:DE000LEG1110` in each of two
+accounts. VZ 2024 / VZ 2025 abort at `REPLAY_MARK_MISMATCH` on the same two instruments.
+
+**With PR-E, the grant half is resolved.** The awarded shares reconcile against the broker
+snapshot at every checkpoint mark — VZ 2023 (1 mark), VZ 2024 (2), VZ 2025 (3), all kept — and
+**zero** fallback lots are synthesised where the base synthesised one; the lot keeps its real
+acquisition date instead of an invented 31 December. `ISIN:US45841N1072` drops out of the
+reconciliation failure entirely. The § 22 Nr. 3 receipt is reported as a data gap
+(`STOCK_AWARD_RECEIPT_NOT_DECLARED`) in VZ 2023 — the one year an award is dated inside the
+processed year — naming the year and the amount; nothing is silently declared or omitted
+([GT-ESTG20-063], issue #76).
+
+**The remaining `DE000LEG1110` abort is the Transfers re-export completeness gap already
+recorded under PR-C, not PR-E's.** Measured cause: the 2023 Transfers re-export's date window
+began after the own-account move's date, so the move — and a same-day currency Umbuchung — were
+dropped; the surviving rows are all from three days later. The move survives in the maintainer's
+earlier export. Restoring it (the securities move's own side is enough — the parser de-duplicates
+the two sides) makes **all three years — VZ 2023, VZ 2024, VZ 2025 — reconcile at every mark and
+produce a declaration PDF**, "Every ledger agreed with the reported snapshot at every checkpoint
+mark", the only residual data gaps being the intended § 22 Nr. 3 receipt notice and the ordinary
+Vorabpauschale / KESt notices. The Transfers export is input, gitignored, and not part of this
+change.
+
+**Suite:** 1278 passed, 1 deselected (the pre-existing `test_the_column_tuples_match_the_real_exports`,
+the Cash_Balance 35-vs-tuple mismatch, failing identically on the base). **Mutation probes** on the
+eight sites PR-E adds, grant test files, failing ids recorded, no `-x`: seven RED (observable) —
+current-year dispatch entry (1), historical bucket entry (2), enrichment EUR conversion (6),
+parser unclassified-kind refusal (1), zero-quantity guard (1), over-reversal guard (1),
+undeclared-receipt recording (1); the eighth, the stock-award sort band, is GREEN when deleted and
+is the documented blind spot recorded under *Where the suite is blind* in `CLAUDE.md`.

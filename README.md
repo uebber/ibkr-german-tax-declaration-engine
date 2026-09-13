@@ -290,9 +290,81 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "cash_balance": 123460,      # Your Cash Balance query ID
     "options_eae": None,         # Your Options EAE query ID (None if you never traded index options)
     "transfers": None,           # Your Transfers query ID (None if you hold one account / never moved a position)
+    "grants": None,              # Your Stock Grant Activity query ID (None if your broker has never awarded you shares)
 }
 ```
 
+`--download` fetches every query that has an ID here, so a report with no ID is a report
+that never arrives. Set the Transfers ID before you rely on a downloaded year: without it
+the download completes and looks fine, and the run then tells you which years it could not
+see a move in. The same applies to Grants. A year of awards that does not arrive is a year whose holding
+cannot be reconstructed — and whether that stops the run depends on where the gap falls:
+between two position snapshots it refuses, but in the earliest year of your input window it
+warns, invents an acquisition date and gives you a figure anyway. Set the ID rather than rely
+on being told.
+
+### Query 8: Grants (needed if your broker has awarded you shares)
+
+Create an Activity Flex Query with only the **Stock Grant Activity** section enabled. If your
+broker has never given you shares — IBKR awards them for wiring cash in, for example — you have no
+rows and do not need this query.
+
+**Export it for every year, the same years as the other queries.** The award is the only record
+that those shares arrived and what they were worth. A year you do not export is a year the engine
+cannot reconstruct your holding for.
+
+Whether that stops the run depends on where the gap falls, and **one of the two cases is silent**:
+if the missing year sits between two position snapshots the engine refuses and produces nothing,
+but if it falls in the earliest year of your input window there is no snapshot before it to
+disagree with — so the engine takes the broker's quantity, invents an acquisition date of
+31 December, warns, and **gives you a figure anyway**. Export every year rather than rely on being
+told.
+
+Select these fields:
+
+| # | Field | Why it is needed |
+|---|-------|------------------|
+| 1 | Account ID | Which account's ledger the shares belong to |
+| 2 | Currency | The currency of `Price`, converted at the ECB rate for the event's own date |
+| 3 | Asset Class | `STK` |
+| 4 | Sub Category | e.g. `COMMON` |
+| 5 | Symbol | Instrument identification |
+| 6 | Description | Instrument identification |
+| 7 | Conid | Instrument identification |
+| 8 | ISIN | Instrument identification |
+| 9 | Multiplier | 1 for shares |
+| 10 | Report Date | The day the broker booked the row |
+| 11 | Activity Description | **The only thing distinguishing an award from a vesting** |
+| 12 | Award Date | The matching key tying a vesting or a reversal to its award |
+| 13 | Vesting Date | The day the shares become unconditionally yours |
+| 14 | Quantity | Shares, negative on a return |
+| 15 | Price | Per-share value |
+| 16 | Value | Quantity x Price, to the cent. Requested so the column is accounted for; the engine computes from the unrounded Price and does not read it |
+| 17 | Serial Number | Blank in practice; requested so that its ever being filled is noticed |
+
+Do **not** select the rest. The engine checks the header against exactly this list and rejects a
+query offering more or fewer columns, rather than reading it half-heartedly. In particular leave
+**FX Rate To Base** unticked: the engine converts at ECB rates, never the broker's, and importing a
+second rate alongside creates a plausible wrong path.
+
+**Three row kinds share this report and they are not interchangeable.** A *Grant* books shares in,
+a *Return* takes some back if you withdraw the cash that earned them, and a *Vesting* moves no
+shares at all — it records the day they stopped being forfeitable. Adding the vesting rows to your
+position would roughly double it. If your broker ever introduces a fourth kind, the run stops and
+names it rather than guessing which sort it is.
+
+**The award date is what counts, not the vesting date.** Your shares are acquired for tax purposes
+on the day they are booked into your account, at that day's value. A promise to give them back if
+you withdraw the cash does not postpone that — the BFH holds that a contractual lock-up or
+forfeiture clause does not delay Zufluss, only being *legally unable to sell* would. So a vesting
+row changes nothing the engine computes.
+
+**What the engine does with it.** The award gives your shares a real acquisition date and cost, so
+when you eventually sell them the gain on **Anlage KAP** is measured properly instead of against an
+invented basis. What it does **not** do is declare the award itself as income in the year you
+received it — that belongs on **Anlage SO** under *Einkünfte aus Leistungen*, and this engine has no
+line for it yet. The run now says so, naming the year and the amount, but **declaring it is still
+yours to do.**
 ## Preparing Input Data
 
 Place your IBKR Flex Query CSV files in the `data_import/` directory using this naming scheme:
@@ -304,6 +376,7 @@ Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
 Options_EAE-{YYYY}.csv          # One file per year (only if you trade index options — see below)
 Transfers-{YYYY}.csv            # One file per year (only if you moved a position between your own accounts — see below)
+Grants-{YYYY}.csv               # One file per year (only if your broker has awarded you shares)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
@@ -703,6 +776,7 @@ uv run pytest tests/test_group7_currency_fifo.py -v   # Currency FIFO
 ## Known Limitations
 
 *   **IBKR API history:** The Flex Web Service API only retains ~2 calendar years of data. Older years come from the Client Portal instead, either with the browser downloader or by hand (see [Client Portal Download](#client-portal-download-for-older-years)).
+*   **Awarded shares: the sale is handled, the receipt is not.** Where your broker has given you shares for placing capital with it, the engine gives them a real acquisition date and cost basis, so the **gain when you sell them** is computed correctly on Anlage KAP. It does **not** declare the **award itself** as income in the year you received it. Such a benefit is a *Leistung* under § 22 Nr. 3 EStG ([GT-ESTG20-063]), which belongs on **Anlage SO**, and the reporting layer has no line for it — the same gap as for a securities-lending fee, tracked as issue #76. **If you have been awarded shares, the income side of them is still yours to declare.**
 *   **No "Alt-Anteile":** Assumes all investment fund shares were acquired on or after January 1, 2018.
 *   **Foreign WHT:** Aggregates WHT paid (Anlage KAP Zeile 41) but does not calculate creditable WHT.
 *   **No loss carry-forward/backward:** Calculations are limited to the specified tax year.

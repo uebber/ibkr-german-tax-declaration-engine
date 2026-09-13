@@ -291,3 +291,100 @@ settles it.
 - **`TransactionID` is not carried onto the move event.** For a securities move the two sides carry different ids, so neither names the move; for a cash move the two sides carry the **same** id, which is used to pair them into one move (and to keep two genuinely distinct same-shape moves apart). Either way the id is not put on the event, because it would decide the intra-day order (which the engine fixes by rule — a move sorts before that day's trades so units or a balance that arrived can be spent).
 - **A `CASH` row is a currency Umbuchung, and the opposite of a securities move.** Moving a foreign-currency balance to another of the taxpayer's own accounts is a disposal of the sending account's Kapitalforderung and an acquisition of the receiving account's ([GT-FX-009]); the securities move is no disposal at all. The row becomes an `InternalCashTransferEvent`, valued at the amount moved converted on the move day (Reading A of [GT-FX-010]). A move of **EUR** produces nothing — § 20 Abs. 2 Satz 1 Nr. 7 reaches a *Fremdwährungs*guthaben and EUR is the base currency.
 - Columns the export carries but the engine does not read (broker PnL figures, `DateTime`, `Code`, and account/instrument metadata) are ignored deliberately; see `tests/test_raw_model_fields.py`.
+
+---
+
+## 8. Grants File (Optional)
+- **Input:** `data_import/Grants-{YYYY}.csv`, concatenated across every year <= the tax year
+- **Purpose:** Records shares a broker awarded for capital placed with it. The award is the only
+  record that those shares arrived and what they were worth; no other export carries it. Without
+  this file the historical replay reconstructs a holding smaller than the broker reports. **What
+  happens then depends on the interval**, and only one of the two cases is a stop:
+  - the interval **began at a reported snapshot** — `REPLAY_MARK_MISMATCH`, FAIL_FAST, and the run
+    produces no figures at all;
+  - the interval is the **earliest one**, with nothing confirming its start —
+    `REPLAY_MARK_UNCONFIRMED_START`, severity WARNING. The broker's quantity is taken, a lot is
+    synthesised dated `{tax_year-1}-12-31`, and **the run completes**. A user whose award falls in
+    the first year of their input window gets a figure, not a refusal, and the acquisition date
+    behind it is invented. This is the fallback rule's case, and the report is what avoids it.
+- **Legal ground:** shares granted for placing capital are a *Leistung* under § 22 Nr. 3 EStG, not
+  Kapitalertrag ([GT-ESTG20-063]). Zufluss falls where wirtschaftliche Verfügungsmacht arrives,
+  which is the booking into the account: a contractual condition under which the grantor may still
+  take the shares back does not postpone it ([GT-ESTG20-064]), and the amount brought to tax then
+  is the Anschaffungskosten on a later disposal ([GT-ESTG20-065]).
+- **What this engine does and does not do with it.** It supplies the **acquisition** — the lot, its
+  date and its cost basis — so a later disposal is measured correctly on Anlage KAP. It does **not**
+  declare the **receipt** as income in the year it accrued: that belongs on Anlage SO under
+  *Einkünfte aus Leistungen*, the reporting layer has no such category, and this library holds no
+  Zeilen for that half of the form. Tracked as issue #76, which closes it for this and for the
+  securities-lending fee together.
+- **Optional as a whole, but not per year.** A person whose broker has never awarded them shares
+  has no rows. A window with a hole is different: a year of awards that does not arrive is a year
+  whose holding cannot be reconstructed. `prepare_data_for_tax_year` counts the missing years the
+  same way it does for Transfers.
+- **Associated Pydantic Model:** `RawGrantRecord`
+
+**Three activity kinds share the file and only two move the position.**
+
+| `ActivityDescription` contains | Meaning | Moves the position? |
+|---|---|---|
+| `Stock Award Grant` | Shares booked into the account | Yes, positive |
+| `Stock Award Return` | Taken back when the condition fails | Yes, negative |
+| `Stock Award Vesting` | The condition lapsed | **No** |
+
+Adding the vesting quantities to the position roughly doubles the holding against the broker's
+snapshot. `parse_grants_csv` therefore **raises** on an `ActivityDescription` it does not
+recognise rather than skipping it: an award and a vesting differ in nothing a parser can see
+except this text, so an unclassified kind is as likely to move the position as not, and a run that
+dropped one would reconcile until the year the dropped kind mattered.
+
+**Each kind takes its date from a different column.**
+
+- An **award** is dated on `AwardDate` — the day the shares entered the account. That is both what
+  the position snapshot counts and where Zufluss falls ([GT-ESTG20-064]), so it is the acquisition
+  date.
+- A **reversal** is dated on `ReportDate`. Its `AwardDate` names the *original* award and is the
+  matching key, not its own date.
+- A **vesting** is dated on `VestingDate` and **has no ledger effect**. It is read so that an
+  unrecognised kind can still be refused, and inert because the acquisition already happened.
+
+**The award creates the lot and the lot is final.** BFH VI R 37/09 Rn. 4 holds that a Sperr- or
+Haltefrist does not prevent Zufluss, and Leitsatz 2 that what does is a disposal being *rechtlich
+unmöglich* — so a contractual clawback does not postpone the acquisition. A reversal reduces the
+matching lot **at that lot's own unit cost** and realises nothing: it is not a disposal and
+produces no `RealizedGainLoss`.
+
+**Column Specifications** — `GRANTS_COLUMNS` in `src/parsers/column_validator.py` declares the
+export's full header so that a column appearing or disappearing is caught at the boundary.
+
+| CSV Column            | Model Field            | Type                | Description                                    | Notes |
+|-----------------------|------------------------|---------------------|------------------------------------------------|-------|
+| `ClientAccountID`     | `client_account_id`    | `Optional[str]`     | The account the shares were awarded into.      | Decides which account's ledger holds the lot. A single-account export would not notice it being dropped, which is what makes getting it wrong latent. |
+| `CurrencyPrimary`     | `currency_primary`     | `str`               | Currency of `Price` and `Value`.               | Required. The award price is converted at the ECB rate for the event's own date, never at a broker rate. |
+| `AssetClass`          | `asset_class`          | `str`               | `STK` on every observed row.                   | Required. |
+| `SubCategory`         | `sub_category`         | `Optional[str]`     | e.g. `COMMON`.                                 | |
+| `Symbol`              | `symbol`               | `Optional[str]`     | Instrument symbol.                             | |
+| `Description`         | `description`          | `Optional[str]`     | Instrument name.                               | |
+| `Conid`               | `conid`                | `Optional[str]`     | IBKR contract identifier.                      | |
+| `ISIN`                | `isin`                 | `Optional[str]`     | Instrument ISIN.                               | |
+| `Multiplier`          | `multiplier`           | `Optional[Decimal]` | 1 for shares.                                  | |
+| `ReportDate`          | `report_date`          | `str`               | The day the broker booked the row.             | Required. The event date for a **reversal** only; for a vesting it is the booking day and is deliberately not used. |
+| `ActivityDescription` | `activity_description` | `str`               | Which of the three kinds this row is.          | Required, and the **only** thing distinguishing them. An unrecognised value stops the run. |
+| `AwardDate`           | `award_date`           | `str`               | The originating award's date.                  | Required. **The matching key** on all three kinds, since `SerialNumber` is blank. The event date for an **award**. |
+| `VestingDate`         | `vesting_date`         | `str`               | The day the condition lapses.                  | Required. The event date for a **vesting**, which the engine reads but does not act on — Zufluss already fell on the award ([GT-ESTG20-064]). |
+| `Quantity`            | `quantity`             | `Decimal`           | Shares. Negative on a reversal.                | Required. Read as an absolute value, with the direction carried by the kind. Zero stops the run. |
+| `Price`               | `price`                | `Decimal`           | Per-share value the broker assigned.           | Required. On an **award** this is the übliche Endpreis at Zufluss (§ 8 Abs. 2 Satz 1) and becomes the Anschaffungskosten. |
+| `Value`               | `value`                | `Decimal`           | `Quantity` x `Price`, to the cent.             | Required, and **deliberately not read**. It can only differ from `Quantity` x `Price` by the broker's own rounding, and the cost basis is computed from the unrounded `Price`. Declared so the column is accounted for at the boundary rather than discarded by `extra = 'ignore'`. |
+| `SerialNumber`        | *(not mapped)*         | —                   | Row identifier.                                | **Blank on every row measured.** Declared in the tuple so that its ever being populated is caught at the boundary, and deliberately absent from the model so nothing reads an identity that is not there. |
+
+**Notes:**
+- **The price's own date is not stated.** § 8 Abs. 2 Satz 1 wants the übliche Endpreis on the day of
+  Zufluss, and no column says which day `Price` was struck on. Where `ReportDate` and `VestingDate`
+  differ it may be either day's. It is used as given — it is a measurement, and the alternative is
+  to invent one from market data this engine does not hold — and the residual uncertainty is
+  recorded against [GT-ESTG20-064] rather than left for a reader to notice.
+- **Two awards sharing an award date stop the run.** That date is the only key a vesting or a
+  reversal has, so a duplicate would let one restate or reverse the wrong award's shares.
+- **A lot is never created without a EUR cost basis.** The award price is a foreign amount the
+  enrichment step converts; an unconvertible award stops the run rather than acquiring shares at an
+  invented price.
