@@ -203,6 +203,11 @@ def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, av
         sub_commission_fc = event.commission_foreign_currency * ratio if event.commission_foreign_currency is not None else None
         sub_commission_eur = event.commission_eur * ratio if event.commission_eur is not None else None
         sub_net = event.net_proceeds_or_cost_basis_eur * ratio if event.net_proceeds_or_cost_basis_eur is not None else None
+        # The transaction tax splits with the trade like the commission does; without this a
+        # flip carrying a stamp tax would lose the tax's currency consumption on its sub-events
+        # (the cost basis already rides in sub_net) [GT-ESTG20-066].
+        sub_tax_fc = event.transaction_tax_foreign * ratio if event.transaction_tax_foreign is not None else None
+        sub_tax_eur = event.transaction_tax_eur * ratio if event.transaction_tax_eur is not None else None
 
         return TradeEvent(
             asset_internal_id=event.asset_internal_id,
@@ -213,6 +218,8 @@ def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, av
             commission_foreign_currency=sub_commission_fc,
             commission_currency=event.commission_currency,
             commission_eur=sub_commission_eur,
+            transaction_tax_foreign=sub_tax_fc,
+            transaction_tax_eur=sub_tax_eur,
             net_proceeds_or_cost_basis_eur=sub_net,
             related_option_event_id=None,  # flip events don't arise from option exercise
             is_position_flip=False,

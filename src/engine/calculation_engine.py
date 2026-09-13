@@ -3126,6 +3126,19 @@ def _apply_historical_currency_event(
                             # Normal fee: consumes currency
                             _consume_lots_historical(ledger, comm_abs, comm_eur_per_unit, event.event_date, ctx)
 
+                # Transaction tax (stamp duty): an Anschaffungsnebenkosten paid in the trade
+                # currency, always a charge, so it consumes currency [GT-ESTG20-066]. It is
+                # in local_currency, which equals currency_code in this branch. The current-year
+                # path does this in trade_processor; a historical purchase does it here.
+                tax = event.transaction_tax_foreign
+                tax_eur = event.transaction_tax_eur
+                if tax and tax != Decimal("0") and tax_eur:
+                    tax_abs = tax.copy_abs()
+                    tax_eur_abs = tax_eur.copy_abs()
+                    if tax_abs > Decimal("0") and tax_eur_abs > Decimal("0"):
+                        tax_eur_per_unit = ctx.divide(tax_eur_abs, tax_abs)
+                        _consume_lots_historical(ledger, tax_abs, tax_eur_per_unit, event.event_date, ctx)
+
             else:
                 # Cash flow event
                 ccy = (getattr(event, 'local_currency', None) or "").upper()

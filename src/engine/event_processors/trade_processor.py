@@ -345,6 +345,11 @@ class TradeProcessor(EventProcessor):
         commission_rgls = self._process_commission_currency_impact(event, context)
         results.extend(commission_rgls)
 
+        # Process the transaction tax (stamp duty) as currency consumption. It is an
+        # Anschaffungsnebenkosten paid in the trade currency [GT-ESTG20-066].
+        tax_rgls = self._process_transaction_tax_currency_impact(event, context)
+        results.extend(tax_rgls)
+
         return results
 
     def _consume_currency_for_purchase(
@@ -500,6 +505,87 @@ class TradeProcessor(EventProcessor):
                     currency_ledger, event.event_date, event.ibkr_transaction_id,
                     comm_abs, eur_per_unit
                 )
+
+        return results
+
+    def _process_transaction_tax_currency_impact(
+        self,
+        event: TradeEvent,
+        context: Dict[str, Any]
+    ) -> List[RealizedGainLoss]:
+        """
+        Consume the trade's transaction tax (stamp duty) from the currency FIFO ledger.
+
+        The tax is a foreign-cash outflow of the acquisition, in the trade's own
+        currency ([GT-ESTG20-066]). Unlike the commission it is always a charge, never a
+        rebate, so there is only a consumption path.
+        """
+        results: List[RealizedGainLoss] = []
+
+        tax_amount = event.transaction_tax_foreign
+        if tax_amount is None or tax_amount == Decimal("0"):
+            return results
+
+        tax_currency = (event.local_currency or "").upper()
+        if not tax_currency or tax_currency == "EUR":
+            return results
+
+        tax_eur = event.transaction_tax_eur
+        if tax_eur is None:
+            return results
+
+        tax_abs = tax_amount.copy_abs()
+        tax_eur_abs = tax_eur.copy_abs()
+        if tax_abs <= Decimal("0") or tax_eur_abs <= Decimal("0"):
+            return results
+
+        asset_resolver: Optional[AssetResolver] = context.get('asset_resolver')
+        currency_fifo_ledgers: Optional[Dict] = context.get('currency_fifo_ledgers')
+        currency_processor = context.get('currency_processor')
+
+        if not asset_resolver or not currency_processor or currency_fifo_ledgers is None:
+            return results
+
+        currency_asset = asset_resolver.get_cash_balance_asset(tax_currency)
+        if not currency_asset:
+            return results
+
+        # The account that made the trade: the tax leaves that account's balance, and each
+        # account's balance is its own Kapitalforderung ([GT-FX-009]).
+        currency_ledger = currency_fifo_ledgers.get(
+            (account_key(event.account_id), currency_asset.internal_asset_id))
+        if not currency_ledger:
+            return results
+
+        eur_per_unit = tax_eur_abs / tax_abs
+
+        # Always a cash outflow: consume from long lots, then open a short for any remainder.
+        available_long_qty = sum(lot.quantity for lot in currency_ledger.lots)
+        remaining = tax_abs
+
+        if available_long_qty > Decimal("0"):
+            qty_to_consume = min(tax_abs, available_long_qty)
+            long_results = currency_processor.realize_long_lots_for_cashflow_expense(
+                currency_ledger, currency_asset.internal_asset_id,
+                event.event_date, event.event_id, event.ibkr_transaction_id,
+                qty_to_consume, eur_per_unit
+            )
+            results.extend(long_results)
+
+            if long_results:
+                total_fx_gl = sum(rgl.gross_gain_loss_eur for rgl in long_results)
+                logger.info(
+                    f"Trade {event.event_id}: Transaction tax FX from consuming {qty_to_consume:.2f} "
+                    f"{tax_currency}. FX gain/loss: {total_fx_gl:.2f} EUR"
+                )
+
+            remaining -= qty_to_consume
+
+        if remaining > Decimal("1e-10"):
+            currency_processor.open_short_position_for_cashflow_expense(
+                currency_ledger, event.event_date, event.ibkr_transaction_id,
+                remaining, eur_per_unit
+            )
 
         return results
 

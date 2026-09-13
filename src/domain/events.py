@@ -110,7 +110,8 @@ class TradeEvent(FinancialEvent):
     transaction_tax_foreign: Optional[Decimal] = Decimal('0.0')
     transaction_tax_eur: Optional[Decimal] = None # Populated by enrichment
 
-    # Net proceeds (for sales) or cost basis (for buys) in EUR, including commission
+    # Net proceeds (for sales) or cost basis (for buys) in EUR, including commission and,
+    # on a buy, the transaction tax (Anschaffungsnebenkosten, [GT-ESTG20-066]).
     # This can be calculated during processing.
     net_proceeds_or_cost_basis_eur: Optional[Decimal] = None
 
