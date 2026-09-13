@@ -16,7 +16,7 @@ TRADES_COLUMNS = (
     "Description", "ISIN", "Strike", "Expiry", "Put/Call", "TradeDate", "Quantity",
     "TradePrice", "IBCommission", "IBCommissionCurrency", "Buy/Sell",
     "TransactionID", "Notes/Codes", "UnderlyingSymbol", "Conid", "UnderlyingConid",
-    "Multiplier", "Open/CloseIndicator",
+    "Multiplier", "Open/CloseIndicator", "Taxes",
 )
 
 CASH_TRANSACTIONS_COLUMNS = (

@@ -59,13 +59,17 @@ def conid_for(isin: str) -> str:
 def trade_row(account: str, isin: str, date: str, qty, price, side: str, open_close: str,
               tx_id: str, currency: str = "EUR", symbol: Optional[str] = None,
               asset_class: str = "STK", sub_category: str = "COMMON",
-              commission="0", multiplier="1", notes: str = "") -> List[Any]:
-    """One Trades row (TRADES_COLUMNS order). qty signed (+buy/-sell)."""
+              commission="0", multiplier="1", notes: str = "", taxes="0") -> List[Any]:
+    """One Trades row (TRADES_COLUMNS order). qty signed (+buy/-sell).
+
+    `taxes` is the broker transaction tax (stamp duty), in `currency`; a charge is
+    negative, and the default "0" is the untaxed case that almost every trade is.
+    """
     return [account, currency, asset_class, sub_category, symbol or isin[:6],
             f"{symbol or isin[:6]} security", isin, None, None, None, date,
             Decimal(str(qty)), Decimal(str(price)), Decimal(str(commission)), currency,
             side, tx_id, notes, None, conid_for(isin), None, Decimal(str(multiplier)),
-            open_close]
+            open_close, Decimal(str(taxes))]
 
 
 def position_row(account: str, isin: str, qty, cost, currency: str = "EUR",
@@ -107,7 +111,7 @@ def fx_trade_row(account: str, foreign_currency: str, direction: str, foreign_am
             f"FX EUR.{foreign_currency}", "", None, None, None, date,
             quantity, Decimal(str(ecb_rate)), Decimal("0"), "EUR",
             "SELL" if direction == "BUY" else "BUY", tx_id, None, None, None, None,
-            Decimal("1"), "O"]
+            Decimal("1"), "O", Decimal("0")]
 
 
 def cash_balance_row(account: str, currency: str, soy, eoy,

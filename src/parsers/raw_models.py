@@ -80,6 +80,7 @@ class RawTradeRecord(RawBaseRecord):
     trade_price: Decimal = Field(alias="TradePrice")
     ib_commission: Optional[Decimal] = Field(None, alias="IBCommission")
     ib_commission_currency: Optional[str] = Field(None, alias="IBCommissionCurrency")
+    taxes: Optional[Decimal] = Field(None, alias="Taxes") # Transaction tax (stamp duty) in CurrencyPrimary; a charge is negative
     open_close_indicator: Optional[str] = Field(None, alias="Open/CloseIndicator") # O, C, A, Ex, Ep etc.
     notes_codes: Optional[str] = Field(None, alias="Notes/Codes") # Contains O, C, A, Ex, Ep, P, D etc.
     transaction_id: Optional[str] = Field(None, alias="TransactionID") # Used for linking
@@ -89,7 +90,7 @@ class RawTradeRecord(RawBaseRecord):
     # derived from Quantity x TradePrice x Multiplier. See create_events_from_trades.
 
     # Validators for specific fields
-    @validator('multiplier', 'strike', 'quantity', 'trade_price', 'ib_commission', pre=True)
+    @validator('multiplier', 'strike', 'quantity', 'trade_price', 'ib_commission', 'taxes', pre=True)
     def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
         return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
 

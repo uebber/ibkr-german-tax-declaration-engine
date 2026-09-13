@@ -433,6 +433,24 @@ class DomainEventFactory:
 
                 commission_val = rt.ib_commission
 
+                # Transaction tax (stamp duty) the broker charged on the trade. It has no
+                # currency column of its own in the export -- it is in CurrencyPrimary. On a
+                # purchase it is an Anschaffungsnebenkosten and joins the cost basis
+                # [GT-ESTG20-066]. A non-zero tax on a SALE would reduce proceeds, not raise
+                # cost basis; no such case occurs in the data, so the run stops rather than
+                # invent a sign convention.
+                tax_val = rt.taxes if rt.taxes is not None else Decimal("0.0")
+                if tax_val != Decimal("0.0") and event_type in (
+                    FinancialEventType.TRADE_SELL_LONG,
+                    FinancialEventType.TRADE_SELL_SHORT_OPEN,
+                ):
+                    raise DataIntegrityError(
+                        f"Trade {tx_id_primary} ({asset.get_classification_key()}) on "
+                        f"{event_date_str}: a non-zero transaction tax "
+                        f"({tax_val} {rt.currency_primary}) on a SALE is not handled. See "
+                        f"[GT-ESTG20-066]."
+                    )
+
                 trade_event = TradeEvent(
                     asset_internal_id=asset.internal_asset_id,
                     event_date=event_date_str,
@@ -441,6 +459,7 @@ class DomainEventFactory:
                     price_foreign_currency=trade_price,
                     commission_foreign_currency=commission_val,
                     commission_currency=rt.ib_commission_currency or rt.currency_primary,
+                    transaction_tax_foreign=tax_val,
                     local_currency=rt.currency_primary,
                     gross_amount_foreign_currency=calculated_gross_amount.copy_abs(),
                     ibkr_transaction_id=tx_id_primary,

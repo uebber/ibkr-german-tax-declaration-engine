@@ -103,6 +103,13 @@ class TradeEvent(FinancialEvent):
     commission_currency: Optional[str] = None # Currency of the commission
     commission_eur: Optional[Decimal] = None # Commission in EUR (populated by enrichment)
 
+    # Transaction tax the broker charges on the trade itself (e.g. UK Stamp Duty, Hong
+    # Kong stamp duty). On a purchase it is an Anschaffungsnebenkosten and forms part of
+    # the cost basis [GT-ESTG20-066]. It has no currency column of its own in the export:
+    # it is always in the trade's local_currency. Sign is as exported (a charge is negative).
+    transaction_tax_foreign: Optional[Decimal] = Decimal('0.0')
+    transaction_tax_eur: Optional[Decimal] = None # Populated by enrichment
+
     # Net proceeds (for sales) or cost basis (for buys) in EUR, including commission
     # This can be calculated during processing.
     net_proceeds_or_cost_basis_eur: Optional[Decimal] = None
@@ -123,6 +130,8 @@ class TradeEvent(FinancialEvent):
                  commission_foreign_currency: Optional[Decimal] = Decimal('0.0'),
                  commission_currency: Optional[str] = None,
                  commission_eur: Optional[Decimal] = None,
+                 transaction_tax_foreign: Optional[Decimal] = Decimal('0.0'),
+                 transaction_tax_eur: Optional[Decimal] = None,
                  net_proceeds_or_cost_basis_eur: Optional[Decimal] = None,
                  related_option_event_id: Optional[uuid.UUID] = None,
                  is_position_flip: bool = False,
@@ -133,6 +142,8 @@ class TradeEvent(FinancialEvent):
         self.commission_foreign_currency = commission_foreign_currency
         self.commission_currency = commission_currency
         self.commission_eur = commission_eur
+        self.transaction_tax_foreign = transaction_tax_foreign
+        self.transaction_tax_eur = transaction_tax_eur
         self.net_proceeds_or_cost_basis_eur = net_proceeds_or_cost_basis_eur
         self.related_option_event_id = related_option_event_id
         self.is_position_flip = is_position_flip
