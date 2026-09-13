@@ -609,3 +609,83 @@ class InternalCashTransferEvent(FinancialEvent):
 
     def __post_init__(self):
         super().__post_init__()
+
+
+@dataclass
+class StockAwardEvent(FinancialEvent):
+    """One row of the broker's stock-grant export: an award, its reversal, or its vesting.
+
+    The three kinds share a class because they share a key. `SerialNumber` is blank on
+    every row of the export, so nothing identifies a row on its own; what a reversal and
+    a vesting DO carry is the originating award's date, and that is what ties them back
+    to the lot the award created. `award_date` is therefore the matching key on all
+    three kinds, and on an award row it equals the day the lot is created.
+
+    **The position and the tax acquisition coincide, and that is a decided position
+    rather than an obvious one.** The shares sit in the account from the award, and
+    Zufluss falls there too: a contractual condition under which the grantor may reclaim
+    them does not postpone it, only a disposal being *rechtlich unmoeglich* would
+    ([GT-ESTG20-064], BFH VI R 37/09). So the award creates the lot with its final date
+    and cost ([GT-ESTG20-065]) and a vesting has nothing to change. An earlier revision
+    restated the lot at vesting; that reading was retired when the Zufluss test was
+    sourced, and Q17 records what remains uncertain about it.
+
+    **A reversal realises nothing.** The condition failed and the award is undone, so
+    there is no disposal and no `RealizedGainLoss`. It carries no proceeds for that
+    reason, and it is deliberately not a `TRADE_SELL_LONG`: routing it through the trade
+    path would produce a realised gain the law does not recognise here.
+
+    `unit_price_foreign` is the broker's price on the row, in `currency`. On an award it
+    is the ueblicher Endpreis at Zufluss (§ 8 Abs. 2 Satz 1) and becomes the
+    Anschaffungskosten; on a vesting it is read and unused. It is converted to EUR by
+    the enrichment step like any other foreign amount, at the ECB rate for the row's own
+    date -- never at the broker's rate, which the export does not carry here anyway.
+
+    `account_id` (from `FinancialEvent`) is the account the broker awarded into, so the
+    lot is created in and reversed from that account's ledger.
+    """
+    _: KW_ONLY
+    award_date: str
+    quantity: Decimal
+    unit_price_foreign: Decimal
+    currency: str
+    unit_cost_basis_eur: Optional[Decimal] = None
+
+    def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
+                 event_type: FinancialEventType, award_date: str, quantity: Decimal,
+                 unit_price_foreign: Decimal, currency: str,
+                 **kwargs_for_parent_kw_only):
+        if event_type not in (FinancialEventType.STOCK_AWARD_GRANTED,
+                              FinancialEventType.STOCK_AWARD_REVERSED,
+                              FinancialEventType.STOCK_AWARD_VESTED):
+            raise ValueError(
+                f"StockAwardEvent built with {event_type}, which is none of the three "
+                f"stock-award kinds. The kind decides whether the position moves and "
+                f"whether a lot is restated, so it may not be defaulted."
+            )
+        super().__init__(asset_internal_id, event_date, event_type=event_type,
+                         **kwargs_for_parent_kw_only)
+        self.award_date = award_date
+        self.quantity = quantity
+        self.unit_price_foreign = unit_price_foreign
+        self.currency = currency
+        self.unit_cost_basis_eur = None
+        # Checked here rather than in `__post_init__` for the reason given on
+        # `InternalTransferEvent`: the parent's generated `__init__` runs
+        # `__post_init__` before these fields exist.
+        if quantity is None or quantity <= Decimal(0):
+            raise ValueError(
+                f"StockAwardEvent quantity must be positive, got {quantity}. The "
+                f"export writes a reversal with a negative quantity; callers pass the "
+                f"absolute value and let the event type carry the direction, so that "
+                f"no consumer has to infer one from the other."
+            )
+        if not award_date or not str(award_date).strip():
+            raise ValueError(
+                "StockAwardEvent requires an award date. It is the only key tying a "
+                "vesting or a reversal back to the lot the award created -- the "
+                "export's SerialNumber is blank on every row."
+            )
+
+    def __post_init__(self):
+        super().__post_init__()

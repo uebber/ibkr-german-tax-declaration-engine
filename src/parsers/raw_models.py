@@ -366,3 +366,78 @@ class RawTransferRecord(RawBaseRecord):
 
     class Config:
         extra = 'ignore'
+
+
+class RawGrantRecord(RawBaseRecord):
+    """One row of the Stock Grant Activity export -- shares awarded for placing capital.
+
+    **Three activity kinds share this export and only two of them move the position.**
+    `ActivityDescription` is the discriminator:
+
+    * an **award** ("... Grant ...") books shares into the account;
+    * a **reversal** ("... Return ...") takes some back when the condition fails, with a
+      negative `Quantity` and the ORIGINAL award's `AwardDate`;
+    * a **vesting** ("... Vesting ...") moves nothing. It records the lapse of the
+      condition; the acquisition already happened at the award ([GT-ESTG20-064]), so it
+      changes no lot, and a consumer that added its `Quantity` to the position would
+      count the same shares twice.
+
+    The third is why `GrantsParser` refuses an `ActivityDescription` it does not
+    recognise instead of skipping it. A dispatch that falls through without an `else`
+    would silently drop a future kind, and the drop would reconcile against the broker's
+    snapshot only until the kind was one that moved the position.
+
+    **Why both dates are mapped.** `AwardDate` is where Zufluss falls -- a contractual
+    condition under which the grantor may reclaim the shares does not postpone it, only a
+    disposal being *rechtlich unmoeglich* would ([GT-ESTG20-064]) -- so it is the
+    acquisition date and the matching key. `VestingDate` is mapped because it is what
+    identifies a vesting row as the lapse of THAT award's condition, and because the
+    claim's own test turns on whether disposal was possible before it, which a reader
+    checking this engine's position has to be able to see. `ReportDate` is the broker's
+    booking day, mapped for ordering only.
+
+    **`SerialNumber` is not mapped.** The export carries the column and leaves it blank,
+    so there is no identity to read from it. It stays in `GRANTS_COLUMNS` so that its
+    ever being populated is caught at the boundary rather than downstream.
+
+    **`Value` is mapped and deliberately not read.** It is `Quantity` x `Price` rounded
+    to the cent, so it can only disagree with them by rounding, and the cost basis is
+    computed from `Price` -- the unrounded figure -- rather than from it. It is declared
+    so that the column is accounted for at the boundary rather than discarded by
+    `extra = 'ignore'`. No code compares the two: a consistency check that fired on the broker's own rounding
+    would be noise, and one with a tolerance would need a source for the tolerance.
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    asset_class: str = Field(alias="AssetClass")
+    sub_category: Optional[str] = Field(None, alias="SubCategory")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    report_date: str = Field(alias="ReportDate")
+    activity_description: str = Field(alias="ActivityDescription")
+    award_date: str = Field(alias="AwardDate")
+    vesting_date: str = Field(alias="VestingDate")
+    quantity: Decimal = Field(alias="Quantity")
+    price: Decimal = Field(alias="Price")
+    value: Decimal = Field(alias="Value")
+
+    @validator('multiplier', 'quantity', 'price', 'value', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Any:
+        """Blank becomes absent; anything else is handed to pydantic to parse or reject.
+
+        Deliberately NOT the `safe_decimal(v, default=Decimal("0.0"))` pattern of the
+        older models. A quantity, price or value of zero here is a real statement -- an
+        award of nothing, or one worth nothing -- so defaulting an unparseable figure to
+        zero would put an invented acquisition cost on a lot, which is the substitution
+        CLAUDE.md's fallback rule forbids. `quantity`, `price` and `value` are required,
+        so a blank one still raises; `multiplier` is optional.
+        """
+        if v is None or str(v).strip() == "":
+            return None
+        return v
+
+    class Config:
+        extra = 'ignore'
