@@ -12,7 +12,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 ## Tax Law (EStG)
 
-- [EStG 20 -- Kapitalvermoegen](tax-law/estg-20-kapitalvermoegen.md) -- Central statute for all capital income (dividends, gains, options, corporate actions); also hosts whose holding is declared and which lot a disposal consumes
+- [EStG 20 -- Kapitalvermoegen](tax-law/estg-20-kapitalvermoegen.md) -- Central statute for all capital income (dividends, gains, options, corporate actions); also hosts whose holding is declared, which lot a disposal consumes, and what Anschaffungskosten comprise -- the Nebenkosten of the purchase (commission, transaction tax), via § 255 Abs. 1 HGB [GT-ESTG20-066]
 - [EStG 20 Abs. 6 -- Verlustverrechnung](tax-law/estg-20-abs6-verlustverrechnung.md) -- Loss offsetting rules, stock ring-fencing, abolished derivative cap
 - [EStG 22 Nr. 3 -- Einkuenfte aus Leistungen](tax-law/estg-22-nr3-leistungen.md) -- The residual income type the order of enquiry at [GT-ESTG20-049] ends in: a benefit granted for placing capital is a Leistung, not Kapitalertrag [GT-ESTG20-063]; valuation and Zufluss of a benefit in kind [GT-ESTG20-064]; the amount taxed on receipt becomes the Anschaffungskosten [GT-ESTG20-065]
 - [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold and commodity ETCs), 1-year speculation period
