@@ -11,6 +11,7 @@ from src.parsers.column_validator import (
     CORPORATE_ACTIONS_COLUMNS,
     CASH_BALANCE_COLUMNS,
     TRANSFERS_COLUMNS,
+    GRANTS_COLUMNS,
 )
 
 def create_csv_string(headers: List[str], data_rows: List[List[Union[str, Decimal, int, float, None]]]) -> str:
@@ -61,6 +62,7 @@ def create_cash_balance_csv_string(data_rows: List[List[Any]]) -> str:
 
 
 TRANSFERS_HEADERS = list(TRANSFERS_COLUMNS)
+GRANTS_HEADERS = list(GRANTS_COLUMNS)
 
 
 def create_transfers_csv_string(data_rows: List[List[Any]]) -> str:
@@ -71,3 +73,12 @@ def create_transfers_csv_string(data_rows: List[List[Any]]) -> str:
     moved a holding.
     """
     return create_csv_string(TRANSFERS_HEADERS, data_rows)
+
+
+def create_grants_csv_string(data_rows: List[List[Any]]) -> str:
+    """The Stock Grant Activity export -- shares a broker awarded for placing capital.
+
+    Rows are in GRANTS_COLUMNS order. An empty list yields a headers-only file, which is
+    a person whose broker has never awarded them shares.
+    """
+    return create_csv_string(GRANTS_HEADERS, data_rows)

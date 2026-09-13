@@ -84,6 +84,9 @@ def run_core_processing_pipeline(
     cash_balance_file_path: Optional[str] = None,  # For currency FIFO processing
     options_eae_file_path: Optional[str] = None,  # For cash-settled option processing
     transfers_file_path: Optional[str] = None,  # Moves between the taxpayer's own accounts
+    # Shares a broker awarded for placing capital. Optional: a person whose broker has
+    # never awarded them shares has no rows.
+    grants_file_path: Optional[str] = None,
     # Years of the replayed window for which no Transfers file was offered (from
     # data_preparation). A hole in a supplied export stops the run; an absent export
     # only warns. Empty when the export is complete or absent altogether.
@@ -130,6 +133,7 @@ def run_core_processing_pipeline(
             cash_balance_file=cash_balance_file_path,
             options_eae_file=options_eae_file_path,
             transfers_file=transfers_file_path,
+            grants_file=grants_file_path,
             positions_mark_files=positions_mark_file_paths,
             tax_year=tax_year_to_process
         )

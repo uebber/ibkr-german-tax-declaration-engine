@@ -16,6 +16,7 @@ from src.domain.events import (
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
     WithholdingTaxEvent, CurrencyConversionEvent, InternalTransferEvent,
+    StockAwardEvent,
     InternalCashTransferEvent
 )
 from src.domain.assets import (
@@ -57,6 +58,9 @@ from .event_processors.option_processor import (
 from .event_processors.currency_conversion_processor import CurrencyConversionProcessor
 from .event_processors.transfer_processor import (
     InternalTransferProcessor, InternalCashTransferProcessor, apply_internal_transfer)
+from src.engine.event_processors.stock_award_processor import (
+    StockAwardProcessor
+)
 
 
 logger = logging.getLogger(__name__)
@@ -586,7 +590,7 @@ def run_main_calculations(
                 historical_transfer_events.append(event)
             elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend,
                                     OptionLifecycleEvent, CorpActionMergerCash,
-                                    CorpActionExpireDividendRights)):
+                                    CorpActionExpireDividendRights, StockAwardEvent)):
                 # OptionLifecycleEvent joined this bucket when checkpointing exposed what its
                 # absence cost: an option opened and closed inside the historical window kept
                 # its lots forever, because nothing removed them. Nine option ledgers on the
@@ -1242,6 +1246,7 @@ def run_main_calculations(
     option_assignment_processor = OptionAssignmentProcessor()
     option_expiration_processor = OptionExpirationWorthlessProcessor()
     option_cash_settlement_processor = OptionCashSettlementProcessor()
+    stock_award_processor = StockAwardProcessor()
 
     # Currency conversion processor for FX trades
     currency_conversion_processor = CurrencyConversionProcessor(
@@ -1268,6 +1273,13 @@ def run_main_calculations(
         FinancialEventType.OPTION_CASH_SETTLEMENT: option_cash_settlement_processor,
         FinancialEventType.INTERNAL_TRANSFER: internal_transfer_processor,
         FinancialEventType.INTERNAL_CASH_TRANSFER: internal_cash_transfer_processor,
+        # All three, and the vesting is the one that matters. An award or a reversal
+        # dated inside the tax year is caught by the EoY reconciliation if it goes
+        # unapplied; a vesting moves no shares, so it reconciled clean while leaving the
+        # provisional award price on the lot for a later disposal to be measured against.
+        FinancialEventType.STOCK_AWARD_GRANTED: stock_award_processor,
+        FinancialEventType.STOCK_AWARD_REVERSED: stock_award_processor,
+        FinancialEventType.STOCK_AWARD_VESTED: stock_award_processor,
     }
 
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")
