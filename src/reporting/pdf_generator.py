@@ -1216,55 +1216,7 @@ class PdfReportGenerator:
         else:
             self.story.append(Paragraph("Keine expliziten Stückzinsen-Transaktionen (gezahlt/erhalten) erfasst.", self.styles['BodyText']))
 
-        self.story.append(Paragraph("2.3.6 Nettoerträge aus Investmentfonds (nach 30% Teilfreistellung, als Komponente sonst. Erträge)", self.styles['SmallText']))
-        fund_net_income_data_rows = []
-        
-        fund_distributions_for_kap = [
-            event for event in self.all_financial_events 
-            if isinstance(event, CashFlowEvent) and event.event_type == FinancialEventType.DISTRIBUTION_FUND
-        ]
-        fund_rgls_for_kap = [
-            rgl for rgl in self.realized_gains_losses 
-            if rgl.asset_category_at_realization == AssetCategory.INVESTMENT_FUND
-        ]
-        # Selected by declaration year: the VP for calendar X appears on the VZ X+1 return
-        # (18 Abs. 3 InvStG).
-        fund_vop_for_kap = [vp for vp in self.vorabpauschale_items if vp.declaration_year == self.tax_year]
-
-        for dist_event in fund_distributions_for_kap:
-            asset_id = dist_event.asset_internal_id
-            asset_name, asset_isin_symbol, fund_type_enum = self._get_asset_details(asset_id)
-            tf_rate = get_teilfreistellung_rate_for_fund_type(fund_type_enum)
-            gross_eur = dist_event.gross_amount_eur or Decimal(0)
-            tf_amount_eur = (gross_eur.copy_abs() * tf_rate).quantize(app_config.OUTPUT_PRECISION_AMOUNTS)
-            net_taxable_eur = gross_eur - tf_amount_eur if gross_eur >= Decimal(0) else gross_eur + tf_amount_eur
-            if net_taxable_eur !=0:
-                fund_net_income_data_rows.append([asset_name, asset_isin_symbol, "Ausschüttung (Netto)", self._format_decimal(net_taxable_eur).replace('.',',')])
-
-        for rgl in fund_rgls_for_kap:
-            asset_name, asset_isin_symbol, _ = self._get_asset_details(rgl.asset_internal_id)
-            net_gl = rgl.net_gain_loss_after_teilfreistellung_eur or Decimal(0)
-            if net_gl != 0:
-                fund_net_income_data_rows.append([asset_name, asset_isin_symbol, "Veräußerung G/V (Netto)", self._format_decimal(net_gl).replace('.',',')])
-
-        for vp_item in fund_vop_for_kap:
-            if vp_item.net_taxable_vorabpauschale_eur != Decimal(0): 
-                asset_name, asset_isin_symbol, _ = self._get_asset_details(vp_item.asset_internal_id)
-                net_vp = vp_item.net_taxable_vorabpauschale_eur
-                fund_net_income_data_rows.append([asset_name, asset_isin_symbol, "Vorabpauschale (Netto)", self._format_decimal(net_vp).replace('.',',')])
-
-        if fund_net_income_data_rows:
-            data = [["Fonds Name", "ISIN/Symbol", "Typ", "Netto Steuerpfl. Betrag (EUR)"]] + sorted(fund_net_income_data_rows, key=lambda x: (x[0], x[2]))
-            # Calculate sum based on the already formatted strings by converting back to Decimal
-            total_net_fund_income_display = sum(Decimal(row[3].replace(',','.')) for row in data[1:])
-            data.append([Paragraph("Summe Netto Investmenterträge (für Verrechnung):", self.styles['TableHeader']), "", "", Paragraph(self._format_decimal(total_net_fund_income_display).replace('.',','), self.styles['TableCellRight'])])
-            table = self._create_styled_table(data, col_widths=[5*cm, 3*cm, 4*cm, 3.5*cm])
-            self.story.append(KeepTogether(table))
-            self.story.append(Paragraph("Hinweis: Diese Netto-Investmenterträge werden gemäß InvStG versteuert und fließen in die Gesamtverrechnung ein; die Bruttozahlen sind in KAP-INV zu deklarieren.", self.styles['SmallText']))
-        else:
-            self.story.append(Paragraph("Keine Nettoerträge aus Investmentfonds für 'Sonstige Kapitalerträge'.", self.styles['BodyText']))
-
-        # 2.3.7 -- the §20 Abs. 2 Satz 1 Nr. 7 instruments that are NOT bonds: unbacked
+        # 2.3.6 -- the §20 Abs. 2 Satz 1 Nr. 7 instruments that are NOT bonds: unbacked
         # commodity ETCs ([GT-ESTG23-011], BMF 14.05.2025 Rz. 57), Zertifikate and
         # unallocated spot metal ([GT-ESTG20-038], Rz. 9). Same Zeile 19/22 as 2.3.4, shown
         # apart from it so the report does not call a metal position a bond.
@@ -1280,7 +1232,7 @@ class PdfReportGenerator:
         ]
         if sk_rgls:
             self.story.append(Paragraph(
-                "2.3.7 Gewinne/Verluste aus sonstigen Kapitalforderungen (§20 Abs. 2 S. 1 Nr. 7, keine Anleihen)",
+                "2.3.6 Gewinne/Verluste aus sonstigen Kapitalforderungen (§20 Abs. 2 S. 1 Nr. 7, keine Anleihen)",
                 self.styles['SmallText']))
             data = [["Asset Name", "ISIN/Symbol", "Verk. Datum", "Menge", "Erlös EUR", "Ansch. Datum", "Kosten EUR", "G/V Brutto EUR"]]
             total_sk_gl = Decimal(0)
