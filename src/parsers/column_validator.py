@@ -16,7 +16,7 @@ TRADES_COLUMNS = (
     "Description", "ISIN", "Strike", "Expiry", "Put/Call", "TradeDate", "Quantity",
     "TradePrice", "IBCommission", "IBCommissionCurrency", "Buy/Sell",
     "TransactionID", "Notes/Codes", "UnderlyingSymbol", "Conid", "UnderlyingConid",
-    "Multiplier", "Open/CloseIndicator",
+    "Multiplier", "Open/CloseIndicator", "Taxes",
 )
 
 CASH_TRANSACTIONS_COLUMNS = (
@@ -42,12 +42,35 @@ CASH_BALANCE_COLUMNS = (
     "StartingCash", "EndingCash",
 )
 
+# Stock Grant Activity export -- shares a broker awards for placing capital with it.
+# Declared in full rather than as the subset the engine maps, for the reason given on
+# TRANSFERS_COLUMNS: a column appearing or disappearing is then caught at the boundary.
+# `SerialNumber` is the case that needs it -- the export carries the column and leaves it
+# blank, so it is declared here and deliberately absent from `RawGrantRecord`.
+GRANTS_COLUMNS = (
+    "ClientAccountID", "CurrencyPrimary", "AssetClass", "SubCategory", "Symbol",
+    "Description", "Conid", "ISIN", "Multiplier", "ReportDate",
+    "ActivityDescription", "AwardDate", "VestingDate", "Quantity", "Price",
+    "Value", "SerialNumber",
+)
+
 OPTIONS_EAE_COLUMNS = (
     "ClientAccountID", "CurrencyPrimary", "FXRateToBase", "AssetClass",
     "Symbol", "Description", "Conid", "ISIN", "UnderlyingConid",
     "UnderlyingSymbol", "Multiplier", "Strike", "Expiry", "Put/Call",
     "Date", "Transaction Type", "Quantity", "Trade Price", "Proceeds",
     "Comm/Tax", "Basis", "RealizedPnl",
+)
+
+
+TRANSFERS_COLUMNS = (
+    "ClientAccountID", "AccountAlias", "CurrencyPrimary", "AssetClass", "Symbol",
+    "Description", "Conid", "ISIN", "UnderlyingConid", "UnderlyingSymbol", "Multiplier",
+    "ReportDate", "Date", "DateTime", "SettleDate", "Type", "Direction",
+    "TransferAccount", "TransferAccountName", "Quantity", "TransferPrice",
+    "PositionAmount", "PositionAmountInBase", "PnlAmount", "PnlAmountInBase",
+    "CashTransfer", "Code", "ClientReference", "TransactionID", "SerialNumber",
+    "DeliveryType", "CommodityType", "CostBasis", "OpenDateTime", "LevelOfDetail",
 )
 
 

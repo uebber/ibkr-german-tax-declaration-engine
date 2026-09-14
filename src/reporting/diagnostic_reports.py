@@ -5,7 +5,8 @@ from collections import defaultdict
 from typing import List, Dict, Any, Optional
 
 import src.config as config 
-from src.domain.assets import Asset, InvestmentFund 
+from src.domain.assets import (
+    Asset, InvestmentFund, SnapshotsByAccount, person_snapshot)
 from src.domain.events import FinancialEvent, TradeEvent # Added TradeEvent for type hint
 from src.domain.enums import AssetCategory, InvestmentFundType, FinancialEventType, RealizationType 
 from src.identification.asset_resolver import AssetResolver 
@@ -81,33 +82,57 @@ def print_grouped_event_details(
             if event.ibkr_activity_description:
                 print(f"    Desc: {event.ibkr_activity_description[:80]}")
 
-def print_asset_positions_diagnostic(asset_resolver: AssetResolver):
-    """Prints SOY and EOY asset positions."""
+def print_asset_positions_diagnostic(asset_resolver: AssetResolver,
+                                     soy_positions: SnapshotsByAccount,
+                                     eoy_positions: SnapshotsByAccount):
+    """Prints SOY and EOY asset positions, per account and as the person's total."""
     print("\n--- Asset Positions (Start & End of Year) ---")
     sorted_assets = sorted(asset_resolver.assets_by_internal_id.values(), key=_get_asset_display_key)
     for asset in sorted_assets:
-        soy_info = "N/A"
-        if asset.soy_quantity is not None: # Renamed from initial_quantity_soy
-            qty_val = asset.soy_quantity.quantize(config.PRECISION_QUANTITY) # Renamed from initial_quantity_soy
-            cost_val_soy = asset.soy_cost_basis_amount # Renamed from initial_cost_basis_money_soy
-            cost_val = cost_val_soy.quantize(config.OUTPUT_PRECISION_AMOUNTS) if cost_val_soy else 'N/A' # Renamed
-            soy_info = f"Qty: {qty_val!s}, Cost: {cost_val!s} {asset.soy_cost_basis_currency or ''}" # Renamed from initial_cost_basis_currency_soy
+        asset_id = asset.internal_asset_id
+        soy_info = _format_opening(person_snapshot(soy_positions, asset_id))
+        eoy_info = _format_closing(person_snapshot(eoy_positions, asset_id))
 
-        eoy_info = "N/A"
-        if asset.eoy_quantity is not None:
-            qty_val_eoy = asset.eoy_quantity.quantize(config.PRECISION_QUANTITY)
-            price_val_eoy = asset.eoy_market_price # Renamed from eoy_mark_price
-            value_val_eoy = asset.eoy_position_value
-            
-            price_val = price_val_eoy.quantize(config.OUTPUT_PRECISION_PER_SHARE) if price_val_eoy else 'N/A' # Renamed
-            value_val = value_val_eoy.quantize(config.OUTPUT_PRECISION_AMOUNTS) if value_val_eoy else 'N/A' # Renamed
-            eoy_info = f"Qty: {qty_val_eoy!s}, MarkPrice: {price_val!s} {asset.eoy_mark_price_currency or ''}, Value: {value_val!s}"
-        
         asset_display_key_val = _get_asset_display_key(asset)
         asset_desc_print_val = asset.description or asset_display_key_val
+        # The person's total, then -- when more than one account reports the asset -- a line
+        # per account beneath it. An account's own holding has meaning of its own now that a
+        # disposal consumes that account's lots ([GT-ESTG20-013]); a single-account run is
+        # unchanged, printing only the total.
         print(f"  {asset_desc_print_val:<50} | "
               f"Cat: {asset.asset_category.name if asset.asset_category else 'N/A':<20} | "
               f"SOY: {soy_info:<50} | EOY: {eoy_info}")
+
+        accounts = ({acct for (acct, aid) in soy_positions if aid == asset_id}
+                    | {acct for (acct, aid) in eoy_positions if aid == asset_id})
+        if len(accounts) > 1:
+            for acct in sorted(accounts):
+                acct_soy = _format_opening(soy_positions.get((acct, asset_id)))
+                acct_eoy = _format_closing(eoy_positions.get((acct, asset_id)))
+                print(f"      └─ Konto {acct:<20} | "
+                      f"{'':<26} | SOY: {acct_soy:<50} | EOY: {acct_eoy}")
+
+
+def _format_opening(snapshot) -> str:
+    if snapshot is None or snapshot.quantity is None:
+        return "N/A"
+    qty_val = snapshot.quantity.quantize(config.PRECISION_QUANTITY)
+    cost = snapshot.cost_basis_amount
+    cost_val = cost.quantize(config.OUTPUT_PRECISION_AMOUNTS) if cost else 'N/A'
+    return f"Qty: {qty_val!s}, Cost: {cost_val!s} {snapshot.cost_basis_currency or ''}"
+
+
+def _format_closing(snapshot) -> str:
+    if snapshot is None or snapshot.quantity is None:
+        return "N/A"
+    qty_val = snapshot.quantity.quantize(config.PRECISION_QUANTITY)
+    price = snapshot.mark_price
+    value = snapshot.position_value
+    price_val = price.quantize(config.OUTPUT_PRECISION_PER_SHARE) if price else 'N/A'
+    value_val = value.quantize(config.OUTPUT_PRECISION_AMOUNTS) if value else 'N/A'
+    return (f"Qty: {qty_val!s}, MarkPrice: {price_val!s} "
+            f"{snapshot.mark_price_currency or ''}, Value: {value_val!s}")
+
 
 def print_assets_by_category_diagnostic(asset_resolver: AssetResolver):
     """Prints assets grouped by their final classification."""

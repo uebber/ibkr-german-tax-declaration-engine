@@ -24,8 +24,8 @@ Adding a field therefore means adding the column to the Flex Query *and* to the
 `*_COLUMNS` tuple. Leaving it declared-but-unrequested is the one state to avoid.
 
 Note the mirror case, which is *not* corrected here because changing it could move a
-figure: `Positions` exports `ClientAccountID` and `SubCategory`, and `Corporate_Actions`
-exports `Amount`, none of which have a field below, so `extra = 'ignore'` discards them.
+figure: `Positions` exports `SubCategory` and `Corporate_Actions` exports `Amount`,
+neither of which has a field below, so `extra = 'ignore'` discards them.
 """
 from typing import Optional, Any
 from decimal import Decimal
@@ -80,6 +80,7 @@ class RawTradeRecord(RawBaseRecord):
     trade_price: Decimal = Field(alias="TradePrice")
     ib_commission: Optional[Decimal] = Field(None, alias="IBCommission")
     ib_commission_currency: Optional[str] = Field(None, alias="IBCommissionCurrency")
+    taxes: Optional[Decimal] = Field(None, alias="Taxes") # Transaction tax (stamp duty) in CurrencyPrimary; a charge is negative
     open_close_indicator: Optional[str] = Field(None, alias="Open/CloseIndicator") # O, C, A, Ex, Ep etc.
     notes_codes: Optional[str] = Field(None, alias="Notes/Codes") # Contains O, C, A, Ex, Ep, P, D etc.
     transaction_id: Optional[str] = Field(None, alias="TransactionID") # Used for linking
@@ -89,7 +90,7 @@ class RawTradeRecord(RawBaseRecord):
     # derived from Quantity x TradePrice x Multiplier. See create_events_from_trades.
 
     # Validators for specific fields
-    @validator('multiplier', 'strike', 'quantity', 'trade_price', 'ib_commission', pre=True)
+    @validator('multiplier', 'strike', 'quantity', 'trade_price', 'ib_commission', 'taxes', pre=True)
     def parse_decimal_fields(cls, v: Any) -> Optional[Decimal]:
         return safe_decimal(v, default=None if v is None or str(v).strip() == "" else Decimal("0.0"))
 
@@ -141,8 +142,8 @@ class RawCashTransactionRecord(RawBaseRecord):
         extra = 'ignore'
 
 class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
-    """One row of a Positions snapshot. Mirrors `POSITIONS_COLUMNS`, less the two
-    columns noted in the module docstring that this model does not map at all.
+    """One row of a Positions snapshot. Mirrors `POSITIONS_COLUMNS`, less the one
+    column noted in the module docstring that this model does not map at all.
 
     Carries no option contract terms. `Strike`, `Expiry` and `Put/Call` were declared here
     and read by `process_positions` until August 2026, but the Positions query does not
@@ -153,6 +154,7 @@ class RawPositionRecord(RawBaseRecord): # For Start and End of Year positions
     been an option's only source. Restoring the capability means adding the three columns
     to the Flex Query and to POSITIONS_COLUMNS together, not re-declaring them here.
     """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
     currency_primary: str = Field(alias="CurrencyPrimary") # Renamed for consistency
     asset_class: str = Field(alias="AssetClass")
     symbol: str = Field(alias="Symbol")
@@ -275,6 +277,168 @@ class RawCashBalanceRecord(RawBaseRecord):
         if v is None or str(v).strip() == "":
             return None
         return str(v).strip()
+
+    class Config:
+        extra = 'ignore'
+
+class RawTransferRecord(RawBaseRecord):
+    """One row of the Transfers export -- a move of a holding or a cash balance.
+
+    The export writes a move as SEVERAL rows, and a consumer that sums them moves the
+    holding more than once. `LevelOfDetail` discriminates them:
+
+    * a **TRANSFER** row -- the summary, one per side of the move: `Direction` "OUT" on
+      the sending account and "IN" on the receiving one. Each names both accounts -- its
+      own in `ClientAccountID` and the other in `TransferAccount` -- so either side alone
+      describes the whole move. It carries a `TransactionID`.
+    * a **LOT** row per acquisition day beneath a summary, carrying `Code` "ST", no
+      `TransactionID`, and the day and basis of that lot in `OpenDateTime` and
+      `CostBasis`. Measured: one row per acquisition day, not per trade.
+
+    `DomainEventFactory.create_events_from_transfers` reads `LevelOfDetail`, collapses the
+    summary rows into one move per side pair, and attaches the `LOT` rows as the per-day
+    breakdown of which lots moved. The older shape of this export lacked `LevelOfDetail`,
+    `CostBasis` and `OpenDateTime`; those three are now REQUIRED input -- an export without
+    them stops the run rather than being read on a heuristic (`Code`/`TransactionID`) that
+    the real field replaces.
+
+    **`Direction` carries the direction and the sign of `Quantity` does not.** The two
+    sides of one move carry opposite signs, and which side is negative varies by
+    instrument, so the sign identifies neither the direction nor a short position on the
+    summary row. The engine reads `abs(quantity)` for the move total and takes the
+    direction from `Direction`. On a LOT row the sign DOES mark long-versus-short
+    (measured: 6 of 13 real lot rows are shorts opened by SELL), but the sending ledger
+    remains authoritative and the sign is a cross-check.
+
+    **`TransferPrice` and `CostBasis` are parsed but not consumed.** They ARE a cost basis
+    -- the previous shape of this model asserted they were "not a cost basis", which was
+    wrong -- but in the broker's convention: IBKR nets an option-assignment premium into
+    the basis of assigned shares, which German law rejects ([GT-ESTG20-004], BMF
+    14.05.2025 Rz. 26). Taking them would understate the basis and tax the premium twice.
+    The German-correct basis is the sending ledger's own reconstruction, which the
+    handover relocates, so these two values are never read to value anything. They are
+    parsed here only because they complete the required lot-detail export shape (an export
+    lacking them is read on a heuristic instead, which is the state this file exists to
+    prevent). What the `LOT` rows ARE used for -- the acquisition day, the quantity and the
+    long/short sign -- is on `TransferLot`, and those are matched and cross-checked against
+    the sending ledger.
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    asset_class: str = Field(alias="AssetClass")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    date: str = Field(alias="Date")
+    transfer_type: Optional[str] = Field(None, alias="Type")
+    direction: Optional[str] = Field(None, alias="Direction")
+    transfer_account: Optional[str] = Field(None, alias="TransferAccount")
+    quantity: Decimal = Field(alias="Quantity")
+    transfer_price: Optional[Decimal] = Field(None, alias="TransferPrice")
+    transaction_id: Optional[str] = Field(None, alias="TransactionID")
+    cost_basis: Optional[Decimal] = Field(None, alias="CostBasis")
+    open_date_time: Optional[str] = Field(None, alias="OpenDateTime")
+    level_of_detail: Optional[str] = Field(None, alias="LevelOfDetail")
+    # The amount moved, on a cash row. `Quantity`, `PositionAmount` and `TransferPrice`
+    # are all zero on such a row -- a cash move has no units -- so this is the only column
+    # that carries it, and without it a currency move could not be measured at all. Blank
+    # on a securities row, where the units are in `Quantity`.
+    cash_transfer: Optional[Decimal] = Field(None, alias="CashTransfer")
+
+    @validator('multiplier', 'quantity', 'transfer_price', 'cost_basis', 'cash_transfer', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Any:
+        """Blank becomes absent; anything else is handed to pydantic to parse or reject.
+
+        Deliberately NOT the other models' pattern of defaulting an unparseable non-blank
+        value to `Decimal("0.0")`. A quantity of zero here is a move of nothing, so that
+        default would leave the holding where it was while the broker had moved it -- and
+        the reconciliation that follows compares quantities, which would then agree with
+        the snapshot for the wrong reason.
+
+        Blank must not raise: `Multiplier` is blank on a cash row, `CostBasis` and
+        `TransferPrice` blank on some summary rows. `Quantity` is required, so a blank one
+        still raises.
+        """
+        if v is None or str(v).strip() == "":
+            return None
+        return v
+
+    class Config:
+        extra = 'ignore'
+
+
+class RawGrantRecord(RawBaseRecord):
+    """One row of the Stock Grant Activity export -- shares awarded for placing capital.
+
+    **Three activity kinds share this export and only two of them move the position.**
+    `ActivityDescription` is the discriminator:
+
+    * an **award** ("... Grant ...") books shares into the account;
+    * a **reversal** ("... Return ...") takes some back when the condition fails, with a
+      negative `Quantity` and the ORIGINAL award's `AwardDate`;
+    * a **vesting** ("... Vesting ...") moves nothing. It records the lapse of the
+      condition; the acquisition already happened at the award ([GT-ESTG20-064]), so it
+      changes no lot, and a consumer that added its `Quantity` to the position would
+      count the same shares twice.
+
+    The third is why `GrantsParser` refuses an `ActivityDescription` it does not
+    recognise instead of skipping it. A dispatch that falls through without an `else`
+    would silently drop a future kind, and the drop would reconcile against the broker's
+    snapshot only until the kind was one that moved the position.
+
+    **Why both dates are mapped.** `AwardDate` is where Zufluss falls -- a contractual
+    condition under which the grantor may reclaim the shares does not postpone it, only a
+    disposal being *rechtlich unmoeglich* would ([GT-ESTG20-064]) -- so it is the
+    acquisition date and the matching key. `VestingDate` is mapped because it is what
+    identifies a vesting row as the lapse of THAT award's condition, and because the
+    claim's own test turns on whether disposal was possible before it, which a reader
+    checking this engine's position has to be able to see. `ReportDate` is the broker's
+    booking day, mapped for ordering only.
+
+    **`SerialNumber` is not mapped.** The export carries the column and leaves it blank,
+    so there is no identity to read from it. It stays in `GRANTS_COLUMNS` so that its
+    ever being populated is caught at the boundary rather than downstream.
+
+    **`Value` is mapped and deliberately not read.** It is `Quantity` x `Price` rounded
+    to the cent, so it can only disagree with them by rounding, and the cost basis is
+    computed from `Price` -- the unrounded figure -- rather than from it. It is declared
+    so that the column is accounted for at the boundary rather than discarded by
+    `extra = 'ignore'`. No code compares the two: a consistency check that fired on the broker's own rounding
+    would be noise, and one with a tolerance would need a source for the tolerance.
+    """
+    client_account_id: Optional[str] = Field(None, alias="ClientAccountID")
+    currency_primary: str = Field(alias="CurrencyPrimary")
+    asset_class: str = Field(alias="AssetClass")
+    sub_category: Optional[str] = Field(None, alias="SubCategory")
+    symbol: Optional[str] = Field(None, alias="Symbol")
+    description: Optional[str] = Field(None, alias="Description")
+    conid: Optional[str] = Field(None, alias="Conid")
+    isin: Optional[str] = Field(None, alias="ISIN")
+    multiplier: Optional[Decimal] = Field(None, alias="Multiplier")
+    report_date: str = Field(alias="ReportDate")
+    activity_description: str = Field(alias="ActivityDescription")
+    award_date: str = Field(alias="AwardDate")
+    vesting_date: str = Field(alias="VestingDate")
+    quantity: Decimal = Field(alias="Quantity")
+    price: Decimal = Field(alias="Price")
+    value: Decimal = Field(alias="Value")
+
+    @validator('multiplier', 'quantity', 'price', 'value', pre=True)
+    def parse_decimal_fields(cls, v: Any) -> Any:
+        """Blank becomes absent; anything else is handed to pydantic to parse or reject.
+
+        Deliberately NOT the `safe_decimal(v, default=Decimal("0.0"))` pattern of the
+        older models. A quantity, price or value of zero here is a real statement -- an
+        award of nothing, or one worth nothing -- so defaulting an unparseable figure to
+        zero would put an invented acquisition cost on a lot, which is the substitution
+        CLAUDE.md's fallback rule forbids. `quantity`, `price` and `value` are required,
+        so a blank one still raises; `multiplier` is optional.
+        """
+        if v is None or str(v).strip() == "":
+            return None
+        return v
 
     class Config:
         extra = 'ignore'

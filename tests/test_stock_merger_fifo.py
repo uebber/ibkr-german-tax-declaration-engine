@@ -104,14 +104,14 @@ class TestMergerIntraDayOrdering:
     merger has to be applied BEFORE the same day's trades -- otherwise a
     disposal of the delivered shares still oversells.
 
-    **That ordering currently holds by accident.** `sorting_utils.py` puts the
-    transaction id ahead of `intra_day_order` in the secondary key, so
-    `_INTRA_DAY_SORT_ORDER_CORP_ACTION` decides nothing between events with
-    different ids. A corporate action sorts first only because
-    `Corporate_Actions-*.csv` carries no `TransactionID` column, so
-    `ibkr_transaction_id` is None and the key element is `""`, which precedes
-    every real id. If IBKR ever supplies that column the order flips and the
-    integration tests break with no explanation. This test is the explanation.
+    **That ordering is an explicit rule, not an accident.** `sorting_utils.py`
+    partitions the same-day key by precedence: lot-DELIVERING kinds (corporate
+    actions and mergers, internal transfers, option lifecycle events) sort ahead
+    of that day's disposals regardless of transaction id, and only within a part
+    does IBKR's txid chronology decide. So a merger sorts before the same day's
+    trades by the rule -- it would still do so if IBKR ever gave the corporate
+    action export a `TransactionID` column. The second test pins exactly that:
+    an id on the merger no longer flips the order.
     """
 
     @staticmethod
@@ -141,12 +141,13 @@ class TestMergerIntraDayOrdering:
 
         assert get_event_sort_key(merger, resolver) < get_event_sort_key(sale, resolver)
 
-    def test_a_transaction_id_on_the_merger_would_break_it(self):
+    def test_a_transaction_id_on_the_merger_does_not_break_it(self):
         """
-        The failure mode above, made visible: give the merger an id and the
-        ordering is decided by a lexicographic string comparison instead. Not a
-        wish for different behaviour -- a record of what the guarantee rests on,
-        so that whoever adds the column knows what they have to fix.
+        The old fragility, now fixed and guarded. Give the merger an id that would
+        have dragged it behind the sale under the old id-first key; the precedence
+        partition still puts it first, because a merger is a lot-delivering kind and
+        sorts ahead of that day's disposals by rule, not by the accident of an empty
+        id. Red under the old `(transaction_id, intra_day_order, ...)` key.
         """
         from src.utils.sorting_utils import get_event_sort_key
 
@@ -154,7 +155,7 @@ class TestMergerIntraDayOrdering:
         source_id, target_id = uuid.uuid4(), uuid.uuid4()
 
         merger = _make_merger_event(source_id, target_id, event_date="2022-06-15")
-        merger.ibkr_transaction_id = "9999999999"  # would sort after the sale
+        merger.ibkr_transaction_id = "9999999999"  # would have sorted after the sale
         sale = TradeEvent(
             asset_internal_id=target_id,
             event_date="2022-06-15",
@@ -164,7 +165,7 @@ class TestMergerIntraDayOrdering:
             ibkr_transaction_id="1322551221",
         )
 
-        assert get_event_sort_key(merger, resolver) > get_event_sort_key(sale, resolver)
+        assert get_event_sort_key(merger, resolver) < get_event_sort_key(sale, resolver)
 
 
 # =============================================================================

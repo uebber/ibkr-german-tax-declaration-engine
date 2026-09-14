@@ -92,7 +92,16 @@ def generate_console_tax_report(
     logger.info(f"Generating console tax declaration summary for tax year {tax_year}...")
     print(f"\n--- Tax Declaration Summary for Year {tax_year} (All amounts in EUR) ---")
     print("--- Figures for direct entry into German tax forms (as per PRD v3.2.2) ---")
-    
+
+    # Multi-account limitations, printed BEFORE the figures so a reader who stops at the
+    # number they came for has already passed the warning about it. The engine records the
+    # gap on a multi-account run for which no Transfers export was supplied — the one case
+    # a move stays invisible (see _report_multi_account_limitations).
+    for _gap in (data_gaps or []):
+        if _gap.code == "MULTI_ACCOUNT_LIMITATIONS":
+            print(f"\n  ACHTUNG -- {_gap.subject}. Mehrkonten-Unterstützung ist unvollständig:")
+            print(f"  {_gap.detail}")
+
     tax_year_start_date = parse_ibkr_date(f"{tax_year}-01-01")
     tax_year_end_date = parse_ibkr_date(f"{tax_year}-12-31")
 
@@ -267,6 +276,8 @@ def generate_console_tax_report(
     sum_non_fund_dividends_gross = Decimal('0')
     sum_bond_gains_gross = Decimal('0')
     sum_sonstige_kapitalforderung_gains_gross = Decimal('0')
+    sum_fx_gains_gross = Decimal('0')
+    sum_fx_losses_abs = Decimal('0')
 
     # Process events for interest and non-fund dividends
     for event in current_year_events: # Already filtered for tax year
@@ -289,12 +300,20 @@ def generate_console_tax_report(
     # Process RGLs for bond gains and for the other §20 Abs. 2 S. 1 Nr. 7 instruments.
     # Both feed the same Zeile 19, and both are shown, so the components add up.
     for rgl in current_year_rgls: # Already filtered for tax year
-        if rgl.gross_gain_loss_eur is None or rgl.gross_gain_loss_eur <= Decimal('0'):
+        gl = rgl.gross_gain_loss_eur
+        if gl is None or gl == Decimal('0'):
+            continue
+        if gl < Decimal('0'):
+            # Only FX losses are itemised here; the other loss components already have a home.
+            if rgl.asset_category_at_realization == AssetCategory.CASH_BALANCE:
+                sum_fx_losses_abs += gl.copy_abs()
             continue
         if rgl.asset_category_at_realization == AssetCategory.BOND:
-            sum_bond_gains_gross += rgl.gross_gain_loss_eur
+            sum_bond_gains_gross += gl
         elif rgl.asset_category_at_realization == AssetCategory.SONSTIGE_KAPITALFORDERUNG:
-            sum_sonstige_kapitalforderung_gains_gross += rgl.gross_gain_loss_eur
+            sum_sonstige_kapitalforderung_gains_gross += gl
+        elif rgl.asset_category_at_realization == AssetCategory.CASH_BALANCE:
+            sum_fx_gains_gross += gl
 
     print(f"      Zinserträge (brutto positiv): {_q(sum_interest_income_gross)}")
     print(f"      Dividenden (Aktien, brutto positiv, inkl. steuerpfl. Stock-Dividenden): {_q(sum_non_fund_dividends_gross)}")
@@ -303,12 +322,21 @@ def generate_console_tax_report(
     # constant zero for every taxpayer, and this category is rare by construction.
     if sum_sonstige_kapitalforderung_gains_gross > Decimal('0'):
         print(f"      Gewinne aus sonstigen Kapitalforderungen (§20 Abs. 2 S. 1 Nr. 7, keine Anleihen; brutto positiv): {_q(sum_sonstige_kapitalforderung_gains_gross)}")
+    # FX (Währungspositionen) feeds the same Zeile 19/22. Only the sums are shown here; the
+    # per-position detail is in the PDF report (Abschnitt 2.3.5). Printed only when present, so
+    # an account without currency disposals is unchanged.
+    if sum_fx_gains_gross > Decimal('0'):
+        print(f"      FX-Gewinne (Währungspositionen, brutto positiv): {_q(sum_fx_gains_gross)}")
 
     total_kap_other_income_positive_components = (
         sum_interest_income_gross + sum_non_fund_dividends_gross + sum_bond_gains_gross
-        + sum_sonstige_kapitalforderung_gains_gross
+        + sum_sonstige_kapitalforderung_gains_gross + sum_fx_gains_gross
     )
     print(f"      Summe dieser positiven Komponenten (nicht Fonds): {_q(total_kap_other_income_positive_components)}")
+    if sum_fx_losses_abs > Decimal('0'):
+        print(f"      FX-Verluste (Währungspositionen, in 'Sonstige Verluste'/Zeile 22 enthalten): {_q(sum_fx_losses_abs)}")
+    if sum_fx_gains_gross > Decimal('0') or sum_fx_losses_abs > Decimal('0'):
+        print(f"      (FX-Gewinne/-Verluste pro Position: siehe PDF-Bericht, Abschnitt 2.3.5.)")
     print(f"      (Hinweis: Gezahlte Stückzinsen mindern 'Sonstige Verluste'. Erhaltene Stückzinsen sind i.d.R. in 'Zinserträge' enthalten.)")
     # --- END OF NEW DETAILED BREAKDOWN ---
 

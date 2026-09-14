@@ -68,7 +68,7 @@ from enum import Enum
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Set
 
-from src.domain.assets import InvestmentFund
+from src.domain.assets import InvestmentFund, SnapshotsByAccount, person_snapshot
 from src.domain.exceptions import ProcessingError
 
 logger = logging.getLogger(__name__)
@@ -284,6 +284,7 @@ def commit_declared_vorabpauschale(
     *,
     store: VorabpauschaleDeclarationStore,
     asset_resolver,
+    prior_eoy_positions: "SnapshotsByAccount",
     vorabpauschale_items: Iterable,
     vorabpauschale_year: int,
     declared_on: date,
@@ -296,8 +297,9 @@ def commit_declared_vorabpauschale(
     Vorabpauschale for, and a zero for the rest, because "held and owed nothing"
     and "not on the record" must stay distinguishable.
 
-    Which funds were held is read from `prior_year_eoy_quantity`, the same
-    Rz. 18.4 count the Vorabpauschale itself multiplies by ([GT-INVSTG-017]).
+    Which funds were held is read from the preceding year's closing snapshot, the
+    same Rz. 18.4 count the Vorabpauschale itself multiplies by ([GT-INVSTG-017]),
+    summed over the person's accounts ([GT-ESTG20-061]).
 
     Returns one line per entry written, for the console.
     """
@@ -314,7 +316,8 @@ def commit_declared_vorabpauschale(
     ):
         if not isinstance(asset, InvestmentFund):
             continue
-        held = asset.prior_year_eoy_quantity or Decimal(0)
+        reported = person_snapshot(prior_eoy_positions, asset_id)
+        held = (reported.quantity if reported is not None else None) or Decimal(0)
         gross = gross_by_asset.get(asset_id)
         if held <= Decimal(0) and gross is None:
             continue

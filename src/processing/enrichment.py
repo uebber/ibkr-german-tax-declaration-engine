@@ -5,7 +5,8 @@ from typing import List
 
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, CorpActionStockDividend,
-    CorpActionMergerCash, OptionCashSettlementEvent, FinancialEventType
+    CorpActionMergerCash, OptionCashSettlementEvent, FinancialEventType,
+    StockAwardEvent
 )
 from src.utils.currency_converter import CurrencyConverter
 from src.utils.type_utils import parse_ibkr_date
@@ -96,6 +97,28 @@ def enrich_financial_events(
                      event.commission_eur = ctx.create_decimal(Decimal(0))
                      eur_commission_conversions_success += 1
 
+            # 2a-tax. Transaction tax (stamp duty) -> EUR. It has no currency column of its
+            # own; it is in the trade's local_currency. Same shape as the commission block;
+            # folded into the cost basis at 2c as an Anschaffungsnebenkosten [GT-ESTG20-066].
+            if isinstance(event, TradeEvent) and event.transaction_tax_foreign is not None \
+                    and event.transaction_tax_eur is None:
+                if event.transaction_tax_foreign == Decimal(0):
+                    event.transaction_tax_eur = ctx.create_decimal(Decimal(0))
+                elif event.local_currency and event.local_currency.upper() != "EUR":
+                    eur_tax = currency_converter.convert_to_eur(
+                        event.transaction_tax_foreign,
+                        event.local_currency,
+                        event_date_obj
+                    )
+                    if eur_tax is not None:
+                        event.transaction_tax_eur = ctx.create_decimal(eur_tax)
+                    else:
+                        logger.warning(f"Event {event_idx+1} (Trade ID: {event.event_id}): Could not convert transaction tax ({event.transaction_tax_foreign} {event.local_currency}) to EUR.")
+                elif event.local_currency and event.local_currency.upper() == "EUR":
+                    event.transaction_tax_eur = ctx.create_decimal(event.transaction_tax_foreign)
+                elif not event.local_currency:
+                    logger.warning(f"Event {event_idx+1} (Trade ID: {event.event_id}): transaction_tax_foreign ({event.transaction_tax_foreign}) exists but local_currency is missing. Cannot convert to EUR.")
+
 
             # 2b. Calculate gross_amount_eur for trade if not already set by general logic above
             if event.gross_amount_eur is None and event.gross_amount_foreign_currency is None and \
@@ -118,16 +141,34 @@ def enrich_financial_events(
 
             # 2c. Net proceeds or cost basis in EUR (HIGH PRECISION)
             if event.net_proceeds_or_cost_basis_eur is None: # Only calculate if not already set
-                if event.gross_amount_eur is not None and event.commission_eur is not None:
-                    if event.event_type in [FinancialEventType.TRADE_BUY_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER]:
-                        # Cost basis = gross amount + commission
-                        event.net_proceeds_or_cost_basis_eur = ctx.add(event.gross_amount_eur, event.commission_eur.copy_abs()) # Ensure commission added is positive
+                # A transaction tax is an Anschaffungsnebenkosten and joins a buy's cost
+                # basis [GT-ESTG20-066]. If a non-zero tax could not be converted to EUR,
+                # leave the cost basis unset so the miss surfaces downstream rather than
+                # silently dropping the tax.
+                tax_unconverted = (event.transaction_tax_foreign is not None
+                                   and event.transaction_tax_foreign != Decimal('0.0')
+                                   and event.transaction_tax_eur is None)
+                tax_eur_abs = (event.transaction_tax_eur.copy_abs()
+                               if event.transaction_tax_eur is not None else Decimal('0'))
+                is_buy = event.event_type in [FinancialEventType.TRADE_BUY_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER]
+
+                if tax_unconverted:
+                    logger.warning(f"Event {event_idx+1} (Trade ID: {event.event_id}): Cannot calculate net_proceeds_or_cost_basis_eur because a non-zero transaction tax could not be converted to EUR.")
+                elif event.gross_amount_eur is not None and event.commission_eur is not None:
+                    if is_buy:
+                        # Cost basis = gross amount + commission + transaction tax
+                        event.net_proceeds_or_cost_basis_eur = ctx.add(
+                            ctx.add(event.gross_amount_eur, event.commission_eur.copy_abs()),
+                            tax_eur_abs) # commission and tax added positive
                     elif event.event_type in [FinancialEventType.TRADE_SELL_LONG, FinancialEventType.TRADE_SELL_SHORT_OPEN]:
-                        # Proceeds = gross amount - commission
+                        # Proceeds = gross amount - commission (a sale carries no tax; the factory refuses one)
                         event.net_proceeds_or_cost_basis_eur = ctx.subtract(event.gross_amount_eur, event.commission_eur.copy_abs()) # Ensure commission subtracted is positive
                 elif event.gross_amount_eur is not None and event.commission_eur is None and event.commission_foreign_currency == Decimal('0.0'):
-                    # If commission is zero, net = gross
-                    event.net_proceeds_or_cost_basis_eur = ctx.create_decimal(event.gross_amount_eur) # ensure it's under context
+                    # Commission zero: net = gross, plus the transaction tax on a buy
+                    if is_buy:
+                        event.net_proceeds_or_cost_basis_eur = ctx.add(event.gross_amount_eur, tax_eur_abs)
+                    else:
+                        event.net_proceeds_or_cost_basis_eur = ctx.create_decimal(event.gross_amount_eur) # ensure it's under context
                 elif event.gross_amount_eur is None:
                      logger.warning(f"Event {event_idx+1} (Trade ID: {event.event_id}): Cannot calculate net_proceeds_or_cost_basis_eur because gross_amount_eur is None.")
                 elif event.commission_eur is None :
@@ -200,6 +241,38 @@ def enrich_financial_events(
                 elif not event.local_currency:
                      logger.warning(f"Event {event_idx+1} (CorpActionStockDividend ID: {event.event_id}): Missing currency. Cannot convert fmv_per_new_share to EUR.")
                      eur_corp_action_detail_conversions_failed += 1
+
+        elif isinstance(event, StockAwardEvent):
+            # The award price converted at the ECB rate for the EVENT's own date -- the
+            # award day for an award, the vesting day for a vesting. Never the broker's
+            # rate: the export carries none here, and § 8 Abs. 2 Satz 1 wants the price
+            # at Zufluss, which is the day this event is dated on ([GT-ESTG20-064]).
+            #
+            # A failed conversion is left as None rather than defaulted. The ledger
+            # refuses a lot without a EUR cost, so an unconvertible award stops the run
+            # instead of acquiring shares at an invented price.
+            if event.unit_cost_basis_eur is None:
+                if event_date_obj and event.currency:
+                    if event.currency.upper() != "EUR":
+                        eur_val = currency_converter.convert_to_eur(
+                            event.unit_price_foreign, event.currency, event_date_obj)
+                        if eur_val is not None:
+                            event.unit_cost_basis_eur = ctx.create_decimal(eur_val)
+                            eur_corp_action_detail_conversions_success += 1
+                        else:
+                            logger.warning(
+                                f"Event {event_idx+1} (StockAwardEvent ID: {event.event_id}): "
+                                f"could not convert the award price "
+                                f"({event.unit_price_foreign} {event.currency}) to EUR.")
+                            eur_corp_action_detail_conversions_failed += 1
+                    else:
+                        event.unit_cost_basis_eur = ctx.create_decimal(event.unit_price_foreign)
+                        eur_corp_action_detail_conversions_success += 1
+                else:
+                    logger.warning(
+                        f"Event {event_idx+1} (StockAwardEvent ID: {event.event_id}): "
+                        f"missing a valid date or currency; cannot convert the award price.")
+                    eur_corp_action_detail_conversions_failed += 1
 
     logger.info(f"Enrichment summary: Events with date parsing errors: {events_skipped_date_parsing}.")
     logger.info(f"Gross amount to EUR: {eur_gross_conversions_success} succeeded, {eur_gross_conversions_failed} failed/skipped.")
