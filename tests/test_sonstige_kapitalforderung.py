@@ -536,3 +536,81 @@ class TestTheDisposalReachesTheReports:
         text = _pdf_kap_text([_rgl(asset.internal_asset_id, AssetCategory.BOND,
                                    Decimal("10.00"))], asset)
         assert "sonstigen Kapitalforderungen" not in text
+
+
+def _summary_kap_text(rgls):
+    """Render the KAP chapter with the REAL loss-offsetting figures (not an empty
+    result), so the §2.3 summary total is the engine's declared figure and can be
+    compared against the itemised components."""
+    from src.engine.loss_offsetting import LossOffsettingEngine
+    from src.reporting.pdf_generator import PdfReportGenerator
+
+    result = LossOffsettingEngine(
+        realized_gains_losses=rgls,
+        vorabpauschale_items=[],
+        current_year_financial_events=[],
+        asset_resolver=_SingleAssetResolver(_spot_metal_asset()),
+        tax_year=2023,
+    ).calculate_reporting_figures()
+
+    generator = PdfReportGenerator(
+        loss_offsetting_result=result,
+        all_financial_events=[],
+        realized_gains_losses=rgls,
+        vorabpauschale_items=[],
+        assets_by_id={},
+        tax_year=2023,
+        eoy_mismatch_details=None,
+        eoy_mismatch_count=0,
+    )
+    generator._add_kap_details()
+    parts = []
+    for flowable in generator.story:
+        _flatten(flowable, parts)
+    return "\n".join(parts), result
+
+
+class TestTheSonstigeChapterFootsToTheDeclaredFigures:
+    """The §2.3 summary must add up to the Anlage KAP Zeile 19/22 figures the report
+    declares, with foreign currency (FX, Währungspositionen) shown as its own
+    component and detail. Before this, FX gains/losses reached the Zeile-19/22 totals
+    but appeared in no §2.3 subsection, so the chapter could not be reconciled to the
+    figure it declared — the failure this test pins."""
+
+    def test_fx_is_itemised_and_the_summary_foots(self):
+        rgls = [
+            _rgl(uuid.uuid4(), AssetCategory.CASH_BALANCE, Decimal("80.00")),
+            _rgl(uuid.uuid4(), AssetCategory.CASH_BALANCE, Decimal("-30.00")),
+            _rgl(uuid.uuid4(), AssetCategory.BOND, Decimal("50.00")),
+            _rgl(uuid.uuid4(), AssetCategory.BOND, Decimal("-10.00")),
+            _rgl(uuid.uuid4(), AssetCategory.SONSTIGE_KAPITALFORDERUNG, Decimal("300.00")),
+            _rgl(uuid.uuid4(), AssetCategory.SONSTIGE_KAPITALFORDERUNG, Decimal("-20.00")),
+        ]
+        text, result = _summary_kap_text(rgls)
+
+        # The engine's declared figures: gains 50+80+300, losses 10+30+20.
+        assert result.form_line_values[
+            TaxReportingCategory.ANLAGE_KAP_SONSTIGE_KAPITALERTRAEGE] == Decimal("430.00")
+        assert result.raw_other_losses_abs == Decimal("60.00")
+
+        # FX is now a summary component AND has its own detail section (2.3.5).
+        assert "FX-Gewinne (Währungspositionen)" in text
+        assert "Summe FX-Gewinne (→ Zeile 19):" in text
+        assert "Summe FX-Verluste (→ Zeile 22):" in text
+        assert "80,00" in text and "30,00" in text
+
+        # The chapter reconciles: the itemised components do not drift from the declared
+        # figure, so the ⚠️ warning does not fire and the two totals are the engine's.
+        assert "⚠️ Differenz" not in text
+        assert "Summe → Anlage KAP Zeile 19" in text
+        assert "Summe → Anlage KAP Zeile 22" in text
+        assert "430,00" in text  # gains total = Zeile 19 component
+        assert "60,00" in text   # losses total = Zeile 22
+
+    def test_an_fx_loss_alone_reaches_the_zeile_22_summary(self):
+        rgls = [_rgl(uuid.uuid4(), AssetCategory.CASH_BALANCE, Decimal("-45.00"))]
+        text, result = _summary_kap_text(rgls)
+        assert result.raw_other_losses_abs == Decimal("45.00")
+        assert "FX-Verluste (Währungspositionen)" in text
+        assert "45,00" in text
+        assert "⚠️ Differenz" not in text
