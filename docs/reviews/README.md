@@ -10,10 +10,11 @@ Start here after context clearing. Last updated: 2026-09-17.
 | [PR #86 review](pr-86-review.md) | Findings, reproductions, later-commit checks and final resolution |
 | [PR #87 review](pr-87-review.md) | Rework-before-merge findings, later-commit checks and verified local candidate |
 
-Current handoff: **#86 is fixed and merged; #87's authorized corrections are
-verified as `46aa37b` and awaiting publication/merge.** The pre-fix corrected-history
-candidate is `0d5c958`. No rebase has been executed. PM-001 through PM-004 from
-#86 remain open; option linking is explicitly deferred as PM-005.
+Current handoff: **#86 and #87 are merged. The TR-008 refund restoration is
+verified and authorized for merge**, including the measured VZ 2024 difference.
+All VZ 2023–2025 runs complete again; see `pr-train.md` and `VALIDATION_REPORT.md`.
+#88 follows this correction. No rebase has been executed. PM-001 through PM-004
+from #86 remain open; option linking is explicitly deferred as PM-005.
 
 The PR train is authoritative for review/merge status. The post-merge list is
 authoritative for deferred-work status. Individual review documents contain the
