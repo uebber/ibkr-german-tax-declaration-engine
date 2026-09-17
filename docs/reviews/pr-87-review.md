@@ -268,5 +268,9 @@ as history. This is the intended safe refusal of an unresolved input, not parity
 and not successful completion of those tax declarations. Original exports/cache
 hashes remain unchanged. No row was deleted or overridden to make verification pass.
 
-The final clean-checkout suite and merge revision are recorded in `pr-train.md`.
+Corrective code: `46aa37b65e6cc9a6a1d922d78abd7f8cb16ca337`. The clean-checkout
+suite passes **1,224 tests with 1 data-dependent skip**, and the copied-export
+suite passes **1,225 tests**. No reference-law files or option-linking implementation
+changed. Disposition after correction: **accept with required follow-up** (PM-001
+through PM-005). Publication/merge state is maintained in `pr-train.md`.
 PM-001 through PM-005 remain open. #88-#92 still require individual updates/reviews.

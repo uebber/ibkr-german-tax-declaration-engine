@@ -11,7 +11,7 @@ Start here after context clearing. Last updated: 2026-09-17.
 | [PR #87 review](pr-87-review.md) | Rework-before-merge findings, later-commit checks and verified local candidate |
 
 Current handoff: **#86 is fixed and merged; #87's authorized corrections are
-implemented and awaiting final verification/merge.** The pre-fix corrected-history
+verified as `46aa37b` and awaiting publication/merge.** The pre-fix corrected-history
 candidate is `0d5c958`. No rebase has been executed. PM-001 through PM-004 from
 #86 remain open; option linking is explicitly deferred as PM-005.
 

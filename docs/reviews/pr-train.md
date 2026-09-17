@@ -11,7 +11,7 @@ Apply [review-criteria.md](review-criteria.md) to every PR.
 
 1. Check the working branch, uncommitted files, remote `main`, and live PR heads.
    Recorded hashes below are observations, not permission to overwrite newer work.
-2. Complete **#87's authorized correction and merge**, documented in
+2. Complete **#87's verified correction and merge**, documented in
    [pr-87-review.md](pr-87-review.md). F1 now refuses disposals from undated
    reconstructed lots; F2 explicitly dispatches currencies and refuses unattributed
    commission credits. The inherited option-linking gap is accepted as PM-005.
@@ -68,7 +68,7 @@ Original base: `5a64079c277451da1b082a1d7f753821cc68466f`.
 | ID | Task | Status | Completion evidence |
 |---|---|---|---|
 | TR-001 | Update #87-#92 onto corrected accepted history | In progress locally for #87; no remote update or rebase | #87 local merge candidate `0d5c958` preserves corrected `main`; conflicts resolved and shipped suite green. Findings prevent acceptance. #88-#92 unchanged |
-| TR-002 | Review #87 | Review complete; authorized F1/F2 corrections implemented, final verification/merge pending | [Review](pr-87-review.md): 13 correction regressions pass; option linking deferred as PM-005. VZ 2023 parity; VZ 2024/2025 safely refuse an unclassified refund |
+| TR-002 | Review #87 | Accepted with required follow-up; verified correction `46aa37b`, publication/merge pending | [Review](pr-87-review.md): 1,224 passed/1 skipped clean; 1,225 passed with exports; 13 correction regressions pass. Option linking deferred as PM-005. VZ 2023 parity; VZ 2024/2025 safely refuse an unclassified refund |
 | TR-003 | Review #88 | Pending | Same evidence; assess delivery/receipt boundaries, ordering, lot preservation and partial-failure handling |
 | TR-004 | Review #89 | Pending | Same evidence; assess currency authority, account independence and shared ledger abstractions |
 | TR-005 | Review #90 | Pending | Same evidence; assess grant lifecycle, acquisition basis and income-reporting completeness |
@@ -100,7 +100,19 @@ accepted. The remote head remains the original PR commit. Do not discard the
 candidate merely because the source worktree still contains separate failing
 review probes; they are preserved durably as `pr-87-probes.py.txt`.
 
-### #87 review evidence and remaining blockers
+### #87 initial review evidence and correction
+
+Corrective code: `46aa37b65e6cc9a6a1d922d78abd7f8cb16ca337`. Final clean checkout:
+**1,224 passed, 1 skipped**; copied exports: **1,225 passed**. The 13 new tests
+give **12 failed, 1 passed** on pre-fix `0d5c958` and **13 passed** after correction.
+F1 is closed by refusal of securities disposals requiring unresolved lot history,
+including long/short histories preserved through mergers. F2 is closed by explicit
+currency dispatch and refusal of unclassified positive commission adjustments.
+This is not an implementation of refund taxation: VZ 2024 and 2025 cannot complete
+until the unidentified refund's original transaction/service and treatment are
+established. Both now exit 1 without a PDF; VZ 2023 remains identical to accepted
+base. No input override was used. PM-005 records the explicitly deferred option
+linking defect. The following bullets retain the **pre-correction** findings.
 
 - PR87-F1: historical account moves without transfer records can produce an
   invented acquisition date and still complete. Reproduced on #87 and through #92.
