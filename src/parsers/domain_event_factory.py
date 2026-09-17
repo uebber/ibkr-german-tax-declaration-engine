@@ -521,6 +521,8 @@ class DomainEventFactory:
             desc_upper = (rct.description or "").upper()
             domain_event_instance: Optional[FinancialEvent] = None
             raw_amount = rct.amount
+            commission_adjustment = ("COMMISSION" in event_type_str_upper or
+                (event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper))
             # Gross amount for events should be absolute for income, or represent the cost if it's an expense.
             # For WithholdingTaxEvent and FeeEvent, raw_amount is typically negative.
             # For CashFlowEvents (Dividend, Interest), raw_amount is typically positive.
@@ -556,7 +558,14 @@ class DomainEventFactory:
                 "account_id": rct.client_account_id,
             }
 
-            if "DIVIDEND" in event_type_str_upper:
+            if commission_adjustment:
+                # Maintainer-confirmed interpretation: correction of an earlier
+                # commission overcharge. Preserve the observed cash direction;
+                # do not invent a security link or call it capital repayment.
+                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
+                domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str,
+                    is_refund=raw_amount > Decimal(0), **event_params_kw)
+            elif "DIVIDEND" in event_type_str_upper:
                 if raw_amount < Decimal(0) and "PAYMENT IN LIEU" in event_type_str_upper:
                     # Negative Payment In Lieu = you pay (short stock lending fee)
                     # This is a cash outflow, classify as FEE_TRANSACTION
@@ -630,31 +639,6 @@ class DomainEventFactory:
                 # Fees are costs, raw_amount typically negative. Store as positive cost.
                 event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
                 domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
-
-            elif "COMMISSION" in event_type_str_upper:
-                # Commission adjustments are post-trade fee corrections from IBKR.
-                # raw_amount is typically negative (additional fee charged). Store as positive cost.
-                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
-
-            # Commission adjustments sometimes arrive as "Deposits/Withdrawals" type.
-            # Detect these before the ignorable-type check so they affect the currency ledger.
-            if domain_event_instance is None and event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper:
-                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                if raw_amount >= Decimal(0):
-                    # Positive = commission refund (cash inflow)
-                    domain_event_instance = CashFlowEvent(
-                        asset_for_event.internal_asset_id, event_date_str,
-                        event_type=FinancialEventType.CAPITAL_REPAYMENT,
-                        source_country_code=None, **event_params_kw
-                    )
-                else:
-                    # Negative = additional commission charge (cash outflow)
-                    domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
-                logger.info(
-                    f"Commission adjustment in Deposits/Withdrawals (TxID: {rct.transaction_id}): "
-                    f"{raw_amount} {rct.currency_primary} → {domain_event_instance.event_type.name}"
-                )
 
             if domain_event_instance:
                 logger.debug(f"Created {type(domain_event_instance).__name__} (Type: {domain_event_instance.event_type.name}) for asset {asset_for_event.get_classification_key()} from cash tx ID {rct.transaction_id}, Amt: {event_params_kw['gross_amount_foreign_currency']} {event_params_kw['local_currency']}")

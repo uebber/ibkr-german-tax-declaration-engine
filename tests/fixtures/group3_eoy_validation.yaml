@@ -59,6 +59,12 @@ tests:
         symbol: ASSET.EOYC002.EUR
         isin: TESTISINEOYC002EUR
         category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-12-31"
+          qty: 20
+          price: "9.95"
+          currency: EUR
       positions_soy:
         quantity: 20
         cost_basis: 200.00
@@ -91,6 +97,12 @@ tests:
         symbol: ASSET.EOYC003.EUR
         isin: TESTISINEOYC003EUR
         category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-12-31"
+          qty: 10
+          price: "9.90"
+          currency: EUR
       positions_soy:
         quantity: 10
         cost_basis: 100.00
@@ -201,6 +213,12 @@ tests:
         symbol: ASSET.EOYM004.EUR
         isin: TESTISINEOYM004EUR
         category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-12-31"
+          qty: 10
+          price: "9.90"
+          currency: EUR
       positions_soy:
         quantity: 10
         cost_basis: 100.00
@@ -238,6 +256,12 @@ tests:
         symbol: ASSET.EOYS001.EUR
         isin: TESTISINEOYS001EUR
         category: STOCK
+      historical_trades:
+        - type: SSO
+          date: "2022-12-31"
+          qty: 10
+          price: "100.10"
+          currency: EUR
       positions_soy:
         quantity: -10
         cost_basis: 1000.00

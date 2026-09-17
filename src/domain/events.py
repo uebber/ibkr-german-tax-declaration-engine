@@ -449,13 +449,17 @@ class CurrencyConversionEvent(FinancialEvent):
 class FeeEvent(FinancialEvent):
     # For miscellaneous fees (e.g., account fees, market data fees)
     # event_type is FinancialEventType.FEE_TRANSACTION
-    # gross_amount_foreign_currency in FinancialEvent holds the fee amount (typically negative or handled as positive cost)
+    # Amounts are magnitudes; is_refund distinguishes a credit from a charge.
     # local_currency in FinancialEvent holds the currency of the fee
+    is_refund: bool = False
+
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, # Removed the problematic bare '*'
+                 *, is_refund: bool = False,
                  **kwargs_for_parent_kw_only): # asset_internal_id could be general cash account
         super().__init__(asset_internal_id, event_date,
                          event_type=FinancialEventType.FEE_TRANSACTION,
                          **kwargs_for_parent_kw_only)
+        self.is_refund = is_refund
 
     def __post_init__(self):
         super().__post_init__()

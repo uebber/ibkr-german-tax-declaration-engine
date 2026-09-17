@@ -33,7 +33,7 @@ from src.domain.assets import (
     PositionSnapshot, person_mark, person_snapshot, snapshots_for_asset)
 from src.domain.assets import Stock
 from src.domain.enums import RealizationType
-from src.domain.exceptions import DataIntegrityError
+from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.parsing_orchestrator import ParsingOrchestrator
 from src.parsers.positions_parser import parse_positions_csv
@@ -64,6 +64,7 @@ class TestTheOpeningSnapshotIsEveryAccountsRow(FifoTestCaseBase):
     def _run(self):
         return self._run_pipeline(
             trades_data=[
+                trade_row(B, self.ISIN, "2022-06-01", "50", "10", "BUY", "O", "OPEN-B"),
                 trade_row(B, self.ISIN, "2023-06-01", "-50", "12", "SELL", "C", "T1"),
             ],
             positions_start_data=[
@@ -176,22 +177,12 @@ class TestACurrencyHeldInTwoAccounts(FifoTestCaseBase):
         assert gaps == []
 
 
-class TestACheckpointMarksBasisCarriesIntoALaterSale(FifoTestCaseBase):
-    """A mid-window checkpoint mark's cost basis reaches a sale four years later.
+class TestACheckpointCannotSupplyAcquisitionHistory(FifoTestCaseBase):
+    """A 2021 mark supplies quantity and basis but cannot date a 2024 disposal.
 
-    The mark is where the ledger's cost basis is set for units acquired before the
-    import window: the reconstruction is compared against the reported mark and, where
-    they disagree, the mark's figures are what the ledger carries forward. This checks
-    that carry end to end -- from a 2021 mark to a 2024 disposal.
-
-    Per Depot ([GT-ESTG20-013]) the mark, the carried lots and the sale are all one
-    account's: the disposal consumes the lots of the account it was made from, at the
-    basis that account's own mark set. (The two-account storage of a mark -- one row per
-    account, `person_mark` the derived view -- is pinned at the seam in
-    TestTheCheckpointMarkRegistry; here what matters is that an account's own mark basis
-    is what its later sale costs.)
-
-        A's 2021 mark : 100 units at 1400 -> 3500 - 1400 = 2100 gain
+    GT-ESTG20-013/014: per-account reconciliation must preserve provenance or
+    refuse. Storage and summation of account-specific marks are covered separately
+    by TestTheCheckpointMarkRegistry; no sale may use its placeholder date.
     """
     ISIN = "US000000PS03"
     RATES = MockECBExchangeRateProvider(Decimal("1.00"))
@@ -212,12 +203,10 @@ class TestACheckpointMarksBasisCarriesIntoALaterSale(FifoTestCaseBase):
             tax_year=2024,
         )
 
-    def test_a_marks_basis_is_what_the_later_sale_costs(self):
-        rgls = [r for r in self._run().realized_gains_losses
-                if r.quantity_realized == Decimal("100")]
-        assert len(rgls) == 1
-        assert rgls[0].total_cost_basis_eur == Decimal("1400")
-        assert rgls[0].gross_gain_loss_eur == Decimal("2100")
+    def test_a_mark_without_acquisition_history_cannot_value_a_later_sale(self):
+        from src.processing.data_gaps import DataGapError
+        with pytest.raises(DataGapError, match="SECURITIES_ACQUISITION_HISTORY_UNKNOWN"):
+            self._run()
 
 
 class TestTheCheckpointMarkRegistry:
@@ -412,16 +401,13 @@ class TestTheRegistryItself:
     def test_the_preceding_years_snapshots_are_kept_per_account_too(self, tmp_path):
         """The Vorabpauschale's own three snapshots are recorded the same way.
 
-        Two of them have a live consumer whose answer depends on the person's total:
+        One has a live consumer whose answer depends on the person's total:
         the closing count, tested `> 0` in `fund_prices.py` and
-        `vorabpauschale_declarations.py` to decide whether a fund was held at all, and
-        the opening count, which is a **magnitude** in the § 18 Abs. 2 path --
-        `undated_units > held_before_the_year` decides whether a Vorabpauschale is
-        computed or refused for units the reconstruction could not date. Reading one
-        account's row understates the threshold and refuses a figure that is due.
+        `vorabpauschale_declarations.py` to decide whether a fund was held at all.
+        The earlier opening count is retained for diagnostics; matching it to an
+        undated closing tranche does not establish acquisition timing.
 
-        Asserted at the seam because the figure consequence needs an undated tranche in
-        two accounts, and the `> 0` one needs a closing row of zero -- which is 0 of 88
+        Asserted at the seam because the `> 0` case needs a closing row of zero -- 0 of 88
         rows in the exports this engine is run against.
         """
         orchestrator = self._orchestrator(tmp_path)
@@ -693,19 +679,12 @@ class TestTheAssetPositionsDiagnostic:
         assert "processing_results.eoy_positions" in source
 
 
-class TestTheAbs2ThresholdIsThePersonsHolding:
-    """Units the reconstruction could not date, weighed against what was held.
+class TestOpeningCountsDoNotDateLots:
+    """GT-INVSTG-011 requires acquisition evidence for the surviving units.
 
-    § 18 Abs. 2 asks whether a tranche was acquired *during* the Vorabpauschale
-    year. Where the replay could not place a lot in time, the engine answers from
-    the report instead: units the broker already showed at the close of the year
-    before were demonstrably acquired before this year began, so no reduction
-    applies to them. Above that count the question is unanswerable and the fund
-    is refused rather than computed from an invented date.
-
-    That count is the person's, summed over their accounts ([GT-ESTG20-061]).
-    Read from one account's row it is too small, and a Vorabpauschale that is
-    due is refused -- deemed income missing from KAP-INV Zeilen 9-13.
+    Aggregating opening holdings across accounts cannot supply that evidence:
+    the old units may have been sold and replaced. Both a matching opening
+    total and a smaller total must leave an undated positive VP unresolved.
     """
     ISIN = "IE00PERSVP01"
 
@@ -757,17 +736,13 @@ class TestTheAbs2ThresholdIsThePersonsHolding:
             data_gap_collector=None,
         )
 
-    def test_the_units_of_both_accounts_answer_for_the_undated_lot(self):
-        results = self._run([(A, "60"), (B, "40")])
-        assert len(results) == 1, (
-            "100 undated units were all held at the close of the year before, "
-            "across two accounts, so 18 Abs. 2 does not reduce them")
-        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+    def test_a_matching_total_does_not_date_the_surviving_units(self):
+        with pytest.raises(ProcessingError, match="ACQUISITION_DATE_UNKNOWN"):
+            self._run([(A, "60"), (B, "40")])
 
     def test_one_accounts_row_is_not_enough_and_the_fund_is_refused(self):
-        """The other reading, stated so the difference is visible."""
-        results = self._run([(A, "60")])
-        assert results == []
+        with pytest.raises(ProcessingError, match="ACQUISITION_DATE_UNKNOWN"):
+            self._run([(A, "60")])
 
 
 class TestTheEndsOfThePriorYearChannel:

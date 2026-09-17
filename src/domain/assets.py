@@ -267,7 +267,7 @@ class PositionSnapshot:
     row per account, and reading them as one row per instrument is how one account's
     holding came to be declared as the person's ([GT-ESTG20-061]).
 
-    Every field but the last is exactly one column of the Positions export. Amounts and
+    Amounts and prices come from the Positions export. Amounts and
     quantities belong to the account; `mark_price` is per unit and so is a property of the
     instrument, which is why `person_snapshot` sums the first and takes the second.
 
@@ -283,6 +283,9 @@ class PositionSnapshot:
     mark_price: Optional[Decimal] = None
     mark_price_currency: Optional[str] = None
     mark_price_date: Optional[date] = None
+    # A conflict is different from an absent observation and survives aggregation.
+    # Only an independently resolved price may clear it (GT-INVSTG-010).
+    mark_price_conflicted: bool = False
 
 
 # {(account_key, asset_id): PositionSnapshot} -- the shape every snapshot registry takes:
@@ -312,11 +315,9 @@ def person_snapshot(snapshots: "SnapshotsByAccount",
     """One asset's holding across all of a person's accounts, or None if unreported.
 
     The person is the unit of assessment ([GT-ESTG20-061]), so quantities and amounts
-    are summed. `None` in a column is "the broker left it blank" and is skipped, so an
-    asset whose every row is blank keeps `None` there and reaches the guard that
-    refuses a holding reported with no cost basis. What that cannot distinguish is one
-    account blank and another filled; see `_sum_snapshot_column` in
-    `src/parsers/parsing_orchestrator.py`, where the same assumption is written out.
+    are summed only when every contribution is known. A missing contribution keeps
+    the total at `None`: a known subset is not the acquisition cost of the whole
+    holding (GT-ESTG20-011). Required incomplete totals reach the missing-data guard.
 
     A currency belongs to the instrument, not to the account holding it, so the rows
     agree and the first non-empty one is taken. `parsing_orchestrator` refuses two
@@ -328,33 +329,32 @@ def person_snapshot(snapshots: "SnapshotsByAccount",
     prices. It is therefore the value they agree on, or `None` where they do not, which
     is what `_one_snapshot_price` in `parsing_orchestrator` does within one account and
     for the same reason. A row reporting no price adds nothing: a blank is the broker
-    omitting a figure, not a second venue disagreeing about it.
+    omitting a figure, not a second venue disagreeing about it. An already recorded
+    conflict is retained even when another account supplies a price.
     """
     rows = [snap for _account, snap in snapshots_for_asset(snapshots, asset_id)]
     if not rows:
         return None
 
     def total(pick):
-        values = [v for v in (pick(r) for r in rows) if v is not None]
-        return sum(values[1:], values[0]) if values else None
+        values = [pick(r) for r in rows]
+        return None if any(v is None for v in values) else sum(values[1:], values[0])
 
     def first(pick):
         return next((v for v in (pick(r) for r in rows) if v is not None), None)
 
-    def agreed(pick):
-        values = [v for v in (pick(r) for r in rows) if v is not None]
-        if not values:
-            return None
-        return values[0] if all(v == values[0] for v in values) else None
+    prices = {r.mark_price for r in rows if r.mark_price is not None}
+    price_conflicted = any(r.mark_price_conflicted for r in rows) or len(prices) > 1
 
     return PositionSnapshot(
         quantity=total(lambda r: r.quantity),
         cost_basis_amount=total(lambda r: r.cost_basis_amount),
         cost_basis_currency=first(lambda r: r.cost_basis_currency),
         position_value=total(lambda r: r.position_value),
-        mark_price=agreed(lambda r: r.mark_price),
+        mark_price=next(iter(prices)) if prices and not price_conflicted else None,
         mark_price_currency=first(lambda r: r.mark_price_currency),
         mark_price_date=first(lambda r: r.mark_price_date),
+        mark_price_conflicted=price_conflicted,
     )
 
 
@@ -397,18 +397,19 @@ def person_mark(marks: "MarksByAccount",
     Quantity and cost basis are summed together or not at all. A quantity added up
     across the rows and a cost basis taken from one of them imply a per-unit cost
     that belongs to no holding anybody had -- and that is the figure a reconstruction
-    disagreeing with the broker is replaced by. A blank cost basis is skipped rather
-    than read as zero, so an asset whose every row is blank keeps `None` and reaches
-    the guard that refuses a holding reported with no cost basis.
+    disagreeing with the broker is replaced by. Any blank cost basis leaves the total
+    unknown, so reconciliation cannot substitute a partial acquisition cost for the
+    whole holding (GT-ESTG20-011).
     """
     rows = [mark for _account, mark in snapshots_for_asset(marks, asset_id)]
     if not rows:
         return None
-    amounts = [r.cost_basis_amount for r in rows if r.cost_basis_amount is not None]
+    amounts = [r.cost_basis_amount for r in rows]
     currency = next((r.cost_basis_currency for r in rows
                      if r.cost_basis_currency is not None), None)
     return MarkPosition(
         quantity=sum((r.quantity for r in rows[1:]), rows[0].quantity),
-        cost_basis_amount=sum(amounts[1:], amounts[0]) if amounts else None,
+        cost_basis_amount=(None if any(v is None for v in amounts)
+                           else sum(amounts[1:], amounts[0])),
         cost_basis_currency=currency,
     )

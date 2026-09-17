@@ -289,6 +289,45 @@ def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
 MULTI_ACCOUNT_LIMITATIONS = "MULTI_ACCOUNT_LIMITATIONS"
 
 
+def _require_disposal_history(events, fifo_ledgers, asset_resolver, data_gap_collector):
+    """Refuse to value securities disposals from snapshot-only acquisition history.
+
+    GT-ESTG20-011/013/014/022: quantity reconciliation does not establish the
+    actual lots, their FIFO order or acquisition-side FX. Each ledger exposes
+    only its own provenance state; the coordinator collects every affected key.
+    """
+    consuming_types = {
+        FinancialEventType.TRADE_SELL_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER,
+        FinancialEventType.CORP_MERGER_CASH, FinancialEventType.CORP_MERGER_STOCK,
+        FinancialEventType.CORP_EXPIRE_DIVIDEND_RIGHTS,
+        FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT,
+        FinancialEventType.OPTION_EXPIRATION_WORTHLESS, FinancialEventType.OPTION_CASH_SETTLEMENT,
+    }
+    affected = set()
+    for event in events:
+        if event.event_type not in consuming_types and not getattr(event, 'is_position_flip', False):
+            continue
+        asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
+        if asset is None or asset.asset_category == AssetCategory.CASH_BALANCE:
+            continue
+        account = account_key(event.account_id)
+        ledger = fifo_ledgers.get((account, event.asset_internal_id))
+        if ledger is not None and ledger.has_unresolved_acquisition_history():
+            affected.add(f"{asset.get_classification_key()} [Konto {account}]")
+    if affected:
+        detail = (
+            "Acquisition history is unknown for securities required by this year's disposals: "
+            + "; ".join(sorted(affected))
+            + ". A position snapshot supplies quantities and amounts, not the acquisition "
+            "dates or lot allocation. Supply the missing acquisition/transfer history; "
+            "an inferred year-end date cannot be used to produce tax figures."
+        )
+        if data_gap_collector is not None:
+            data_gap_collector.record(code="SECURITIES_ACQUISITION_HISTORY_UNKNOWN",
+                subject="Securities disposals", detail=detail, severity=GapSeverity.FAIL_FAST)
+        raise ProcessingError(detail)
+
+
 def _report_multi_account_limitations(accounts, data_gap_collector,
                                       transfers_file_supplied: bool = False) -> None:
     """Say what per-Depot lot tracking does NOT yet cover, whenever it is in play.
@@ -1081,6 +1120,7 @@ def run_main_calculations(
                 ctx=ctx, unattributed=unattributed_fund_years)
 
     _grade_mark_outcomes(mark_outcomes, data_gap_collector)
+    _require_disposal_history(current_year_events, fifo_ledgers, asset_resolver, data_gap_collector)
 
     # Placing the merger ahead of its day's trades (see engine/replay.py) is
     # right for the target — the delivered shares exist before that day's
@@ -1235,9 +1275,14 @@ def run_main_calculations(
 
         # The disposal consumes the lots of the account it was made from -- Rz. 97 Satz 2,
         # [GT-ESTG20-013]. Every account this asset's events name has a ledger
-        # (`ledger_accounts` was built from those same events), so a miss here is a cash
-        # balance or an option, both handled in the branches below.
-        ledger = fifo_ledgers.get((account_key(event.account_id), asset_object.internal_asset_id))
+        # (`ledger_accounts` was built from those same events). Cash has a separate,
+        # explicit pooled-ledger lookup until the per-account currency change.
+        if asset_object.asset_category == AssetCategory.CASH_BALANCE:
+            # Currency remains pooled in #87. Its explicit boundary must not depend
+            # on whether the export supplies an account label (GT-FX-008).
+            ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, asset_object.internal_asset_id))
+        else:
+            ledger = fifo_ledgers.get((account_key(event.account_id), asset_object.internal_asset_id))
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):
@@ -2254,7 +2299,7 @@ def _calculate_vorabpauschale(
     eoy_conversion_date_default = last_business_day_of_year(vorabpauschale_year)
 
     results: List[VorabpauschaleData] = []
-    funds_without_acquisition_dates: List[Tuple[str, str]] = []
+    funds_without_acquisition_dates: List[Tuple[str, str, Decimal, Optional[Decimal]]] = []
     # Every fund dropped for want of a usable Satz 2 or Satz 3 price, with the
     # reason. Collected rather than recorded on the spot for the same reason as
     # the list above: the gap is FAIL_FAST and raises as it is recorded, so one
@@ -2271,42 +2316,6 @@ def _calculate_vorabpauschale(
         # by 31 December are simply not multiplied. Do not reason it from the Abs. 3
         # Zuflussfiktion, which fixes when income is received, not whether it arises.
         tranches = opening_lots_by_asset.get(asset_id, [])
-
-        # § 18 Abs. 2 turns on the month each tranche was acquired. Where the
-        # historical replay could not reconstruct a lot, the opening snapshot
-        # gave the quantity and the engine invented the date. No Vorabpauschale
-        # is computed from an invented date -- not reduced by it, and not
-        # quietly treated as though the units had always been held.
-        undated = [t for t in tranches if not t.acquisition_date_is_known]
-        if undated:
-            # Abs. 2 asks one thing of a tranche: was it acquired *during* this
-            # calendar year? A date is one way to answer that and not the only
-            # one. Units the reconstruction could not place, but which the
-            # broker already reported at the close of the year before, were
-            # demonstrably acquired before this year began -- the snapshot is
-            # the evidence, and no reduction applies to them. That is a
-            # derivation from a report actually held, not a guess at a date.
-            opened_with = person_snapshot(prior_opening_positions, asset_id)
-            held_before_the_year = (
-                (opened_with.quantity if opened_with is not None else None) or Decimal(0))
-            undated_units = sum((t.quantity for t in undated), Decimal(0))
-            if undated_units > held_before_the_year:
-                funds_without_acquisition_dates.append(
-                    (asset_obj.get_classification_key(), asset_obj.description or "",
-                     undated_units, held_before_the_year))
-                logger.warning(
-                    "Fund %s: %s units held at the close of %d cannot be placed in "
-                    "time -- the reconstruction has no date for them and the close "
-                    "of %d accounts for only %s. No Vorabpauschale computed.",
-                    asset_obj.get_classification_key(), undated_units,
-                    vorabpauschale_year, vorabpauschale_year - 1, held_before_the_year)
-                continue
-
-            logger.info(
-                "Fund %s: %s undated units were already held at the close of %d, "
-                "so 18 Abs. 2 does not reduce them.",
-                asset_obj.get_classification_key(), undated_units,
-                vorabpauschale_year - 1)
 
         units_at_year_end = sum((t.quantity for t in tranches), Decimal(0))
         if units_at_year_end <= Decimal('0'):
@@ -2399,22 +2408,26 @@ def _calculate_vorabpauschale(
                          f"({basisertrag_per_unit}). VP=0.")
             continue
 
+        # GT-INVSTG-011: Abs. 2 depends on each surviving lot's acquisition.
+        # An earlier snapshot's quantity does not prove continuity: those units
+        # may have been sold and replaced. GT-INVSTG-055's automatic full-year
+        # fallback is confined to withholding, not this declaration calculation.
+        # Check after the cap/distributions: where VP is already zero, no date is
+        # needed to determine it and no reduction can change it.
+        undated = [t for t in tranches if not t.acquisition_date_is_known]
+        if undated:
+            opened_with = person_snapshot(prior_opening_positions, asset_id)
+            held_before_the_year = opened_with.quantity if opened_with is not None else None
+            funds_without_acquisition_dates.append((
+                asset_obj.get_classification_key(), asset_obj.description or "",
+                sum((t.quantity for t in undated), Decimal(0)), held_before_the_year))
+            continue
+
         # Rz. 18.4 with Abs. 2: multiply by the units, tranche by tranche, each
         # reduced by a twelfth for every full month before its month of acquisition.
         gross_vp = Decimal(0)
         for tranche in tranches:
-            if tranche.acquisition_date_is_known:
-                twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
-            else:
-                # An undated tranche only reaches here past the check above, which
-                # established from the report that these units were already held
-                # when the year opened. They are therefore not in their year of
-                # acquisition and keep twelve twelfths -- [GT-INVSTG-011],
-                # reference/investment-tax-law/invstg-18-vorabpauschale.md:131-135.
-                # Answered without a date because none was observed and none may be
-                # invented: every date before the year gives this same answer, so
-                # the question Abs. 2 asks has been settled without one.
-                twelfths = 12
+            twelfths = tranche.abs2_retained_twelfths(vorabpauschale_year)
             tranche_vp = ctx.multiply(vp_per_unit, tranche.quantity)
             if twelfths != 12:
                 tranche_vp = ctx.divide(
@@ -2469,11 +2482,16 @@ def _calculate_vorabpauschale(
 
     # One report naming every fund. A FAIL_FAST gap raises as it is recorded, so
     # recording them one by one would stop at the first and hide the rest.
-    if funds_without_acquisition_dates and data_gap_collector is not None:
+    if funds_without_acquisition_dates:
         named = "; ".join(
             f"{key} ({description}): {undated} Anteile ohne Datum, "
-            f"Bestand zum Vorjahresende {held}"
+            f"Bestand zum Vorjahresende {held if held is not None else 'unbekannt'}"
             for key, description, undated, held in funds_without_acquisition_dates)
+        if data_gap_collector is None:
+            raise ProcessingError(
+                "VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN: acquisition dates of the "
+                "surviving units are required by § 18 Abs. 2 InvStG. An earlier "
+                "position count does not establish their acquisition dates. " + named)
         data_gap_collector.record(
             code="VORABPAUSCHALE_ACQUISITION_DATE_UNKNOWN",
             subject=f"{len(funds_without_acquisition_dates)} Fonds: {named}",
@@ -2483,12 +2501,12 @@ def _calculate_vorabpauschale(
                 "Anschaffungsdatum rekonstruieren; die Menge stammt aus dem "
                 "Positions-Snapshot. § 18 Abs. 2 InvStG mindert die Vorabpauschale um "
                 "ein Zwoelftel je vollem Monat vor dem Anschaffungsmonat; ob diese "
-                "Anteile ueberhaupt unterjaehrig erworben wurden, ist nicht "
-                "feststellbar, weil sie auch im Bestand zum Ende des Vorjahres nicht "
-                "enthalten sind. Es wurde daher KEINE Vorabpauschale angesetzt, was "
-                "die Einkuenfte untererfasst. Die historische Rekonstruktion "
-                "widerspricht hier dem Positionsbericht des Brokers -- die Ursache "
-                "liegt in den Transaktionsdateien, nicht in fehlenden Preisen."
+                "Anteile unterjaehrig erworben wurden, ist ohne ihre Erwerbshistorie "
+                "nicht feststellbar. Auch eine gleich grosse Position zum Ende des "
+                "Vorjahres belegt dies nicht: damalige Anteile koennen verkauft und "
+                "ersetzt worden sein. Bitte die Anschaffungsdaten der verbliebenen "
+                "Anteile ergaenzen. Der Lauf bricht ab, statt eine ungeklaerte "
+                "Vorabpauschale auszuweisen."
             ),
             severity=GapSeverity.FAIL_FAST,
         )
@@ -2504,9 +2522,9 @@ def _calculate_vorabpauschale(
     # already is at whole-year scale: the figure is not zero, it is
     # un-computable, and a zero on Zeile 9 is indistinguishable from a real one.
     #
-    # Recorded after the block above so that a tree missing both keeps aborting
-    # on the acquisition dates, as it did before this existed -- a FAIL_FAST
-    # raises where it is recorded, so only the first of the two is ever seen.
+    # Funds whose positive amount is priced but whose acquisition timing is
+    # unresolved are reported first above. An unpriced fund is reported here;
+    # its acquisition factor cannot yet be assessed against a positive amount.
     #
     # One code for all four, with the reason per fund in the detail. #55 asked
     # for the year-start path to be split so that a fund *not held* when the
@@ -2723,8 +2741,9 @@ def _process_cashflow_currency_impact(
 
     eur_per_unit = eur_amount / foreign_amount
 
-    # Classify: income (creates lots) vs expense (consumes lots)
-    if event.event_type in [
+    # Cash direction, not tax classification: a commission refund returns currency
+    # (GT-FX-001/008), using the observed amount, currency and receipt date.
+    if (isinstance(event, FeeEvent) and event.is_refund) or event.event_type in [
         FinancialEventType.DIVIDEND_CASH,
         FinancialEventType.DISTRIBUTION_FUND,
         FinancialEventType.INTEREST_RECEIVED,
@@ -2989,7 +3008,7 @@ def _apply_historical_currency_event(
 
                 eur_per_unit = ctx.divide(ea_abs, fa_abs)
 
-                if event.event_type in [
+                if (isinstance(event, FeeEvent) and event.is_refund) or event.event_type in [
                     FinancialEventType.DIVIDEND_CASH, FinancialEventType.DISTRIBUTION_FUND,
                     FinancialEventType.INTEREST_RECEIVED, FinancialEventType.CAPITAL_REPAYMENT,
                 ]:
