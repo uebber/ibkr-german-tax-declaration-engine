@@ -1,5 +1,13 @@
 # PR #87 review
 
+**Subsequent TR-008 correction:** the maintainer rejected the blanket commission
+refusal and confirmed the credit as an overcharge refund. The restoration uses
+`FeeEvent.is_refund` for current and historical cash direction and retains the
+acquisition-history safeguards. All three real-data years complete again; the
+measured VZ 2024 difference is explicitly approved. See `pr-train.md` and the
+TR-008 entry in `VALIDATION_REPORT.md` for current verification. The refusal
+described in the original review below is historical, not the current policy.
+
 **Initial disposition: rework before merge; corrections now authorized and implemented.**
 Reviewed 2026-09-17. The initial findings below describe `0d5c958`; the correction
 record at the end states the resulting behavior and verification. The maintainer

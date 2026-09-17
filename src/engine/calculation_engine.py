@@ -2514,8 +2514,9 @@ def _process_cashflow_currency_impact(
 
     eur_per_unit = eur_amount / foreign_amount
 
-    # Classify: income (creates lots) vs expense (consumes lots)
-    if event.event_type in [
+    # Cash direction, not tax classification: a commission refund returns currency
+    # (GT-FX-001/008), using the observed amount, currency and receipt date.
+    if (isinstance(event, FeeEvent) and event.is_refund) or event.event_type in [
         FinancialEventType.DIVIDEND_CASH,
         FinancialEventType.DISTRIBUTION_FUND,
         FinancialEventType.INTEREST_RECEIVED,
@@ -2780,7 +2781,7 @@ def _apply_historical_currency_event(
 
                 eur_per_unit = ctx.divide(ea_abs, fa_abs)
 
-                if event.event_type in [
+                if (isinstance(event, FeeEvent) and event.is_refund) or event.event_type in [
                     FinancialEventType.DIVIDEND_CASH, FinancialEventType.DISTRIBUTION_FUND,
                     FinancialEventType.INTEREST_RECEIVED, FinancialEventType.CAPITAL_REPAYMENT,
                 ]:

@@ -618,3 +618,25 @@ agree. Resolving the refund requires evidence and explicit supported treatment.
 The no-account and named-account inputs now both refuse the same unclassified
 credit. Source/spec/docstring claims about successful disposal from snapshot-only
 history were updated alongside the code; accepted architectural work remains open.
+
+## 2026-09-17 — restore commission-correction cash processing (TR-008)
+
+Category: `fix-func`. The maintainer rejected the new import refusal and confirmed
+the credit as a refund of an earlier commission overcharge. `FeeEvent.is_refund`
+now distinguishes credits from charges. The same cash direction is used for the
+tax year and historical replay, without converting the credit into capital
+repayment or inventing a security link. Acquisition-history safeguards remain.
+
+Focused verification before the change: 10 failed, 8 passed. After correction,
+the focused set passes; two additional charge controls retain the prior debit
+behavior. Final clean checkout suite: **1,231 passed, 1 data-dependent skip**.
+No option-linking or reference-law files changed.
+
+Fresh copies of saved inputs/caches through the normal entry point now complete
+VZ 2023, 2024 and 2025 with PDFs. VZ 2023 and 2025 console/PDF bytes match accepted
+pre-#87 main `8b7e49f`, excluding volatile PDF metadata. All 24 parsed VZ 2024
+form-line values match the working #87 candidate before the refusal. Compared
+with `8b7e49f`, the known refund currency bug changes two VZ 2024 form lines;
+the currency mismatch disappears and the refund no longer appears as capital
+repayment. Private differences remain in the review captures. Original export
+and cache hashes are unchanged. This is not an all-years byte-parity claim.

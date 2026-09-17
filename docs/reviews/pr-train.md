@@ -9,6 +9,17 @@ Apply [review-criteria.md](review-criteria.md) to every PR.
 
 ## Resume here
 
+**TR-008 update, 2026-09-17:** the maintainer confirmed that the commission credit
+is a refund of an earlier overcharge and approved the measured VZ 2024 difference.
+The restoration on `fix/pr87-commission-refund` is verified and authorized for merge.
+`FeeEvent.is_refund` preserves the cash direction in current and historical replay;
+the blanket import refusal is removed. All VZ 2023–2025 runs complete with PDFs.
+2023/2025 match pre-#87 main; all parsed 2024 form lines match the working #87
+candidate before the refusal, with the approved currency correction against
+pre-#87 main. Suite: 1,231 passed, 1 skipped. Source: `VALIDATION_REPORT.md`, TR-008.
+The earlier refusal/acceptance statements below describe the #87 merge, not the
+subsequent decision to restore processing. PM-005 remains open; #88 follows TR-008.
+
 1. Check the working branch, uncommitted files, remote `main`, and live PR heads.
    Recorded hashes below are observations, not permission to overwrite newer work.
 2. Complete **#87's verified correction and merge**, documented in

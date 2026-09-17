@@ -739,7 +739,7 @@ holds. Three choices under uncertainty remain (GT-FX-005, -006, -007) and they a
 of every historical currency event leaves the whole suite green. Currency changes must be probed
 by mutation, not by running the suite.
 
-### PR #87 acquisition-history and refund refusal boundaries
+### PR #87 acquisition-history and commission-correction boundaries
 
 GT-ESTG20-011/013/014/022: `calculation_engine._require_disposal_history` collects
 account-local unresolved acquisition histories before securities disposals. Long and
@@ -749,13 +749,19 @@ long/short disposals, multiple affected holdings and merger provenance. This
 refusal is not implementation of transfers: GT-ESTG20-014 remains `deviates` until
 properly evidenced outgoing/incoming lot movements are supported.
 
-GT-ESTG20-010/048 distinguish benefits/reimbursements by the underlying investment;
-GT-ESTG20-011 governs transaction costs. A positive `COMMISSION` adjustment, including
-`Deposits/Withdrawals` with that description, has no implemented attribution rule.
-`DomainEventFactory` now refuses it as `COMMISSION_REFUND_UNCLASSIFIED`, collecting
-all such credits. It is not assigned to capital repayment, dividend income or an
-arbitrary lot. The maintainer's export contains one such unidentified credit;
-resolving its treatment requires evidence of the original trade or service. No
-new legal election or assumption that a refund is tax-free is made. Tests cover
-both account representations and both exported adjustment labels. Currency dispatch
+The blanket `COMMISSION_REFUND_UNCLASSIFIED` refusal was a compatibility regression.
+On 2026-09-17 the maintainer confirmed the interpretation of the credit as a refund
+of an earlier commission overcharge. `DomainEventFactory` now creates a `FeeEvent`
+whose `is_refund` flag preserves the credit direction; charges retain their old
+direction. Current-year and historical currency processing credit the observed
+amount once using its currency and date (GT-FX-001/008). No trade identifier or
+arbitrary small-amount threshold is required, and no security link is fabricated.
+
+This restores cash processing, not a general exemption of fee refunds under
+GT-ESTG20-010/048 or a newly allocated transaction-cost correction under
+GT-ESTG20-011. The credit is no longer mislabelled as capital repayment. The
+pre-existing treatment of unallocated fees in the assessment is unchanged; this
+correction does not assign the credit to an arbitrary lot or introduce separate
+principal income. Tests cover account labels, both adjustment labels, positive
+and negative cash balances, charges and historical replay. Currency dispatch
 remains explicitly pooled at this stage (GT-FX-008).
