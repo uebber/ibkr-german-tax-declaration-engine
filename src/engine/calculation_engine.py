@@ -287,6 +287,45 @@ def _replay_historical_merger(merger_event, fifo_ledgers) -> None:
 MULTI_ACCOUNT_LIMITATIONS = "MULTI_ACCOUNT_LIMITATIONS"
 
 
+def _require_disposal_history(events, fifo_ledgers, asset_resolver, data_gap_collector):
+    """Refuse to value securities disposals from snapshot-only acquisition history.
+
+    GT-ESTG20-011/013/014/022: quantity reconciliation does not establish the
+    actual lots, their FIFO order or acquisition-side FX. Each ledger exposes
+    only its own provenance state; the coordinator collects every affected key.
+    """
+    consuming_types = {
+        FinancialEventType.TRADE_SELL_LONG, FinancialEventType.TRADE_BUY_SHORT_COVER,
+        FinancialEventType.CORP_MERGER_CASH, FinancialEventType.CORP_MERGER_STOCK,
+        FinancialEventType.CORP_EXPIRE_DIVIDEND_RIGHTS,
+        FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT,
+        FinancialEventType.OPTION_EXPIRATION_WORTHLESS, FinancialEventType.OPTION_CASH_SETTLEMENT,
+    }
+    affected = set()
+    for event in events:
+        if event.event_type not in consuming_types and not getattr(event, 'is_position_flip', False):
+            continue
+        asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
+        if asset is None or asset.asset_category == AssetCategory.CASH_BALANCE:
+            continue
+        account = account_key(event.account_id)
+        ledger = fifo_ledgers.get((account, event.asset_internal_id))
+        if ledger is not None and ledger.has_unresolved_acquisition_history():
+            affected.add(f"{asset.get_classification_key()} [Konto {account}]")
+    if affected:
+        detail = (
+            "Acquisition history is unknown for securities required by this year's disposals: "
+            + "; ".join(sorted(affected))
+            + ". A position snapshot supplies quantities and amounts, not the acquisition "
+            "dates or lot allocation. Supply the missing acquisition/transfer history; "
+            "an inferred year-end date cannot be used to produce tax figures."
+        )
+        if data_gap_collector is not None:
+            data_gap_collector.record(code="SECURITIES_ACQUISITION_HISTORY_UNKNOWN",
+                subject="Securities disposals", detail=detail, severity=GapSeverity.FAIL_FAST)
+        raise ProcessingError(detail)
+
+
 def _report_multi_account_limitations(accounts, data_gap_collector) -> None:
     """Say what per-Depot lot tracking does NOT yet cover, whenever it is in play.
 
@@ -859,6 +898,7 @@ def run_main_calculations(
                 ctx=ctx, unattributed=unattributed_fund_years)
 
     _grade_mark_outcomes(mark_outcomes, data_gap_collector)
+    _require_disposal_history(current_year_events, fifo_ledgers, asset_resolver, data_gap_collector)
 
     # Placing the merger ahead of its day's trades (see engine/replay.py) is
     # right for the target — the delivered shares exist before that day's
@@ -1011,9 +1051,14 @@ def run_main_calculations(
 
         # The disposal consumes the lots of the account it was made from -- Rz. 97 Satz 2,
         # [GT-ESTG20-013]. Every account this asset's events name has a ledger
-        # (`ledger_accounts` was built from those same events), so a miss here is a cash
-        # balance or an option, both handled in the branches below.
-        ledger = fifo_ledgers.get((account_key(event.account_id), asset_object.internal_asset_id))
+        # (`ledger_accounts` was built from those same events). Cash has a separate,
+        # explicit pooled-ledger lookup until the per-account currency change.
+        if asset_object.asset_category == AssetCategory.CASH_BALANCE:
+            # Currency remains pooled in #87. Its explicit boundary must not depend
+            # on whether the export supplies an account label (GT-FX-008).
+            ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, asset_object.internal_asset_id))
+        else:
+            ledger = fifo_ledgers.get((account_key(event.account_id), asset_object.internal_asset_id))
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):

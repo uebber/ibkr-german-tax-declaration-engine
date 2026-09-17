@@ -3,11 +3,9 @@
 # Revision: 2025-05-18
 # PRD Coverage: §2.4 (FIFO), §2.5 (SOY Position Initialization)
 #
-# Objective: Verify correct cost basis derivation from:
-# 1. SOY Report only (no historical trades)
-# 2. Historical trades (when sufficient)
-# 3. SOY Report fallback (when historical trades insufficient)
-# 4. Asset not in SOY report (intra-year only)
+# Objective: Use observed historical lots; refuse disposals that depend on
+# snapshot-only or insufficient acquisition history. Intra-year-only positions
+# still need no opening snapshot row (GT-ESTG20-013/014/022).
 
 metadata:
   group: 2
@@ -22,7 +20,7 @@ tests:
   # ===========================================================================
 
   - id: SOY_R_001
-    description: "SOY Long from Report Only (No Hist.), Sell All"
+    description: "SOY_R_001: refuse a disposal with unobserved acquisition history"
     inputs:
       asset:
         symbol: ASSET.A.EUR
@@ -39,20 +37,10 @@ tests:
           price: 120.00
           currency: EUR
     expected:
-      rgls:
-        - realization_type: SOLD_LONG
-          quantity: 10
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-07-15"
-          total_cost_basis_eur: 1000.00
-          total_proceeds_eur: 1199.00
-          gain_loss_eur: 199.00
-      eoy_state:
-        quantity: 0
-      errors: 0
-
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
   - id: SOY_R_002
-    description: "SOY Short from Report Only (No Hist.), Cover All"
+    description: "SOY_R_002: refuse a disposal with unobserved acquisition history"
     inputs:
       asset:
         symbol: ASSET.R002.EUR
@@ -69,17 +57,8 @@ tests:
           price: 80.00
           currency: EUR
     expected:
-      rgls:
-        - realization_type: COV_SHORT
-          quantity: 10
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-08-10"
-          total_cost_basis_eur: 801.00
-          total_proceeds_eur: 1000.00
-          gain_loss_eur: 199.00
-      eoy_state:
-        quantity: 0
-      errors: 0
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
 
   # ===========================================================================
   # Historical Trades Sufficient Tests (SOY_H_*)
@@ -157,8 +136,8 @@ tests:
   # ===========================================================================
 
   - id: SOY_F_001
-    description: "SOY Long Fallback, Hist. Insufficient, cost from SOY Report"
-    notes: "Historical buy only 10, but SOY qty is 20. Must use SOY report cost."
+    description: "SOY_F_001: refuse a disposal with unobserved acquisition history"
+    notes: "A snapshot supplies quantity and cost, not acquisition dates. GT-ESTG20-013/014/022."
     inputs:
       asset:
         symbol: ASSET.D.USD
@@ -181,18 +160,11 @@ tests:
           price: 120.00
           currency: USD
     expected:
-      rgls:
-        - realization_type: SOLD_LONG
-          quantity: 20
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-05-10"
-      eoy_state:
-        quantity: 0
-      errors: 0
-
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
   - id: SOY_F_002
-    description: "SOY Short Fallback, Hist. Insufficient, proceeds from SOY Report"
-    notes: "Historical SSO only 10, but SOY qty is -20. Must use SOY report proceeds."
+    description: "SOY_F_002: refuse a disposal with unobserved acquisition history"
+    notes: "A snapshot supplies quantity and cost, not acquisition dates. GT-ESTG20-013/014/022."
     inputs:
       asset:
         symbol: ASSET.F002.USD
@@ -215,18 +187,10 @@ tests:
           price: 90.00
           currency: USD
     expected:
-      rgls:
-        - realization_type: COV_SHORT
-          quantity: 20
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-05-10"
-          gain_loss_eur: 798.00
-      eoy_state:
-        quantity: 0
-      errors: 0
-
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
   - id: SOY_F_003
-    description: "SOY Long Fallback, No Hist. Trades, Sell All"
+    description: "SOY_F_003: refuse a disposal with unobserved acquisition history"
     inputs:
       asset:
         symbol: ASSET.F003.USD
@@ -243,14 +207,8 @@ tests:
           price: 120.00
           currency: USD
     expected:
-      rgls:
-        - realization_type: SOLD_LONG
-          quantity: 10
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-03-10"
-      eoy_state:
-        quantity: 0
-      errors: 0
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
 
   # ===========================================================================
   # No SOY Report Tests (SOY_N_*)
@@ -292,7 +250,7 @@ tests:
   # ===========================================================================
 
   - id: SOY_V_001
-    description: "SOY Long Fallback (Hist Insufficient), Sell Partial"
+    description: "SOY_V_001: refuse a disposal with unobserved acquisition history"
     inputs:
       asset:
         symbol: ASSET.V001.USD
@@ -315,19 +273,11 @@ tests:
           price: 120.00
           currency: USD
     expected:
-      rgls:
-        - realization_type: SOLD_LONG
-          quantity: 15
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-10-10"
-          gain_loss_eur: 598.00
-      eoy_state:
-        quantity: 5
-      errors: 0
-
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
   - id: SOY_V_002
-    description: "SOY Short: Hist. SSO < SOY Qty (Fallback), Intra-year covers portion"
-    notes: "Historical SSO 10, SOY qty -20. Covers 15. Proceeds from SOY Report."
+    description: "SOY_V_002: refuse a disposal with unobserved acquisition history"
+    notes: "A snapshot supplies quantity and cost, not acquisition dates. GT-ESTG20-013/014/022."
     inputs:
       asset:
         symbol: ASSET.V002.USD
@@ -350,12 +300,5 @@ tests:
           price: 90.00
           currency: USD
     expected:
-      rgls:
-        - realization_type: COV_SHORT
-          quantity: 15
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-10-10"
-          gain_loss_eur: 598.00
-      eoy_state:
-        quantity: -5
-      errors: 0
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN

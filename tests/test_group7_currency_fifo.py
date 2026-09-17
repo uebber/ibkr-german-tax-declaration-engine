@@ -384,6 +384,18 @@ def spec_to_trades_data(
 
     # Add security trades (for implicit FX)
     for i, sec_trade in enumerate(spec.security_trades):
+        if sec_trade.type in ("SELL_LONG", "BUY_SHORT_COVER"):
+            # These currency-only fixtures supply zero-basis opening securities
+            # in spec_to_positions_soy_data. Supply their dated history too; the
+            # security disposal must not rely on an invented snapshot date.
+            # Zero price/commission deliberately introduces no historical FX leg.
+            from dataclasses import replace
+            opening = replace(sec_trade,
+                type="BUY_LONG" if sec_trade.type == "SELL_LONG" else "SELL_SHORT_OPEN",
+                date=f"{tax_year - 1}-12-30", time=None, price_foreign=Decimal("0"))
+            trades_data.append(create_security_trade_csv_row(
+                account_id=account_id, security_trade=opening,
+                transaction_id=f"SEC_OPEN_{i:04d}"))
         trades_data.append(create_security_trade_csv_row(
             account_id=account_id,
             security_trade=sec_trade,

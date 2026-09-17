@@ -521,6 +521,19 @@ class DomainEventFactory:
             desc_upper = (rct.description or "").upper()
             domain_event_instance: Optional[FinancialEvent] = None
             raw_amount = rct.amount
+            commission_adjustment = ("COMMISSION" in event_type_str_upper or
+                (event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper))
+            if commission_adjustment and raw_amount > Decimal(0):
+                # GT-ESTG20-010/011/048: a refund is not automatically a dividend,
+                # return of invested capital, or reduction of a particular lot's cost.
+                # The export supplies no attribution for ADJUSTMENT: COMMISSION.
+                # Collect every unresolved credit rather than invent its tax treatment.
+                data_errors.append(
+                    f"COMMISSION_REFUND_UNCLASSIFIED: cash transaction {rct.transaction_id} "
+                    f"on {event_date_str} ({rct.description}) is a positive commission "
+                    "adjustment. Its connection to the original trade or service and "
+                    "the applicable tax treatment must be established before processing.")
+                continue
             # Gross amount for events should be absolute for income, or represent the cost if it's an expense.
             # For WithholdingTaxEvent and FeeEvent, raw_amount is typically negative.
             # For CashFlowEvents (Dividend, Interest), raw_amount is typically positive.
@@ -641,13 +654,8 @@ class DomainEventFactory:
             # Detect these before the ignorable-type check so they affect the currency ledger.
             if domain_event_instance is None and event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper:
                 event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                if raw_amount >= Decimal(0):
-                    # Positive = commission refund (cash inflow)
-                    domain_event_instance = CashFlowEvent(
-                        asset_for_event.internal_asset_id, event_date_str,
-                        event_type=FinancialEventType.CAPITAL_REPAYMENT,
-                        source_country_code=None, **event_params_kw
-                    )
+                if raw_amount == Decimal(0):
+                    continue  # No payment and no tax or currency consequence.
                 else:
                     # Negative = additional commission charge (cash outflow)
                     domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)

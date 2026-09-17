@@ -64,6 +64,7 @@ class TestTheOpeningSnapshotIsEveryAccountsRow(FifoTestCaseBase):
     def _run(self):
         return self._run_pipeline(
             trades_data=[
+                trade_row(B, self.ISIN, "2022-06-01", "50", "10", "BUY", "O", "OPEN-B"),
                 trade_row(B, self.ISIN, "2023-06-01", "-50", "12", "SELL", "C", "T1"),
             ],
             positions_start_data=[
@@ -176,22 +177,12 @@ class TestACurrencyHeldInTwoAccounts(FifoTestCaseBase):
         assert gaps == []
 
 
-class TestACheckpointMarksBasisCarriesIntoALaterSale(FifoTestCaseBase):
-    """A mid-window checkpoint mark's cost basis reaches a sale four years later.
+class TestACheckpointCannotSupplyAcquisitionHistory(FifoTestCaseBase):
+    """A 2021 mark supplies quantity and basis but cannot date a 2024 disposal.
 
-    The mark is where the ledger's cost basis is set for units acquired before the
-    import window: the reconstruction is compared against the reported mark and, where
-    they disagree, the mark's figures are what the ledger carries forward. This checks
-    that carry end to end -- from a 2021 mark to a 2024 disposal.
-
-    Per Depot ([GT-ESTG20-013]) the mark, the carried lots and the sale are all one
-    account's: the disposal consumes the lots of the account it was made from, at the
-    basis that account's own mark set. (The two-account storage of a mark -- one row per
-    account, `person_mark` the derived view -- is pinned at the seam in
-    TestTheCheckpointMarkRegistry; here what matters is that an account's own mark basis
-    is what its later sale costs.)
-
-        A's 2021 mark : 100 units at 1400 -> 3500 - 1400 = 2100 gain
+    GT-ESTG20-013/014: per-account reconciliation must preserve provenance or
+    refuse. Storage and summation of account-specific marks are covered separately
+    by TestTheCheckpointMarkRegistry; no sale may use its placeholder date.
     """
     ISIN = "US000000PS03"
     RATES = MockECBExchangeRateProvider(Decimal("1.00"))
@@ -212,12 +203,10 @@ class TestACheckpointMarksBasisCarriesIntoALaterSale(FifoTestCaseBase):
             tax_year=2024,
         )
 
-    def test_a_marks_basis_is_what_the_later_sale_costs(self):
-        rgls = [r for r in self._run().realized_gains_losses
-                if r.quantity_realized == Decimal("100")]
-        assert len(rgls) == 1
-        assert rgls[0].total_cost_basis_eur == Decimal("1400")
-        assert rgls[0].gross_gain_loss_eur == Decimal("2100")
+    def test_a_mark_without_acquisition_history_cannot_value_a_later_sale(self):
+        from src.processing.data_gaps import DataGapError
+        with pytest.raises(DataGapError, match="SECURITIES_ACQUISITION_HISTORY_UNKNOWN"):
+            self._run()
 
 
 class TestTheCheckpointMarkRegistry:

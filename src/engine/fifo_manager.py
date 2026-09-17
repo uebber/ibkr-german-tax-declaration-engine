@@ -77,6 +77,7 @@ class ShortFifoLot:
     unit_sale_proceeds_eur: Decimal # Renamed from sale_proceeds_eur_per_unit
     total_sale_proceeds_eur: Decimal # Total sale proceeds when shorted
     source_transaction_id: str # IBKR Transaction ID (or fallback string like "SOY_FALLBACK_SHORT")
+    acquisition_date_is_known: bool = True
 
     def __post_init__(self):
         if not isinstance(self.quantity_shorted, Decimal) or not self.quantity_shorted.is_finite() or self.quantity_shorted <= Decimal(0):
@@ -631,14 +632,11 @@ class FifoLedger:
         The snapshot supplies a quantity and a cost basis. It supplies no acquisition
         date, so the lot carries `acquisition_date_is_known=False`.
 
-        **Exactly one consumer honours that flag: § 18 Abs. 2, which raises rather than
-        read the placeholder. § 23 does not.** The holding period is computed straight
-        from `acquisition_date`, so a placeholder would decide the Spekulationsfrist
-        with no signal either way. This docstring claimed both refused until 2026-08-09;
-        it now says what the code does. The assumption the gap rests on, measured over
-        2021-2025: two undated lots exist, neither is a `PRIVATE_SALE_ASSET` -- the only
-        category § 23 reaches -- and neither has been disposed of. It becomes live the
-        day an undated lot is crypto, a metal ETP or a currency balance.
+        The calculation entry point refuses current-year securities disposals that
+        depend on such lots, collecting the affected accounts before dispatch.
+        The Vorabpauschale acquisition-month calculation also refuses an unknown date.
+        Reconciliation can still retain quantities for diagnostics or an instrument
+        that is not disposed of; a matching quantity does not establish its history.
 
         **A cost basis this cannot use stops the run; it is never replaced by zero.**
         Three substitutions stood here until 2026-08-09 -- an absent basis, one that
@@ -722,7 +720,8 @@ class FifoLedger:
         fallback_short_lot = ShortFifoLot(
             opening_date=opening_date_str, quantity_shorted=quantity_abs,
             unit_sale_proceeds_eur=proceeds_per_unit, total_sale_proceeds_eur=total_proceeds_eur, # Renamed
-            source_transaction_id=self.soy_fallback_short_lot_source_tx_id
+            source_transaction_id=self.soy_fallback_short_lot_source_tx_id,
+            acquisition_date_is_known=False,
         )
         self.short_lots.append(fallback_short_lot)
         logger.info(
@@ -775,6 +774,7 @@ class FifoLedger:
                 # § 19 Abs. 1 Satz 3 deducts them when it ends. Rebuilding the lot
                 # without this drops them, and the loss is silent.
                 vorabpauschale_gross_eur=lot.vorabpauschale_gross_eur,
+                acquisition_date_is_known=lot.acquisition_date_is_known,
             ))
 
         prepared_short_lots: List[ShortFifoLot] = []
@@ -787,6 +787,7 @@ class FifoLedger:
                 unit_sale_proceeds_eur=new_unit_proceeds,
                 total_sale_proceeds_eur=lot.total_sale_proceeds_eur,
                 source_transaction_id=str(merger_event.event_id),
+                acquisition_date_is_known=lot.acquisition_date_is_known,
             ))
 
         # Phase 2 — COMMIT (cannot fail)
@@ -794,6 +795,10 @@ class FifoLedger:
         self.lots.sort(key=lambda l: (parse_ibkr_date(l.acquisition_date) or datetime.min.date(), l.source_transaction_id))
         self.short_lots.extend(prepared_short_lots)
         self.short_lots.sort(key=lambda l: (parse_ibkr_date(l.opening_date) or datetime.min.date(), l.source_transaction_id))
+
+    def has_unresolved_acquisition_history(self) -> bool:
+        """Account-local provenance check; matching a snapshot proves only quantity."""
+        return any(not lot.acquisition_date_is_known for lot in self.lots + self.short_lots)
 
     def add_long_lot(self, trade_event: TradeEvent):
         if trade_event.event_type != FinancialEventType.TRADE_BUY_LONG: return

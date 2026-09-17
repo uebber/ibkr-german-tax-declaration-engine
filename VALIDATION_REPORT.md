@@ -574,3 +574,47 @@ establish regression parity, not correctness of every pre-existing figure.
 `docs/reviews/pr-86-required-rework.md`. Account independence and declaration-level
 aggregation remain the target; a separate Person entity is not required. Later PRs
 still need individual review.
+
+## 2026-09-17 — PR #87 account boundaries and safe refusal
+
+Category: `fix-func`. The maintainer authorized fixes and merge after review of
+`2c8c45b` and local corrected-history candidate `0d5c958` against accepted main
+`8b7e49f`. Option linking is explicitly deferred as PM-005.
+
+- Before current-year securities disposals, every account/asset with unresolved
+  acquisition history is collected and refused. Short-lot provenance and merger
+  preservation match the long-lot contract (GT-ESTG20-011/013/014/022).
+- Currency dispatch has an explicit pooled boundary at this stage. A positive
+  commission adjustment cannot masquerade as capital repayment or a negative fee;
+  all unclassified credits are refused during import. GT-ESTG20-010/048 and
+  GT-ESTG20-011 distinguish the possible treatments; no new filing position is chosen.
+- The initial 11 regression cases were 10 failed/1 passed before the change.
+  The final 13 cases, including merger provenance, are 12 failed/1 passed on
+  `0d5c958` and 13 passed on the fixed code. Full suite with copied private exports:
+  **1,225 passed**. The clean-checkout result is recorded in the review handoff.
+- Nine snapshot-only FIFO scenarios and two dedicated undated-lot tests now require
+  refusal. EOY, split, option and currency scenarios whose purpose is unrelated to
+  missing history have explicit synthetic acquisition inputs; numerical assertions
+  remain unchanged. No tests bypass the new production guard.
+
+The maintainer's input window has one unclassified positive commission credit
+among 920 cash-transaction data rows (2021–2025). It says only
+`ADJUSTMENT: COMMISSION`; asset class, symbol, ISIN and contract identifier are
+blank, so its original transaction/service is not established. Across all 34 CSVs,
+account IDs are populated in 6,976 trades, 920 cash transactions, 13 corporate
+actions, 170 option-EAE rows, 87 positions and 55 cash-balance rows. One account
+is represented; synthetic cases are needed for transfers/account isolation.
+
+Fresh identical input/cache copies, tracked configuration, non-interactive execution
+and automatic NAV fetching disabled: VZ 2023 console/PDF match accepted base
+(volatile PDF metadata excluded). VZ 2024 and VZ 2025 exit 1 on
+`COMMISSION_REFUND_UNCLASSIFIED`, producing no PDF; the latter imports the earlier
+credit as history. These are intentional data refusals, not successful declarations
+or parity claims. The original export/cache hashes are unchanged. No inputs were
+removed or overridden. Previous base controls matched for all three years.
+
+The old mixed-basis/refund algorithms are not validated by making two representations
+agree. Resolving the refund requires evidence and explicit supported treatment.
+The no-account and named-account inputs now both refuse the same unclassified
+credit. Source/spec/docstring claims about successful disposal from snapshot-only
+history were updated alongside the code; accepted architectural work remains open.

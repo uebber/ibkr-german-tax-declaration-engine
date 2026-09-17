@@ -139,6 +139,13 @@ class TestFifoGroups(FifoTestCaseBase):
         mock_rate_provider = MockECBExchangeRateProvider(
             foreign_to_eur_init_value=fx_rate
         )
+        if spec.expected_error_code:
+            # Missing acquisition history cannot be replaced by a dated snapshot lot.
+            with pytest.raises(DataGapError, match=spec.expected_error_code):
+                self._run_pipeline(trades_data=trades_data, positions_start_data=positions_start,
+                    positions_end_data=positions_end, custom_rate_provider=mock_rate_provider,
+                    tax_year=tax_year)
+            return
         if spec.expected_errors > 0:
             # A spec that expects EoY mismatches now expects the run to ABORT.
             # Given a full year of input, SoY + the year's events must reconcile to
