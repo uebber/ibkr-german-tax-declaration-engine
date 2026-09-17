@@ -74,6 +74,13 @@ class FinancialEvent:
     ibkr_activity_description: Optional[str] = None # From Cash Transactions "Description" or Trades "Description"
     ibkr_notes_codes: Optional[str] = None # From Trades "Notes/Codes" column
 
+    # The custody account (Depot) this event was booked in — IBKR's ClientAccountID.
+    # A disposal consumes the lots of the account it was made from: FIFO is applied
+    # per single Depot (BMF 14.05.2025 Rz. 97 Satz 2, [GT-ESTG20-013]). Normalised to
+    # a ledger key by `account_key()`, which collapses an absent id to one DEFAULT
+    # account, so an export without the column behaves exactly as before.
+    account_id: Optional[str] = None # From ClientAccountID
+
     def __post_init__(self):
         if not isinstance(self.event_type, FinancialEventType):
             raise TypeError(f"FinancialEvent.event_type must be a FinancialEventType enum member, got {type(self.event_type)}")

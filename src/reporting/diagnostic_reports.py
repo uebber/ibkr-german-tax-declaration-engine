@@ -95,13 +95,22 @@ def print_asset_positions_diagnostic(asset_resolver: AssetResolver,
 
         asset_display_key_val = _get_asset_display_key(asset)
         asset_desc_print_val = asset.description or asset_display_key_val
-        # Deliberately the person's figure alone, which is exactly what this printed
-        # before the snapshot moved. The per-account breakdown the registries can now
-        # supply is a new report, and belongs with the change that makes an account's
-        # holding mean something on its own.
+        # The person's total, then -- when more than one account reports the asset -- a line
+        # per account beneath it. An account's own holding has meaning of its own now that a
+        # disposal consumes that account's lots ([GT-ESTG20-013]); a single-account run is
+        # unchanged, printing only the total.
         print(f"  {asset_desc_print_val:<50} | "
               f"Cat: {asset.asset_category.name if asset.asset_category else 'N/A':<20} | "
               f"SOY: {soy_info:<50} | EOY: {eoy_info}")
+
+        accounts = ({acct for (acct, aid) in soy_positions if aid == asset_id}
+                    | {acct for (acct, aid) in eoy_positions if aid == asset_id})
+        if len(accounts) > 1:
+            for acct in sorted(accounts):
+                acct_soy = _format_opening(soy_positions.get((acct, asset_id)))
+                acct_eoy = _format_closing(eoy_positions.get((acct, asset_id)))
+                print(f"      └─ Konto {acct:<20} | "
+                      f"{'':<26} | SOY: {acct_soy:<50} | EOY: {acct_eoy}")
 
 
 def _format_opening(snapshot) -> str:

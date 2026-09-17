@@ -501,6 +501,37 @@ Steuerbescheinigung requirement. The reduction equals the excluded row to the ce
 not move, because every withholding row that year carries a non-German issuer country and is
 correctly retained as foreign tax.
 
+## 2026-09-01 — per-account FIFO (GT-ESTG20-013), measured against the real export
+
+Incidence of the input the per-account keying depends on, `ClientAccountID`, measured with
+`utf-8-sig` (the 2025 files carry a UTF-8 BOM) and skipping the mid-file header repeats IBKR
+inserts: present on every event row across the window, none blank — 236 of 236 Trades data rows,
+383 of 383 Cash_Transactions, 6 of 6 Corporate_Actions; the OptionEAE report has no rows. (Counting
+the header-repeat rows as data gives 239 / 386 / 9; either way the load-bearing figure is zero
+blank.) Two accounts appear across the window; the assumption that every account's row carries the
+column is written at `account_key` in `src/utils/account_utils.py`.
+
+**The securities half is not latent on this export** — the base's "no instrument in two accounts"
+was measured on the Positions files alone and does not describe the run. Own-account transfers, which
+the engine does not yet read, put an instrument in two accounts across the trades and the marks:
+
+- VZ 2023: two instruments are bought in one account and sold from another within the year
+  (US8998961044 and US36467W1099 — ISINs identify instruments, not wealth, so they stay; the account
+  numbers do not, per the public-repo rule). Per account the selling account's ledger is empty, so
+  the run stops at the first such sale with an insufficient-lots error. Pooled FIFO netted the buy
+  and the sale silently.
+- VZ 2025: the close-of-2023 snapshot (a checkpoint mark) reports about eight further still-held
+  instruments in a different account than the trades reconstruct them into — positions moved between
+  accounts with no sale, so a BUY/SELL scan does not see them. Per account this is a 19-ledger
+  `REPLAY_MARK_MISMATCH` and the run stops.
+- VZ 2024: one account only, so unchanged — aborts at `VORABPAUSCHALE_YEAR_START_PRICE_UNKNOWN`,
+  exactly as before, and the multi-account limitations warning does not fire.
+
+All three already aborted before any figure on the base, so no figure is lost. Reading the Transfers
+export (the next change) relocates the moved lots and makes VZ 2023 and VZ 2025 complete again. These
+counts and instrument identifiers stay here, not in a commit message, per CLAUDE.md's public-repo
+rule and the PR-hygiene rule against a portfolio census in published text.
+
 ## 2026-09-17 — PR #86 correctness review and fixes
 
 **Category:** `fix-func`. The maintainer authorized correction and merge after an
@@ -543,3 +574,47 @@ establish regression parity, not correctness of every pre-existing figure.
 `docs/reviews/pr-86-required-rework.md`. Account independence and declaration-level
 aggregation remain the target; a separate Person entity is not required. Later PRs
 still need individual review.
+
+## 2026-09-17 — PR #87 account boundaries and safe refusal
+
+Category: `fix-func`. The maintainer authorized fixes and merge after review of
+`2c8c45b` and local corrected-history candidate `0d5c958` against accepted main
+`8b7e49f`. Option linking is explicitly deferred as PM-005.
+
+- Before current-year securities disposals, every account/asset with unresolved
+  acquisition history is collected and refused. Short-lot provenance and merger
+  preservation match the long-lot contract (GT-ESTG20-011/013/014/022).
+- Currency dispatch has an explicit pooled boundary at this stage. A positive
+  commission adjustment cannot masquerade as capital repayment or a negative fee;
+  all unclassified credits are refused during import. GT-ESTG20-010/048 and
+  GT-ESTG20-011 distinguish the possible treatments; no new filing position is chosen.
+- The initial 11 regression cases were 10 failed/1 passed before the change.
+  The final 13 cases, including merger provenance, are 12 failed/1 passed on
+  `0d5c958` and 13 passed on the fixed code. Full suite with copied private exports:
+  **1,225 passed**. The clean-checkout result is recorded in the review handoff.
+- Nine snapshot-only FIFO scenarios and two dedicated undated-lot tests now require
+  refusal. EOY, split, option and currency scenarios whose purpose is unrelated to
+  missing history have explicit synthetic acquisition inputs; numerical assertions
+  remain unchanged. No tests bypass the new production guard.
+
+The maintainer's input window has one unclassified positive commission credit
+among 920 cash-transaction data rows (2021–2025). It says only
+`ADJUSTMENT: COMMISSION`; asset class, symbol, ISIN and contract identifier are
+blank, so its original transaction/service is not established. Across all 34 CSVs,
+account IDs are populated in 6,976 trades, 920 cash transactions, 13 corporate
+actions, 170 option-EAE rows, 87 positions and 55 cash-balance rows. One account
+is represented; synthetic cases are needed for transfers/account isolation.
+
+Fresh identical input/cache copies, tracked configuration, non-interactive execution
+and automatic NAV fetching disabled: VZ 2023 console/PDF match accepted base
+(volatile PDF metadata excluded). VZ 2024 and VZ 2025 exit 1 on
+`COMMISSION_REFUND_UNCLASSIFIED`, producing no PDF; the latter imports the earlier
+credit as history. These are intentional data refusals, not successful declarations
+or parity claims. The original export/cache hashes are unchanged. No inputs were
+removed or overridden. Previous base controls matched for all three years.
+
+The old mixed-basis/refund algorithms are not validated by making two representations
+agree. Resolving the refund requires evidence and explicit supported treatment.
+The no-account and named-account inputs now both refuse the same unclassified
+credit. Source/spec/docstring claims about successful disposal from snapshot-only
+history were updated alongside the code; accepted architectural work remains open.

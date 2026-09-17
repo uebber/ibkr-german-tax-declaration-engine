@@ -144,6 +144,7 @@ class FifoTestSpec:
     # EOY reconciliation fields (Option B implementation)
     positions_eoy_report: Optional[PositionSpec] = None  # Broker-reported EOY position (input)
     expected_calculated_eoy: Optional[Decimal] = None    # Expected engine calculation (documentation)
+    expected_error_code: Optional[str] = None
 
 
 def _decimal_constructor(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> Decimal:
@@ -277,6 +278,7 @@ def parse_fifo_tests(spec_data: Dict[str, Any]) -> List[FifoTestSpec]:
             historical_trades=hist_trades,
             positions_eoy_report=eoy_report_pos,
             expected_calculated_eoy=expected_calc_eoy_decimal,
+            expected_error_code=expected.get("error_code"),
         ))
 
     return tests

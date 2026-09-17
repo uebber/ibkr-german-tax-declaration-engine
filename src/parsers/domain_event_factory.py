@@ -224,7 +224,8 @@ class DomainEventFactory:
                 "local_currency": raw_trade.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": raw_trade.description,
-                "ibkr_notes_codes": raw_trade.notes_codes
+                "ibkr_notes_codes": raw_trade.notes_codes,
+                "account_id": raw_trade.client_account_id,
             }
 
             option_event: Optional[OptionLifecycleEvent] = None
@@ -382,7 +383,8 @@ class DomainEventFactory:
                         exchange_rate=rate,
                         ibkr_transaction_id=tx_id_primary,
                         ibkr_activity_description=f"FX Pair Trade: {rt.description}",
-                        ibkr_notes_codes=rt.notes_codes
+                        ibkr_notes_codes=rt.notes_codes,
+                        account_id=rt.client_account_id,
                     )
                     all_created_events.append(conv_event)
                     continue
@@ -443,6 +445,7 @@ class DomainEventFactory:
                     ibkr_activity_description=rt.description,
                     ibkr_notes_codes=rt.notes_codes,
                     is_position_flip=is_position_flip,
+                    account_id=rt.client_account_id,
                 )
 
                 if trade_event.gross_amount_foreign_currency is not None and trade_event.gross_amount_foreign_currency < Decimal("0"):
@@ -518,6 +521,19 @@ class DomainEventFactory:
             desc_upper = (rct.description or "").upper()
             domain_event_instance: Optional[FinancialEvent] = None
             raw_amount = rct.amount
+            commission_adjustment = ("COMMISSION" in event_type_str_upper or
+                (event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper))
+            if commission_adjustment and raw_amount > Decimal(0):
+                # GT-ESTG20-010/011/048: a refund is not automatically a dividend,
+                # return of invested capital, or reduction of a particular lot's cost.
+                # The export supplies no attribution for ADJUSTMENT: COMMISSION.
+                # Collect every unresolved credit rather than invent its tax treatment.
+                data_errors.append(
+                    f"COMMISSION_REFUND_UNCLASSIFIED: cash transaction {rct.transaction_id} "
+                    f"on {event_date_str} ({rct.description}) is a positive commission "
+                    "adjustment. Its connection to the original trade or service and "
+                    "the applicable tax treatment must be established before processing.")
+                continue
             # Gross amount for events should be absolute for income, or represent the cost if it's an expense.
             # For WithholdingTaxEvent and FeeEvent, raw_amount is typically negative.
             # For CashFlowEvents (Dividend, Interest), raw_amount is typically positive.
@@ -549,7 +565,8 @@ class DomainEventFactory:
                 "local_currency": rct.currency_primary,
                 "ibkr_transaction_id": tx_id_for_event,
                 "ibkr_activity_description": rct.description,
-                "ibkr_notes_codes": None  # `Code` is not exported; see RawCashTransactionRecord.
+                "ibkr_notes_codes": None,  # `Code` is not exported; see RawCashTransactionRecord.
+                "account_id": rct.client_account_id,
             }
 
             if "DIVIDEND" in event_type_str_upper:
@@ -637,13 +654,8 @@ class DomainEventFactory:
             # Detect these before the ignorable-type check so they affect the currency ledger.
             if domain_event_instance is None and event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper:
                 event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                if raw_amount >= Decimal(0):
-                    # Positive = commission refund (cash inflow)
-                    domain_event_instance = CashFlowEvent(
-                        asset_for_event.internal_asset_id, event_date_str,
-                        event_type=FinancialEventType.CAPITAL_REPAYMENT,
-                        source_country_code=None, **event_params_kw
-                    )
+                if raw_amount == Decimal(0):
+                    continue  # No payment and no tax or currency consequence.
                 else:
                     # Negative = additional commission charge (cash outflow)
                     domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
@@ -741,7 +753,8 @@ class DomainEventFactory:
                 "ibkr_transaction_id": None,  # TransactionID is not exported for CAs
                 "ibkr_activity_description": rca.description,
                 "local_currency": rca.currency_primary or affected_asset.currency,
-                "gross_amount_foreign_currency": None # Will be set by specific CA type if applicable
+                "gross_amount_foreign_currency": None, # Will be set by specific CA type if applicable
+                "account_id": rca.client_account_id,
             }
             logger.debug(f"CA Record {idx+1}: common_ca_params_kw_base (pre-gross): {common_ca_params_kw_base}")
 
@@ -972,6 +985,7 @@ class DomainEventFactory:
                     gross_amount_foreign_currency=maturity_proceeds.copy_abs(),
                     ibkr_transaction_id=f"BM-{rca.action_id_ibkr}",
                     ibkr_activity_description=rca.description,
+                    account_id=rca.client_account_id,
                 )
                 domain_ca_events.append(bm_event)
                 continue
@@ -1081,6 +1095,7 @@ class DomainEventFactory:
                     local_currency=settle_row.currency_primary,
                     gross_amount_foreign_currency=proceeds.copy_abs(),
                     ibkr_activity_description=f"Cash Settlement: {settle_row.description}",
+                    account_id=settle_row.client_account_id,
                 )
 
                 cash_settlement_events.append(event)
