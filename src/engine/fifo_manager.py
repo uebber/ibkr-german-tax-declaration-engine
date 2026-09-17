@@ -6,7 +6,7 @@ import uuid
 from datetime import date as date_obj, datetime
 
 from src.domain.assets import Asset, Option, PositionSnapshot
-from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights
+from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights, OptionDeliveryLink
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError, ProcessingError
@@ -159,6 +159,20 @@ class ConsumedLotDetail:
     original_lot_source_tx_id: str
 
 
+@dataclass(frozen=True)
+class LotTransfer:
+    """A delivery of existing lots; acquisition history travels intact (GT-ESTG20-014)."""
+    asset_internal_id: uuid.UUID
+    long_lots: tuple
+    short_lots: tuple
+
+
+@dataclass(frozen=True)
+class PreparedTransferState:
+    long_lots: list
+    short_lots: list
+
+
 def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, available_short_qty: Decimal) -> List[TradeEvent]:
     """Split a position-flip trade (C;O / O;C) into close + open sub-events.
 
@@ -205,6 +219,17 @@ def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, av
         sub_commission_eur = event.commission_eur * ratio if event.commission_eur is not None else None
         sub_net = event.net_proceeds_or_cost_basis_eur * ratio if event.net_proceeds_or_cost_basis_eur is not None else None
 
+        # Allocate each linked delivery once across the close/open split. An option
+        # assignment can cross zero in the underlying account just like another trade.
+        offset = Decimal('0') if sub_type == close_type else close_qty
+        end = offset + sub_abs_qty
+        cursor = Decimal('0')
+        links = []
+        for link in event.option_delivery_links:
+            take = min(end, cursor + link.quantity) - max(offset, cursor)
+            if take > 0:
+                links.append(OptionDeliveryLink(link.option_event_id, take))
+            cursor += link.quantity
         return TradeEvent(
             asset_internal_id=event.asset_internal_id,
             event_date=event.event_date,
@@ -215,7 +240,8 @@ def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, av
             commission_currency=event.commission_currency,
             commission_eur=sub_commission_eur,
             net_proceeds_or_cost_basis_eur=sub_net,
-            related_option_event_id=None,  # flip events don't arise from option exercise
+            option_delivery_links=links,
+            account_id=event.account_id,
             is_position_flip=False,
             local_currency=event.local_currency,
             gross_amount_foreign_currency=sub_gross_fc,
@@ -795,6 +821,85 @@ class FifoLedger:
         self.lots.sort(key=lambda l: (parse_ibkr_date(l.acquisition_date) or datetime.min.date(), l.source_transaction_id))
         self.short_lots.extend(prepared_short_lots)
         self.short_lots.sort(key=lambda l: (parse_ibkr_date(l.opening_date) or datetime.min.date(), l.source_transaction_id))
+
+
+    def prepare_transfer_delivery(self, event, name, data_gap_collector=None):
+        """Validate the sending account's own lots without touching any ledger.
+
+        Lot detail selects whole acquisition days. A summary-only move can select
+        only the entire long or short holding. Sub-day selection remains unsupported.
+        """
+        from src.processing.data_gaps import DataGapError, GapSeverity
+
+        def refuse(detail):
+            subject = f'{name}: transfer on {event.event_date}'
+            if data_gap_collector is not None:
+                data_gap_collector.record(code='INTERNAL_TRANSFER_PARTIAL', subject=subject,
+                    detail=detail, severity=GapSeverity.FAIL_FAST)
+            raise DataGapError(f'[INTERNAL_TRANSFER_PARTIAL] {subject}: {detail}')
+
+        if event.moved_lots:
+            days = {}
+            for detail in event.moved_lots:
+                if detail.quantity <= 0:
+                    refuse('Lot-detail quantity must be positive')
+                days[detail.acquisition_date] = days.get(detail.acquisition_date, Decimal('0')) + detail.quantity
+            if sum(days.values(), Decimal('0')) != event.quantity:
+                refuse('Lot-detail quantity does not match the transfer total')
+            longs, shorts = [], []
+            for day, quantity in days.items():
+                day_longs = [lot for lot in self.lots if lot.acquisition_date == day]
+                day_shorts = [lot for lot in self.short_lots if lot.opening_date == day]
+                if day_longs and day_shorts:
+                    refuse(f'Long and short lots both exist on {day}; lot-detail is ambiguous')
+                available = (sum((lot.quantity for lot in day_longs), Decimal('0'))
+                             + sum((lot.quantity_shorted for lot in day_shorts), Decimal('0')))
+                if available != quantity:
+                    refuse(f'Lot-detail for {day} moves {quantity} but account {event.account_id} '
+                           f'holds {available}; provide lot-detail for a whole acquisition day')
+                if any(detail.is_short != bool(day_shorts) for detail in event.moved_lots
+                       if detail.acquisition_date == day):
+                    logger.warning('Transfer lot sign disagrees with the sending ledger on %s; '
+                                   'preserving the ledger side', day)
+                longs.extend(day_longs)
+                shorts.extend(day_shorts)
+        else:
+            long_qty = sum((lot.quantity for lot in self.lots), Decimal('0'))
+            short_qty = sum((lot.quantity_shorted for lot in self.short_lots), Decimal('0'))
+            if long_qty == event.quantity and short_qty == 0:
+                longs, shorts = list(self.lots), []
+            elif short_qty == event.quantity and long_qty == 0:
+                longs, shorts = [], list(self.short_lots)
+            else:
+                refuse(f'Account {event.account_id} holds {long_qty} long and {short_qty} short; '
+                       f'transfer moves {event.quantity}. Supply lot-detail for a partial move')
+        long_ids, short_ids = {id(lot) for lot in longs}, {id(lot) for lot in shorts}
+        remaining = PreparedTransferState(
+            [lot for lot in self.lots if id(lot) not in long_ids],
+            [lot for lot in self.short_lots if id(lot) not in short_ids])
+        return LotTransfer(self.asset_internal_id, tuple(longs), tuple(shorts)), remaining
+
+    def prepare_transfer_receipt(self, delivery: LotTransfer) -> PreparedTransferState:
+        """Validate and sort the receiving account's replacement state before commit."""
+        if delivery.asset_internal_id != self.asset_internal_id:
+            raise ProcessingError('Transfer receipt names a different instrument')
+        incoming = delivery.long_lots + delivery.short_lots
+        existing_ids = {id(lot) for lot in self.lots + self.short_lots}
+        if len({id(lot) for lot in incoming}) != len(incoming) or any(id(lot) in existing_ids for lot in incoming):
+            raise ProcessingError('Transfer receipt contains a duplicated lot')
+        longs = list(self.lots) + list(delivery.long_lots)
+        shorts = list(self.short_lots) + list(delivery.short_lots)
+        if longs and shorts:
+            raise ProcessingError('Transfer would combine long and short holdings; netting is not a lot relocation')
+        longs.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
+        shorts.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
+        return PreparedTransferState(longs, shorts)
+
+    def commit_transfer_state(self, state: PreparedTransferState) -> None:
+        """Commit already validated state. No parsing, sorting or calculations here."""
+        self.lots = state.long_lots
+        self.short_lots = state.short_lots
+
 
     def has_unresolved_acquisition_history(self) -> bool:
         """Account-local provenance check; matching a snapshot proves only quantity."""

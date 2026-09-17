@@ -407,18 +407,20 @@ class TestTheLimitationsAreStated(FifoTestCaseBase):
     has moved nothing between accounts is told so in the text.
 
     These assertions are meant to be deleted one at a time as each limitation is
-    closed — the securities half with the Transfers change, the currency half
+    closed — the securities half with the Transfers change (PR-C, below: the securities
+    caveat is now conditional on whether the Transfers export was read), the currency half
     after it.
     """
     ISIN = "US000000LM01"
 
-    def _run(self, accounts):
+    def _run(self, accounts, transfers_data=None):
         return self._run_pipeline(
             trades_data=[trade_row(a, self.ISIN, "2025-03-01", "10", "20", "BUY", "O", f"T{i}")
                          for i, a in enumerate(accounts)],
             positions_start_data=[],
             positions_end_data=[position_row(a, self.ISIN, "10", "200", price="20")
                                 for a in accounts],
+            transfers_data=transfers_data,
             custom_rate_provider=MockECBExchangeRateProvider(Decimal("1.00")),
             tax_year=TAX_YEAR,
         )
@@ -427,19 +429,34 @@ class TestTheLimitationsAreStated(FifoTestCaseBase):
         return next((g for g in out.data_gaps
                      if g.code == "MULTI_ACCOUNT_LIMITATIONS"), None)
 
-    def test_two_accounts_are_told_what_is_not_covered(self):
+    def test_without_a_transfers_export_the_securities_caveat_stays(self):
+        """No Transfers export read, so a move in any year is invisible and the securities
+        caveat remains. (Rewritten by PR-C from `test_two_accounts_are_told_what_is_not_
+        covered`, which asserted the old unconditional "Überträge ... werden nicht
+        eingelesen"; the caveat is now conditional on whether the export was read.)"""
         gap = self._gap(self._run([A, B]))
         assert gap is not None, "a multi-account run must state its limitations"
-        assert "Überträge zwischen Ihren eigenen Konten werden nicht eingelesen" in gap.detail
+        assert "KEIN TRANSFERS-BERICHT EINGELESEN" in gap.detail
         # Currency is stated as the reading the store currently supports, not as a defect the
-        # engine has yet to fix: BMF Rz. 131 sets no Depot boundary on the FIFO of like
-        # foreign-currency amounts, so per-person is a lawful reading and the open question is
-        # decided separately (PR-D). Asserting a shortfall that may not exist in a
-        # taxpayer-facing report is exactly what must not happen.
+        # engine has yet to fix (BMF Rz. 131 sets no Depot boundary; per-person is a lawful
+        # reading, decided separately in PR-D).
         assert "Fremdwährungsbestände werden je Person geführt" in gap.detail
         assert "derzeit vom Regelwerk gestützte Lesart" in gap.detail
         assert "NICHT BELASTBAR" in gap.detail, \
             "the securities limitation is only WARNING, so the text has to carry the weight"
+
+    def test_with_the_transfers_export_the_securities_caveat_is_gone(self):
+        """The securities half is closed once the export is read: the warning then says
+        the moves ARE read and the securities figures are unaffected, leaving only the
+        currency note. An empty export is still an export -- the person has the report and
+        moved nothing."""
+        gap = self._gap(self._run([A, B], transfers_data=[]))
+        assert gap is not None
+        assert "werden eingelesen" in gap.detail
+        assert "nicht eingelesen" not in gap.detail
+        assert "KEIN TRANSFERS-BERICHT" not in gap.detail
+        assert "nicht betroffen" in gap.detail, "securities figures unaffected"
+        assert "Fremdwährungsbestände werden je Person geführt" in gap.detail
 
     def test_one_account_is_told_nothing(self):
         """The warning must not reach the people it does not apply to — a report

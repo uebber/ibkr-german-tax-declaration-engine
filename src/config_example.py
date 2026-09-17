@@ -88,6 +88,13 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     # appear in no other export. A run that needs it and does not have it stops and names
     # the contracts -- see ParsingOrchestrator._require_option_cash_settlements.
     "options_eae": None,
+    # Moves of a holding between your own accounts. Needed once you hold more than one
+    # account and have ever moved a position between them: without it the receiving
+    # account shows units it never bought and the sending one units it never sold, and
+    # the reconstruction invents the acquisition dates (see [GT-ESTG20-014]). Configure
+    # the query with lot detail on -- the Cost Basis, Open Date Time and Level of Detail
+    # columns are required (see README).
+    "transfers": None,
 }
 
 # Cache directory for downloaded Flex Query CSVs

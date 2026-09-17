@@ -12,13 +12,13 @@ from src.domain.events import (
     CorpActionMergerStock, CorpActionStockDividend, CorpActionExpireDividendRights,
     OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
-    CurrencyConversionEvent, FeeEvent
+    CurrencyConversionEvent, FeeEvent, InternalTransferEvent, TransferLot
 )
 from src.domain.enums import FinancialEventType, AssetCategory, InvestmentFundType
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.raw_models import (
     RawTradeRecord, RawCashTransactionRecord, RawCorporateActionRecord,
-    RawOptionsEAERecord
+    RawOptionsEAERecord, RawTransferRecord
 )
 from src.domain.exceptions import DataIntegrityError
 from src.utils.type_utils import parse_ibkr_date, safe_decimal
@@ -1085,3 +1085,207 @@ class DomainEventFactory:
             )
         logger.info(f"Created {len(cash_settlement_events)} OptionCashSettlementEvents from OptionEAE data.")
         return cash_settlement_events
+
+    def create_events_from_transfers(
+        self, raw_transfers: List[RawTransferRecord]
+    ) -> List[InternalTransferEvent]:
+        """Pair reciprocal observations without dropping distinct same-size moves.
+
+        A TRANSFER summary owns the adjacent LOT rows. Opposite sides are matched
+        by account pair, instrument, date, quantity and acquisition-day detail.
+        Conflicting reciprocal observations are collected as errors. One-sided
+        exports remain supported, and both sides' source identifiers are retained.
+        Cash transfers remain outside the pooled-currency implementation's scope.
+        """
+        data_errors: List[str] = []
+        # A summary starts a group; day/account grouping alone loses repeated moves.
+        groups: List[dict] = []
+        current: Optional[dict] = None
+
+        for rtr in raw_transfers:
+            asset_class = (rtr.asset_class or "").strip().upper()
+            if asset_class == "CASH":
+                # A move of a pooled per-person currency balance changes nothing (PR-D
+                # territory). Dropped before asset resolution so no cash asset is invented.
+                continue
+            lod = (rtr.level_of_detail or "").strip().upper()
+            if lod not in ("TRANSFER", "LOT"):
+                data_errors.append(
+                    f"Transfer of {rtr.symbol or rtr.isin or 'unknown instrument'} on "
+                    f"{rtr.date} has LevelOfDetail '{rtr.level_of_detail}', which is neither "
+                    f"TRANSFER (a move's summary) nor LOT (its per-lot detail). The export's "
+                    f"lot-detail option must be on; the run cannot say which lots moved "
+                    f"without it.")
+                continue
+
+            asset = self.asset_resolver.get_or_create_asset(
+                raw_isin=rtr.isin, raw_conid=rtr.conid, raw_symbol=rtr.symbol,
+                raw_currency=rtr.currency_primary,
+                raw_ibkr_asset_class=rtr.asset_class, raw_description=rtr.description,
+                description_source_type="transfer",
+                raw_multiplier=rtr.multiplier,
+            )
+            if lod == "TRANSFER":
+                current = {"summary": rtr, "lots": [], "asset": asset}
+                groups.append(current)
+            else:  # LOT
+                if (current is None or current["asset"].internal_asset_id != asset.internal_asset_id
+                        or any(getattr(current['summary'], attr) != getattr(rtr, attr)
+                               for attr in ('client_account_id', 'transfer_account', 'direction', 'date'))):
+                    data_errors.append(
+                        f"Transfer of {asset.get_classification_key()} on {rtr.date} has a "
+                        f"lot-detail row with no summary row before it. The export writes "
+                        f"one TRANSFER row per side and its lot rows beneath it; a lot row "
+                        f"standing alone is a malformed export.")
+                    continue
+                current["lots"].append(rtr)
+
+        sides: dict = {}
+        for g in groups:
+            rtr = g["summary"]
+            asset = g["asset"]
+            asset_id = asset.internal_asset_id
+            client = (rtr.client_account_id or "").strip()
+            transfer = (rtr.transfer_account or "").strip()
+            direction = (rtr.direction or "").strip().upper()
+            parsed_date = parse_ibkr_date(rtr.date)
+            event_date = parsed_date.isoformat() if parsed_date else None
+            name = asset.get_classification_key()
+
+            # Every observed row is INTERNAL. A move to a third party or to another
+            # institution is a different question -- whether it is a disposal at all
+            # depends on who ends up owning the units -- and `reference/` settles only
+            # the own-depot case ([GT-ESTG20-014]). So it stops the run rather than being
+            # relocated as if it stayed in the family.
+            transfer_type = (rtr.transfer_type or "").strip().upper()
+            if transfer_type != "INTERNAL":
+                data_errors.append(
+                    f"Transfer of {name} on {rtr.date} has Type '{rtr.transfer_type}', not "
+                    f"INTERNAL. Only a move between the taxpayer's own accounts is covered "
+                    f"([GT-ESTG20-014]); anything else may be a disposal and no rule here "
+                    f"decides which.")
+                continue
+
+            if direction == "OUT":
+                from_account, to_account = client, transfer
+            elif direction == "IN":
+                from_account, to_account = transfer, client
+            else:
+                data_errors.append(
+                    f"Transfer of {name} on {rtr.date} has Direction '{rtr.direction}'. The "
+                    f"sign of Quantity does not carry the direction, so there is nothing "
+                    f"else to read it from.")
+                continue
+
+            if not from_account or not to_account:
+                data_errors.append(
+                    f"Transfer of {name} on {rtr.date} names only one account (from "
+                    f"'{from_account}' to '{to_account}'). Both are needed to say which "
+                    f"ledger loses the lots and which receives them.")
+                continue
+
+            if from_account == to_account:
+                data_errors.append(f'Transfer of {name} names the same sending and receiving account')
+                continue
+
+            if not event_date:
+                data_errors.append(
+                    f"Transfer of {name} has an unparseable Date '{rtr.date}'. The move is "
+                    f"applied in chronological order, so it cannot be placed without one.")
+                continue
+
+            total = rtr.quantity.copy_abs()
+            if total <= Decimal(0):
+                data_errors.append(
+                    f"Transfer of {name} on {event_date} moves {rtr.quantity} "
+                    f"units. A move of nothing is not a move, and reading it as one would "
+                    f"leave the holding where it was while the broker reported it "
+                    f"elsewhere.")
+                continue
+
+            moved_lots: List[TransferLot] = []
+            bad_lot = False
+            for lot in g["lots"]:
+                lot_date = parse_ibkr_date(lot.open_date_time)
+                if lot_date is None:
+                    data_errors.append(
+                        f"Transfer of {name} on {event_date} has a lot row with an "
+                        f"unreadable OpenDateTime '{lot.open_date_time}'. The acquisition "
+                        f"day decides the holding period and § 18 Abs. 2 reduction, so it "
+                        f"cannot be guessed.")
+                    bad_lot = True
+                    continue
+                moved_lots.append(TransferLot(
+                    acquisition_date=lot_date.isoformat(),
+                    quantity=lot.quantity.copy_abs(),
+                    is_short=lot.quantity < Decimal(0)))
+            if bad_lot:
+                continue
+
+            if moved_lots:
+                lot_sum = sum((lot.quantity for lot in moved_lots), Decimal(0))
+                if lot_sum != total:
+                    data_errors.append(
+                        f"Transfer of {name} on {event_date}: the lot rows sum to {lot_sum} "
+                        f"units but the move's summary says {total}. One of them is wrong, "
+                        f"and relocating either would disagree with the broker's own total.")
+                    continue
+
+            move_key = (from_account, to_account, asset_id, event_date)
+            event = InternalTransferEvent(
+                asset_internal_id=asset_id,
+                event_date=event_date,
+                to_account_id=to_account,
+                quantity=total,
+                moved_lots=moved_lots,
+                account_id=from_account,
+                ibkr_activity_description=rtr.description,
+                source_transaction_ids=((client, rtr.transaction_id),) if rtr.transaction_id else (),
+            )
+            sides.setdefault(move_key, {"OUT": [], "IN": []})[direction].append(event)
+
+        moves = []
+        def signature(event):
+            # The ledger remains authoritative for long/short. The two exported
+            # sides may use opposite quantity signs; compare dates and magnitudes.
+            days = {}
+            for lot in event.moved_lots:
+                days[lot.acquisition_date] = days.get(lot.acquisition_date, Decimal('0')) + lot.quantity
+            return tuple(sorted(days.items()))
+
+        for key, pair in sides.items():
+            remaining = list(pair['IN'])
+            unmatched = []
+            for outgoing in pair['OUT']:
+                match = next((incoming for incoming in remaining
+                    if outgoing.quantity == incoming.quantity
+                    and (not outgoing.moved_lots or not incoming.moved_lots
+                         or signature(outgoing) == signature(incoming))), None)
+                if match is None:
+                    unmatched.append(outgoing)
+                    continue
+                remaining.remove(match)
+                outgoing.source_transaction_ids += match.source_transaction_ids
+                if not outgoing.moved_lots:
+                    outgoing.moved_lots = match.moved_lots
+                moves.append(outgoing)
+            if unmatched and remaining:
+                data_errors.append(f'Conflicting reciprocal transfer details on {key[3]} '
+                                   f'between {key[0]} and {key[1]}')
+            else:
+                # One side alone is supported. Never collapse two observations from
+                # the same side merely because their totals coincide.
+                moves.extend(unmatched)
+                moves.extend(remaining)
+
+        if data_errors:
+            raise DataIntegrityError(
+                f"{len(data_errors)} transfer record(s) have data integrity issues:\n  "
+                + "\n  ".join(data_errors)
+            )
+
+        logger.info(
+            f"Created {len(moves)} internal transfer event(s) from {len(raw_transfers)} "
+            f"raw transfer row(s)."
+        )
+        return moves

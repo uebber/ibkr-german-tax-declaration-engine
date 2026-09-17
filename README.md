@@ -231,6 +231,35 @@ Select these fields:
 | 21 | Basis | Cost basis |
 | 22 | RealizedPnl | Realized P&L |
 
+### Query 7: Transfers (Optional)
+
+This query is needed if you hold **more than one account** and have ever moved a position between them. A move between your own accounts is not a sale, so its lots must keep their acquisition date and cost basis — but without this report the engine cannot see the move, and the receiving account will look as if it holds units it never bought. If you hold one account, or have never moved a position, this query is not required.
+
+Create an Activity Flex Query with only the **Transfers** section enabled, and **turn lot detail on** so the export writes one lot row per acquisition day beneath each transfer (this is what produces the `Level of Detail`, `Cost Basis` and `Open Date Time` columns below — they are **required**; an export without them stops the run).
+
+Select these fields:
+
+| # | Field to Select | Description |
+|---|-----------------|-------------|
+| 1 | ClientAccountID | Account identifier |
+| 2 | CurrencyPrimary | Instrument currency |
+| 3 | AssetClass | STK, etc. (CASH rows are ignored) |
+| 4 | Symbol | Instrument symbol |
+| 5 | Description | Instrument description |
+| 6 | Conid | Contract identifier |
+| 7 | ISIN | ISIN |
+| 8 | Multiplier | Contract multiplier |
+| 9 | Date | The move date |
+| 10 | Type | Transfer type (must be INTERNAL) |
+| 11 | Direction | OUT (sending) or IN (receiving) |
+| 12 | TransferAccount | The counterparty account |
+| 13 | Quantity | Units moved |
+| 14 | TransferPrice | Per-unit basis (broker convention; read only to cross-check) |
+| 15 | TransactionID | Summary-row identifier |
+| 16 | Cost Basis | Lot total basis (broker convention; read only to cross-check) — **required** |
+| 17 | Open Date Time | Each lot's acquisition day — **required** |
+| 18 | Level of Detail | TRANSFER (summary) / LOT (per-lot detail) — **required** |
+
 ### Enabling the Flex Web Service (for automated download)
 
 To use the automated download feature (`--download`), you need to enable the Flex Web Service and generate an access token:
@@ -259,6 +288,7 @@ FLEX_QUERY_IDS: dict[str, int | None] = {
     "corporate_actions": 123459, # Your Corporate Actions query ID
     "cash_balance": 123460,      # Your Cash Balance query ID
     "options_eae": None,         # Your Options EAE query ID (None if you never traded index options)
+    "transfers": None,           # Your Transfers query ID (None if you hold one account / never moved a position)
 }
 ```
 
@@ -272,6 +302,7 @@ Cash_Transactions-{YYYY}.csv    # One file per year
 Corporate_Actions-{YYYY}.csv    # One file per year
 Cash_Balance-{YYYY}.csv         # One file per year
 Options_EAE-{YYYY}.csv          # One file per year (only if you trade index options — see below)
+Transfers-{YYYY}.csv            # One file per year (only if you moved a position between your own accounts — see below)
 Positions-{YYYY}-SoY.csv        # Start-of-year positions snapshot
 Positions-{YYYY}-EoY.csv        # End-of-year positions snapshot
 ```
