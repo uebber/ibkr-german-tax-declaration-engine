@@ -33,7 +33,7 @@ from src.domain.assets import (
     PositionSnapshot, person_mark, person_snapshot, snapshots_for_asset)
 from src.domain.assets import Stock
 from src.domain.enums import RealizationType
-from src.domain.exceptions import DataIntegrityError
+from src.domain.exceptions import DataIntegrityError, ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from src.parsers.parsing_orchestrator import ParsingOrchestrator
 from src.parsers.positions_parser import parse_positions_csv
@@ -409,16 +409,13 @@ class TestTheRegistryItself:
     def test_the_preceding_years_snapshots_are_kept_per_account_too(self, tmp_path):
         """The Vorabpauschale's own three snapshots are recorded the same way.
 
-        Two of them have a live consumer whose answer depends on the person's total:
+        One has a live consumer whose answer depends on the person's total:
         the closing count, tested `> 0` in `fund_prices.py` and
-        `vorabpauschale_declarations.py` to decide whether a fund was held at all, and
-        the opening count, which is a **magnitude** in the § 18 Abs. 2 path --
-        `undated_units > held_before_the_year` decides whether a Vorabpauschale is
-        computed or refused for units the reconstruction could not date. Reading one
-        account's row understates the threshold and refuses a figure that is due.
+        `vorabpauschale_declarations.py` to decide whether a fund was held at all.
+        The earlier opening count is retained for diagnostics; matching it to an
+        undated closing tranche does not establish acquisition timing.
 
-        Asserted at the seam because the figure consequence needs an undated tranche in
-        two accounts, and the `> 0` one needs a closing row of zero -- which is 0 of 88
+        Asserted at the seam because the `> 0` case needs a closing row of zero -- 0 of 88
         rows in the exports this engine is run against.
         """
         orchestrator = self._orchestrator(tmp_path)
@@ -690,19 +687,12 @@ class TestTheAssetPositionsDiagnostic:
         assert "processing_results.eoy_positions" in source
 
 
-class TestTheAbs2ThresholdIsThePersonsHolding:
-    """Units the reconstruction could not date, weighed against what was held.
+class TestOpeningCountsDoNotDateLots:
+    """GT-INVSTG-011 requires acquisition evidence for the surviving units.
 
-    § 18 Abs. 2 asks whether a tranche was acquired *during* the Vorabpauschale
-    year. Where the replay could not place a lot in time, the engine answers from
-    the report instead: units the broker already showed at the close of the year
-    before were demonstrably acquired before this year began, so no reduction
-    applies to them. Above that count the question is unanswerable and the fund
-    is refused rather than computed from an invented date.
-
-    That count is the person's, summed over their accounts ([GT-ESTG20-061]).
-    Read from one account's row it is too small, and a Vorabpauschale that is
-    due is refused -- deemed income missing from KAP-INV Zeilen 9-13.
+    Aggregating opening holdings across accounts cannot supply that evidence:
+    the old units may have been sold and replaced. Both a matching opening
+    total and a smaller total must leave an undated positive VP unresolved.
     """
     ISIN = "IE00PERSVP01"
 
@@ -754,17 +744,13 @@ class TestTheAbs2ThresholdIsThePersonsHolding:
             data_gap_collector=None,
         )
 
-    def test_the_units_of_both_accounts_answer_for_the_undated_lot(self):
-        results = self._run([(A, "60"), (B, "40")])
-        assert len(results) == 1, (
-            "100 undated units were all held at the close of the year before, "
-            "across two accounts, so 18 Abs. 2 does not reduce them")
-        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+    def test_a_matching_total_does_not_date_the_surviving_units(self):
+        with pytest.raises(ProcessingError, match="ACQUISITION_DATE_UNKNOWN"):
+            self._run([(A, "60"), (B, "40")])
 
     def test_one_accounts_row_is_not_enough_and_the_fund_is_refused(self):
-        """The other reading, stated so the difference is visible."""
-        results = self._run([(A, "60")])
-        assert results == []
+        with pytest.raises(ProcessingError, match="ACQUISITION_DATE_UNKNOWN"):
+            self._run([(A, "60")])
 
 
 class TestTheEndsOfThePriorYearChannel:
