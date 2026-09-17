@@ -531,3 +531,46 @@ All three already aborted before any figure on the base, so no figure is lost. R
 export (the next change) relocates the moved lots and makes VZ 2023 and VZ 2025 complete again. These
 counts and instrument identifiers stay here, not in a commit message, per CLAUDE.md's public-repo
 rule and the PR-hygiene rule against a portfolio census in published text.
+
+## 2026-09-17 — PR #86 correctness review and fixes
+
+**Category:** `fix-func`. The maintainer authorized correction and merge after an
+independent review of `ea45c42` against base `5a64079` and the knowledge store.
+
+- Missing additive contributions now keep snapshot totals unknown, within an
+  account and across accounts. Opening reconciliation reports every affected
+  holding; checkpoint fallback cannot consume a partial basis. Source:
+  GT-ESTG20-011. Explicit zero cost remains a known value.
+- Snapshot price conflicts are separate from absent prices and survive grouping
+  and row-order changes. An older snapshot cannot clear a current-year conflict;
+  an independently resolved price can. Source: GT-INVSTG-010.
+- A prior position count cannot establish acquisition timing for undated surviving
+  units. Positive Vorabpauschale calculations requiring that timing stop, including
+  when the old units were sold and replaced. No factor is needed when the cap,
+  distributions or Basiszins already establish zero. Sources: GT-INVSTG-011/055.
+
+**Regression evidence:** the original five review probes had four failures and
+one passing control on `ea45c42`. All five pass after correction. The final
+`test_snapshot_integrity.py` expands them to 36 passing cases, including row-order
+permutations, both price endpoints, checkpoint basis, explicit zero basis, grouped
+error reporting and independent price resolution. Five existing tests were updated
+because they had accepted the unsupported quantity-only acquisition inference or
+silent omission when no gap collector was supplied; dates remain unknown on refusal.
+
+**Full suite:** 1,193 passed / 1 skipped without private data; 1,194 passed with a
+copy of the maintainer's exports. Python 3.12.12 and the frozen lockfile dependencies.
+
+**Actual-data validation:** the maintainer's 34 exports span 2021-2025 and one
+account. Their 87 position rows contain no blank quantity, account, cost basis or
+mark price; missing-input and multi-account cases therefore require synthetic tests.
+For VZ 2023, 2024 and 2025, the corrected PR completes with console and PDF identical
+to base `5a64079` (excluding volatile PDF metadata), with unchanged data-gap codes.
+Both base control captures also match. Every capture used fresh identical copies
+of the supplied classification, FX-rate and fund-price caches, with automatic NAV
+fetching disabled. Original export/cache hashes remained unchanged. These results
+establish regression parity, not correctness of every pre-existing figure.
+
+**Architectural acceptance:** bounded follow-up requirements are recorded in
+`docs/reviews/pr-86-required-rework.md`. Account independence and declaration-level
+aggregation remain the target; a separate Person entity is not required. Later PRs
+still need individual review.
