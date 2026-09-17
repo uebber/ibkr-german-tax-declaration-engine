@@ -1,130 +1,107 @@
-# src/processing/option_trade_linker.py
-import logging
-from typing import List, Dict, Tuple
-from decimal import Decimal # Import Decimal
+"""Account-local physical option deliveries (GT-ESTG20-013).
 
-from src.domain.events import TradeEvent, OptionLifecycleEvent, OptionExerciseEvent, OptionAssignmentEvent
-from src.domain.assets import Stock, Option
-from src.identification.asset_resolver import AssetResolver
+Match economic identity before allocating quantities. Same-contract partial
+executions are allocated in the broker order within each leg. Different option
+contracts that cannot be distinguished by the stock export are an ambiguity,
+never a dictionary overwrite. Linking does not choose the tax treatment.
+"""
+from collections import defaultdict
+from decimal import Decimal
+import logging
+
+from src.domain.assets import Option, Stock
+from src.domain.events import OptionExerciseEvent, OptionAssignmentEvent, OptionDeliveryLink
+from src.domain.exceptions import DataIntegrityError
+from src.utils.account_utils import account_key
 
 logger = logging.getLogger(__name__)
 
-class OptionTradeLinker:
-    def __init__(self, asset_resolver: AssetResolver):
-        self.asset_resolver = asset_resolver
 
-    def _build_option_event_lookup(self,
-                                   option_lifecycle_events: List[OptionLifecycleEvent]
-                                   ) -> Dict[Tuple[str, str, str], OptionLifecycleEvent]:
-        """
-        Builds a lookup map for option lifecycle events (Exercise/Assignment).
-        Key: (event_date_str, underlying_conid_str, abs_expected_stock_qty_str)
-        Value: OptionLifecycleEvent
-        """
-        lookup: Dict[Tuple[str, str, str], OptionLifecycleEvent] = {}
-        for opt_event in option_lifecycle_events:
-            if not isinstance(opt_event, (OptionExerciseEvent, OptionAssignmentEvent)):
-                continue
+def _action(event):
+    codes = {c.strip().upper() for c in (event.ibkr_notes_codes or '').split(';')}
+    if 'EX' in codes:
+        return 'EX'
+    if 'A' in codes:
+        return 'A'
+    return None
 
-            option_asset = self.asset_resolver.get_asset_by_id(opt_event.asset_internal_id)
-            if not isinstance(option_asset, Option) or not option_asset.underlying_ibkr_conid:
-                logger.warning(f"OptionLifecycleEvent {opt_event.event_id} (Type: {opt_event.event_type.name}) "
-                               f"is missing valid Option asset or underlying_ibkr_conid. Cannot build lookup key.")
-                continue
 
-            multiplier = option_asset.multiplier if option_asset.multiplier is not None else Decimal("100")
-            if multiplier == Decimal(0): multiplier = Decimal("100") # Safety
+def _order(event):
+    return event.ibkr_transaction_id or '', event.creation_sequence
 
-            expected_stock_qty_abs = (opt_event.quantity_contracts * multiplier).copy_abs()
-            link_key = (
-                opt_event.event_date, # Event date is already string YYYY-MM-DD
-                option_asset.underlying_ibkr_conid,
-                expected_stock_qty_abs.to_eng_string()
-            )
 
-            if link_key in lookup:
-                existing_event = lookup[link_key]
-                logger.warning(
-                    f"Duplicate key {link_key} for option lifecycle event lookup. "
-                    f"Existing event: {existing_event.event_id} ({existing_event.event_type.name}), "
-                    f"New event: {opt_event.event_id} ({opt_event.event_type.name}). Overwriting with new event. "
-                    "This might indicate multiple option events leading to the same underlying stock movement on the same day."
-                )
-            lookup[link_key] = opt_event
-        logger.debug(f"Built option event lookup map with {len(lookup)} entries.")
-        return lookup
+def perform_option_trade_linking(asset_resolver, candidate_option_lifecycle_events,
+                                candidate_stock_trades_for_linking):
+    options, stocks = defaultdict(list), defaultdict(list)
+    errors = []
+    for event in candidate_option_lifecycle_events:
+        if not isinstance(event, (OptionExerciseEvent, OptionAssignmentEvent)):
+            continue
+        asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
+        # Cash-settled options have a separate OptionEAE pairing and no stock leg.
+        if not isinstance(asset, Option) or asset.underlying_asset_internal_id is None:
+            continue
+        # PM-005 repairs the existing Stock premium channel. Fund/other underlying
+        # treatment is a separate pre-existing gap, not a new import rejection.
+        underlying = asset_resolver.get_asset_by_id(asset.underlying_asset_internal_id)
+        if not isinstance(underlying, Stock):
+            continue
+        if asset.strike_price is None or asset.multiplier is None or asset.multiplier <= 0:
+            errors.append(f'Option {event.ibkr_transaction_id}: missing strike/multiplier')
+            continue
+        exercised = isinstance(event, OptionExerciseEvent)
+        buys_stock = (asset.option_type == 'C') == exercised
+        key = (account_key(event.account_id), event.event_date,
+               asset.underlying_asset_internal_id, 'EX' if exercised else 'A',
+               buys_stock, asset.strike_price, event.local_currency)
+        options[key].append((event, event.quantity_contracts * asset.multiplier))
 
-    def link_trades(self,
-                    stock_trades_to_link: List[TradeEvent],
-                    option_event_lookup: Dict[Tuple[str, str, str], OptionLifecycleEvent]
-                    ):
-        """
-        Attempts to link stock trades to option lifecycle events.
-        Modifies stock_trades_to_link in place by setting related_option_event_id.
-        """
-        linked_count = 0
-        if not stock_trades_to_link:
-            logger.debug("No stock trades provided for linking.")
-            return
-        if not option_event_lookup:
-            logger.debug("Option event lookup map is empty. No linking possible.")
-            return
+    for trade in candidate_stock_trades_for_linking:
+        asset = asset_resolver.get_asset_by_id(trade.asset_internal_id)
+        action = _action(trade)
+        if not isinstance(asset, Stock) or action is None:
+            continue
+        key = (account_key(trade.account_id), trade.event_date, trade.asset_internal_id,
+               action, trade.quantity > 0, trade.price_foreign_currency, trade.local_currency)
+        stocks[key].append(trade)
 
-        for stock_trade in stock_trades_to_link:
-            stock_asset = self.asset_resolver.get_asset_by_id(stock_trade.asset_internal_id)
-            if not isinstance(stock_asset, Stock) or not stock_asset.ibkr_conid:
-                logger.warning(f"Stock trade {stock_trade.ibkr_transaction_id} (Event ID: {stock_trade.event_id}) "
-                               f"is missing valid Stock asset or ibkr_conid. Cannot attempt linking.")
-                continue
-
-            stock_qty_abs_str = stock_trade.quantity.copy_abs().to_eng_string()
-            # For stock trades, the "key" needs to use the stock's own conid for the conid part of the tuple
-            link_key_for_stock_trade = (
-                stock_trade.event_date,
-                stock_asset.ibkr_conid, # Use the stock's conid
-                stock_qty_abs_str
-            )
-
-            matched_option_event = option_event_lookup.get(link_key_for_stock_trade)
-
-            if matched_option_event:
-                stock_trade.related_option_event_id = matched_option_event.event_id
-                linked_count += 1
-                logger.info(
-                    f"Successfully linked stock trade {stock_trade.ibkr_transaction_id} (Asset: {stock_asset.get_classification_key()}) "
-                    f"to option event {matched_option_event.event_id} (Type: {matched_option_event.event_type.name}) "
-                    f"via key: {link_key_for_stock_trade}"
-                )
-            else:
-                logger.warning(
-                    f"Stock trade {stock_trade.ibkr_transaction_id} (Asset: {stock_asset.get_classification_key()}, Event Date: {stock_trade.event_date}, ConID: {stock_asset.ibkr_conid}, Qty: {stock_trade.quantity}) "
-                    f"has E/A Notes/Codes ('{stock_trade.ibkr_notes_codes}') but no matching OptionLifecycleEvent found. "
-                    f"Lookup key: {link_key_for_stock_trade}. "
-                    f"Available option event keys for date {stock_trade.event_date}: "
-                    f"{ {k for k in option_event_lookup if k[0] == stock_trade.event_date} }"
-                )
-        logger.info(f"Option trade linking completed. {linked_count} stock trades linked to option events.")
-
-def perform_option_trade_linking(
-    asset_resolver: AssetResolver,
-    candidate_option_lifecycle_events: List[OptionLifecycleEvent],
-    candidate_stock_trades_for_linking: List[TradeEvent]
-):
-    """
-    Orchestrates the linking of stock trades to option lifecycle events.
-    """
-    if not candidate_stock_trades_for_linking:
-        logger.info("No stock trades eligible for option linking. Skipping linking step.")
-        return
-    if not candidate_option_lifecycle_events:
-        logger.info("No candidate option lifecycle events for linking. Skipping linking step.")
-        return
-
-    linker = OptionTradeLinker(asset_resolver)
-    option_event_lookup = linker._build_option_event_lookup(candidate_option_lifecycle_events)
-
-    if not option_event_lookup:
-        logger.info("Option event lookup map is empty after building. No linking possible for stock trades.")
-        return
-
-    linker.link_trades(candidate_stock_trades_for_linking, option_event_lookup)
+    prepared = []
+    for key in options.keys() | stocks.keys():
+        source = sorted(options.get(key, []), key=lambda item: _order(item[0]))
+        target = sorted(stocks.get(key, []), key=_order)
+        label = f'account {key[0]}, {key[1]}, {key[3]}'
+        source_total = sum((qty for _, qty in source), Decimal('0'))
+        target_total = sum((e.quantity.copy_abs() for e in target), Decimal('0'))
+        if not source:
+            # Preserve the existing stock-only history path. Repairing matching
+            # must not newly reject earlier acquisitions supplied without their
+            # option history (e.g. dividend-rights scenarios). No premium is
+            # invented and no delivered stock value is changed on this path.
+            logger.warning('%s: stock delivery has no supplied option event; '
+                           'retaining the existing unadjusted stock-history treatment', label)
+            continue
+        if not target or source_total != target_total:
+            errors.append(f'{label}: unmatched option/stock delivery quantities; '
+                          f'options={source_total}, stock={target_total}')
+            continue
+        if len({event.asset_internal_id for event, _ in source}) != 1:
+            errors.append(f'{label}: ambiguous contracts share the same delivery terms')
+            continue
+        index, remaining = 0, source[0][1]
+        for trade in target:
+            wanted = trade.quantity.copy_abs()
+            links = []
+            while wanted:
+                event, _ = source[index]
+                take = min(wanted, remaining)
+                links.append(OptionDeliveryLink(event.event_id, take))
+                wanted -= take
+                remaining -= take
+                if remaining == 0 and index + 1 < len(source):
+                    index += 1
+                    remaining = source[index][1]
+            prepared.append((trade, links))
+    if errors:
+        raise DataIntegrityError('Option delivery linking failed:\n  ' + '\n  '.join(sorted(errors)))
+    for trade, links in prepared:
+        trade.option_delivery_links = links

@@ -15,7 +15,7 @@ same obligations, not additional TODOs.
 | PM-002 | #86 R2 | Separate instrument prices from holdings | Open | Unassigned / not yet scheduled | None |
 | PM-003 | #86 R3 | Explicit currency boundaries | Open | Unassigned / not yet scheduled | None |
 | PM-004 | #86 R4 | Behavioral boundary tests | Open | Unassigned / not yet scheduled | None |
-| PM-005 | #87 PR87-P1; explicitly deferred by maintainer on 2026-09-17 | Account-scoped option linking and premium adjustments | Open | Unassigned / follow-up after #87 | Reproduction recorded; implementation pending |
+| PM-005 | #87 PR87-P1; brought into #88 by the maintainer | Account-scoped option linking and premium adjustments | In progress | Current #88 correction | Implementation and verification pending; not closed |
 
 ## PM-001 — Account-scoped snapshot input
 

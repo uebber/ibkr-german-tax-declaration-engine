@@ -44,6 +44,9 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     if not parsed_date:
         raise ValueError(f"Event {event.event_id} ({type(event).__name__}) has unparseable date '{event.event_date}'. Cannot generate sort key.")
 
+    if event.resolved_day_position is not None:
+        return parsed_date, (event.resolved_day_position, event.creation_sequence)
+
     asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
     if not asset:
         raise ValueError(f"Event {event.event_id} ({type(event).__name__}) on {parsed_date} references unknown asset {event.asset_internal_id}. Cannot generate sort key.")

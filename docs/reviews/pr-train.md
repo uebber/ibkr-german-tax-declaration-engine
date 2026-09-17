@@ -9,6 +9,14 @@ Apply [review-criteria.md](review-criteria.md) to every PR.
 
 ## Resume here
 
+**Active #88 correction:** the maintainer authorized #88 together with PM-005.
+Live main is `89e7c24`, original head `4da165a`, isolated integration `0b1910e`.
+The initial candidate fails every supported real-data year despite 1,293 passing
+tests. Option-order correction restores parity in diagnostic captures. See
+[PR #88 review](pr-88-review.md) for findings and the ongoing correction plan.
+No candidate is accepted or published. PM-005 is active in this run; other accepted
+follow-up remains open. Any further figure change needs explicit approval.
+
 **TR-008 update, 2026-09-17:** the maintainer confirmed that the commission credit
 is a refund of an earlier overcharge and approved the measured VZ 2024 difference.
 The restoration on `fix/pr87-commission-refund` is verified and authorized for merge.

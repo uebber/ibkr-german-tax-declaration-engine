@@ -27,6 +27,8 @@ from src.domain.enums import FinancialEventType, InvestmentFundType
 from src.utils.snapshot_dates import (
     first_business_day_of_year, last_business_day_of_year)
 from src.utils.sorting_utils import get_event_sort_key
+from src.engine.option_premiums import OptionPremiumBook
+from src.processing.event_ordering import order_financial_events
 from src.domain.exceptions import ProcessingError
 from src.utils.type_utils import parse_ibkr_date
 
@@ -615,7 +617,8 @@ def run_main_calculations(
     historical_currency_events: DefaultDict[str, List[FinancialEvent]] = defaultdict(list)
     current_year_events: List[FinancialEvent] = []
 
-    pending_option_adjustments: Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]] = {}
+    option_premiums = OptionPremiumBook(ctx)
+    financial_events = order_financial_events(financial_events, asset_resolver)
 
     tax_year_start_date_str = f"{tax_year}-01-01"
     tax_year_end_date_str = f"{tax_year}-12-31"
@@ -1269,6 +1272,9 @@ def run_main_calculations(
 
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")
     for event_idx, event in enumerate(current_year_events):
+        # The opening check cannot see lots transferred in later in this year.
+        # Recheck consumption against the account's state at this event.
+        _require_disposal_history([event], fifo_ledgers, asset_resolver, data_gap_collector)
         asset_object = asset_resolver.get_asset_by_id(event.asset_internal_id)
         if not asset_object:
             raise ProcessingError(f"Event {event.event_id} ({event.event_type.name}) references unknown asset {event.asset_internal_id}. Asset resolution failure.")
@@ -1302,7 +1308,9 @@ def run_main_calculations(
                 context: Dict[str, Any] = {
                     'asset_resolver': asset_resolver,
                     'fifo_ledgers': fifo_ledgers,
-                    'pending_option_adjustments': pending_option_adjustments,
+                    'option_premiums': option_premiums,
+                    'transfer_coordinator': lambda move: apply_internal_transfer(
+                        move, fifo_ledgers, asset_resolver, data_gap_collector),
                     'currency_converter': currency_converter,
                     # Phase 5a: Pass currency infrastructure for implicit FX from security trades
                     'currency_fifo_ledgers': currency_fifo_ledgers,
@@ -1440,7 +1448,7 @@ def run_main_calculations(
 
 
     logger.info("Finished processing current year events.")
-    logger.info(f"Pending option adjustments stored: {len(pending_option_adjustments)}")
+    option_premiums.require_empty()
 
 
     logger.info("Performing End-of-Year (EOY) quantity validation per account...")

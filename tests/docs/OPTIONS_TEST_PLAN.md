@@ -210,9 +210,10 @@ def create_option_lifecycle_event(
 
 #### C. Stock Trade Linker Setup
 
-The `OptionTradeLinker` requires:
-- Option event lookup keyed by `(date, underlying_conid, abs_qty)`
-- Stock trades with matching keys get linked
+The delivery matcher uses account, date, underlying, action, direction, strike
+and currency. Stock events carry quantity allocations in `option_delivery_links`.
+Same-contract partial executions are allocated in broker order; indistinguishable
+different contracts are refused. See `test_option_delivery_integrity.py`.
 
 ### 4.2 Test File Structure
 
@@ -235,12 +236,12 @@ tests/
 **Phase 2: Processor Tests**
 1. Test `OptionExerciseProcessor` with mock context
 2. Test `OptionAssignmentProcessor` with mock context
-3. Verify `pending_option_adjustments` dict populated correctly
+3. Verify account-owned `OptionPremiumBook` allocations and exact remainder conservation
 
 **Phase 3: Trade Linker Tests**
-1. Test `OptionTradeLinker._build_option_event_lookup()`
-2. Test `OptionTradeLinker.link_trades()`
-3. Verify `related_option_event_id` set on stock trades
+1. Test `perform_option_trade_linking()` with account and contract distinctions
+2. Test split/aggregated stock deliveries and ambiguous contracts
+3. Verify `option_delivery_links` carry exact quantities on stock trades
 
 **Phase 4: Integration Tests (Full Pipeline)**
 1. CSV → Parsing → Enrichment → Calculation → RGL
@@ -317,7 +318,7 @@ tests:
 - [x] `OptionExerciseEvent`, `OptionAssignmentEvent`, `OptionExpirationWorthlessEvent`
 - [x] `consume_long_option_get_cost()`, `consume_short_option_get_proceeds()`
 - [x] `OptionExerciseProcessor`, `OptionAssignmentProcessor`, `OptionExpirationWorthlessProcessor`
-- [x] `OptionTradeLinker` and `perform_option_trade_linking()`
+- [x] `perform_option_trade_linking()` and the account-owned `OptionPremiumBook`
 - [x] Premium adjustment logic in `TradeProcessor`
 
 ### 6.2 Test Infrastructure Available
@@ -855,43 +856,14 @@ Note: Same option, same time, different transaction IDs - these are partial fill
 - [ ] Stock trade linking works with large share quantities
 - [ ] Memory/performance acceptable
 
-### 13.4 Gap 3: Same-Day Multiple Assignments (P3)
+### 13.4 Same-day option delivery integrity (PM-005)
 
-**Problem:** Linking logic uses `(date, underlying_conid, qty)` as key. Multiple same-day assignments for different options could conflict.
-
-**Real Data Pattern:**
-```csv
-# Two different GME options assigned same day
-2023-06-30: BUY 15 GME 230630C00021000 @ $0, code "A"
-2023-06-30: BUY 10 GME 230630C00020000 @ $0, code "A"  # Different strike
-# Stock trades:
-2023-06-30: SELL 1500 GME @ $21, code "A"
-2023-06-30: SELL 1000 GME @ $20, code "A"
-```
-
-**Implementation Steps:**
-
-1. **Review `OptionTradeLinker` linking key construction**
-   - Current key: `(date, underlying_conid, qty * multiplier)`
-   - Issue: Two different options, same underlying, different quantities would be fine
-   - Issue: Same quantity + same underlying + same day would collide
-
-2. **Add test case to verify or expose the issue:**
-   ```yaml
-   - id: OPT_LINK_003
-     description: "Two options assigned same day - verify independent linking"
-     inputs:
-       # Option A: 10 contracts Call @ $50
-       # Option B: 10 contracts Call @ $55
-       # Both assigned same day
-   ```
-
-3. **If bug found, fix linking key to include option contract ID**
-
-**Acceptance Criteria:**
-- [ ] Each option assignment links to correct stock trade
-- [ ] No cross-contamination of premium adjustments
-- [ ] Warning logged if ambiguous linking detected
+`test_option_delivery_integrity.py` covers two accounts, both call/put directions,
+exercises and assignments, reversed rows, different strikes, partial/aggregated
+deliveries, interleaved same-day openings/exercises, ambiguous contracts and
+single consumption of premiums. `test_event_chronology.py` rejects the old
+blanket lifecycle-before-trades rule. Tests preserve the distinction between
+correct ownership/allocation and the pre-existing premium-tax-treatment gaps.
 
 ### 13.5 Optional: Commission Accuracy Enhancement
 

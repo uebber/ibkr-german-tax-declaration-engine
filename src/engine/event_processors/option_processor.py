@@ -9,10 +9,11 @@ from src.domain.events import (
     OptionExerciseEvent, OptionAssignmentEvent, OptionExpirationWorthlessEvent,
     OptionCashSettlementEvent, FinancialEvent
 )
-from src.domain.assets import Option, Asset 
+from src.domain.assets import Option, Asset, Stock
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType
 from src.domain.results import RealizedGainLoss
 from src.engine.fifo_manager import FifoLedger, ConsumedLotDetail
+from src.engine.option_premiums import OptionPremiumBook
 from src.domain.exceptions import ProcessingError
 from src.identification.asset_resolver import AssetResolver
 from .base_processor import EventProcessor
@@ -32,10 +33,10 @@ class OptionExerciseProcessor(EventProcessor):
             return []
 
         asset_resolver: Optional[AssetResolver] = context.get('asset_resolver')
-        pending_adjustments: Optional[Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]]] = context.get('pending_option_adjustments')
+        pending_adjustments: Optional[OptionPremiumBook] = context.get('option_premiums')
 
         if asset_resolver is None or pending_adjustments is None:
-            logger.critical(f"Missing asset_resolver or pending_option_adjustments in context for OptionExerciseProcessor. Event ID: {event.event_id}")
+            logger.critical(f"Missing asset_resolver or option_premiums in context for OptionExerciseProcessor. Event ID: {event.event_id}")
             raise ValueError("Missing required context for option exercise processing.")
 
         option_asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
@@ -72,9 +73,9 @@ class OptionExerciseProcessor(EventProcessor):
             
             logger.debug(f"  Total premium paid (cost) for exercised option {option_asset.get_classification_key()}: {total_premium_paid_eur} EUR from {len(consumed_lot_details)} consumed lot details.")
 
-            pending_adjustments[event.event_id] = (total_premium_paid_eur, event.asset_internal_id, option_asset.option_type)
-            logger.info(f"  Stored pending adjustment for stock trade linked to exercise event {event.event_id}. "
-                        f"Total Premium Paid (Cost): {total_premium_paid_eur} EUR, Option Type: {option_asset.option_type}")
+            if isinstance(asset_resolver.get_asset_by_id(option_asset.underlying_asset_internal_id), Stock):
+                pending_adjustments.record(event, option_asset, total_premium_paid_eur)
+                logger.info('Stored account-owned premium for exercise %s', event.event_id)
 
         except ValueError as e:
             logger.critical(f"Error consuming long option lots for exercise event {event.event_id}: {e}", exc_info=True)
@@ -93,10 +94,10 @@ class OptionAssignmentProcessor(EventProcessor):
             return []
 
         asset_resolver: Optional[AssetResolver] = context.get('asset_resolver')
-        pending_adjustments: Optional[Dict[uuid.UUID, Tuple[Decimal, uuid.UUID, str]]] = context.get('pending_option_adjustments')
+        pending_adjustments: Optional[OptionPremiumBook] = context.get('option_premiums')
 
         if asset_resolver is None or pending_adjustments is None:
-            logger.critical(f"Missing asset_resolver or pending_option_adjustments in context for OptionAssignmentProcessor. Event ID: {event.event_id}")
+            logger.critical(f"Missing asset_resolver or option_premiums in context for OptionAssignmentProcessor. Event ID: {event.event_id}")
             raise ValueError("Missing required context for option assignment processing.")
 
         option_asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
@@ -128,9 +129,9 @@ class OptionAssignmentProcessor(EventProcessor):
 
             logger.debug(f"  Total premium received (proceeds) for assigned option {option_asset.get_classification_key()}: {total_premium_received_eur} EUR from {len(consumed_lot_details)} consumed lot details.")
 
-            pending_adjustments[event.event_id] = (total_premium_received_eur, event.asset_internal_id, option_asset.option_type)
-            logger.info(f"  Stored pending adjustment for stock trade linked to assignment event {event.event_id}. "
-                        f"Total Premium Received (Proceeds): {total_premium_received_eur} EUR, Option Type: {option_asset.option_type}")
+            if isinstance(asset_resolver.get_asset_by_id(option_asset.underlying_asset_internal_id), Stock):
+                pending_adjustments.record(event, option_asset, total_premium_received_eur)
+                logger.info('Stored account-owned premium for assignment %s', event.event_id)
 
         except ValueError as e:
             logger.critical(f"Error consuming short option lots for assignment event {event.event_id}: {e}", exc_info=True)

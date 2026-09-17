@@ -1389,7 +1389,7 @@ class ParsingOrchestrator:
                 candidate_option_lifecycle_events=self.candidate_option_lifecycle_events,
                 candidate_stock_trades_for_linking=self.candidate_stock_trades_for_linking
             )
-            # self.domain_financial_events now contains events with potentially updated related_option_event_id
+            # Stock events now carry validated quantity allocations to option events.
             
             # NEW STEP: Perform withholding tax linking
             logger.info("Performing withholding tax linking...")
