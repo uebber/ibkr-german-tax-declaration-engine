@@ -68,13 +68,45 @@ def trade_row(account: str, isin: str, date: str, qty, price, side: str, open_cl
 
 
 def position_row(account: str, isin: str, qty, cost, currency: str = "EUR",
-                 price="100", symbol: Optional[str] = None) -> List[Any]:
-    """One Positions row (POSITIONS_COLUMNS order) for SoY/EoY snapshots."""
+                 price="100", symbol: Optional[str] = None,
+                 conid: Optional[str] = None, value=None) -> List[Any]:
+    """One Positions row (POSITIONS_COLUMNS order) for SoY/EoY snapshots.
+
+    `cost` of None leaves CostBasisMoney blank, and `price` of None leaves MarkPrice
+    blank -- what a broker omitting a figure emits, which is distinct from zero.
+    `conid` distinguishes two contracts of one ISIN, which is how the same security
+    listed on two exchanges arrives. `value` overrides PositionValue, which otherwise
+    is the quantity times the price.
+    """
     q = Decimal(str(qty))
+    p = Decimal(str(price)) if price is not None else None
+    v = Decimal(str(value)) if value is not None else (q * p if p is not None else None)
     return [account, currency, "STK", "COMMON", symbol or isin[:6],
-            f"{symbol or isin[:6]} security", isin, q, q * Decimal(str(price)),
-            Decimal(str(price)), Decimal(str(cost)), None, conid_for(isin), None,
-            Decimal("1")]
+            f"{symbol or isin[:6]} security", isin, q, v, p,
+            Decimal(str(cost)) if cost is not None else None,
+            None, conid or conid_for(isin), None, Decimal("1")]
+
+
+def fx_trade_row(account: str, foreign_currency: str, direction: str, foreign_amount,
+                 eur_amount, ecb_rate, date: str, tx_id: str) -> List[Any]:
+    """One explicit FX trade row (TRADES_COLUMNS order), IBKR's FX-pair shape.
+
+    IBKR reports an FX conversion as a `EUR.<FOREIGN>` row in AssetClass CASH:
+    `Quantity` is the EUR leg, signed -- negative when EUR is given up to obtain
+    the foreign currency -- and `TradePrice` is the rate in ECB's direction,
+    foreign units per EUR.
+
+    `direction` is "BUY" to acquire the foreign currency, "SELL" to dispose of it.
+    Both amounts are absolute; the sign comes from the direction.
+    """
+    if Decimal(str(foreign_amount)) < 0 or Decimal(str(eur_amount)) < 0:
+        raise ValueError(f"FX trade {tx_id}: amounts are absolute, the direction carries the sign")
+    quantity = -Decimal(str(eur_amount)) if direction == "BUY" else Decimal(str(eur_amount))
+    return [account, "EUR", "CASH", "", f"EUR.{foreign_currency}",
+            f"FX EUR.{foreign_currency}", "", None, None, None, date,
+            quantity, Decimal(str(ecb_rate)), Decimal("0"), "EUR",
+            "SELL" if direction == "BUY" else "BUY", tx_id, None, None, None, None,
+            Decimal("1"), "O"]
 
 
 def cash_balance_row(account: str, currency: str, soy, eoy,
@@ -95,7 +127,8 @@ def cash_transaction_row(account: str, currency: str, amount, tx_type: str, date
 
 
 __all__ = [
-    "write_csv", "conid_for", "trade_row", "position_row", "cash_balance_row",
+    "write_csv", "conid_for", "trade_row", "position_row", "fx_trade_row",
+    "cash_balance_row",
     "cash_transaction_row",
     "TRADES_COLUMNS", "CASH_TRANSACTIONS_COLUMNS", "POSITIONS_COLUMNS",
     "CORPORATE_ACTIONS_COLUMNS", "CASH_BALANCE_COLUMNS",

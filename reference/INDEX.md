@@ -12,7 +12,7 @@ tagged on the headings here. See the Purity Rule in docs/knowledge-store.md.
 
 ## Tax Law (EStG)
 
-- [EStG 20 -- Kapitalvermoegen](tax-law/estg-20-kapitalvermoegen.md) -- Central statute for all capital income (dividends, gains, options, corporate actions)
+- [EStG 20 -- Kapitalvermoegen](tax-law/estg-20-kapitalvermoegen.md) -- Central statute for all capital income (dividends, gains, options, corporate actions); also hosts whose holding is declared and which lot a disposal consumes
 - [EStG 20 Abs. 6 -- Verlustverrechnung](tax-law/estg-20-abs6-verlustverrechnung.md) -- Loss offsetting rules, stock ring-fencing, abolished derivative cap
 - [EStG 23 -- Private Veraeusserung](tax-law/estg-23-private-veraeusserung.md) -- Private sales (Gold and commodity ETCs), 1-year speculation period
 - [EStG 32d -- Abgeltungsteuer](tax-law/estg-32d-abgeltungsteuer.md) -- Flat tax rate (25%), Veranlagungspflicht (Abs. 3), foreign tax credit (Abs. 5), Guenstigerpruefung (Abs. 6)

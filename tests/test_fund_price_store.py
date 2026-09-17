@@ -27,7 +27,7 @@ from decimal import Decimal
 
 import pytest
 
-from src.domain.assets import InvestmentFund
+from src.domain.assets import InvestmentFund, SnapshotsByAccount, person_snapshot
 from src.domain.enums import InvestmentFundType
 from src.processing.data_gaps import DataGapCollector, DataGapError, GapSeverity
 from src.processing.fund_prices import (
@@ -38,6 +38,22 @@ from src.processing.fund_prices import (
     resolve_year_start_prices,
 )
 from tests.support.base import FifoTestCaseBase
+from tests.support.prior_year_snapshots import snapshot_row
+
+
+# The preceding year's snapshots the funds below are reported in, per
+# (account, asset) exactly as the engine holds them. Module-level because
+# `_fund` writes the rows and `_resolve` reads them, while a test names only the
+# fund; cleared between tests by the autouse fixture beneath.
+_PRIOR_SOY: SnapshotsByAccount = {}
+_PRIOR_EOY: SnapshotsByAccount = {}
+
+
+@pytest.fixture(autouse=True)
+def _empty_prior_year_registries():
+    _PRIOR_SOY.clear()
+    _PRIOR_EOY.clear()
+    yield
 
 
 def _fund(*, eoy_qty=Decimal("100"), soy_price=None, soy_currency="EUR",
@@ -45,12 +61,19 @@ def _fund(*, eoy_qty=Decimal("100"), soy_price=None, soy_currency="EUR",
     fund = InvestmentFund(
         fund_type=InvestmentFundType.AKTIENFONDS, description=description,
         currency="EUR", ibkr_isin=isin, ibkr_symbol="MYF")
-    fund.prior_year_eoy_quantity = eoy_qty
-    fund.prior_year_soy_mark_price = soy_price
-    if soy_price is not None:
-        fund.prior_year_soy_mark_price_currency = soy_currency
-        fund.prior_year_soy_mark_price_date = soy_day
+    _PRIOR_EOY.update(snapshot_row(fund.internal_asset_id, quantity=eoy_qty))
+    _PRIOR_SOY.update(snapshot_row(
+        fund.internal_asset_id,
+        mark_price=soy_price,
+        mark_price_currency=soy_currency if soy_price is not None else None,
+        mark_price_date=soy_day if soy_price is not None else None,
+    ))
     return fund
+
+
+def _year_start_price(fund):
+    """The year-start Ruecknahmepreis the run settled on, as the engine will read it."""
+    return person_snapshot(_PRIOR_SOY, fund.internal_asset_id)
 
 
 def _price(price="31.1026", currency="USD", day=date(2023, 1, 3), source="issuer NAV file"):
@@ -67,7 +90,8 @@ def _nav(price="31.1026", currency="USD", day=date(2023, 1, 3)):
 def _resolve(funds, *, store, interactive=False, collector=None, year=2023,
              fetch=None, ask=None, auto_fetch=True):
     return resolve_year_start_prices(
-        assets=funds, vorabpauschale_year=year, store=store, interactive=interactive,
+        assets=funds, prior_soy_positions=_PRIOR_SOY, prior_eoy_positions=_PRIOR_EOY,
+        vorabpauschale_year=year, store=store, interactive=interactive,
         data_gap_collector=collector if collector is not None else DataGapCollector(),
         ask=ask, fetch=fetch, auto_fetch=auto_fetch)
 
@@ -122,7 +146,7 @@ class TestTheOrderOfSources:
         _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
                  fetch=lambda a, y: _nav(price="101.5"))
 
-        assert fund.prior_year_soy_mark_price == Decimal("101.5")
+        assert _year_start_price(fund).mark_price == Decimal("101.5")
 
     def test_the_nav_brings_its_own_day_and_currency(self, tmp_path):
         """Rz. 18.6 converts at the rate of the day the price was set
@@ -132,8 +156,93 @@ class TestTheOrderOfSources:
         _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
                  fetch=lambda a, y: _nav(currency="USD", day=date(2023, 1, 3)))
 
-        assert fund.prior_year_soy_mark_price_currency == "USD"
-        assert fund.prior_year_soy_mark_price_date == date(2023, 1, 3)
+        assert _year_start_price(fund).mark_price_currency == "USD"
+        assert _year_start_price(fund).mark_price_date == date(2023, 1, 3)
+
+    def test_the_reports_own_price_keeps_its_day_and_its_currency(self, tmp_path):
+        """The report's price is a figure the run may use, so it has to carry
+        the two things Rz. 18.6 converts it by: the day it was set and the
+        currency it is quoted in. The NAV path above pins the same two for a
+        price obtained elsewhere; this pins them for the export's own.
+        """
+        fund = _fund(soy_price=Decimal("100"), soy_currency="SGD",
+                     soy_day=date(2023, 1, 3))
+
+        _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
+                 fetch=lambda a, y: None)
+
+        settled = _year_start_price(fund)
+        assert settled.mark_price == Decimal("100")
+        assert settled.mark_price_currency == "SGD"
+        assert settled.mark_price_date == date(2023, 1, 3)
+
+    def test_units_in_either_account_are_units_held(self, tmp_path):
+        """Whether a fund owes a Vorabpauschale at all is the person's holding.
+
+        Rz. 18.4 multiplies by the units held at the close of 31 December, and
+        those are the person's ([GT-ESTG20-061]). Reading one account's row
+        would leave a fund the taxpayer still holds unpriced, and its deemed
+        income would leave the declaration with nothing recorded.
+        """
+        fund = InvestmentFund(
+            fund_type=InvestmentFundType.AKTIENFONDS, description="A Fund",
+            currency="EUR", ibkr_isin="IE00TESTPRC1", ibkr_symbol="MYF")
+        # The account the export happens to list last holds nothing.
+        _PRIOR_EOY.update(snapshot_row(fund.internal_asset_id, quantity=Decimal("100"),
+                                       account="U1111111"))
+        _PRIOR_EOY.update(snapshot_row(fund.internal_asset_id, quantity=Decimal("0"),
+                                       account="U2222222"))
+        _PRIOR_SOY.update(snapshot_row(fund.internal_asset_id, account="U1111111"))
+        _PRIOR_SOY.update(snapshot_row(fund.internal_asset_id, account="U2222222"))
+
+        priced = _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
+                          fetch=lambda a, y: _nav(price="31.1026"))
+
+        assert priced == 1, "a fund held in one of two accounts still owes a figure"
+        assert _year_start_price(fund).mark_price == Decimal("31.1026")
+
+    def test_the_settled_price_reaches_every_account_holding_the_fund(self, tmp_path):
+        """The price is per unit, so it belongs on every account's row.
+
+        Invisible while ledgers are pooled -- the person's view takes whichever
+        row carries it -- and load-bearing as soon as a ledger reads its own
+        account's record.
+        """
+        fund = InvestmentFund(
+            fund_type=InvestmentFundType.AKTIENFONDS, description="A Fund",
+            currency="EUR", ibkr_isin="IE00TESTPRC1", ibkr_symbol="MYF")
+        for account in ("U1111111", "U2222222"):
+            _PRIOR_EOY.update(snapshot_row(fund.internal_asset_id,
+                                           quantity=Decimal("50"), account=account))
+            _PRIOR_SOY.update(snapshot_row(fund.internal_asset_id,
+                                           quantity=Decimal("50"), account=account))
+
+        _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
+                 fetch=lambda a, y: _nav(price="31.1026"))
+
+        rows = [snap for (_a, aid), snap in _PRIOR_SOY.items()
+                if aid == fund.internal_asset_id]
+        assert len(rows) == 2
+        assert all(r.mark_price == Decimal("31.1026") for r in rows)
+
+    def test_a_fund_the_opening_report_omits_is_recorded_under_the_accounts_that_held_it(
+            self, tmp_path):
+        """A fund bought during the Vorabpauschale year is in no start-of-year
+        row, so the settled price has nowhere obvious to go. It goes under the
+        accounts the closing report names, which are accounts the export states
+        -- rather than under an invented one.
+        """
+        fund = InvestmentFund(
+            fund_type=InvestmentFundType.AKTIENFONDS, description="A Fund",
+            currency="EUR", ibkr_isin="IE00TESTPRC1", ibkr_symbol="MYF")
+        _PRIOR_EOY.update(snapshot_row(fund.internal_asset_id, quantity=Decimal("100"),
+                                       account="U1111111"))
+
+        _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
+                 fetch=lambda a, y: _nav(price="31.1026"))
+
+        assert list(_PRIOR_SOY) == [("U1111111", fund.internal_asset_id)]
+        assert _year_start_price(fund).mark_price == Decimal("31.1026")
 
     def test_a_fund_absent_from_the_report_is_priced_the_same_way(self, tmp_path):
         fund = _fund(soy_price=None)
@@ -141,7 +250,7 @@ class TestTheOrderOfSources:
         _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
                  fetch=lambda a, y: _nav(price="31.1026"))
 
-        assert fund.prior_year_soy_mark_price == Decimal("31.1026")
+        assert _year_start_price(fund).mark_price == Decimal("31.1026")
 
     def test_a_stored_price_is_used_without_asking_the_provider(self, tmp_path):
         """A past year's first NAV does not change, so a run that already has
@@ -196,7 +305,7 @@ class TestWhenNoRuecknahmepreisCanBeHad:
         _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
                  collector=collector, fetch=lambda a, y: None)
 
-        assert fund.prior_year_soy_mark_price == Decimal("100")
+        assert _year_start_price(fund).mark_price == Decimal("100")
         gap = collector.gaps[-1]
         assert gap.code == MARKET_FALLBACK_CODE and gap.severity is GapSeverity.WARNING
 
@@ -302,7 +411,7 @@ class TestWhoIsProcessed:
         _resolve([fund], store=FundPriceStore(cache_file_path=str(tmp_path / "p.json")),
                  fetch=None, auto_fetch=False)
 
-        assert fund.prior_year_soy_mark_price == Decimal("100")
+        assert _year_start_price(fund).mark_price == Decimal("100")
 
 
 class TestThePurchasePriceAnchor:

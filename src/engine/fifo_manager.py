@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 import uuid
 from datetime import date as date_obj, datetime
 
-from src.domain.assets import Asset, Option 
+from src.domain.assets import Asset, Option, PositionSnapshot
 from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
@@ -288,10 +288,11 @@ class FifoLedger:
     def initialize_lots_from_soy(self,
                                  asset: Asset,
                                  all_historical_events_for_asset: List[FinancialEvent],
-                                 tax_year: int):
+                                 tax_year: int,
+                                 reported: Optional[PositionSnapshot]):
         """Convenience method: simulate + reconcile in one call (used when no mergers)."""
         self.simulate_historical_events(asset, all_historical_events_for_asset, tax_year)
-        self.reconcile_with_soy_position(asset, tax_year)
+        self.reconcile_with_soy_position(asset, tax_year, reported)
 
     def begin_historical_simulation(self, asset: Asset):
         """Prepare the ledger for historical replay (unified replayer, AR5):
@@ -454,18 +455,24 @@ class FifoLedger:
         for hist_event in all_historical_events_for_asset:
             self.apply_historical_event(asset, hist_event, tax_year)
 
-    def reconcile_with_soy_position(self, asset: Asset, tax_year: int) -> "MarkReconciliation":
+    def reconcile_with_soy_position(self, asset: Asset, tax_year: int,
+                                    reported: Optional[PositionSnapshot]) -> "MarkReconciliation":
         """Reconcile against the tax year's opening snapshot -- the final mark.
 
-        The SoY *record* (`asset.soy_quantity` and friends) is read from
-        `Positions-{tax_year-1}-EoY.csv`, not from any SoY file. Thin wrapper
-        over `reconcile_with_mark`, which every checkpoint uses.
+        `reported` is the holding the opening snapshot carries for this ledger. It is
+        read from `Positions-{tax_year-1}-EoY.csv`, not from any SoY file, and it is
+        passed in rather than read off the Asset because a snapshot belongs to an
+        account: this ledger reconciles against its own account's record, and the
+        person's total is one derivation among others ([GT-ESTG20-061] with
+        [GT-ESTG20-013]). `None` means the snapshot reports nothing for it.
+
+        Thin wrapper over `reconcile_with_mark`, which every checkpoint uses.
         """
         return self.reconcile_with_mark(
             asset,
-            reported_quantity=asset.soy_quantity,
-            reported_cost_basis=asset.soy_cost_basis_amount,
-            reported_cost_basis_currency=asset.soy_cost_basis_currency,
+            reported_quantity=reported.quantity if reported else None,
+            reported_cost_basis=reported.cost_basis_amount if reported else None,
+            reported_cost_basis_currency=reported.cost_basis_currency if reported else None,
             mark_label=f"{tax_year - 1}-12-31 (opening snapshot)",
             fallback_acquisition_date=f"{tax_year-1}-12-31",
             fx_conversion_date=date_obj(tax_year, 1, 1),

@@ -5,12 +5,86 @@
 - **Primary:** [gesetze-im-internet.de -- 20 EStG](https://www.gesetze-im-internet.de/estg/__20.html)
 - **With annotations:** [dejure.org -- 20 EStG](https://dejure.org/gesetze/EStG/20.html)
 - **Current version:** As amended by Jahressteuergesetz 2024 (BGBl. I 2024 Nr. 387), effective 01.01.2025
+- **Also cited here:** [gesetze-im-internet.de -- 2 EStG](https://www.gesetze-im-internet.de/estg/__2.html)
+  and [25 EStG](https://www.gesetze-im-internet.de/estg/__25.html), for the taxable subject and the
+  unit of assessment ([GT-ESTG20-061]). Both retrieved 2026-08-11.
 
 ## Scope
 
 The central statute for capital income. It defines what constitutes capital income (Abs. 1),
 capital gains (Abs. 2), gain calculation (Abs. 4), corporate action treatment (Abs. 4a), and
 loss offsetting (Abs. 6, in its own file).
+
+---
+
+## Whose income -- the taxable subject
+
+### [GT-ESTG20-061] The Steuerpflichtige is the subject; a Depot is not a unit of assessment
+
+**Tier 1 -- statute.** Retrieved from gesetze-im-internet.de on 2026-08-11.
+
+§ 2 Abs. 1 Satz 1 EStG closes its enumeration of the seven Einkunftsarten with one relative clause
+that governs all of them:
+
+*"Der Einkommensteuer unterliegen 1. Einkuenfte aus Land- und Forstwirtschaft, 2. Einkuenfte aus
+Gewerbebetrieb, 3. Einkuenfte aus selbstaendiger Arbeit, 4. Einkuenfte aus nichtselbstaendiger
+Arbeit, 5. Einkuenfte aus Kapitalvermoegen, 6. Einkuenfte aus Vermietung und Verpachtung,
+7. sonstige Einkuenfte im Sinne des § 22, die der Steuerpflichtige waehrend seiner unbeschraenkten
+Einkommensteuerpflicht oder als inlaendische Einkuenfte waehrend seiner beschraenkten
+Einkommensteuerpflicht erzielt."*
+
+Nr. 5 names *Einkuenfte aus Kapitalvermoegen* -- the income § 20 defines -- and the closing clause
+attaches them to **der Steuerpflichtige**.
+
+§ 25 Abs. 1 EStG fixes the unit of assessment:
+
+*"Die Einkommensteuer wird nach Ablauf des Kalenderjahres (Veranlagungszeitraum) nach dem Einkommen
+veranlagt, das der Steuerpflichtige in diesem Veranlagungszeitraum bezogen hat, soweit nicht nach
+§ 43 Absatz 5 und § 46 eine Veranlagung unterbleibt."*
+
+§ 25 Abs. 3 Satz 1 EStG: *"Die steuerpflichtige Person hat fuer den Veranlagungszeitraum eine
+eigenhaendig unterschriebene Einkommensteuererklaerung abzugeben."*
+
+| Question | Answer | Source |
+|----------|--------|--------|
+| Whose Kapitalertraege are assessed? | The Steuerpflichtige's | § 2 Abs. 1 S. 1 Nr. 5 (Tier 1) |
+| Over which unit and period? | One person, one Veranlagungszeitraum | § 25 Abs. 1 (Tier 1) |
+| One declaration, or one per custody account? | One per person and period | § 25 Abs. 3 S. 1 (Tier 1) |
+| Is a Depot a unit of assessment? | **No provision cited here makes it one** | § 2 Abs. 1, § 25 Abs. 1 (Tier 1) |
+
+**Applicable tax years: both quoted sentences are unchanged across VZ 2023-2025.**
+Verified 2026-08-11 against the version histories:
+
+- § 2 Abs. 1 Satz 1 -- last amended by Artikel 2 JStG 2022 (BGBl. I 2022 S. 2294, published
+  16.12.2022), i.e. before the window opens. No later amendment listed.
+- § 25 Abs. 1 -- last substantive revision effective 01.01.2012 (Steuervereinfachungsgesetz 2011,
+  BGBl. I S. 2131). No amendment listed from 2023 onwards.
+
+One loose end, recorded rather than relied on: buzer.de lists a further amendment to § 25 effective
+29.06.2026 (BGBl. 2026 I Nr. 197) whose content was not established; dejure.org lists none. It falls
+after VZ 2025, so nothing stated above rests on it. Any use of this claim for VZ 2026 or later must
+settle it first.
+
+> **Two Tier 1 copies disagreed on the § 25 Abs. 1 wording (Validation Protocol item 5).**
+> dejure.org rendered the sentence *without* the clause *"das der Steuerpflichtige in diesem
+> Veranlagungszeitraum bezogen hat"* -- the clause this claim turns on. gesetze-im-internet.de
+> (BMJ, the official consolidated text and first in the store's tier table) carries it, confirmed
+> on two separate verbatim retrievals. **The BMJ text is taken.** Noted because agreement between
+> copies is not verification, and neither is disagreement silently resolved.
+
+**What else the cited units contain (Validation Protocol item 2).**
+§ 2: Abs. 2 how Einkuenfte are computed per category; Abs. 3 Gesamtbetrag der Einkuenfte; Abs. 4
+Einkommen; Abs. 5 zu versteuerndes Einkommen; Abs. 5a and 5b adjust these terms where non-tax
+statutes reference them, Abs. 5b excluding Kapitalertraege in the cases it names; Abs. 6 tarifliche
+to festzusetzende Einkommensteuer; Abs. 7 the annual-tax principle; Abs. 8 extension to
+Lebenspartnerschaften. § 25: Abs. 2 weggefallen; Abs. 3 Satz 2 joint returns of spouses; Abs. 4
+electronic transmission and its hardship exemption.
+
+**Relationship to [GT-ESTG20-013] and to open question Q2.** This claim settles *whose* holding is
+assessed. It does not settle *which lot* a disposal consumes where one security is held in more
+than one Depot -- that is Rz. 97 Satz 2, and for a foreign broker's sub-accounts it remains open
+(`../research/open-legal-questions.md` Q2). The two are independent, and this claim holds whichever
+way Q2 falls: Q2 governs the lot consumed, not the person whose holding is declared.
 
 ---
 

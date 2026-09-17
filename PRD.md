@@ -70,8 +70,8 @@ The system must parse IBKR data from CSV reports: Trades (including the `Open/Cl
 
 #### Note on Start-of-Year Positions and Quantities
 - The `POSITIONS_START_FILE_PATH` is crucial for establishing initial inventory quantities (as `Decimal`) and potentially cost basis (`Decimal`) at the beginning of the tax year.
-- **SOY Quantity Precedence:** The `soy_quantity` reported in the positions start file for each `Asset` (excluding `AssetCategory.CASH_BALANCE` types) is considered **factually correct and has absolute priority** over any quantity that might be derived from analyzing pre-tax-year historical trades.
-- **Assets Not in SOY Report:** For any `Asset` (excluding `AssetCategory.CASH_BALANCE` types) that is **not present** in the positions start file, its `soy_quantity` at the beginning of the tax year **must be assumed to be `Decimal(0)`.**
+- **SOY Quantity Precedence:** The SOY quantity reported in the positions start file for each `Asset` (excluding `AssetCategory.CASH_BALANCE` types) — the person's total, summed across the accounts that report it — is considered **factually correct and has absolute priority** over any quantity that might be derived from analyzing pre-tax-year historical trades.
+- **Assets Not in SOY Report:** For any `Asset` (excluding `AssetCategory.CASH_BALANCE` types) that is **not present** in the positions start file, its SOY quantity at the beginning of the tax year **must be assumed to be `Decimal(0)`.**
 - The detailed logic for determining the SOY cost basis, which may involve historical FIFO calculations or data from the positions start file, is specified in Section 2.4.
 
 It must handle various CSV dialects and potential character encodings (e.g., BOMs).
@@ -155,20 +155,20 @@ The system must implement the First-In, First-Out (FIFO) method in EUR (using `D
 
 #### Initialization of FIFO Ledgers at Start-of-Year (SOY) and EOY Validation
 
-**SOY Quantity:** The `soy_quantity` (`Decimal`) for an `Asset` (as established per Section 2.1, i.e., primarily from positions start file, or `Decimal(0)` if not listed for non-cash assets) is the definitive starting quantity for its FIFO ledger at the beginning of the tax year. This applies to both long (`soy_quantity` > 0) and short (`soy_quantity` < 0) positions.
+**SOY Quantity:** The SOY quantity (`Decimal`) for an `Asset` (as established per Section 2.1, i.e., primarily from positions start file, or `Decimal(0)` if not listed for non-cash assets) is the definitive starting quantity for its FIFO ledger at the beginning of the tax year. This applies to both long (positive) and short (negative) positions.
 
 **SOY Cost Basis Determination:**
 1. **Historical FIFO Simulation:** The system will simulate the FIFO state by processing historical trade data (transactions like `TradeEvent` and relevant corporate actions such as `CorpActionSplitForward`, `CorpActionStockDividend` occurring *before* the start of the current tax year), using the `INTERNAL_CALCULATION_PRECISION`.
-2. **Prioritization of Reconstructed Data:** The cost basis (or proceeds for initial short positions) for the `soy_quantity` will be derived from this historical simulation if:
+2. **Prioritization of Reconstructed Data:** The cost basis (or proceeds for initial short positions) for the SOY quantity will be derived from this historical simulation if:
    - The simulation process did not encounter internal inconsistencies (e.g., attempting to sell more shares than available based on prior simulated buys).
-   - The net quantity (long or short) derived from the simulation aligns with the sign of the `soy_quantity`.
-   - The total quantity of simulated historical lots (long or short) is sufficient to cover the absolute value of `soy_quantity`.
-3. **Fallback to Reported SOY Cost Basis:** If the conditions for using the historically simulated FIFO lots are not met (e.g., insufficient historical data, simulation inconsistencies, or misalignment with reported SOY quantity sign/magnitude), then the cost basis (or proceeds) for the *entire* `soy_quantity` **must** be taken from the `soy_cost_basis_amount` and `soy_cost_basis_currency` fields reported in the positions start file. This reported cost basis is then converted to EUR if necessary, using the `INTERNAL_CALCULATION_PRECISION`. If this reported SOY cost basis information is also missing, a zero-value FIFO lot (zero cost for long, zero proceeds for short) will be created with an acquisition/opening date of December 31st of the preceding tax year (e.g., "YYYY-1-12-31").
+   - The net quantity (long or short) derived from the simulation aligns with the sign of the SOY quantity.
+   - The total quantity of simulated historical lots (long or short) is sufficient to cover the absolute value of the SOY quantity.
+3. **Fallback to Reported SOY Cost Basis:** If the conditions for using the historically simulated FIFO lots are not met (e.g., insufficient historical data, simulation inconsistencies, or misalignment with reported SOY quantity sign/magnitude), then the cost basis (or proceeds) for the *entire* SOY quantity **must** be taken from the `CostBasisMoney` and `CurrencyPrimary` columns reported in the positions start file. This reported cost basis is then converted to EUR if necessary, using the `INTERNAL_CALCULATION_PRECISION`. **If this reported SOY cost basis information is also missing, the run stops.** It does not fall back to a zero-value lot: a zero basis declares the whole of a later disposal as gain, which is an invented figure and not a missing one. `_ensure_soy_quantities_are_set` refuses a nonzero opening holding reported with no basis, and `_create_fallback_long_lot` refuses the same condition at a mark. (This paragraph described the zero-value fallback until August 2026, by which time the code had already removed it.) Where a basis *is* supplied, the lot it builds carries no acquisition date and is flagged `acquisition_date_is_known=False`; its date is December 31st of the preceding tax year and only § 18 Abs. 2 InvStG honours the flag.
 
-**EOY Quantity Validation:** After processing all `FinancialEvent` objects for the tax year, the calculated end-of-year (EOY) quantity for each `Asset` in its FIFO ledger **must be identical**, within a small numerical tolerance, to the `eoy_quantity` (`Decimal`) reported in the `POSITIONS_END_FILE_PATH` (if the asset is listed).
-- Any discrepancy (beyond the tolerance) between the FIFO-calculated EOY quantity and the reported `eoy_quantity` (for assets present in the end-of-year position report) **must be flagged as a critical error** and reported to the user.
+**EOY Quantity Validation:** After processing all `FinancialEvent` objects for the tax year, the calculated end-of-year (EOY) quantity for each `Asset` in its FIFO ledger **must be identical**, within a small numerical tolerance, to the EOY quantity (`Decimal`) reported in the `POSITIONS_END_FILE_PATH` (if the asset is listed).
+- Any discrepancy (beyond the tolerance) between the FIFO-calculated EOY quantity and the reported EOY quantity (for assets present in the end-of-year position report) **must be flagged as a critical error** and reported to the user.
 - If an asset is not present in the positions end file, its authoritative quantity is `Decimal(0)`. If its calculated EOY quantity differs significantly (beyond the tolerance) from zero, this must also be treated as a critical error.
-- **The run must abort.** The SOY quantity is authoritative — Section 2.4's ledger initialization pins it to the reported `soy_quantity` in every branch, using the historical reconstruction only to derive cost basis and acquisition dates — so the EOY quantity is determined by the SOY snapshot plus the tax year's own events, and has exactly one correct answer. A residual therefore means an event is missing or was processed incorrectly (an absent trade or corporate action, an unlinked option exercise, one instrument resolved under two identifiers), which puts at least one disposal against the wrong lots and makes the gains derived from that ledger wrong, not merely the quantity. The engine checks every asset first and then raises a single `EOY_RECONCILIATION_FAILED` data gap naming all affected positions, so one run identifies the whole problem. It **must not** emit gains, form-line figures or a PDF from an unreconciled ledger: a wrong number that looks plausible is worse than a crash. Note that an incomplete *prior-year* trade history cannot produce this condition — it affects carried-in cost basis, never the running quantity.
+- **The run must abort.** The SOY quantity is authoritative — Section 2.4's ledger initialization pins it to the reported SOY quantity in every branch, using the historical reconstruction only to derive cost basis and acquisition dates — so the EOY quantity is determined by the SOY snapshot plus the tax year's own events, and has exactly one correct answer. A residual therefore means an event is missing or was processed incorrectly (an absent trade or corporate action, an unlinked option exercise, one instrument resolved under two identifiers), which puts at least one disposal against the wrong lots and makes the gains derived from that ledger wrong, not merely the quantity. The engine checks every asset first and then raises a single `EOY_RECONCILIATION_FAILED` data gap naming all affected positions, so one run identifies the whole problem. It **must not** emit gains, form-line figures or a PDF from an unreconciled ledger: a wrong number that looks plausible is worse than a crash. Note that an incomplete *prior-year* trade history cannot produce this condition — it affects carried-in cost basis, never the running quantity.
 - The **currency** (cash balance) EOY check is deliberately *not* fatal. Its known causes are input-completeness problems — the date range of the cash-balance export, or deposits, withdrawals, margin interest and fees absent from the cash-transactions file — rather than a ledger disagreeing with the broker about a holding. It is recorded as a `CURRENCY_EOY_MISMATCH` data gap (severity WARNING) so it reaches the report rather than only the log.
 
 #### Corporate Action Handling
@@ -516,7 +516,7 @@ All monetary values and precise quantities (e.g., share counts, prices, costs, g
 
 ### Core Asset Types (subclasses of `Asset` in `domain.assets`)
 
-- `Asset`: Base class with `internal_asset_id`, `aliases`, `description`, `currency`, `asset_category` (`AssetCategory` enum), IBKR identifiers, SOY/EOY position data (`Decimal` quantities and values like `soy_quantity`, `soy_cost_basis_amount`, `eoy_quantity`, `eoy_market_price`, `eoy_position_value`). Each subclass correctly sets its `asset_category`.
+- `Asset`: Base class with `internal_asset_id`, `aliases`, `description`, `currency`, `asset_category` (`AssetCategory` enum) and IBKR identifiers. Each subclass correctly sets its `asset_category`. The tax year's SOY/EOY position data is **not** here: it is recorded per `(account, asset)` as `PositionSnapshot` in `ParsingOrchestrator.soy_positions` / `.eoy_positions`, and the person's figure — which is what the return declares — is `person_snapshot()` over those. FIFO is applied per Depot and the person declares the total across their accounts, so both readings are wanted and only one of them is stored.
 - Specific types: `Stock`, `Bond`, `InvestmentFund` (with `fund_type` of `InvestmentFundType` enum, defaults to `InvestmentFundType.NONE`), `Option` (with `strike_price`, `expiry_date`, etc.), `Cfd`, `PrivateSaleAsset`, `CashBalance` (requires `currency` in constructor).
 - `Derivative` as a base for `Option` and `Cfd`, containing `underlying_asset_internal_id`, `underlying_ibkr_conid`, `underlying_ibkr_symbol` and `multiplier`.
 
@@ -577,7 +577,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
 2. Parse IBKR input data files (`ParsingOrchestrator.load_all_raw_data`). For each row:
    - Generate aliases. Resolve or create a unique `Asset` object via `AssetResolver.get_or_create_asset`. Update `Asset` attributes (including `description` based on `description_source_type`). `Decimal` values initialized per Section 2.0.4.
 
-3. Process position files (`ParsingOrchestrator.process_positions`) to populate SOY/EOY data on `Asset` objects. **Crucially, `soy_quantity` and related SOY cost basis fields are recorded here. Per Section 2.1, `soy_quantity` from this file (or `Decimal(0)` if not listed for non-cash assets) is authoritative for starting quantities.**
+3. Process position files (`ParsingOrchestrator.process_positions`) to record the SOY/EOY snapshots, one `PositionSnapshot` per `(account, asset)`. **Crucially, the SOY quantity and cost basis are recorded here. Per Section 2.1, the SOY quantity from this file (or `Decimal(0)` if not listed for non-cash assets) is authoritative for starting quantities.**
 
 4. Discover assets from transaction files (`ParsingOrchestrator.discover_assets_from_transactions`).
 
@@ -627,7 +627,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
 11. Perform Option-to-Stock Trade Linking (`perform_option_trade_linking`): Link `OptionExerciseEvent`/`OptionAssignmentEvent` objects (from the current tax year) to their corresponding stock `TradeEvent` objects by populating `TradeEvent.related_option_event_id`, as detailed in Section 2.4.
 
 12. Initialize FIFO Ledgers for each `Asset`:
-    - **Set initial quantities based on `Asset.soy_quantity` (as determined per Section 2.1).**
+    - **Set initial quantities from the opening snapshot recorded for that ledger (as determined per Section 2.1), read through `person_snapshot()` while ledgers are person-wide.**
     - **Determine initial cost basis for these SOY lots according to the detailed logic in Section 2.4 (SOY Cost Basis Determination), using `INTERNAL_CALCULATION_PRECISION` for any calculations.**
 
 13. Process sorted `FinancialEvent` objects (all confirmed to be within the current tax year) chronologically, updating FIFO ledgers (all calculations using `INTERNAL_CALCULATION_PRECISION`):
@@ -651,7 +651,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
       - For expirations or closing option trades not resulting in stock delivery, generate `RealizedGainLoss` for option premiums with the correct `RealizationType`. These G/L contribute to `derivative_gains_gross` or `derivative_losses_abs`.
     - Calculate gross and net Vorabpauschale (€0 for current tax year), creating `VorabpauschaleData`. The net Vorabpauschale contributes to `fund_income_net_taxable` (as €0).
 
-14. Perform EOY Quantity Validation (as per Section 2.4): Compare calculated EOY quantities in FIFO ledgers against `Asset.eoy_quantity` (from `POSITIONS_END_FILE_PATH`) using a small numerical tolerance. Report any errors.
+14. Perform EOY Quantity Validation (as per Section 2.4): Compare calculated EOY quantities in FIFO ledgers against the closing snapshot (from `POSITIONS_END_FILE_PATH`, read through `person_snapshot()`) using a small numerical tolerance. Report any errors.
 
 15. Aggregate figures into the internal components (`stock_gains_gross`, `stock_losses_abs`, `derivative_gains_gross`, `derivative_losses_abs`, `kap_other_income_positive`, `kap_other_losses_abs`) and then calculate the final values for each tax form line (Anlage KAP Zeilen 19-24, KAP-INV, SO) as per Section 2.7, maintaining `INTERNAL_CALCULATION_PRECISION`. This is handled by the `LossOffsettingEngine`. All aggregations are based on the current tax year events and realizations.
 
@@ -733,10 +733,17 @@ Diagnostic messages (current implementation provides detailed event/asset printi
 - All file paths end with `_FILE_PATH` consistently
 
 ### Asset Position Fields
-- `soy_quantity` instead of `initial_quantity_soy`
-- `soy_cost_basis_amount` instead of `initial_cost_basis_money_soy`
-- `soy_cost_basis_currency` instead of `initial_cost_basis_currency_soy`
-- `eoy_market_price` instead of `eoy_mark_price`
+Every snapshot of a holding was a field on `Asset` until August 2026 — the tax year's own
+(`soy_quantity`, `soy_cost_basis_amount`, `soy_cost_basis_currency`, `eoy_quantity`,
+`eoy_market_price`, `eoy_position_value` and the two mark-price currencies) and the preceding
+calendar year's, which the Vorabpauschale reads (`prior_year_soy_*`, `prior_year_eoy_*`,
+`prior_year_opening_*`). None of them is on `Asset` now. They are the fields of
+`PositionSnapshot` — `quantity`, `cost_basis_amount`, `cost_basis_currency`, `position_value`,
+`mark_price`, `mark_price_currency`, `mark_price_date` — recorded per `(account, asset)` in the
+`ParsingOrchestrator` registries `soy_positions`, `eoy_positions`, `prior_soy_positions`,
+`prior_eoy_positions` and `prior_opening_positions`. The checkpoint marks are `MarkPosition`
+records in `mark_positions`, keyed the same way. The person's figure is `person_snapshot()` or
+`person_mark()` over them, derived where it is needed and never stored.
 
 ### Financial Event Types (simplified)
 - `FinancialEventType.CORP_SPLIT_FORWARD` instead of `CORP_ACTION_SPLIT_FORWARD`

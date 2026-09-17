@@ -9,7 +9,7 @@ from src.pipeline_runner import run_core_processing_pipeline, ProcessingOutput
 from src.processing.data_gaps import DataGapError
 from src.utils.exchange_rate_provider import ExchangeRateProvider  # Base class for mock
 from src.domain.results import RealizedGainLoss
-from src.domain.assets import Asset
+from src.domain.assets import Asset, person_snapshot
 from src.identification.asset_resolver import AssetResolver
 # Ensure AssetClassifier is imported for the dummy instantiation
 from src.classification.asset_classifier import AssetClassifier
@@ -246,12 +246,12 @@ class FifoTestCaseBase:
                      preliminary_match = True
 
                 if preliminary_match:
-                    if expected_eoy_state.matches(actual_asset_obj): 
+                    if expected_eoy_state.matches(actual_asset_obj, actual_results.eoy_positions):
                         found_asset_for_eoy_check = True
                         break 
             
             assert found_asset_for_eoy_check, \
                 (f"Asset for EOY state check (identifier: {expected_eoy_state.asset_identifier}) "
                  f"not found or did not match in actual EOY asset states. "
-                 f"Checked against {len(all_actual_assets)} assets with details: {[(a.internal_asset_id, a.get_classification_key() if hasattr(a, 'get_classification_key') else 'N/A', a.eoy_quantity) for a in all_actual_assets]}.")
+                 f"Checked against {len(all_actual_assets)} assets with details: {[(a.internal_asset_id, a.get_classification_key() if hasattr(a, 'get_classification_key') else 'N/A', person_snapshot(actual_results.eoy_positions, a.internal_asset_id)) for a in all_actual_assets]}.")
 

@@ -58,36 +58,21 @@ class AssetResolver:
             "ibkr_isin": asset.ibkr_isin,
             "ibkr_asset_class_raw": asset.ibkr_asset_class_raw,
             "ibkr_sub_category_raw": asset.ibkr_sub_category_raw,
-            "soy_quantity": asset.soy_quantity, # Renamed from initial_quantity_soy
-            "soy_cost_basis_amount": asset.soy_cost_basis_amount, # Renamed from initial_cost_basis_money_soy
-            "soy_cost_basis_currency": asset.soy_cost_basis_currency, # Renamed from initial_cost_basis_currency_soy
-            # The preceding calendar year's snapshot, read by the Vorabpauschale. A positions
-            # row is resolved without its SubCategory, so unless the description says "ETF" the
-            # fund is created as a Stock and becomes an InvestmentFund only when the user's
-            # classification is applied -- which is after this snapshot has been read onto it.
-            # Omitting these here left such a fund with no year-start Ruecknahmepreis, so
-            # 18 Abs. 1 InvStG had nothing to compute from and the figure vanished from
-            # Zeilen 9-13 with nothing recorded.
-            "prior_year_soy_quantity": asset.prior_year_soy_quantity,
-            "prior_year_soy_position_value": asset.prior_year_soy_position_value,
-            "prior_year_soy_mark_price": asset.prior_year_soy_mark_price,
-            "prior_year_soy_mark_price_currency": asset.prior_year_soy_mark_price_currency,
-            # The Stichtag travels with its price. A retyped fund that kept the price
-            # but lost the day would be converted at a date derived from the year
-            # instead, which is wrong by a year on the substitution path.
-            "prior_year_soy_mark_price_date": asset.prior_year_soy_mark_price_date,
-            "prior_year_eoy_quantity": asset.prior_year_eoy_quantity,
-            "prior_year_eoy_position_value": asset.prior_year_eoy_position_value,
-            "prior_year_eoy_mark_price": asset.prior_year_eoy_mark_price,
-            "prior_year_eoy_mark_price_currency": asset.prior_year_eoy_mark_price_currency,
-            "prior_year_eoy_mark_price_date": asset.prior_year_eoy_mark_price_date,
-            "prior_year_opening_quantity": asset.prior_year_opening_quantity,
-            "prior_year_opening_mark_price": asset.prior_year_opening_mark_price,
-            "prior_year_opening_mark_price_currency": asset.prior_year_opening_mark_price_currency,
-            "eoy_quantity": asset.eoy_quantity,
-            "eoy_mark_price_currency": asset.eoy_mark_price_currency,
-            "eoy_market_price": asset.eoy_market_price, # Renamed from eoy_mark_price
-            "eoy_position_value": asset.eoy_position_value,
+            # No snapshot is copied here, because no snapshot is on the Asset. Every one
+            # of them -- the tax year's opening and closing positions, the checkpoint
+            # marks, and the preceding year's three Vorabpauschale snapshots -- is held
+            # per (account, asset) in the orchestrator's registries, keyed by
+            # `internal_asset_id`, which this method preserves. A reclassified asset
+            # therefore keeps them without anything having to carry them across, and a
+            # snapshot cannot be lost by being left off this list.
+            #
+            # That mattered most for a fund. A positions row is resolved without its
+            # SubCategory, so unless the description says "ETF" the fund is created as a
+            # Stock and becomes an InvestmentFund only when the user's classification is
+            # applied -- which is after the prior-year snapshot has been read. A field
+            # missing from this list left such a fund with no year-start Ruecknahmepreis,
+            # so 18 Abs. 1 InvStG had nothing to compute from and the figure vanished
+            # from Zeilen 9-13 with nothing recorded.
         }
         if isinstance(asset, Derivative):
             common["underlying_asset_internal_id"] = asset.underlying_asset_internal_id
