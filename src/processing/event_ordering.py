@@ -6,7 +6,7 @@ transfer-side observations; scheduling never changes account ledger contents.
 from collections import defaultdict
 from heapq import heappop, heappush
 
-from src.domain.events import InternalTransferEvent, OptionLifecycleEvent, TradeEvent
+from src.domain.events import InternalTransferEvent, OptionLifecycleEvent, OptionCashSettlementEvent, TradeEvent
 from src.domain.enums import FinancialEventType as Kind
 from src.domain.exceptions import DataIntegrityError
 from src.utils.account_utils import account_key
@@ -53,7 +53,7 @@ def order_financial_events(events, resolver):
             if key in last_ledger:
                 before(last_ledger[key], i)
             last_ledger[key] = i
-            if not isinstance(event, OptionLifecycleEvent):
+            if not isinstance(event, OptionLifecycleEvent) or isinstance(event, OptionCashSettlementEvent):
                 if last_cash is not None:
                     before(last_cash, i)
                 last_cash = i

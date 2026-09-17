@@ -87,4 +87,22 @@ remain distinct from the foreign-custody interpretation already recorded in Q2.
 No rates, form mappings, assessment-year rules, reference claims or filing positions
 were changed. The map now states the pre-existing assignment deviation honestly.
 
-Disposition: final clean-checkout verification pending; not published or merged.
+Final implementation verification: **1,327 passed, 1 export-dependent skip** in a
+clean checkout using the tracked configuration template and locked dependencies.
+The nine export-schema checks pass with copied exports. Deliberately pooling
+account keys causes **8 linker test failures** and **1 premium-book test failure**;
+unmutated tests pass. Removing the obsolete stock-linker/premium-dictionary and
+direct relocation interfaces leaves **zero** references in current source, PRD
+and the option test plan. The four remaining `related_option_event_id` occurrences
+belong to the separate cash-settlement companion field, not stock deliveries.
+The staged disclosure check has zero account-id and zero portfolio-scale monetary
+literal matches against the private exports. Inputs, configuration and caches
+were preserved; private output stayed outside the repository.
+
+**Disposition: accept with the existing required follow-up.** PM-005 is complete;
+PM-001–PM-004 remain open. The unchanged pre-existing tax-treatment finding is
+tracked explicitly as PM-006, requiring a separate correction and approval of
+measured figure changes before using affected figures for a new filing. No new
+tax-treatment choice or new real-data refusal is part of this merge.
+Publication and merge confirmation are recorded in `pr-train.md` after GitHub
+confirms them.

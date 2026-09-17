@@ -534,6 +534,10 @@ rule and the PR-hygiene rule against a portfolio census in published text.
 
 ## 2026-09-01 — PR-C (own-account transfers) real-data validation
 
+**Historical contributor record.** The later PR #88 review below supersedes its
+acceptance/ordering conclusions; these captures were not completed declarations
+on the maintainer's accepted input baseline.
+
 Run against the maintainer's export with the 35-column Transfers report
 (`data_import/data_new_transfers/`) copied into `data_import/`; `cache/` present so no
 early classification abort. Baseline is PR-B (`2c8c45b`), which does not read Transfers.

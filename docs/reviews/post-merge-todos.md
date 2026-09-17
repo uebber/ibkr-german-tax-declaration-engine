@@ -15,7 +15,8 @@ same obligations, not additional TODOs.
 | PM-002 | #86 R2 | Separate instrument prices from holdings | Open | Unassigned / not yet scheduled | None |
 | PM-003 | #86 R3 | Explicit currency boundaries | Open | Unassigned / not yet scheduled | None |
 | PM-004 | #86 R4 | Behavioral boundary tests | Open | Unassigned / not yet scheduled | None |
-| PM-005 | #87 PR87-P1; brought into #88 by the maintainer | Account-scoped option linking and premium adjustments | In progress | Current #88 correction | Implementation and verification pending; not closed |
+| PM-005 | #87 PR87-P1; brought into #88 by the maintainer | Account-scoped option linking and premium adjustments | Done | #88, implementation `b8b5b11` | Original reproduction: 3 passed; account-pooling mutations: 8 linker failures / 1 premium-book failure; VZ 2023–2025 parity |
+| PM-006 | #88 review; pre-existing behavior | Option premium tax treatment across assignment, historical replay and fund underlyings | Open | Separate figure-changing correction | Reference conflict recorded; correction and measured impact pending |
 
 ## PM-001 — Account-scoped snapshot input
 
@@ -77,6 +78,14 @@ data-dependent checks.
 
 ## PM-005 — Account-scoped option linking and premium adjustments
 
+**Completed in #88's verified correction.** The original reproduction now passes
+all three cases. New tests cover reversed/crossed stock-leg order, partial and
+aggregated deliveries, all exercise/assignment directions, ambiguous contracts,
+interleaved same-day exercises and exact single consumption of premiums. Combined
+account results match separate runs; account-pooling mutations fail. The full
+clean suite and VZ 2023–2025 parity pass. This closes stock-delivery ownership;
+the separate pre-existing tax-treatment issues are PM-006.
+
 **Origin and deferral:** [PR87-P1](pr-87-review.md), explicitly accepted as a TODO
 by the maintainer on 2026-09-17. This defect predates #87 and reproduces on accepted
 base and through #92. The observed combined-account case aborts; each account's
@@ -103,9 +112,37 @@ Verify tax consequences against the knowledge store and run the full suite plus
 VZ 2023–2025 comparisons. The maintainer's current one-account exports cannot
 exercise the cross-account collision.
 
+## PM-006 — Pre-existing option premium tax treatment
+
+**Origin:** discovered while verifying PM-005; [PR #88 review](pr-88-review.md).
+Status: **Open**. This is separate from the completed stock-link ownership repair.
+
+**Exposure and consequence:** assignment premiums are folded into stock basis or
+proceeds; historical replay and fund-underlying premium handling differ from the
+current stock channel. The assignment treatment conflicts with GT-ESTG20-004.
+The maintainer's exports contain option assignments; matching current results
+does not certify the existing tax treatment.
+
+**Why separate:** correcting recognition dates and the separation of premiums
+from stock gains requires one coherent tax-treatment change across opening,
+closing, assignment, historical and fund paths, with measured effects on accepted
+returns. #88 corrects ownership and ordering while leaving that treatment unchanged.
+Its allocation boundary makes the follow-up easier and does not require retaining
+the legacy formula. This deferral is not approval of the existing tax treatment.
+
+**Milestone:** resolve before relying on affected option figures for a new filing.
+**Done when:** requirements are grounded in the relevant reference passages;
+receipt/closing/assignment and historical/current-year cases agree with them;
+the map is honest; full verification and all supported real-data years are measured;
+any changed figures receive the maintainer's explicit approval.
+
 ## Adding and closing work
 
-- Add only explicitly accepted, bounded follow-up. Include originating PR/finding,
+- Add only bounded follow-up accepted under `review-criteria.md` or explicitly by
+  the maintainer. Important findings may be deferred when the criteria establish
+  that doing so is safe and economical; importance alone does not require another
+  approval round. An unresolved substantive tradeoff still goes to the maintainer.
+  Include originating PR/finding,
   rationale for deferral, affected components, intended result and completion evidence.
 - Reuse an existing ID if a later review extends the same obligation. Link both reviews;
   do not create independent copies of one task.

@@ -74,7 +74,8 @@ class TestOptionDeliveryIntegrity(FifoTestCaseBase):
             rows.extend([option(account, '10'+account, when='2025-01-02', opening=True,
                                 premium=premium, kind=kind, assigned=assigned),
                          option(account, '20'+account, kind=kind, assigned=assigned),
-                         stock(account, '30'+account, kind=kind, assigned=assigned),
+                         # Opposite stock-leg order must not swap account premiums.
+                         stock(account, '30'+('B' if account == 'A' else 'A'), kind=kind, assigned=assigned),
                          stock(account, '40'+account, kind=kind, assigned=assigned, sale=True,
                                when='2025-07-01', price='70')])
         if reverse:
