@@ -925,3 +925,44 @@ class TestACashMoveWithoutItsLedgerFailsFast(FifoTestCaseBase):
                 custom_rate_provider=_Rates({f"{TAX_YEAR}-06-01": "1.0"}),
                 tax_year=TAX_YEAR,
             )
+
+
+class TestASingleSidedMoveInTheYearRealisesTheDisposal(FifoTestCaseBase):
+    """The shape the contributor's real export carries, pinned as a figure. A non-EUR
+    Umbuchung between the taxpayer's own accounts is reported by the sending OUT row alone --
+    no matching IN -- dated inside the tax year. It is a current-year § 20 Abs. 2 disposal of
+    the sending account's Kapitalforderung: the move is built from the one observed side and
+    realises the gain accrued up to that day. On the contributor's full run this figure is
+    reached but never emitted, because an unrelated securities reconciliation aborts first; it
+    is pinned here directly so the § 20 delta is measured, not left to that abort.
+
+    A opens the year holding 100 USD at 0.80 EUR/USD. On 2025-06-01, at 1.00, all 100 move to
+    B. The disposal realises 100 x (1.00 - 0.80) = +20 EUR.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[],
+            positions_start_data=[_usd_position(A, "100", "80")],
+            positions_end_data=[],
+            cash_balance_data=[cash_balance_row(A, "USD", "100", "0", year=TAX_YEAR),
+                               cash_balance_row(B, "USD", "0", "100", year=TAX_YEAR)],
+            transfers_data=[
+                # Single-sided, exactly as the real export reports it: the sending OUT row
+                # with no matching IN. The receiving leg is synthesised.
+                transfer_row(A, B, "OUT", f"{TAX_YEAR}0601", asset_class="CASH",
+                             currency="USD", quantity="0", cash_transfer="-100",
+                             tx_id="T1", multiplier=""),
+            ],
+            custom_rate_provider=_Rates({f"{TAX_YEAR}-06-01": "1.00"}),
+            tax_year=TAX_YEAR,
+        )
+
+    def test_the_single_sided_move_realises_the_year_disposal(self):
+        assert _fx_total(self._run()) == Decimal("20"), \
+            "100 USD disposed at 1.00 against an 0.80 basis is a +20 EUR gain"
+
+    def test_both_accounts_reconcile(self):
+        out = self._run()
+        assert not _gaps(out, "CURRENCY_EOY_MISMATCH")
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED")

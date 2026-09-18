@@ -1443,6 +1443,16 @@ class DomainEventFactory:
 
         # Phase 2a: sides sharing a TransactionID are the sides of one move. Group in the
         # order first seen, validate they agree, and only then decide EUR-skip vs build.
+        #
+        # A group may hold a SINGLE observed side: the export often reports only the sending
+        # OUT row, never a matching IN. The move is still built in full and the receiving
+        # leg synthesised, trusting that the balance reached the named receiving account.
+        # Two things make that trust safe rather than an invented input: both accounts are
+        # the taxpayer's own (`_require_transfer_counterparties_are_the_persons_own` has
+        # rejected the move otherwise), so the balance really moved between own accounts; and
+        # the receiving account's synthesised balance is reconciled against its own reported
+        # cash balance (`CURRENCY_EOY_MISMATCH`/`_UNRECONCILED`) rather than taken on faith.
+        # Incidence in the window is counted in `VALIDATION_REPORT.md`, not asserted here.
         by_id = {}
         for cash_key, side in cash_sides:
             by_id.setdefault(cash_key, []).append(side)
