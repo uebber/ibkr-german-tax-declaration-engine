@@ -769,5 +769,6 @@ GT-ESTG20-011. The credit is no longer mislabelled as capital repayment. The
 pre-existing treatment of unallocated fees in the assessment is unchanged; this
 correction does not assign the credit to an arbitrary lot or introduce separate
 principal income. Tests cover account labels, both adjustment labels, positive
-and negative cash balances, charges and historical replay. Currency dispatch
-remains explicitly pooled at this stage (GT-FX-008).
+and negative cash balances, charges and historical replay. Currency dispatch is
+keyed per account ([GT-FX-009]); the refund credit lands in the sending account's
+own currency ledger, not a pool.
