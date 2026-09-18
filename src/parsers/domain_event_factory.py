@@ -1115,10 +1115,12 @@ class DomainEventFactory:
         through its TRANSFER-summary and LOT-row pairing; a cash row has no LOT detail, so
         keyed on shape the two would collapse into one disposal and pass in silence -- a
         currency ledger that runs short opens a short position rather than refusing
-        ([GT-FX-006]). The id is used only to identify the move and is deliberately NOT
-        carried onto the event: `get_event_sort_key` puts `ibkr_transaction_id` ahead of the
-        intra-day band, so an id there would let a broker's string decide whether the move
-        lands before or after that day's trades.
+        ([GT-FX-006]). The id names the move -- pairing its two sides -- and is carried onto
+        the event: a cash Umbuchung sits in the trade band ordered by `ibkr_transaction_id`,
+        so the broker's own intra-day chronology places the move among that day's currency
+        events. That order is load-bearing: the currency FIFO gain is right only if the lots
+        are consumed in the broker's true order, and forcing the move ahead of an earlier
+        same-day currency purchase consumed the wrong lot (see `get_event_sort_key`).
 
         A move of EUR produces nothing. § 20 Abs. 2 Satz 1 Nr. 7 reaches a
         *Fremdwaehrungs*guthaben and this engine's base currency is EUR, so there is no
