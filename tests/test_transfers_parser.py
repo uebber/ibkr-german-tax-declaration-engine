@@ -497,3 +497,38 @@ class TestTheMoveTakesItsIntraDaySlot:
         assert len(moves) == 2
         keys = sorted(get_event_sort_key(m, factory.asset_resolver) for m in moves)
         assert keys[0] != keys[1], "two distinct moves must not collide on one key"
+
+
+class TestACashMoveIsOrderedByBrokerChronology:
+    """A cash Umbuchung is NOT forced ahead of the day like a securities move. It sits
+    in the trade band, ordered by its own transaction id, so an earlier same-day
+    currency event is consumed first. The defect it replaces put the move in the
+    lot-delivering band, ahead of everything, and realised the wrong FX gain."""
+
+    def test_the_move_sorts_between_an_earlier_and_a_later_same_day_trade(self, tmp_path):
+        from decimal import Decimal as D
+        from src.domain.enums import FinancialEventType
+        from src.domain.events import TradeEvent
+        from src.utils.sorting_utils import get_event_sort_key
+
+        factory = _factory(tmp_path)
+        moves = factory.create_events_from_transfers(parse_transfers_csv(_write(tmp_path, [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", tx_id="200", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="100", tx_id="200", multiplier=""),
+        ])))
+        move = moves[0]
+        resolver = factory.asset_resolver
+        asset_id = move.asset_internal_id
+        earlier = TradeEvent(asset_id, "2025-06-01", quantity=D("100"),
+                             price_foreign_currency=D("1"),
+                             event_type=FinancialEventType.TRADE_BUY_LONG,
+                             account_id=B, ibkr_transaction_id="100", local_currency="USD")
+        later = TradeEvent(asset_id, "2025-06-01", quantity=D("-100"),
+                           price_foreign_currency=D("1"),
+                           event_type=FinancialEventType.TRADE_SELL_LONG,
+                           account_id=B, ibkr_transaction_id="300", local_currency="USD")
+        km = get_event_sort_key(move, resolver)
+        assert get_event_sort_key(earlier, resolver) < km, "an earlier tx must precede the move"
+        assert km < get_event_sort_key(later, resolver), "a later tx must follow the move"

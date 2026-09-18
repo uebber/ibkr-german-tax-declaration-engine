@@ -588,7 +588,9 @@ class InternalCashTransferEvent(FinancialEvent):
     between the accounts realises nothing to declare.
 
     The two exported rows -- the sending account's and the receiving account's -- share one
-    broker `TransactionID`, which is how they are recognised as one move.
+    broker `TransactionID`, which is how they are recognised as one move. That id is kept in
+    `ibkr_transaction_id` so `get_event_sort_key` places the move in the broker's own
+    chronology among the day's currency events (the trade band), rather than ahead of them.
     `source_transaction_ids` retains each side's (account, id) observation as provenance: both
     rows are kept, not the first one only, and the two are checked to agree before they become
     one move.

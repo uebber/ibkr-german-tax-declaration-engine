@@ -1433,6 +1433,11 @@ class DomainEventFactory:
                 local_currency=currency,
                 gross_amount_foreign_currency=amount,
                 ibkr_activity_description=rtr.description,
+                # The two sides share this id; keeping it on the event lets the day
+                # scheduler place the move in the broker's own chronology among the day's
+                # currency events, rather than ahead of them. Absent id -> no ordering
+                # signal, the degraded no-id case.
+                ibkr_transaction_id=cash_key or None,
                 source_transaction_ids=((client, cash_key),) if cash_key else (),
             )
             if cash_key:

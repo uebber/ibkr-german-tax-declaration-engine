@@ -31,7 +31,7 @@ from src.processing.data_gaps import DataGapError
 from tests.support.base import FifoTestCaseBase
 from tests.support.mock_providers import MockECBExchangeRateProvider
 from tests.support.multi_account import (
-    cash_balance_row, position_row, trade_row, transfer_row)
+    cash_balance_row, fx_trade_row, position_row, trade_row, transfer_row)
 
 A, B = "U10000001", "U10000002"
 TAX_YEAR = 2025
@@ -445,6 +445,55 @@ class TestMovingMoneyBetweenYourAccounts(FifoTestCaseBase):
         """The export writes each move once per side. Both describe the same move."""
         assert len([r for r in _fx_rgls(self._run())
                     if r.realization_date == "2025-06-01"]) == 1
+
+
+class TestACashMoveKeepsItsBrokerChronology(FifoTestCaseBase):
+    """A cash Umbuchung is ordered by the broker's own chronology among the day's
+    currency events, not forced ahead of them.
+
+    On 2025-06-01, in the broker's order, B:
+      1. buys USD 100 for EUR 50            (tx 100) -> a lot at 0.50 EUR/USD
+      2. receives USD 100 by Umbuchung, valued EUR 80 at that day's rate (tx 200)
+      3. buys a share for USD 100           (tx 300), consuming USD 100
+
+    FIFO consumes the earlier, cheaper lot: the USD spent on the share is valued at
+    0.80 and the consumed lot cost 0.50, realising +30, and the 0.80 lot from the move
+    remains. The sending account A held its 100 USD at 0.80 and disposes at 0.80, so
+    the move realises 0 on A. Total FX = 30.
+
+    Forcing the move ahead of the whole day (the corporate-action band it used to take)
+    consumed the 0.80 move-lot on the share purchase and realised 0 -- the F1 defect.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[
+                fx_trade_row(B, "USD", "BUY", "100", "50", "2", "2025-06-01", "100"),
+                trade_row(B, "US000000RV89", "2025-06-01", "1", "100", "BUY", "O",
+                          "300", currency="USD"),
+            ],
+            positions_start_data=[_usd_position(A, "100", "80")],
+            positions_end_data=[
+                position_row(B, "US000000RV89", "1", "100", currency="USD"),
+            ],
+            cash_balance_data=[
+                cash_balance_row(A, "USD", "100", "0"),
+                cash_balance_row(B, "USD", "0", "100"),
+            ],
+            transfers_data=[
+                transfer_row(A, B, "OUT", "20250601", asset_class="CASH",
+                             currency="USD", cash_transfer="-100", tx_id="200"),
+                transfer_row(B, A, "IN", "20250601", asset_class="CASH",
+                             currency="USD", cash_transfer="100", tx_id="200"),
+            ],
+            custom_rate_provider=_Rates({"2025-06-01": "0.80"}), tax_year=TAX_YEAR)
+
+    def test_the_earlier_cheaper_lot_is_consumed_before_the_moves_lot(self):
+        out = self._run()
+        assert not _gaps(out, "CURRENCY_EOY_MISMATCH")
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED")
+        assert _fx_total(out) == Decimal("30"), \
+            "the 0.50 lot is consumed, not the 0.80 lot the move delivered"
 
 
 class TestAMoveInAnEarlierYear(FifoTestCaseBase):
