@@ -99,6 +99,31 @@ def _acquire_receiving_side(currency_processor, state, asset_id, event, eur_per_
     return results
 
 
+def _coordinate_cash_umbuchung(source_ledger, target_ledger, dispose_fn, acquire_fn):
+    """Prepare both sides of a cash Umbuchung on isolated copies, run each side's lot
+    operation on its own copy, and commit both only once both have succeeded.
+
+    The single account-local prepare-then-commit boundary for a currency move -- the mirror
+    of `apply_internal_transfer` for securities -- shared by both replay paths. The tax-year
+    path (`apply_internal_cash_transfer`) passes the currency processor's cash-flow methods
+    and receives the realised results; the historical replay (`apply_historical_cash_transfer`)
+    passes the historical consume/create operations, which declare nothing and return no
+    results. Which lot operation runs is the caller's; the isolation is here.
+
+    `dispose_fn` and `acquire_fn` each run on a `_PreparedCurrencyState` copy and may raise.
+    A receiving-side raise happens before either state is committed, so the sending balance
+    is never left disposed of on an aborted run.
+    """
+    source_state = _PreparedCurrencyState(source_ledger)
+    target_state = _PreparedCurrencyState(target_ledger)
+    results: List[RealizedGainLoss] = []
+    results.extend(dispose_fn(source_state))
+    results.extend(acquire_fn(target_state))
+    source_state.commit(source_ledger)
+    target_state.commit(target_ledger)
+    return results
+
+
 def apply_internal_cash_transfer(event, currency_fifo_ledgers, asset_resolver,
                                  currency_processor) -> List[RealizedGainLoss]:
     """Coordinate a cash Umbuchung account-locally: prepare both sides, then commit.
@@ -112,9 +137,9 @@ def apply_internal_cash_transfer(event, currency_fifo_ledgers, asset_resolver,
 
     The valuation (`eur_per_unit`, from `gross_amount_eur` at the day of the move) is the
     same figure the historical replay uses, so the two paths cannot disagree about what a
-    move is worth. The historical replay applies each side as its own account-local stream
-    item (`_apply_historical_currency_event`) and declares nothing; its lots carry a
-    different `source_transaction_id` tag, so it is deliberately not merged with this path.
+    move is worth. The historical replay (`apply_historical_cash_transfer`) goes through the
+    same prepare-then-commit boundary (`_coordinate_cash_umbuchung`) with the historical lot
+    operations, which declare nothing and tag their lots `HIST_`.
     """
     currency = (event.local_currency or "").upper()
     currency_asset = asset_resolver.get_cash_balance_asset(currency)
@@ -154,18 +179,12 @@ def apply_internal_cash_transfer(event, currency_fifo_ledgers, asset_resolver,
             f"([GT-FX-010]).")
     eur_per_unit = currency_processor.ctx.divide(eur_value.copy_abs(), event.quantity)
 
-    # PREPARE both sides on isolated copies -- the real ledgers are untouched until commit.
-    source_state = _PreparedCurrencyState(source_ledger)
-    target_state = _PreparedCurrencyState(target_ledger)
-    results: List[RealizedGainLoss] = []
-    results.extend(_dispose_sending_side(
-        currency_processor, source_state, asset_id, event, eur_per_unit))
-    results.extend(_acquire_receiving_side(
-        currency_processor, target_state, asset_id, event, eur_per_unit))
-
-    # COMMIT both. Prepared and validated; this cannot fail.
-    source_state.commit(source_ledger)
-    target_state.commit(target_ledger)
+    results = _coordinate_cash_umbuchung(
+        source_ledger, target_ledger,
+        dispose_fn=lambda state: _dispose_sending_side(
+            currency_processor, state, asset_id, event, eur_per_unit),
+        acquire_fn=lambda state: _acquire_receiving_side(
+            currency_processor, state, asset_id, event, eur_per_unit))
 
     logger.info(
         "Internal cash transfer: %s moved from %s to %s on %s, %d realisation(s).",

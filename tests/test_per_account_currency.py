@@ -591,6 +591,62 @@ class TestAMoveInAnEarlierYear(FifoTestCaseBase):
                     if r.realization_date and r.realization_date < f"{TAX_YEAR}-01-01"]
 
 
+class TestAnEarlierMoveReconcilesAtYearEnd(FifoTestCaseBase):
+    """The completed-run half the contributor's real export cannot reach: it aborts at an
+    unrelated securities grant before the currency reconciliation, so this stands in for it
+    as a self-contained synthetic run.
+
+    A move from before the tax year builds each account's balance, and the year-end currency
+    reconciliation ties the ledger out against the broker's reported cash balance with no gap
+    — the whole point of routing the historical move through the same account-local
+    coordinator the tax-year path uses. A buys 1000 USD in 2023; in 2024, before this
+    return's year, 400 move to B; nobody spends in 2025. At the close of 2025 A holds 600 and
+    B holds 400, both of which exist only because the historical move was replayed onto the
+    two ledgers, and both of which the broker reports, so the run completes and every currency
+    ledger reconciles.
+
+    SoY balances are given as zero on purpose: a non-zero SoY snapshot makes
+    `_reconcile_currency_soy` rebuild the ledger from the reported figure and mask the move
+    (CLAUDE.md's "anything a start-of-year snapshot can rebuild"). With SoY zero the year-end
+    check compares the historically-built ledger itself — break the receiving side and B
+    reconciles 0 against a reported 400, a CURRENCY_EOY_MISMATCH.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[
+                fx_trade_row(A, "USD", "BUY", "1000", "500", "2.0", "2023-06-01", "H1"),
+            ],
+            positions_start_data=[],
+            positions_end_data=[],
+            cash_balance_data=[
+                cash_balance_row(A, "USD", "0", "600", year=TAX_YEAR),
+                cash_balance_row(B, "USD", "0", "400", year=TAX_YEAR),
+            ],
+            transfers_data=[
+                transfer_row(A, B, "OUT", "20240301", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="-400", tx_id="H2",
+                             multiplier=""),
+                transfer_row(B, A, "IN", "20240301", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="400", tx_id="H2",
+                             multiplier=""),
+            ],
+            custom_rate_provider=_Rates({"2023-06-01": "0.50", "2024-03-01": "1.0"}),
+            tax_year=TAX_YEAR,
+        )
+
+    def test_both_accounts_reconcile_with_no_gap(self):
+        out = self._run()
+        assert not _gaps(out, "CURRENCY_EOY_MISMATCH"), \
+            "the move built 600 in A and 400 in B, each matching its reported balance"
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED"), \
+            "both balances are reported, so neither is unreconciled"
+
+    def test_the_earlier_move_declares_nothing_this_year(self):
+        assert _fx_total(self._run()) == Decimal("0"), \
+            "the move belonged to an earlier return; nothing is spent in this one"
+
+
 class TestWhatACashMoveDoesNotDo(FifoTestCaseBase):
     ISIN = "US000000FX04"
 
@@ -636,40 +692,42 @@ class TestWhatACashMoveDoesNotDo(FifoTestCaseBase):
             ], cash=[cash_balance_row(A, "USD", "1000", "0", year=TAX_YEAR)])
 
     def test_a_move_whose_day_has_no_rate_stops_the_historical_replay(self):
-        """Both paths refuse, and the historical one had to be made to.
-
-        Every other branch of the historical currency replay is wrapped in a catch-all
-        that logs at DEBUG and carries on (issue #49). A move swallowed there leaves the
-        sending account holding a balance it no longer has and the receiving one short
-        of what it received -- and the opening reconciliation then repairs the QUANTITY
-        against the cash report and synthesises the lots, so the run finishes with
-        acquisition dates nobody measured. That is the blind spot `CLAUDE.md` names, and
-        it is why this branch raises rather than skips.
+        """The historical cash-move path refuses a move it cannot value, rather than
+        skipping it. A move swallowed would leave the sending account holding a balance it
+        no longer has and the receiving one short of what it received -- and the opening
+        reconciliation then repairs the QUANTITY against the cash report and synthesises the
+        lots, so the run finishes with acquisition dates nobody measured. That is the blind
+        spot `CLAUDE.md` names, and it is why this path raises rather than skips.
         """
         import uuid as _uuid
         from decimal import Context
+        from types import SimpleNamespace
         from src.domain.enums import AssetCategory
         from src.domain.events import InternalCashTransferEvent
         from src.domain.exceptions import ProcessingError
-        from src.engine.calculation_engine import _apply_historical_currency_event
-        from src.engine.fifo_manager import FifoLedger
+        from src.engine.calculation_engine import apply_historical_cash_transfer
+        from src.utils.account_utils import account_key
+        from tests.test_stock_merger_fifo import _make_ledger
 
-        ledger = FifoLedger(
-            asset_internal_id=_uuid.uuid4(), asset_category=AssetCategory.CASH_BALANCE,
-            asset_multiplier_from_asset=None, currency_converter=None,
-            exchange_rate_provider=None, internal_working_precision=28,
-            decimal_rounding_mode="ROUND_HALF_EVEN")
+        asset_id = _uuid.uuid4()
+        source = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        target = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
         event = InternalCashTransferEvent(
             _uuid.uuid4(), "2023-06-19", to_account_id=B, quantity=Decimal("1000"),
             account_id=A, local_currency="USD",
             gross_amount_foreign_currency=Decimal("1000"))
         # What enrichment leaves behind when the day has no rate after its fallback.
         event.gross_amount_eur = None
+        resolver = SimpleNamespace(
+            get_cash_balance_asset=lambda _: SimpleNamespace(internal_asset_id=asset_id))
 
         with pytest.raises(ProcessingError, match="no exchange rate"):
-            _apply_historical_currency_event(
-                event, ledger, "USD", None, Context(prec=28), ledger_account=A)
-        assert not ledger.lots and not ledger.short_lots
+            apply_historical_cash_transfer(
+                event, {(account_key(A), asset_id): source,
+                        (account_key(B), asset_id): target},
+                resolver, Context(prec=28))
+        assert not source.lots and not source.short_lots
+        assert not target.lots and not target.short_lots
 
     def test_a_cash_row_with_no_amount_stops_the_run(self):
         """`CashTransfer` is the only column carrying it — `Quantity`,
@@ -777,3 +835,46 @@ class TestACashMoveIsAtomic:
                 "currency_processor": currency})
         assert source.lots == [lot] and source.lots[0].quantity == Decimal("100")
         assert not target.lots
+
+
+class TestAHistoricalCashMoveIsAtomic:
+    """A cash Umbuchung replayed from before the tax year falls on two ledgers, exactly like
+    the tax-year move, and goes through the same prepare-both-then-commit boundary. A failure
+    on the receiving side never leaves the sending balance already disposed of. Before the
+    fix the historical replay registered the two sides as separate per-account stream
+    callbacks, so the sending disposal was committed before the receiving acquisition was
+    attempted -- partial mutation on an aborted run."""
+
+    def test_a_receiving_side_failure_leaves_the_sender_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+        from decimal import Context
+        from uuid import uuid4
+        from src.domain.enums import AssetCategory
+        from src.domain.events import InternalCashTransferEvent
+        from src.domain.exceptions import ProcessingError
+        from src.engine import calculation_engine as engine
+        from src.utils.account_utils import account_key
+        from tests.test_stock_merger_fifo import _make_ledger, _make_long_lot
+
+        asset_id = uuid4()
+        source = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        target = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        lot = _make_long_lot("2023-01-01", "100", "0.50", "OPEN")
+        source.lots = [lot]
+        # The receiving side (a historical lot creation) refuses. It runs after the sending
+        # side has already been computed -- on an isolated copy, which is the whole point.
+        monkeypatch.setattr(engine, "_create_lot_historical",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                ProcessingError("receiving-side validation failed")))
+        event = InternalCashTransferEvent(
+            asset_id, "2024-06-01", account_id="A", to_account_id="B",
+            quantity=Decimal("100"), local_currency="USD", gross_amount_eur=Decimal("80"))
+        resolver = SimpleNamespace(
+            get_cash_balance_asset=lambda _: SimpleNamespace(internal_asset_id=asset_id))
+        with pytest.raises(ProcessingError, match="receiving-side"):
+            engine.apply_historical_cash_transfer(
+                event, {(account_key("A"), asset_id): source,
+                        (account_key("B"), asset_id): target},
+                resolver, Context(prec=28))
+        assert source.lots == [lot] and source.lots[0].quantity == Decimal("100")
+        assert not target.lots and not target.short_lots

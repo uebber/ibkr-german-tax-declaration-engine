@@ -58,7 +58,8 @@ from .event_processors.option_processor import (
 )
 from .event_processors.currency_conversion_processor import CurrencyConversionProcessor
 from .event_processors.transfer_processor import (
-    InternalTransferProcessor, InternalCashTransferProcessor, apply_internal_transfer)
+    InternalTransferProcessor, InternalCashTransferProcessor, apply_internal_transfer,
+    _coordinate_cash_umbuchung)
 
 
 logger = logging.getLogger(__name__)
@@ -1016,16 +1017,20 @@ def run_main_calculations(
             # per-currency relative order = get_event_sort_key (ties: insertion seq).
             # Events of different currencies commute, and so now do events of different
             # accounts — one ledger each.
+            # A cash Umbuchung touches two ledgers and is streamed once, as a single
+            # two-ledger coordinator item below -- not once per account here, which could
+            # commit the sending disposal before the receiving acquisition was attempted.
             hist_events = [e for e in historical_currency_events.get(currency_code, [])
-                           if _currency_event_touches_account(e, ledger_account)]
+                           if not isinstance(e, InternalCashTransferEvent)
+                           and _currency_event_touches_account(e, ledger_account)]
             if hist_events:
                 counter_key = f"{currency_code}@{ledger_account}"
                 currency_replay_counts[counter_key] = [0, len(hist_events)]
 
                 def _apply_ccy_event(event, led=currency_ledger, ccy=currency_code,
-                                     acct=ledger_account, ck=counter_key):
+                                     ck=counter_key):
                     currency_replay_counts[ck][0] += _apply_historical_currency_event(
-                        event, led, ccy, currency_converter, ctx, ledger_account=acct,
+                        event, led, ccy, currency_converter, ctx,
                     )
 
                 for hist_event in hist_events:
@@ -1067,6 +1072,33 @@ def run_main_calculations(
                          _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider,
                                                  ctx, snap)))
                 )
+
+    # Historical cash Umbuchungen between the taxpayer's own accounts touch TWO currency
+    # ledgers, so -- like a securities transfer (above) or a historical merger -- each is
+    # streamed ONCE, as a single two-ledger item through the shared coordinator, not as two
+    # per-account callbacks. Prepare-both-then-commit: a receiving-side rejection leaves the
+    # sending balance untouched ([GT-FX-009]). Both ledgers exist by now (registered from the
+    # event via `_register_currency_event_account` and built in the loop above). Each move is
+    # under exactly one currency key, so flattening the values yields it once.
+    historical_cash_transfers = [
+        e for events in historical_currency_events.values() for e in events
+        if isinstance(e, InternalCashTransferEvent)]
+    if historical_cash_transfers:
+        logger.info("Streaming %d historical cash transfer(s) chronologically...",
+                    len(historical_cash_transfers))
+        for cash_event in historical_cash_transfers:
+            try:
+                cash_key = get_event_sort_key(cash_event, asset_resolver)
+            except ValueError as e:
+                logger.critical(f"Fatal error sorting historical cash transfer "
+                                f"{cash_event.event_id}: {e}. Aborting.")
+                raise
+            _defer(
+                Phase.LEDGER_EVENTS, cash_key,
+                (lambda ev=cash_event: apply_historical_cash_transfer(
+                    ev, currency_fifo_ledgers, asset_resolver, ctx)),
+                label="cash-transfer",
+            )
 
     # === Run the historical replay, one interval per checkpoint mark ===
     #
@@ -2985,17 +3017,14 @@ def _currencies_of_event(event: FinancialEvent) -> List[str]:
 
 
 def _currency_event_touches_account(event: FinancialEvent, ledger_account: str) -> bool:
-    """Whether this event moves the balance held in `ledger_account`.
+    """Whether this single-account event moves the balance held in `ledger_account`.
 
-    Every event names the account that made it. A move between the taxpayer's own accounts
-    names two, and touches both: the balance leaves one and is acquired in the other
-    ([GT-FX-009]). It is replayed once per side, each side applying only its own half, so
-    neither ledger has to reach into the other.
+    Every such event names the one account that made it. The two-account move -- a cash
+    Umbuchung between the taxpayer's own accounts -- is not filtered through here: it is
+    streamed once as a single two-ledger item (`apply_historical_cash_transfer`), so this
+    helper only ever sees an event with one account ([GT-FX-009]).
     """
-    if account_key(event.account_id) == ledger_account:
-        return True
-    to_account_id = getattr(event, "to_account_id", None)
-    return bool(to_account_id) and account_key(to_account_id) == ledger_account
+    return account_key(event.account_id) == ledger_account
 
 
 def _collect_historical_currency_event(
@@ -3019,26 +3048,87 @@ def _collect_historical_currency_event(
         historical_currency_events[ccy].append(event)
 
 
+def apply_historical_cash_transfer(
+    event: FinancialEvent,
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
+    asset_resolver,
+    ctx: Context,
+) -> int:
+    """Replay one pre-tax-year cash Umbuchung through the shared account-local boundary.
+
+    The historical counterpart of `apply_internal_cash_transfer`, and the same
+    `_coordinate_cash_umbuchung` boundary the tax-year path uses. It disposes the sending
+    account's Kapitalforderung and acquires the receiving account's ([GT-FX-009],
+    [GT-FX-010]), valued at the amount moved converted on the day of the move -- the SAME
+    figure the tax-year path uses. It rebuilds lot state only and declares nothing (the
+    years it covers are already filed). Both sides are prepared on isolated copies and
+    committed only once both succeed, so a receiving-side rejection leaves the sending
+    balance untouched. The lots carry the historical `HIST_` provenance tag and FIFO order,
+    exactly as `_consume_lots_historical`/`_create_lot_historical` write them.
+    """
+    currency = (event.local_currency or "").upper()
+    currency_asset = asset_resolver.get_cash_balance_asset(currency)
+    if currency_asset is None:
+        raise ProcessingError(
+            f"Historical cash transfer {event.event_id} moves {currency}, for which no "
+            f"cash-balance asset exists. The disposal cannot be measured.")
+    asset_id = currency_asset.internal_asset_id
+    source_ledger = currency_fifo_ledgers.get((account_key(event.account_id), asset_id))
+    target_ledger = currency_fifo_ledgers.get((account_key(event.to_account_id), asset_id))
+    if source_ledger is None or target_ledger is None:
+        # Both accounts are registered from the event before any ledger is built, so a miss
+        # means registration and this lookup have drifted apart; applying half the move
+        # would delete the balance.
+        missing = "sending" if source_ledger is None else "receiving"
+        raise ProcessingError(
+            f"Historical cash transfer of {currency} on {event.event_date}: no currency "
+            f"ledger for the {missing} account. Applying half the move would make the "
+            f"balance disappear.")
+
+    eur_value = event.gross_amount_eur
+    if eur_value is None:
+        # No rate, no figure -- and no skipping. A skipped move leaves the sending account
+        # holding a balance it no longer has and the receiving one short of what it received;
+        # the opening reconciliation would then repair the QUANTITY against the cash report
+        # and synthesise lots with acquisition dates nobody measured.
+        raise ProcessingError(
+            f"Historical cash transfer of {currency} on {event.event_date}: no exchange "
+            f"rate for that day, so the disposal and the acquisition cannot be valued "
+            f"([GT-FX-010]).")
+    if event.quantity <= Decimal("0"):
+        return 0
+    eur_per_unit = ctx.divide(eur_value.copy_abs(), event.quantity)
+
+    _coordinate_cash_umbuchung(
+        source_ledger, target_ledger,
+        dispose_fn=lambda state: (_consume_lots_historical(
+            state, event.quantity, eur_per_unit, event.event_date, ctx) or []),
+        acquire_fn=lambda state: (_create_lot_historical(
+            state, event.quantity, eur_per_unit, event.event_date,
+            event.ibkr_transaction_id, ctx) or []))
+    return 1
+
+
 def _apply_historical_currency_event(
     event: FinancialEvent,
     ledger: 'FifoLedger',
     currency_code: str,
     currency_converter: CurrencyConverter,
     ctx: Context,
-    ledger_account: str = DEFAULT_ACCOUNT,
 ) -> int:
     """Apply ONE historical event's currency impact to a currency ledger —
     the per-event unit the unified replayer streams (AR5). Mutates lot state
     only (no current-year RGLs). Returns 1 if the event affected the ledger.
 
-    Handles every event type that moves currency:
+    Handles every single-account event type that moves currency:
     - CurrencyConversionEvent: explicit FX trades (only the side matching our currency)
     - TradeEvent: security buys consume currency, sells produce currency, commissions consume
     - CorpActionMergerCash: cash proceeds create a currency lot
     - Income cashflows: dividends, interest, distributions create currency lots
     - Expense cashflows: WHT, fees, Stueckzinsen consume currency lots
-    - InternalCashTransferEvent: a balance moved between the taxpayer's own accounts,
-      which touches TWO ledgers. `ledger_account` says which side this call is applying.
+
+    A cash Umbuchung touches two ledgers and is NOT handled here: it goes through
+    `apply_historical_cash_transfer`, the shared account-local coordinator.
     """
     replayed = 0
     # Single-iteration loop: the body is kept VERBATIM from the previous batch
@@ -3046,46 +3136,7 @@ def _apply_historical_currency_event(
     # currency" and skip to the return).
     for _ in (0,):
         try:
-            if isinstance(event, InternalCashTransferEvent):
-                # A disposal of the sending account's Kapitalforderung and an acquisition
-                # of the receiving account's, both at the gemeiner Wert of the amount moved
-                # ([GT-FX-009], [GT-FX-010]). Replayed once per side; each call applies
-                # only the half belonging to `ledger_account`, so neither ledger reaches
-                # into the other.
-                #
-                # No RealizedGainLoss here: this is the historical replay, which rebuilds
-                # lot state for years already declared. The gain of a move inside the tax
-                # year is produced by `InternalCashTransferProcessor`. Enrichment converted
-                # the amount at the day of the move -- the same figure the tax-year
-                # processor uses, so the two paths cannot disagree about what a move is
-                # worth.
-                eur_value = event.gross_amount_eur
-                if eur_value is None:
-                    # No rate, no figure -- and no skipping either. Skipping leaves the
-                    # sending account holding a balance it no longer has and the receiving
-                    # one short of what it received; the opening reconciliation then repairs
-                    # the QUANTITY against the cash report and synthesises the lots, so the
-                    # run continues with acquisition dates nobody measured. Raised rather
-                    # than swallowed like the neighbouring branches (issue #49): this one is
-                    # new, and the handler below is told to let it through.
-                    raise ProcessingError(
-                        f"Internal cash transfer of {currency_code} on "
-                        f"{event.event_date}: no exchange rate for that day, so the "
-                        f"disposal and the acquisition cannot be valued ([GT-FX-010]).")
-                if event.quantity <= Decimal("0"):
-                    continue
-                eur_per_unit = ctx.divide(eur_value.copy_abs(), event.quantity)
-                if account_key(event.account_id) == ledger_account:
-                    _consume_lots_historical(
-                        ledger, event.quantity, eur_per_unit, event.event_date, ctx)
-                    replayed += 1
-                if account_key(event.to_account_id) == ledger_account:
-                    _create_lot_historical(
-                        ledger, event.quantity, eur_per_unit, event.event_date,
-                        event.ibkr_transaction_id, ctx)
-                    replayed += 1
-
-            elif isinstance(event, CurrencyConversionEvent):
+            if isinstance(event, CurrencyConversionEvent):
                 # Handle only the side affecting our currency
                 if event.from_currency.upper() == currency_code:
                     # Selling this currency
