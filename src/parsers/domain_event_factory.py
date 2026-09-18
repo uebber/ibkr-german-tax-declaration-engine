@@ -1344,6 +1344,18 @@ class DomainEventFactory:
                     f"balance is disposed of and which acquires the new one.")
                 continue
 
+            if from_account == to_account:
+                # [GT-FX-009] rests on a balance not being sellable to itself: were the two
+                # sides one account, `source_ledger` and `target_ledger` would be the same
+                # object and the move would emit a realised FX gain against a lot it then
+                # re-creates -- a figure from nothing. Guarded here, as the securities move
+                # already is above, rather than left to the zero-incidence assumption.
+                data_errors.append(
+                    f"Cash transfer of {name} on {rtr.date} names the same account "
+                    f"('{from_account}') as sender and receiver. A Kapitalforderung is not "
+                    f"disposed of to itself ([GT-FX-009]); one side of the move is misread.")
+                continue
+
             parsed_date = parse_ibkr_date(rtr.date)
             event_date = parsed_date.isoformat() if parsed_date else None
             if not event_date:

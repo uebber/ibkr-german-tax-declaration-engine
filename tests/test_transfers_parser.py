@@ -287,6 +287,18 @@ class TestWhatItRefusesToRead:
                              tx_id="X1"),
             ])
 
+    def test_a_cash_row_naming_one_account_on_both_sides_stops_the_run(self, tmp_path):
+        """A Kapitalforderung cannot be disposed of to itself ([GT-FX-009]). Were the two
+        sides one account, the sending and receiving ledgers would be the same object and
+        the move would emit a realised FX gain against a lot it then re-creates -- a figure
+        from nothing. Guarded like the securities move, not left to the zero-incidence
+        assumption."""
+        with pytest.raises(DataIntegrityError, match="same account"):
+            _moves(tmp_path, [
+                transfer_row(A, A, "OUT", "20230601", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
+            ])
+
     def test_a_row_with_an_unreadable_date_stops_the_run(self, tmp_path):
         with pytest.raises(DataIntegrityError, match="Date"):
             _moves(tmp_path, [
