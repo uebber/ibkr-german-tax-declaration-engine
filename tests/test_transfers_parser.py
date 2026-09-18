@@ -532,3 +532,29 @@ class TestACashMoveIsOrderedByBrokerChronology:
         km = get_event_sort_key(move, resolver)
         assert get_event_sort_key(earlier, resolver) < km, "an earlier tx must precede the move"
         assert km < get_event_sort_key(later, resolver), "a later tx must follow the move"
+
+    def test_a_no_id_move_sorts_against_a_no_id_currency_conversion_without_crashing(self, tmp_path):
+        """The move shares the trade band with currency conversions, so it must emit the
+        SAME asset_category type they do. With no transaction id (the degraded case) the
+        earlier key elements tie and the comparison reaches asset_category; emitting its
+        `.name` (a str) there raised TypeError against a same-category conversion's bare
+        Enum. Regression: both no-id, both CASH_BALANCE, must sort cleanly."""
+        from decimal import Decimal as D
+        from src.domain.events import CurrencyConversionEvent
+        from src.utils.sorting_utils import get_event_sort_key
+
+        factory = _factory(tmp_path)
+        moves = factory.create_events_from_transfers(parse_transfers_csv(_write(tmp_path, [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="100", multiplier=""),
+        ])))
+        move = moves[0]
+        assert move.ibkr_transaction_id is None
+        conv = CurrencyConversionEvent(move.asset_internal_id, "2025-06-01",
+            from_currency="EUR", from_amount=D("80"), to_currency="USD", to_amount=D("100"),
+            exchange_rate=D("1.25"), account_id=A)  # also no transaction id
+        resolver = factory.asset_resolver
+        ordered = sorted([move, conv], key=lambda e: get_event_sort_key(e, resolver))
+        assert len(ordered) == 2

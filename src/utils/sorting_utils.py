@@ -107,9 +107,14 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
         # currency purchase, before a later spend. The corporate-action band it used to
         # take forced it ahead of the whole day and consumed the wrong lot.
         #
-        # `asset_category.name`, not the bare Enum the generic trade branch uses, for the
-        # TypeError reason the securities branch documents: a move with no id (the degraded
-        # no-id case) ties every earlier element and would otherwise reach a bare Enum.
+        # The bare `asset.asset_category` Enum, exactly as this band's other members emit it
+        # (`TradeEvent`, `CurrencyConversionEvent`). It MUST match them: with a no-id move
+        # the earlier elements tie and the comparison reaches this one, and a member is a
+        # currency conversion of the SAME category, so Enum-vs-Enum resolves by equality and
+        # never needs `<`. Using `.name` here (a str) would compare str-vs-Enum against those
+        # same-category siblings and raise TypeError. (The securities branch above uses
+        # `.name` for the opposite reason: ITS band-mates are strings.) Two no-id trade-band
+        # events of DIFFERENT categories is a separate, pre-existing limit of this band.
         intra_day_order = _INTRA_DAY_SORT_ORDER_TRADE
         if not event.ibkr_transaction_id:
             logger.warning(f"Internal cash transfer {event.event_id} on {parsed_date} lacks "
@@ -117,7 +122,7 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
                            f"the trade band.")
         specific_secondary_elements = (
             event.ibkr_transaction_id or "",
-            asset.asset_category.name,
+            asset.asset_category,
             event.creation_sequence,
         )
     elif isinstance(event, OptionLifecycleEvent): # Option Lifecycles before regular trades
