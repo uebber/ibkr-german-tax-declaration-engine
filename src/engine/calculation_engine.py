@@ -1368,7 +1368,15 @@ def run_main_calculations(
             logger.warning(f"Event {event.event_id} is generic CorporateActionEvent with type {event.event_type.name} for asset {_format_asset_info(asset_object)} but specific processor expects subclass. Using GenericCorporateActionProcessor.")
             processor = generic_ca_processor
 
-        if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS, FinancialEventType.OPTION_CASH_SETTLEMENT]):
+        if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS, FinancialEventType.OPTION_CASH_SETTLEMENT, FinancialEventType.INTERNAL_CASH_TRANSFER]):
+            # A cash Umbuchung is dispatched even when this loop found no ledger for the
+            # sending account: it does not use the passed `ledger`, it resolves both account
+            # ledgers itself in `apply_internal_cash_transfer` and raises if either is missing.
+            # Without this, a cash transfer whose sending ledger is absent would satisfy
+            # neither the option branch nor the non-cash raise below (its category IS
+            # CASH_BALANCE) and be silently dropped -- a disposal lost with no warning. This
+            # cannot happen while registration builds every named account's ledger; the exempt
+            # dispatch makes a registration/lookup drift fail fast instead of silently.
             if not ledger and asset_object.asset_category == AssetCategory.OPTION:
                 logger.warning(f"Option event {event.event_id} ({event.event_type.name}) occurred, but no FIFO ledger exists. Processor will handle.")
             elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:

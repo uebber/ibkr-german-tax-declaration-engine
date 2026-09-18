@@ -878,3 +878,50 @@ class TestAHistoricalCashMoveIsAtomic:
                 resolver, Context(prec=28))
         assert source.lots == [lot] and source.lots[0].quantity == Decimal("100")
         assert not target.lots and not target.short_lots
+
+
+class TestACashMoveWithoutItsLedgerFailsFast(FifoTestCaseBase):
+    """The cash-transfer dispatch resolves both account ledgers inside the processor and
+    fails fast if one is missing, so the move is dispatched even when the loop found no ledger
+    for the sending account. Otherwise its CASH_BALANCE category dodges the non-cash "requires
+    a FIFO ledger" raise and the move is silently dropped -- a disposal lost with no warning.
+    Unreachable while registration builds every named account's ledger; this pins the
+    fail-fast against a registration/lookup drift.
+    """
+
+    def test_a_missing_sending_ledger_raises_instead_of_dropping(self, monkeypatch):
+        from src.engine import calculation_engine as engine
+        from src.utils.account_utils import account_key
+
+        original = engine._ensure_currency_ledger_exists
+
+        def skip_the_senders_usd_ledger(currency_code, ledger_account, *rest):
+            # Simulate a registration/lookup drift: the sending account's USD ledger is
+            # never built, so the current-year dispatch finds no ledger for the move.
+            if currency_code == "USD" and account_key(ledger_account) == account_key(A):
+                return
+            return original(currency_code, ledger_account, *rest)
+
+        monkeypatch.setattr(engine, "_ensure_currency_ledger_exists",
+                            skip_the_senders_usd_ledger)
+
+        # `_run_pipeline` converts a pipeline `ProcessingError` into `pytest.fail`, so the
+        # raise surfaces here as `pytest.fail.Exception` carrying the original message.
+        with pytest.raises(pytest.fail.Exception, match="no currency ledger"):
+            self._run_pipeline(
+                trades_data=[],
+                positions_start_data=[],
+                positions_end_data=[],
+                cash_balance_data=[cash_balance_row(A, "USD", "0", "0", year=TAX_YEAR),
+                                   cash_balance_row(B, "USD", "0", "100", year=TAX_YEAR)],
+                transfers_data=[
+                    transfer_row(A, B, "OUT", f"{TAX_YEAR}0601", asset_class="CASH",
+                                 currency="USD", quantity="0", cash_transfer="-100",
+                                 tx_id="M1", multiplier=""),
+                    transfer_row(B, A, "IN", f"{TAX_YEAR}0601", asset_class="CASH",
+                                 currency="USD", quantity="0", cash_transfer="100",
+                                 tx_id="M1", multiplier=""),
+                ],
+                custom_rate_provider=_Rates({f"{TAX_YEAR}-06-01": "1.0"}),
+                tax_year=TAX_YEAR,
+            )
