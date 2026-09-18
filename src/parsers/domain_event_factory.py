@@ -1389,6 +1389,34 @@ class DomainEventFactory:
 
             cash_key = (rtr.transaction_id or "").strip()
             if cash_key and cash_key in cash_moves:
+                # The other side of a move already seen under this id. The two rows are one
+                # move, so they must agree on every field that decides the figure -- the
+                # accounts, the currency, the day and the amount. Collapsing them first-wins
+                # would accept two rows that disagree and silently declare one side's amount;
+                # which side depends only on the row order. Validated here instead, and the
+                # conflict is collected with the rest so one run names them all.
+                existing = cash_moves[cash_key]
+                mismatch = []
+                if (existing.account_id, existing.to_account_id) != (from_account, to_account):
+                    mismatch.append(
+                        f"accounts ({existing.account_id}->{existing.to_account_id} vs "
+                        f"{from_account}->{to_account})")
+                if (existing.local_currency or "") != currency:
+                    mismatch.append(f"currency ({existing.local_currency} vs {currency})")
+                if existing.event_date != event_date:
+                    mismatch.append(f"date ({existing.event_date} vs {event_date})")
+                if existing.quantity != amount:
+                    mismatch.append(f"amount ({existing.quantity} vs {amount})")
+                if mismatch:
+                    data_errors.append(
+                        f"Cash transfer {cash_key} of {name} is reported by its two sides with "
+                        f"different {', '.join(mismatch)}. A move has one of each; choosing one "
+                        f"side's figure over the other's would declare a number the export "
+                        f"itself contradicts.")
+                    continue
+                # Confirmed from the other side. Keep this observation as provenance rather
+                # than discarding the row.
+                existing.source_transaction_ids += ((client, cash_key),)
                 continue
             cash_asset = self.asset_resolver.get_or_create_asset(
                 raw_isin=None, raw_conid=None, raw_symbol=currency,
@@ -1405,12 +1433,16 @@ class DomainEventFactory:
                 local_currency=currency,
                 gross_amount_foreign_currency=amount,
                 ibkr_activity_description=rtr.description,
+                source_transaction_ids=((client, cash_key),) if cash_key else (),
             )
             if cash_key:
                 cash_moves[cash_key] = event
             else:
                 # No id to dedup on: keyed on the whole shape instead, so a genuine
-                # duplicate still collapses and two distinct moves do not.
+                # duplicate still collapses and two distinct moves do not. This cannot
+                # establish that two same-shaped observations are one move; the id path
+                # above can, which is why the export sharing an id across the two sides
+                # matters.
                 cash_moves[(from_account, to_account, currency, event_date, amount)] = event
 
         if data_errors:

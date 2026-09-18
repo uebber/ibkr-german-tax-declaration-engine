@@ -586,19 +586,30 @@ class InternalCashTransferEvent(FinancialEvent):
     **EUR never produces one of these.** § 20 Abs. 2 Satz 1 Nr. 7 reaches a
     *Fremdwaehrungs*guthaben, and this engine's base currency is EUR, so a move of euros
     between the accounts realises nothing to declare.
+
+    The two exported rows -- the sending account's and the receiving account's -- share one
+    broker `TransactionID`, which is how they are recognised as one move.
+    `source_transaction_ids` retains each side's (account, id) observation as provenance: both
+    rows are kept, not the first one only, and the two are checked to agree before they become
+    one move.
     """
     _: KW_ONLY
     to_account_id: str
     quantity: Decimal
+    # Each side's (account, id) observation. Both rows report the same move; keeping both
+    # is what lets a later reader see the two observations the one move was assembled from.
+    source_transaction_ids: tuple = ()
 
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
                  to_account_id: str, quantity: Decimal,
+                 source_transaction_ids: tuple = (),
                  **kwargs_for_parent_kw_only):
         super().__init__(asset_internal_id, event_date,
                          event_type=FinancialEventType.INTERNAL_CASH_TRANSFER,
                          **kwargs_for_parent_kw_only)
         self.to_account_id = to_account_id
         self.quantity = quantity
+        self.source_transaction_ids = source_transaction_ids
         # Checked here rather than in `__post_init__`, for the reason
         # `InternalTransferEvent` records: the parent's generated `__init__` runs
         # `__post_init__` before these two fields exist.

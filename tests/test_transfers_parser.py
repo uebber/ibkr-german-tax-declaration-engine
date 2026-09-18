@@ -248,6 +248,20 @@ class TestCollapsingRowsIntoMoves:
         cash = [m for m in moves if isinstance(m, InternalCashTransferEvent)]
         assert len(cash) == 2
 
+    def test_both_sides_of_a_cash_move_are_kept_as_provenance(self, tmp_path):
+        """The two rows are one move, but both are kept: `source_transaction_ids` records
+        each side's (account, id) observation. Discarding the second row would drop the
+        evidence the move was assembled from."""
+        from src.domain.events import InternalCashTransferEvent
+        moves = _moves(tmp_path, [
+            transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="500", tx_id="X1", multiplier=""),
+        ])
+        move = [m for m in moves if isinstance(m, InternalCashTransferEvent)][0]
+        assert set(move.source_transaction_ids) == {(A, "X1"), (B, "X1")}
+
     def test_the_event_carries_no_transaction_id(self, tmp_path):
         """The two sides carry different ids, so neither names the move -- and the id
         would additionally decide the intra-day order, because `get_event_sort_key`
@@ -298,6 +312,23 @@ class TestWhatItRefusesToRead:
                 transfer_row(A, A, "OUT", "20230601", asset_class="CASH", currency="USD",
                              quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
             ])
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_two_cash_sides_that_disagree_on_the_amount_stop_the_run(self, tmp_path, reverse):
+        """The two rows share a TransactionID, so they are one move; but they report
+        different amounts. Collapsing them first-wins would declare whichever amount the row
+        order happened to put first. Refused instead, and the refusal does not depend on the
+        order the rows arrive in."""
+        rows = [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="200", tx_id="X1", multiplier=""),
+        ]
+        if reverse:
+            rows.reverse()
+        with pytest.raises(DataIntegrityError, match="different amount"):
+            _moves(tmp_path, rows)
 
     def test_a_row_with_an_unreadable_date_stops_the_run(self, tmp_path):
         with pytest.raises(DataIntegrityError, match="Date"):
