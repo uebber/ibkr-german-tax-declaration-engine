@@ -698,3 +698,44 @@ def _usd_position(account, quantity, cost_basis_eur):
     return [account, "USD", "CASH", "", "USD", "Cash Balance USD", "", q,
             q * unit, unit, Decimal(str(cost_basis_eur)), None, None, None,
             Decimal("1")]
+
+
+class TestACashMoveIsAtomic:
+    """The two sides of a cash Umbuchung fall on two ledgers. Both are prepared on isolated
+    copies and committed only once both succeed, so a failure on the receiving side never
+    leaves the sending balance already disposed of. Before the fix the sending disposal was
+    committed before the receiving acquisition was even attempted."""
+
+    def test_a_receiving_side_failure_leaves_the_sender_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+        from uuid import uuid4
+        from src.domain.enums import AssetCategory
+        from src.domain.events import InternalCashTransferEvent
+        from src.domain.exceptions import ProcessingError
+        from src.engine.event_processors.currency_conversion_processor import (
+            CurrencyConversionProcessor)
+        from src.engine.event_processors.transfer_processor import (
+            InternalCashTransferProcessor)
+        from tests.test_stock_merger_fifo import _make_ledger, _make_long_lot
+
+        asset_id = uuid4()
+        source = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        target = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        lot = _make_long_lot("2023-01-01", "100", "0.50", "OPEN")
+        source.lots = [lot]
+        currency = CurrencyConversionProcessor(source.currency_converter, 28, "ROUND_HALF_UP")
+        monkeypatch.setattr(currency, "create_long_lot_for_cashflow_income",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                ProcessingError("receiving-side validation failed")))
+        event = InternalCashTransferEvent(
+            asset_id, "2025-06-01", account_id="A", to_account_id="B",
+            quantity=Decimal("100"), local_currency="USD", gross_amount_eur=Decimal("80"))
+        resolver = SimpleNamespace(
+            get_cash_balance_asset=lambda _: SimpleNamespace(internal_asset_id=asset_id))
+        with pytest.raises(ProcessingError, match="receiving-side"):
+            InternalCashTransferProcessor().process(event, source, {
+                "asset_resolver": resolver,
+                "currency_fifo_ledgers": {("A", asset_id): source, ("B", asset_id): target},
+                "currency_processor": currency})
+        assert source.lots == [lot] and source.lots[0].quantity == Decimal("100")
+        assert not target.lots
