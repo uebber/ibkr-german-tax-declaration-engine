@@ -1311,8 +1311,20 @@ class DomainEventFactory:
                 moves.extend(unmatched)
                 moves.extend(remaining)
 
-        # === Cash moves: the disposal-plus-acquisition, keyed by TransactionID ===
-        cash_moves: dict = {}
+        # === Cash moves: assemble each move from its sides, THEN interpret it ===
+        #
+        # Two phases, because the two sides of a move have to be compared as one unit before
+        # any of them is dropped. Phase 1 reads every row into a normalized side, keeping only
+        # the per-row STRUCTURAL checks -- a row that cannot be read is an error whatever
+        # currency it names. Phase 2 groups the sides that claim to be one move (by their
+        # shared TransactionID), validates that they agree, and only then decides whether the
+        # move is a EUR move that declares nothing or a disposal to build.
+        #
+        # A EUR side is NOT dropped in phase 1. Dropped there, a EUR side reported against a
+        # USD side under one id would vanish before the disagreement could be seen, and the
+        # USD side would stand as a move the export contradicts (F2).
+        cash_sides = []          # (cash_key, side) for rows carrying a TransactionID
+        cash_unkeyed = []        # sides for rows with no TransactionID
         skipped_eur_cash_rows = 0
         for rtr in cash_summary_rows:
             currency = (rtr.currency_primary or "").strip().upper()
@@ -1372,12 +1384,6 @@ class DomainEventFactory:
                     f"Cash transfer on {event_date} names no currency. Which "
                     f"Kapitalforderung was disposed of cannot be read without one.")
                 continue
-            if currency == "EUR":
-                # Nothing to declare: § 20 Abs. 2 Satz 1 Nr. 7 reaches a
-                # Fremdwaehrungsguthaben, and euros are this engine's base currency.
-                # Counted as handled rather than skipped in silence.
-                skipped_eur_cash_rows += 1
-                continue
 
             amount = (rtr.cash_transfer or Decimal(0)).copy_abs()
             if amount <= Decimal(0):
@@ -1389,68 +1395,120 @@ class DomainEventFactory:
                     f"elsewhere.")
                 continue
 
+            side = {
+                "from_account": from_account, "to_account": to_account,
+                "currency": currency, "event_date": event_date, "amount": amount,
+                "client": client, "name": name, "description": rtr.description,
+            }
             cash_key = (rtr.transaction_id or "").strip()
-            if cash_key and cash_key in cash_moves:
-                # The other side of a move already seen under this id. The two rows are one
-                # move, so they must agree on every field that decides the figure -- the
-                # accounts, the currency, the day and the amount. Collapsing them first-wins
-                # would accept two rows that disagree and silently declare one side's amount;
-                # which side depends only on the row order. Validated here instead, and the
-                # conflict is collected with the rest so one run names them all.
-                existing = cash_moves[cash_key]
-                mismatch = []
-                if (existing.account_id, existing.to_account_id) != (from_account, to_account):
-                    mismatch.append(
-                        f"accounts ({existing.account_id}->{existing.to_account_id} vs "
-                        f"{from_account}->{to_account})")
-                if (existing.local_currency or "") != currency:
-                    mismatch.append(f"currency ({existing.local_currency} vs {currency})")
-                if existing.event_date != event_date:
-                    mismatch.append(f"date ({existing.event_date} vs {event_date})")
-                if existing.quantity != amount:
-                    mismatch.append(f"amount ({existing.quantity} vs {amount})")
-                if mismatch:
-                    data_errors.append(
-                        f"Cash transfer {cash_key} of {name} is reported by its two sides with "
-                        f"different {', '.join(mismatch)}. A move has one of each; choosing one "
-                        f"side's figure over the other's would declare a number the export "
-                        f"itself contradicts.")
-                    continue
-                # Confirmed from the other side. Keep this observation as provenance rather
-                # than discarding the row.
-                existing.source_transaction_ids += ((client, cash_key),)
-                continue
+            if cash_key:
+                cash_sides.append((cash_key, side))
+            else:
+                cash_unkeyed.append(side)
+
+        # The move's identity, and the record of its sides. All sides in a group must have
+        # equal `_fields`; the differing ones are named in the error.
+        def _fields(s):
+            return (s["from_account"], s["to_account"], s["currency"],
+                    s["event_date"], s["amount"])
+
+        def _build_cash_move(cash_key, sides):
+            rep = sides[0]
             cash_asset = self.asset_resolver.get_or_create_asset(
-                raw_isin=None, raw_conid=None, raw_symbol=currency,
-                raw_currency=currency, raw_ibkr_asset_class="CASH",
-                raw_description=f"Cash Balance {currency}",
+                raw_isin=None, raw_conid=None, raw_symbol=rep["currency"],
+                raw_currency=rep["currency"], raw_ibkr_asset_class="CASH",
+                raw_description=f"Cash Balance {rep['currency']}",
                 description_source_type="transfer_cash",
             )
-            event = InternalCashTransferEvent(
+            return InternalCashTransferEvent(
                 asset_internal_id=cash_asset.internal_asset_id,
-                event_date=event_date,
-                to_account_id=to_account,
-                quantity=amount,
-                account_id=from_account,
-                local_currency=currency,
-                gross_amount_foreign_currency=amount,
-                ibkr_activity_description=rtr.description,
-                # The two sides share this id; keeping it on the event lets the day
-                # scheduler place the move in the broker's own chronology among the day's
-                # currency events, rather than ahead of them. Absent id -> no ordering
-                # signal, the degraded no-id case.
+                event_date=rep["event_date"],
+                to_account_id=rep["to_account"],
+                quantity=rep["amount"],
+                account_id=rep["from_account"],
+                local_currency=rep["currency"],
+                gross_amount_foreign_currency=rep["amount"],
+                ibkr_activity_description=rep["description"],
+                # The sides share this id; keeping it on the event lets the day scheduler
+                # place the move in the broker's own chronology among the day's currency
+                # events, rather than ahead of them. Absent id -> no ordering signal.
                 ibkr_transaction_id=cash_key or None,
-                source_transaction_ids=((client, cash_key),) if cash_key else (),
+                # Every side's (account, id) observation is kept; discarding the second
+                # would drop the evidence the move was assembled from.
+                source_transaction_ids=tuple((s["client"], cash_key) for s in sides)
+                if cash_key else (),
             )
-            if cash_key:
-                cash_moves[cash_key] = event
-            else:
-                # No id to dedup on: keyed on the whole shape instead, so a genuine
-                # duplicate still collapses and two distinct moves do not. This cannot
-                # establish that two same-shaped observations are one move; the id path
-                # above can, which is why the export sharing an id across the two sides
-                # matters.
-                cash_moves[(from_account, to_account, currency, event_date, amount)] = event
+
+        cash_moves = []
+
+        # Phase 2a: sides sharing a TransactionID are the sides of one move. Group in the
+        # order first seen, validate they agree, and only then decide EUR-skip vs build.
+        by_id = {}
+        for cash_key, side in cash_sides:
+            by_id.setdefault(cash_key, []).append(side)
+        for cash_key, sides in by_id.items():
+            if len(sides) > 2:
+                data_errors.append(
+                    f"Cash transfer {cash_key} of {sides[0]['name']} is reported by "
+                    f"{len(sides)} rows; a move has two sides, so more than two rows sharing "
+                    f"one id cannot be read as one move.")
+                continue
+            rep = sides[0]
+            mismatch = []
+            for s in sides[1:]:
+                if (s["from_account"], s["to_account"]) != (rep["from_account"], rep["to_account"]):
+                    mismatch.append(
+                        f"accounts ({rep['from_account']}->{rep['to_account']} vs "
+                        f"{s['from_account']}->{s['to_account']})")
+                if s["currency"] != rep["currency"]:
+                    mismatch.append(f"currency ({rep['currency']} vs {s['currency']})")
+                if s["event_date"] != rep["event_date"]:
+                    mismatch.append(f"date ({rep['event_date']} vs {s['event_date']})")
+                if s["amount"] != rep["amount"]:
+                    mismatch.append(f"amount ({rep['amount']} vs {s['amount']})")
+            if mismatch:
+                # Validated BEFORE the EUR decision: a side reported against the others in a
+                # different currency (or amount, or account) is caught here rather than one
+                # side being dropped and the rest standing as a move the export contradicts.
+                data_errors.append(
+                    f"Cash transfer {cash_key} of {rep['name']} is reported by its sides with "
+                    f"different {', '.join(sorted(set(mismatch)))}. A move has one of each; "
+                    f"choosing one side's figure over the other's would declare a number the "
+                    f"export itself contradicts.")
+                continue
+            if rep["currency"] == "EUR":
+                # The move is coherent and it is in euros: § 20 Abs. 2 Satz 1 Nr. 7 reaches a
+                # Fremdwaehrungsguthaben, and euros are this engine's base currency, so it
+                # declares nothing. Counted as handled rather than skipped in silence.
+                skipped_eur_cash_rows += len(sides)
+                continue
+            cash_moves.append(_build_cash_move(cash_key, sides))
+
+        # Phase 2b: rows with no TransactionID. The two sides of one move are reported by the
+        # two DIFFERENT accounts -- the sender's OUT and the receiver's IN, which normalize to
+        # the same (from, to, currency, day, amount). So sides of one shape reported by
+        # distinct accounts are that one move. The SAME account reporting one shape more than
+        # once cannot be told from distinct moves without an id, so it is refused rather than
+        # silently collapsed into one, which would understate the year (F2).
+        unkeyed_by_shape = {}
+        for side in cash_unkeyed:
+            unkeyed_by_shape.setdefault(_fields(side), []).append(side)
+        for _shape, sides in unkeyed_by_shape.items():
+            rep = sides[0]
+            clients = [s["client"] for s in sides]
+            if len(set(clients)) != len(clients):
+                data_errors.append(
+                    f"{len(sides)} cash transfer rows of {rep['name']} on {rep['event_date']} "
+                    f"are identical in account, currency, day and amount and carry no "
+                    f"TransactionID, with a side reported more than once by the same account. "
+                    f"One move is reported once by each of its two accounts; these cannot be "
+                    f"told apart from distinct moves, so the run stops rather than guess which. "
+                    f"A cash transfer row in a real export carries an id.")
+                continue
+            if rep["currency"] == "EUR":
+                skipped_eur_cash_rows += len(sides)
+                continue
+            cash_moves.append(_build_cash_move(None, sides))
 
         if data_errors:
             raise DataIntegrityError(
@@ -1463,4 +1521,4 @@ class DomainEventFactory:
             f"internal cash transfer event(s) from {len(raw_transfers)} raw transfer "
             f"row(s) ({skipped_eur_cash_rows} EUR cash row(s) carrying no currency gain)."
         )
-        return moves + list(cash_moves.values())
+        return moves + cash_moves

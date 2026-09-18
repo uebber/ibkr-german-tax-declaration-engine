@@ -558,3 +558,38 @@ class TestACashMoveIsOrderedByBrokerChronology:
         resolver = factory.asset_resolver
         ordered = sorted([move, conv], key=lambda e: get_event_sort_key(e, resolver))
         assert len(ordered) == 2
+
+
+class TestCashSidesAreValidatedBeforeInterpreted:
+    """The two sides of a cash move are assembled and compared as one unit BEFORE either is
+    dropped, so a contradictory side is caught rather than silently discarded, and two rows
+    that cannot be proven to be one move are not silently collapsed into one (F2)."""
+
+    @pytest.mark.parametrize("other_currency", ["GBP", "EUR"])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_two_sides_under_one_id_that_disagree_on_currency_are_refused(
+            self, tmp_path, other_currency, reverse):
+        """One side USD, the other GBP or EUR, under one TransactionID -- a move has one
+        currency. Dropping the euro side before the comparison (as the euro-skip once did)
+        let the USD side stand as a move the export contradicts; GBP already raised because
+        it was not dropped first. Validated before the EUR decision now, in either row order."""
+        rows = [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency=other_currency,
+                         quantity="0", cash_transfer="100", tx_id="X1", multiplier=""),
+        ]
+        if reverse:
+            rows.reverse()
+        with pytest.raises(DataIntegrityError):
+            _moves(tmp_path, rows)
+
+    def test_two_same_side_no_id_rows_are_not_collapsed_into_one(self, tmp_path):
+        """Two OUT rows from A to B with no TransactionID. Two rows reported by the SAME
+        account cannot be told apart from one move reported twice, so the run refuses rather
+        than silently collapse them into a single move and understate the year."""
+        rows = [transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="-100", multiplier="")
+                for _ in range(2)]
+        with pytest.raises(DataIntegrityError):
+            _moves(tmp_path, rows)
