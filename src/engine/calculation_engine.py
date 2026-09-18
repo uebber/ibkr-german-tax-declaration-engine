@@ -1610,21 +1610,29 @@ def run_main_calculations(
     # person's total, and every disposal in both has been matched against the wrong lots.
     #
     # The pairs checked are every currency ledger there is, plus every pair the cash report
-    # states (in eoy_positions). **The second half is defensive and is NOT demonstrated to
-    # matter** -- probed by deleting it, which leaves the suite green. It cannot matter for a
-    # real export, because the cash report states an opening and a closing balance on the
-    # same row and an opening balance is one of the sources that creates a ledger, so every
-    # reported pair already has one. Kept for a caller that supplies balances directly with
-    # only a closing figure, where the ledger set would miss an account reporting a balance
-    # it never acquired. The securities check above unions the closing snapshot for a reason
-    # that *is* demonstrated; this is the same shape without the same evidence, and saying so
-    # is cheaper than implying otherwise.
+    # states a closing for (in eoy_positions). The second half now genuinely matters: a
+    # sub-threshold cash-balance row records its closing but does NOT seed an opening (F4),
+    # so a reported-but-tiny balance in a currency the account never otherwise touched has an
+    # eoy_position and no ledger. Unioning it in is what lets that closing be compared
+    # against zero (it reconciles within tolerance) rather than passing unseen. It also
+    # covers a caller that supplies only a closing figure directly. Mirrors the securities
+    # check above, which unions the closing snapshot for the same reason.
     logger.info("Performing currency EOY quantity validation per account...")
     currency_eoy_mismatches = 0
+
+    def _currency_pair_sort_key(pair):
+        # Order the diagnostics by (currency, account) -- stable identifiers the reader
+        # recognises. The asset's internal id is a uuid4 redrawn every run, so ordering by
+        # it reordered the warnings between two runs of the same tree, PDF included.
+        acct, aid = pair
+        asset_obj = asset_resolver.get_asset_by_id(aid)
+        currency = getattr(asset_obj, "currency", None) or ""
+        return (str(currency), str(acct))
+
     currency_pairs = sorted(
         {(acct, aid) for (acct, aid) in currency_fifo_ledgers}
         | {(acct, aid) for (acct, aid) in eoy_positions},
-        key=lambda pair: (str(pair[1]), pair[0]),
+        key=_currency_pair_sort_key,
     )
     for ledger_account, asset_id in currency_pairs:
         asset_obj = asset_resolver.get_asset_by_id(asset_id)
@@ -1653,14 +1661,16 @@ def run_main_calculations(
         currency_tolerance = Decimal("0.01")
 
         if reported_eoy is None:
-            # Absent != empty. A ledger that computed a non-zero balance from this
-            # account's own events, with nothing reported to reconcile it against, is a
-            # gap -- not the silent pass it was. The §20 Abs. 2 Satz 1 Nr. 7 gains were
-            # computed from this ledger; a report that does not cover it cannot confirm
-            # the balance those gains rest on. `_process_cash_balance_positions` drops a
-            # sub-tolerance reported row, so a ledger can outlive the row that would have
-            # checked it. A zero computed balance against no report is harmless and stays
-            # a silent skip.
+            # Absent != empty, and this is the genuinely-absent case: no cash-balance row
+            # covers this (account, currency) at all. A ledger that computed a non-zero
+            # balance from this account's own events, with nothing reported to reconcile it
+            # against, is a gap -- not the silent pass it was. The §20 Abs. 2 Satz 1 Nr. 7
+            # gains were computed from this ledger; a report that does not cover it cannot
+            # confirm the balance those gains rest on. A *supplied* balance, even a
+            # sub-threshold one, no longer reaches here: `_process_cash_balance_positions`
+            # records its closing whatever its size, so a filtered observation is compared
+            # against (below) rather than mistaken for an absent one (F4). A zero computed
+            # balance against no report is harmless and stays a silent skip.
             if abs(calculated_eoy) > currency_tolerance:
                 logger.warning(
                     f"CURRENCY EOY UNRECONCILED {subject}: "

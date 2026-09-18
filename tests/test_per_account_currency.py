@@ -700,6 +700,44 @@ def _usd_position(account, quantity, cost_basis_eur):
             Decimal("1")]
 
 
+class TestASuppliedBalanceIsComparedNotCalledAbsent(FifoTestCaseBase):
+    """A cash-balance row below the parser's threshold is still a value the broker
+    reported. The end-of-year reconciliation compares the ledger against it instead of
+    recording CURRENCY_EOY_UNRECONCILED as though nothing was reported (F4). The opening
+    is still not seeded from a sub-threshold row, so no figure moves."""
+
+    def test_a_reported_zero_is_a_comparison_value_not_an_absent_report(self):
+        out = self._run_pipeline(
+            trades_data=[fx_trade_row(A, "USD", "BUY", "100", "80", "1.25",
+                                      "2025-06-01", "100")],
+            positions_start_data=[], positions_end_data=[],
+            cash_balance_data=[cash_balance_row(A, "USD", "0", "0")],
+            custom_rate_provider=_Rates({"2025-06-01": "0.80"}), tax_year=TAX_YEAR)
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED"), \
+            "a supplied zero is not an absent report"
+        assert len(_gaps(out, "CURRENCY_EOY_MISMATCH")) == 1, \
+            "ledger of 100 against a reported 0 is a mismatch, and it is compared"
+
+
+class TestCurrencyDiagnosticsAreOrderedStably(FifoTestCaseBase):
+    """The per-account currency diagnostics are ordered by (currency, account) -- stable
+    identifiers -- not by the asset's uuid4 internal id, which is redrawn every run and
+    reordered the warnings, PDF included, between two runs of the same tree (F4)."""
+
+    def test_the_diagnostics_come_out_in_a_stable_currency_order(self):
+        currencies = ["USD", "GBP", "CHF", "JPY", "AUD"]
+        out = self._run_pipeline(
+            trades_data=[fx_trade_row(A, c, "BUY", "100", "80", "1.25", "2025-06-01",
+                                      f"T{i}") for i, c in enumerate(currencies)],
+            positions_start_data=[], positions_end_data=[],
+            cash_balance_data=[cash_balance_row(A, c, "0", "0") for c in currencies],
+            custom_rate_provider=_Rates({"2025-06-01": "0.80"}), tax_year=TAX_YEAR)
+        subjects = [g.subject for g in _gaps(out, "CURRENCY_EOY_MISMATCH")]
+        assert len(subjects) == len(currencies)
+        assert subjects == sorted(subjects), \
+            "diagnostics must be ordered by stable currency/account ids, not asset uuid"
+
+
 class TestACashMoveIsAtomic:
     """The two sides of a cash Umbuchung fall on two ledgers. Both are prepared on isolated
     copies and committed only once both succeed, so a failure on the receiving side never
