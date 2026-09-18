@@ -281,6 +281,52 @@ class TestTheEndOfYearCheckRunsPerAccount(FifoTestCaseBase):
         assert {g.subject for g in gaps} == {f"USD (Konto {A})", f"USD (Konto {B})"}
 
 
+class TestALedgerWithNoReportedBalanceIsRecorded(FifoTestCaseBase):
+    """A currency ledger the cash report does not cover is reconciled against nothing.
+
+    A holds 1000 USD and moves all of it to B, which then simply holds it. B does
+    nothing else with dollars, and B's Cash_Balance row is zero on both ends, so it is
+    dropped as dust — B's USD has no reported end-of-year position at all. B's ledger
+    says 1000; there is nothing to check it against.
+
+    Absent is not empty: the §20 Abs. 2 Satz 1 Nr. 7 gains computed from that ledger are
+    unconfirmed, so the run records `CURRENCY_EOY_UNRECONCILED` for B rather than
+    skipping the account in silence. A, which moved everything out and reports zero,
+    reconciles cleanly and gets no such gap.
+
+    Red-first: with the skip (`if reported_eoy is None: continue`) B's 1000 vanishes
+    without a gap.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[
+                trade_row(B, "US000000FX12", "2025-01-05", "10", "10", "BUY", "O", "E1"),
+            ],
+            positions_start_data=[_usd_position(A, "1000", "500")],
+            positions_end_data=[
+                position_row(B, "US000000FX12", "10", "100", price="10"),
+            ],
+            cash_balance_data=[cash_balance_row(A, "USD", "1000", "0", year=TAX_YEAR)],
+            transfers_data=[
+                transfer_row(A, B, "OUT", "20250601", asset_class="CASH",
+                             currency="USD", quantity="0", cash_transfer="-1000",
+                             tx_id="X1", multiplier=""),
+                transfer_row(B, A, "IN", "20250601", asset_class="CASH",
+                             currency="USD", quantity="0", cash_transfer="1000",
+                             tx_id="X1", multiplier=""),
+            ],
+            custom_rate_provider=_Rates({"2025-06-01": "1.00"}),
+            tax_year=TAX_YEAR,
+        )
+
+    def test_the_unreconciled_ledger_is_recorded_not_skipped(self):
+        gaps = _gaps(self._run(), "CURRENCY_EOY_UNRECONCILED")
+        assert len(gaps) == 1, \
+            "B holds 1000 USD from the move with no reported balance to check it against"
+        assert gaps[0].subject == f"USD (Konto {B})"
+
+
 class TestASingleAccountRunIsUnchanged(FifoTestCaseBase):
     """The account is named only when there is one to name."""
 

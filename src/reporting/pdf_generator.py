@@ -593,7 +593,8 @@ class PdfReportGenerator:
         self._add_currency_eoy_gaps()
 
     def _currency_eoy_gaps(self) -> List["DataGap"]:
-        return [g for g in self.data_gaps if g.code == "CURRENCY_EOY_MISMATCH"]
+        return [g for g in self.data_gaps
+                if g.code in ("CURRENCY_EOY_MISMATCH", "CURRENCY_EOY_UNRECONCILED")]
 
     def _add_currency_eoy_gaps(self):
         """Cash balances are end balances too, and unlike the securities check
@@ -606,7 +607,8 @@ class PdfReportGenerator:
             return
         self.story.append(Paragraph(
             f"ACHTUNG: Bei {len(gaps)} Währungskonto/-konten weicht der aus dem FIFO-Bestand "
-            "berechnete Endbestand vom gemeldeten Kontostand ab. Die daraus abgeleiteten "
+            "berechnete Endbestand vom gemeldeten Kontostand ab oder lässt sich mangels "
+            "gemeldetem Kontostand nicht dagegen prüfen. Die daraus abgeleiteten "
             "Fremdwährungsgewinne (§ 20 Abs. 2 Nr. 3 EStG) sind entsprechend unsicher.",
             self.styles['BodyText']))
         for gap in gaps:

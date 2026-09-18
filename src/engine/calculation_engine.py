@@ -1633,11 +1633,6 @@ def run_main_calculations(
         if asset_obj.currency and asset_obj.currency.upper() == "EUR":
             continue
 
-        closing = eoy_positions.get((ledger_account, asset_id))
-        reported_eoy = closing.quantity if closing else None
-        if reported_eoy is None:
-            continue
-
         ledger = currency_fifo_ledgers.get((ledger_account, asset_id))
         if ledger:
             long_qty = sum(lot.quantity for lot in ledger.lots)
@@ -1646,6 +1641,9 @@ def run_main_calculations(
         else:
             calculated_eoy = Decimal("0")
 
+        closing = eoy_positions.get((ledger_account, asset_id))
+        reported_eoy = closing.quantity if closing else None
+
         # Named only when there is an account to name, so a run over one account reports
         # exactly what it reported before.
         subject = str(asset_obj.currency)
@@ -1653,6 +1651,35 @@ def run_main_calculations(
             subject = f"{subject} (Konto {ledger_account})"
 
         currency_tolerance = Decimal("0.01")
+
+        if reported_eoy is None:
+            # Absent != empty. A ledger that computed a non-zero balance from this
+            # account's own events, with nothing reported to reconcile it against, is a
+            # gap -- not the silent pass it was. The §20 Abs. 2 Satz 1 Nr. 7 gains were
+            # computed from this ledger; a report that does not cover it cannot confirm
+            # the balance those gains rest on. `_process_cash_balance_positions` drops a
+            # sub-tolerance reported row, so a ledger can outlive the row that would have
+            # checked it. A zero computed balance against no report is harmless and stays
+            # a silent skip.
+            if abs(calculated_eoy) > currency_tolerance:
+                logger.warning(
+                    f"CURRENCY EOY UNRECONCILED {subject}: "
+                    f"FIFO ledger={calculated_eoy:.2f}, Reported=(none)"
+                )
+                currency_eoy_mismatches += 1
+                if data_gap_collector is not None:
+                    data_gap_collector.record(
+                        code="CURRENCY_EOY_UNRECONCILED",
+                        subject=subject,
+                        detail=(f"Dem FIFO-Bestand {calculated_eoy:.2f} steht kein "
+                                f"gemeldeter Kontostand gegenüber, gegen den er geprüft "
+                                f"werden könnte; die daraus berechneten §20-Abs.-2-Gewinne "
+                                f"sind unbestätigt. Mögliche Ursachen: Zeitraum der "
+                                f"Cash-Balance-Datei, oder das Konto bzw. die Währung fehlt "
+                                f"im Positionsbericht."),
+                    )
+            continue
+
         diff = calculated_eoy - reported_eoy
         if abs(diff) > currency_tolerance:
             logger.warning(
