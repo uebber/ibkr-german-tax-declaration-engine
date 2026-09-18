@@ -177,9 +177,14 @@ Konto"* -- and ¶3 takes Zahlungsverkehrskonten, Kreditkarten und digitale Zahlu
 ([GT-FX-003]). **So this claim reaches an account within the § 20 branch and no other.** On a
 balance that is a pure payment instrument there is no Waehrungsgewinn to capture under § 20 at
 all, and the Umbuchung realises nothing there; on an unverzinsliches Guthaben the § 23 branch
-applies instead ([GT-FX-002]) and the same Umbuchung would restart the Jahresfrist. Which of the
-three a broker's cash sub-account is, is not decided here -- it is the [GT-FX-005] question, and
-the position taken is recorded in the map.
+applies instead ([GT-FX-002]). **What that same Umbuchung does to the § 23 Jahresfrist is not
+settled by this sentence** -- Rz. 131 ¶2 is a § 20 rule and cannot supply a § 23 result, and
+[GT-FX-002] establishes only that § 23 governs the branch, not that a move within it restarts the
+Frist. That whole § 23 branch is reached only if the classification question [GT-FX-005] resolves
+away from § 20; the § 23 treatment of a move within it is therefore left in the open [GT-FX-005]
+discussion, which already carries the Jahresfrist reading. Which of the three a broker's cash
+sub-account is, is not decided here -- it is the [GT-FX-005]
+question, and the position taken is recorded in the map.
 
 **Not decided here either: whether both sides are the taxpayer's own accounts.** A move to an
 account belonging to somebody else is a different question, on which this Randziffer says
