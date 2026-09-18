@@ -81,7 +81,7 @@ def test_currency_eoy_gaps_reach_the_pdf():
     text = _eoy_section_text(eoy_mismatch_count=0, data_gaps=gaps)
     assert ALL_CLEAR not in text
     assert "USD" in text and "100.51" in text
-    assert "20 Abs. 2 Nr. 3" in text
+    assert "20 Abs. 2 Satz 1 Nr. 7" in text
 
 
 def test_currency_unreconciled_gaps_reach_the_pdf():
@@ -96,7 +96,7 @@ def test_currency_unreconciled_gaps_reach_the_pdf():
     assert ALL_CLEAR not in text
     assert "USD" in text and "1000.00" in text
     assert "kein gemeldeter Kontostand" in text
-    assert "20 Abs. 2 Nr. 3" in text
+    assert "20 Abs. 2 Satz 1 Nr. 7" in text
 
 
 def test_structured_details_still_render_the_table():

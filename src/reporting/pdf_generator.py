@@ -599,7 +599,7 @@ class PdfReportGenerator:
     def _add_currency_eoy_gaps(self):
         """Cash balances are end balances too, and unlike the securities check
         this one is not fatal — so a generated report can and must carry it.
-        The FX ledger drives the §20 Abs. 2 Nr. 3 currency gains, so a ledger
+        The FX ledger drives the §20 Abs. 2 Satz 1 Nr. 7 currency gains, so a ledger
         that disagrees with the broker's closing balance puts those figures in
         question even though the run completed."""
         gaps = self._currency_eoy_gaps()
@@ -609,7 +609,7 @@ class PdfReportGenerator:
             f"ACHTUNG: Bei {len(gaps)} Währungskonto/-konten weicht der aus dem FIFO-Bestand "
             "berechnete Endbestand vom gemeldeten Kontostand ab oder lässt sich mangels "
             "gemeldetem Kontostand nicht dagegen prüfen. Die daraus abgeleiteten "
-            "Fremdwährungsgewinne (§ 20 Abs. 2 Nr. 3 EStG) sind entsprechend unsicher.",
+            "Fremdwährungsgewinne (§ 20 Abs. 2 Satz 1 Nr. 7 EStG) sind entsprechend unsicher.",
             self.styles['BodyText']))
         for gap in gaps:
             self.story.append(Paragraph(f"• {gap.subject}: {gap.detail}", self.styles['BodyText']))
