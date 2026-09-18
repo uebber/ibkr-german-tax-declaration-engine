@@ -45,6 +45,9 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     if not parsed_date:
         raise ValueError(f"Event {event.event_id} ({type(event).__name__}) has unparseable date '{event.event_date}'. Cannot generate sort key.")
 
+    if event.resolved_day_position is not None:
+        return parsed_date, (event.resolved_day_position, event.creation_sequence)
+
     asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
     if not asset:
         raise ValueError(f"Event {event.event_id} ({type(event).__name__}) on {parsed_date} references unknown asset {event.asset_internal_id}. Cannot generate sort key.")
@@ -146,28 +149,12 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     # gain right.
     transaction_id_for_sort = event.ibkr_transaction_id or ""
 
-    # There is ONE legitimate override of that chronology: an event that DELIVERS lots
-    # must precede a same-day disposal of the lots it delivers, because a sale cannot
-    # consume what has not yet arrived. §20 Abs. 4a Satz 6 fixes a merger at the
-    # Einbuchung; an internal transfer-in must exist before a same-day sale out of the
-    # receiving account; an option exercise/assignment creates the position the resulting
-    # trade settles. So the day is partitioned: lot-DELIVERING kinds (corporate actions
-    # and mergers, internal transfers -- which share the corp-action band -- and option
-    # lifecycle events) sort ahead of everything else; WITHIN each part the true txid
-    # chronology is kept, so trades, dividends, interest and FX -- which touch the
-    # currency ledger and have no delivery dependency between them -- keep their real
-    # order and the currency figure stays correct.
-    #
-    # This is the explicit domain rule, not the accident it replaced: the old key put the
-    # transaction id ahead of the band, so a delivering event landed before a trade only
-    # when its id happened to be smaller (e.g. corporate actions, whose export carries no
-    # id, sorted to ""). An event that delivers lots AND carries an id -- an internal
-    # transfer given one, an option lifecycle event -- would otherwise sort by the
-    # broker's string rather than by the rule. See engine/replay.py on the merger, which
-    # this fixes too.
+    # Corporate deliveries retain their established before-trades position. Options
+    # must retain transaction order: exercise/assignment CONSUMES option lots, including
+    # those opened earlier on the same day (GT-ESTG20-011/013). A dependency on a linked
+    # stock leg does not permit moving the exercise ahead of its own purchase.
     _LOT_DELIVERING_BANDS = (
         _INTRA_DAY_SORT_ORDER_CORP_ACTION,      # corporate actions, mergers, internal transfers
-        _INTRA_DAY_SORT_ORDER_OPTION_LIFECYCLE,  # option exercise/assignment/expiry
     )
     precedence = 0 if intra_day_order in _LOT_DELIVERING_BANDS else 1
 

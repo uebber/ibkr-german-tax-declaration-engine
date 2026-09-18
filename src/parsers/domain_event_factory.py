@@ -522,6 +522,8 @@ class DomainEventFactory:
             desc_upper = (rct.description or "").upper()
             domain_event_instance: Optional[FinancialEvent] = None
             raw_amount = rct.amount
+            commission_adjustment = ("COMMISSION" in event_type_str_upper or
+                (event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper))
             # Gross amount for events should be absolute for income, or represent the cost if it's an expense.
             # For WithholdingTaxEvent and FeeEvent, raw_amount is typically negative.
             # For CashFlowEvents (Dividend, Interest), raw_amount is typically positive.
@@ -557,7 +559,14 @@ class DomainEventFactory:
                 "account_id": rct.client_account_id,
             }
 
-            if "DIVIDEND" in event_type_str_upper:
+            if commission_adjustment:
+                # Maintainer-confirmed interpretation: correction of an earlier
+                # commission overcharge. Preserve the observed cash direction;
+                # do not invent a security link or call it capital repayment.
+                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
+                domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str,
+                    is_refund=raw_amount > Decimal(0), **event_params_kw)
+            elif "DIVIDEND" in event_type_str_upper:
                 if raw_amount < Decimal(0) and "PAYMENT IN LIEU" in event_type_str_upper:
                     # Negative Payment In Lieu = you pay (short stock lending fee)
                     # This is a cash outflow, classify as FEE_TRANSACTION
@@ -631,31 +640,6 @@ class DomainEventFactory:
                 # Fees are costs, raw_amount typically negative. Store as positive cost.
                 event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
                 domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
-
-            elif "COMMISSION" in event_type_str_upper:
-                # Commission adjustments are post-trade fee corrections from IBKR.
-                # raw_amount is typically negative (additional fee charged). Store as positive cost.
-                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
-
-            # Commission adjustments sometimes arrive as "Deposits/Withdrawals" type.
-            # Detect these before the ignorable-type check so they affect the currency ledger.
-            if domain_event_instance is None and event_type_str_upper == "DEPOSITS/WITHDRAWALS" and "COMMISSION" in desc_upper:
-                event_params_kw["gross_amount_foreign_currency"] = raw_amount.copy_abs()
-                if raw_amount >= Decimal(0):
-                    # Positive = commission refund (cash inflow)
-                    domain_event_instance = CashFlowEvent(
-                        asset_for_event.internal_asset_id, event_date_str,
-                        event_type=FinancialEventType.CAPITAL_REPAYMENT,
-                        source_country_code=None, **event_params_kw
-                    )
-                else:
-                    # Negative = additional commission charge (cash outflow)
-                    domain_event_instance = FeeEvent(asset_for_event.internal_asset_id, event_date_str, **event_params_kw)
-                logger.info(
-                    f"Commission adjustment in Deposits/Withdrawals (TxID: {rct.transaction_id}): "
-                    f"{raw_amount} {rct.currency_primary} → {domain_event_instance.event_type.name}"
-                )
 
             if domain_event_instance:
                 logger.debug(f"Created {type(domain_event_instance).__name__} (Type: {domain_event_instance.event_type.name}) for asset {asset_for_event.get_classification_key()} from cash tx ID {rct.transaction_id}, Amt: {event_params_kw['gross_amount_foreign_currency']} {event_params_kw['local_currency']}")
@@ -1106,58 +1090,42 @@ class DomainEventFactory:
     def create_events_from_transfers(
         self, raw_transfers: List[RawTransferRecord]
     ) -> List[Union[InternalTransferEvent, InternalCashTransferEvent]]:
-        """Collapse the Transfers export into one event per move of a holding.
+        """Turn the Transfers export into one event per move of a holding or a balance.
 
-        The export writes each move as a summary row per side (`LevelOfDetail` "TRANSFER")
-        plus one lot-detail row per acquisition day beneath it (`LevelOfDetail` "LOT").
-        Rows are grouped into one side of one move by
-        `(ClientAccountID, TransferAccount, Direction, asset, Date)`; each surviving side
-        is normalised through `Direction` into the same `(from, to, asset, date, quantity)`
-        and the set is deduplicated -- either side alone describes the whole move, and both
-        sides produce one. The `LOT` rows of the surviving side become the move's
-        `moved_lots`: the per-acquisition-day breakdown of which lots the handover
-        relocates.
-
-        **What deduplication cannot see, and why it is not silent.** Two genuinely distinct
-        moves of one instrument on one day between one pair of accounts, of equal size,
-        collapse into one. Nothing in the export distinguishes that from the two sides of a
-        single move. It does not pass quietly: a move relocates the sending account's lots
-        for its acquisition days, so after the first the second finds those days already
-        gone and the run stops rather than moving units that are not there.
+        **Securities moves.** Pair reciprocal observations without dropping distinct
+        same-size moves. A TRANSFER summary owns the adjacent LOT rows. Opposite sides are
+        matched by account pair, instrument, date, quantity and acquisition-day detail.
+        Conflicting reciprocal observations are collected as errors. One-sided exports
+        remain supported, and both sides' source identifiers are retained. The `LOT` rows of
+        the surviving side become the move's `moved_lots`.
 
         **A cash row is the opposite event and gets its own.** Moving a foreign-currency
-        balance to another of the taxpayer's accounts is a disposal of the sending
-        account's Kapitalforderung and an acquisition of the receiving account's
-        ([GT-FX-009]), where the securities move is no disposal at all. The two are built
-        here side by side because the export writes them the same way, and they leave as
-        different event types so that nothing downstream can treat one as the other. A cash
-        row carries its amount in `CashTransfer`: `Quantity`, `PositionAmount` and
-        `TransferPrice` are all zero on one, because a balance has no units.
+        balance to another of the taxpayer's accounts is a disposal of the sending account's
+        Kapitalforderung and an acquisition of the receiving account's ([GT-FX-009]), where
+        the securities move is no disposal at all. The two are built here side by side
+        because the export writes them the same way, and they leave as different event types
+        so that nothing downstream can treat one as the other. A cash row carries its amount
+        in `CashTransfer`: `Quantity`, `PositionAmount` and `TransferPrice` are all zero on
+        one, because a balance has no units.
 
-        **The cash path keys on the `TransactionID`, not on the move's shape.** Both sides
-        of one cash move carry the same id -- measured across the export's summary rows --
-        so the id names the move and two genuinely distinct moves of one currency, one day,
-        one pair of accounts and one amount stay two. Keyed on the shape they would collapse
-        into one disposal and pass in silence, which the securities path is saved from by
-        its whole-position/lot-detail check and this one would not be: a currency ledger
-        that runs short opens a short position rather than refusing ([GT-FX-006]). The id
-        is used only to identify the move and is deliberately NOT carried onto the event:
-        `get_event_sort_key` puts `ibkr_transaction_id` ahead of the intra-day band, so an
-        id there would let a broker's string decide whether the move lands before or after
-        that day's trades.
+        **The cash path keys on the `TransactionID`, not on the move's shape.** Both sides of
+        one cash move carry the same id -- measured across the export's summary rows -- so the
+        id names the move and two genuinely distinct moves of one currency, one day, one pair
+        of accounts and one amount stay two. A securities move keeps two such moves apart
+        through its TRANSFER-summary and LOT-row pairing; a cash row has no LOT detail, so
+        keyed on shape the two would collapse into one disposal and pass in silence -- a
+        currency ledger that runs short opens a short position rather than refusing
+        ([GT-FX-006]). The id is used only to identify the move and is deliberately NOT
+        carried onto the event: `get_event_sort_key` puts `ibkr_transaction_id` ahead of the
+        intra-day band, so an id there would let a broker's string decide whether the move
+        lands before or after that day's trades.
 
         A move of EUR produces nothing. § 20 Abs. 2 Satz 1 Nr. 7 reaches a
         *Fremdwaehrungs*guthaben and this engine's base currency is EUR, so there is no
         currency gain to declare either way.
         """
         data_errors: List[str] = []
-        # Group by ADJACENCY, not by a key: the export writes each side-move as a summary
-        # row followed by its lot rows, so a TRANSFER row opens a group and the LOT rows
-        # under it attach to it. Keying by (accounts, direction, asset, date) instead
-        # would collapse two genuinely distinct moves of one instrument on one day into
-        # one; adjacency keeps them apart (they are then deduplicated by move total, so
-        # only two moves of EQUAL size on one day -- which the export cannot tell from one
-        # move's two lot rows -- still collapse, and that case has zero measured incidence).
+        # A summary starts a group; day/account grouping alone loses repeated moves.
         groups: List[dict] = []
         current: Optional[dict] = None
         # Cash rows are the opposite event and are collected here to be built after the
@@ -1192,7 +1160,9 @@ class DomainEventFactory:
                 current = {"summary": rtr, "lots": [], "asset": asset}
                 groups.append(current)
             else:  # LOT
-                if current is None or current["asset"].internal_asset_id != asset.internal_asset_id:
+                if (current is None or current["asset"].internal_asset_id != asset.internal_asset_id
+                        or any(getattr(current['summary'], attr) != getattr(rtr, attr)
+                               for attr in ('client_account_id', 'transfer_account', 'direction', 'date'))):
                     data_errors.append(
                         f"Transfer of {asset.get_classification_key()} on {rtr.date} has a "
                         f"lot-detail row with no summary row before it. The export writes "
@@ -1201,7 +1171,7 @@ class DomainEventFactory:
                     continue
                 current["lots"].append(rtr)
 
-        moves: dict = {}
+        sides: dict = {}
         for g in groups:
             rtr = g["summary"]
             asset = g["asset"]
@@ -1243,6 +1213,10 @@ class DomainEventFactory:
                     f"Transfer of {name} on {rtr.date} names only one account (from "
                     f"'{from_account}' to '{to_account}'). Both are needed to say which "
                     f"ledger loses the lots and which receives them.")
+                continue
+
+            if from_account == to_account:
+                data_errors.append(f'Transfer of {name} names the same sending and receiving account')
                 continue
 
             if not event_date:
@@ -1288,10 +1262,8 @@ class DomainEventFactory:
                         f"and relocating either would disagree with the broker's own total.")
                     continue
 
-            move_key = (from_account, to_account, asset_id, event_date, total)
-            if move_key in moves:
-                continue
-            moves[move_key] = InternalTransferEvent(
+            move_key = (from_account, to_account, asset_id, event_date)
+            event = InternalTransferEvent(
                 asset_internal_id=asset_id,
                 event_date=event_date,
                 to_account_id=to_account,
@@ -1299,7 +1271,43 @@ class DomainEventFactory:
                 moved_lots=moved_lots,
                 account_id=from_account,
                 ibkr_activity_description=rtr.description,
+                source_transaction_ids=((client, rtr.transaction_id),) if rtr.transaction_id else (),
             )
+            sides.setdefault(move_key, {"OUT": [], "IN": []})[direction].append(event)
+
+        moves = []
+        def signature(event):
+            # The ledger remains authoritative for long/short. The two exported
+            # sides may use opposite quantity signs; compare dates and magnitudes.
+            days = {}
+            for lot in event.moved_lots:
+                days[lot.acquisition_date] = days.get(lot.acquisition_date, Decimal('0')) + lot.quantity
+            return tuple(sorted(days.items()))
+
+        for key, pair in sides.items():
+            remaining = list(pair['IN'])
+            unmatched = []
+            for outgoing in pair['OUT']:
+                match = next((incoming for incoming in remaining
+                    if outgoing.quantity == incoming.quantity
+                    and (not outgoing.moved_lots or not incoming.moved_lots
+                         or signature(outgoing) == signature(incoming))), None)
+                if match is None:
+                    unmatched.append(outgoing)
+                    continue
+                remaining.remove(match)
+                outgoing.source_transaction_ids += match.source_transaction_ids
+                if not outgoing.moved_lots:
+                    outgoing.moved_lots = match.moved_lots
+                moves.append(outgoing)
+            if unmatched and remaining:
+                data_errors.append(f'Conflicting reciprocal transfer details on {key[3]} '
+                                   f'between {key[0]} and {key[1]}')
+            else:
+                # One side alone is supported. Never collapse two observations from
+                # the same side merely because their totals coincide.
+                moves.extend(unmatched)
+                moves.extend(remaining)
 
         # === Cash moves: the disposal-plus-acquisition, keyed by TransactionID ===
         cash_moves: dict = {}
@@ -1404,4 +1412,4 @@ class DomainEventFactory:
             f"internal cash transfer event(s) from {len(raw_transfers)} raw transfer "
             f"row(s) ({skipped_eur_cash_rows} EUR cash row(s) carrying no currency gain)."
         )
-        return list(moves.values()) + list(cash_moves.values())
+        return moves + list(cash_moves.values())

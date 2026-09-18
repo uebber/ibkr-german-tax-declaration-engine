@@ -70,7 +70,7 @@ The system must parse IBKR data from CSV reports: Trades (including the `Open/Cl
 
 #### Note on Start-of-Year Positions and Quantities
 - The `POSITIONS_START_FILE_PATH` is crucial for establishing initial inventory quantities (as `Decimal`) and potentially cost basis (`Decimal`) at the beginning of the tax year.
-- **SOY Quantity Precedence:** The SOY quantity reported in the positions start file for each `Asset` (excluding `AssetCategory.CASH_BALANCE` types) — the person's total, summed across the accounts that report it — is considered **factually correct and has absolute priority** over any quantity that might be derived from analyzing pre-tax-year historical trades.
+- **SOY Quantity Precedence:** The SOY quantity reported in the positions start file for each `Asset` (excluding `AssetCategory.CASH_BALANCE` types) — separately for each reporting account — is considered **factually correct and has absolute priority** over any quantity that might be derived from analyzing pre-tax-year historical trades.
 - **Assets Not in SOY Report:** For any `Asset` (excluding `AssetCategory.CASH_BALANCE` types) that is **not present** in the positions start file, its SOY quantity at the beginning of the tax year **must be assumed to be `Decimal(0)`.**
 - The detailed logic for determining the SOY cost basis, which may involve historical FIFO calculations or data from the positions start file, is specified in Section 2.4.
 
@@ -155,7 +155,7 @@ The system must implement the First-In, First-Out (FIFO) method in EUR (using `D
 
 #### Initialization of FIFO Ledgers at Start-of-Year (SOY) and EOY Validation
 
-**SOY Quantity:** The SOY quantity (`Decimal`) for an `Asset` (as established per Section 2.1, i.e., primarily from positions start file, or `Decimal(0)` if not listed for non-cash assets) is the definitive starting quantity for its FIFO ledger at the beginning of the tax year. This applies to both long (positive) and short (negative) positions.
+**SOY Quantity:** Each account's SOY quantity (`Decimal`) for an `Asset` (as established per Section 2.1, i.e., primarily from positions start file, or `Decimal(0)` if not listed for non-cash assets) is the definitive starting quantity for its FIFO ledger at the beginning of the tax year. This applies to both long (positive) and short (negative) positions.
 
 **SOY Cost Basis Determination:**
 1. **Historical FIFO Simulation:** The system will simulate the FIFO state by processing historical trade data (transactions like `TradeEvent` and relevant corporate actions such as `CorpActionSplitForward`, `CorpActionStockDividend` occurring *before* the start of the current tax year), using the `INTERNAL_CALCULATION_PRECISION`.
@@ -163,7 +163,7 @@ The system must implement the First-In, First-Out (FIFO) method in EUR (using `D
    - The simulation process did not encounter internal inconsistencies (e.g., attempting to sell more shares than available based on prior simulated buys).
    - The net quantity (long or short) derived from the simulation aligns with the sign of the SOY quantity.
    - The total quantity of simulated historical lots (long or short) is sufficient to cover the absolute value of the SOY quantity.
-3. **Fallback to Reported SOY Cost Basis:** If the conditions for using the historically simulated FIFO lots are not met (e.g., insufficient historical data, simulation inconsistencies, or misalignment with reported SOY quantity sign/magnitude), then the cost basis (or proceeds) for the *entire* SOY quantity **must** be taken from the `CostBasisMoney` and `CurrencyPrimary` columns reported in the positions start file. This reported cost basis is then converted to EUR if necessary, using the `INTERNAL_CALCULATION_PRECISION`. **If this reported SOY cost basis information is also missing, the run stops.** It does not fall back to a zero-value lot: a zero basis declares the whole of a later disposal as gain, which is an invented figure and not a missing one. `_ensure_soy_quantities_are_set` refuses a nonzero opening holding reported with no basis, and `_create_fallback_long_lot` refuses the same condition at a mark. (This paragraph described the zero-value fallback until August 2026, by which time the code had already removed it.) Where a basis *is* supplied, the lot it builds carries no acquisition date and is flagged `acquisition_date_is_known=False`; its date is December 31st of the preceding tax year and only § 18 Abs. 2 InvStG honours the flag.
+3. **Fallback to Reported SOY Cost Basis:** If the conditions for using the historically simulated FIFO lots are not met (e.g., insufficient historical data, simulation inconsistencies, or misalignment with reported SOY quantity sign/magnitude), then the cost basis (or proceeds) for the *entire* SOY quantity **must** be taken from the `CostBasisMoney` and `CurrencyPrimary` columns reported in the positions start file. This reported cost basis is then converted to EUR if necessary, using the `INTERNAL_CALCULATION_PRECISION`. **If this reported SOY cost basis information is also missing, the run stops.** It does not fall back to a zero-value lot: a zero basis declares the whole of a later disposal as gain, which is an invented figure and not a missing one. `_ensure_soy_quantities_are_set` refuses a nonzero opening holding reported with no basis, and `_create_fallback_long_lot` refuses the same condition at a mark. (This paragraph described the zero-value fallback until August 2026, by which time the code had already removed it.) Where a basis *is* supplied, the lot it builds carries no acquisition date and is flagged `acquisition_date_is_known=False`; its date is only a placeholder. Before current-year securities disposal processing, `SECURITIES_ACQUISITION_HISTORY_UNKNOWN` refuses affected account/asset pairs. The Vorabpauschale acquisition-month calculation also refuses an unknown date. Reconciliation may retain unresolved quantities for diagnostics; it cannot establish acquisition history.
 
 **EOY Quantity Validation:** After processing all `FinancialEvent` objects for the tax year, the calculated end-of-year (EOY) quantity for each `Asset` in its FIFO ledger **must be identical**, within a small numerical tolerance, to the EOY quantity (`Decimal`) reported in the `POSITIONS_END_FILE_PATH` (if the asset is listed).
 - Any discrepancy (beyond the tolerance) between the FIFO-calculated EOY quantity and the reported EOY quantity (for assets present in the end-of-year position report) **must be flagged as a critical error** and reported to the user.
@@ -207,33 +207,31 @@ It must reliably process option exercises (`FinancialEventType.OPTION_EXERCISE`)
 - An option exercise or assignment (e.g., `AssetClass` "OPT" with `Notes/Codes` 'Ex' or 'A' in the Trades CSV) is parsed into an `OptionExerciseEvent` or `OptionAssignmentEvent`.
 - The corresponding movement of the underlying stock is parsed from a *separate row* in the Trades CSV as a standard `TradeEvent`.
 
-**Identifying and Linking Related Events (Post-Event Creation):** After initial event parsing, the system links the `OptionExerciseEvent` or `OptionAssignmentEvent` to its corresponding stock `TradeEvent`. This is handled by the `OptionTradeLinker` using the following mechanism:
+**Identifying and Linking Related Events (Post-Event Creation):** Physical stock
+deliveries are matched by account, date, underlying, exercise/assignment action,
+direction, strike price and currency. A stock event carries quantity allocations
+in `option_delivery_links`. Partial executions of one option contract are allocated
+in the broker order of each leg, allowing one-to-many and many-to-one deliveries.
+Indistinguishable different contracts are reported together as ambiguous. No
+candidate overwrites another. Stock-only historical inputs without a supplied
+option lifecycle retain their existing warning and unadjusted treatment.
 
-1. **Candidate Selection:**
-   - `OptionExerciseEvent` and `OptionAssignmentEvent` objects created from option trades are collected as candidates for linking.
-   - Stock `TradeEvent` objects are pre-filtered as candidates for linking if their `ibkr_notes_codes` field contains 'A' (Assignment/Auto-Exercise) or 'EX' (Exercise) indicators.
-   - Exclude "IA" (Internalized + Automatically Allocated) codes from option assignment detection to prevent false positives.
+**Premium ownership:** `OptionPremiumBook` stores the consumed option premium
+under its account and event identity. Each stock allocation consumes only its
+quantity's share; the last allocation receives the exact remaining amount.
+Overconsumption, cross-account use and leftover allocations are errors. Position
+flips preserve account and delivery allocations across their close/open components.
 
-2. **Option Event Lookup Map Construction:** A lookup map is built for the candidate option lifecycle events. The key for this map is a tuple:
-   - `(event_date_str, option_asset.underlying_ibkr_conid, abs_expected_stock_qty_str)`
+**Ordering:** One stable day schedule serves current-year processing and historical
+replay. It preserves option-ledger chronology and currency-affecting transaction
+order, adds validated option-to-stock dependencies and coordinates transfer sides.
+An exercise cannot be moved ahead of its opening purchase by event-type priority.
 
-3. **Stock Trade Matching:** Each candidate stock `TradeEvent` attempts to find a match in the option event lookup map using a similarly structured key:
-   - `(stock_trade.event_date, stock_asset.ibkr_conid, stock_trade.quantity.copy_abs().to_eng_string())`
-
-4. **Link Establishment:** If a stock trade's key matches a key in the option event lookup map, the stock `TradeEvent`'s `related_option_event_id` field is populated with the `event_id` of the matched `OptionLifecycleEvent`.
-
-**Implicit Matching Criteria through Key Structure:** This linking mechanism inherently relies on:
-- **Identical `event_date`**.
-- **Underlying Asset Match:** The `Option` asset's `underlying_ibkr_conid` (used in the option event key) must effectively match the `Stock` asset's `ibkr_conid` (used in the stock trade key) for the keys to be identical.
-- **Quantity Consistency:** The absolute quantity of the stock `TradeEvent` must match the calculated expected stock quantity from the option event (option contracts * multiplier).
-
-**Handling Ambiguity and Failures during Linking:**
-- If the option event lookup map construction encounters duplicate keys (e.g., multiple option events on the same day for the same underlying predicting the same stock movement), a warning is logged, and the later event typically overwrites the earlier one in the lookup.
-- If a candidate stock `TradeEvent` (pre-filtered by `Notes/Codes`) fails to find a match in the option event lookup map, a warning is logged, indicating a potential linking failure that might require investigation.
-
-**Price Consistency (Not Used for Linking):** The current linking mechanism does *not* use the stock trade price versus the option strike price as part of the key for matching.
-
-**Adjusting Stock Trade Economics:** Once an option exercise/assignment event is linked to the corresponding stock `TradeEvent` (via `related_option_event_id` on the stock `TradeEvent`), the system must adjust the economics of the stock trade to incorporate the option premium (cost or proceeds, in EUR). Option lifecycle event processors (e.g., for exercise or assignment) calculate and temporarily store the total EUR premium of the option leg (e.g., in a context dictionary like `pending_option_adjustments`, keyed by the option event's ID). The `TradeProcessor`, when processing the linked stock `TradeEvent`, retrieves this stored premium and applies the adjustment. All adjustments use `INTERNAL_CALCULATION_PRECISION`. The specific adjustments are as follows:
+**Existing premium treatment (not a legal acceptance statement):** The formulas
+below describe the retained implementation. Assignment premium netting conflicts
+with GT-ESTG20-004; historical and fund-underlying premium handling also remain
+separate pre-existing gaps. See the legal implementation map and PR #88 review.
+PM-005 corrects identity, ownership and allocation, without choosing new treatment.
 
 - **When the Stock Trade is a Purchase (event types `TRADE_BUY_LONG` or `TRADE_BUY_SHORT_COVER`):**
   - **If due to Long Call Exercise:** The premium *paid* for the call option effectively increases the cost basis of the stock purchased (or increases the cost to cover an existing short stock position).
@@ -531,7 +529,7 @@ Internal structures associated with an `Asset.internal_asset_id`.
 ### Core Event Types (subclasses of `FinancialEvent` in `domain.events`)
 
 - `FinancialEvent`: Base class with `event_id`, `asset_internal_id`, `event_type` (`FinancialEventType` enum), `event_date` (YYYY-MM-DD string), monetary amounts (`Decimal` for `gross_amount_foreign_currency`, `gross_amount_eur`), IBKR details. Parent constructor requires `asset_internal_id`, `event_date`, and keyword args including `event_type`.
-- Specific types: `TradeEvent` (with `quantity`, `price_foreign_currency`, `commission_foreign_currency` all `Decimal`, and an optional `related_option_event_id`), `CashFlowEvent` (with `source_country_code`), `WithholdingTaxEvent`, `CorporateActionEvent` (and its subtypes like `CorpActionSplitForward`, `CorpActionMergerCash`, `CorpActionMergerStock`, `CorpActionStockDividend` with their specific attributes like ratios and values as `Decimal`), `OptionLifecycleEvent` (and subtypes `OptionExerciseEvent`, `OptionAssignmentEvent`, `OptionExpirationWorthlessEvent`), `CurrencyConversionEvent` (with `from_amount`, `to_amount`, etc.), `FeeEvent`. Each subtype passes its specific `FinancialEventType` to the parent. Note: `OptionExerciseEvent` and `OptionAssignmentEvent` do not store a direct link to the stock trade event; the stock `TradeEvent` stores a `related_option_event_id`.
+- Specific types: `TradeEvent` (with `quantity`, `price_foreign_currency`, `commission_foreign_currency` all `Decimal`, and an optional `option_delivery_links`), `CashFlowEvent` (with `source_country_code`), `WithholdingTaxEvent`, `CorporateActionEvent` (and its subtypes like `CorpActionSplitForward`, `CorpActionMergerCash`, `CorpActionMergerStock`, `CorpActionStockDividend` with their specific attributes like ratios and values as `Decimal`), `OptionLifecycleEvent` (and subtypes `OptionExerciseEvent`, `OptionAssignmentEvent`, `OptionExpirationWorthlessEvent`), `CurrencyConversionEvent` (with `from_amount`, `to_amount`, etc.), `FeeEvent`. Each subtype passes its specific `FinancialEventType` to the parent. Note: `OptionExerciseEvent` and `OptionAssignmentEvent` do not store a direct link to the stock trade event; the stock `TradeEvent` stores a `option_delivery_links`.
 
 ### Calculated Result Structures (defined in `domain.results`)
 
@@ -624,7 +622,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
 
 10. Enrich data (`enrich_financial_events`): Convert all financial amounts in the filtered (current tax year) `FinancialEvent` objects to EUR using `Decimal` arithmetic (with `INTERNAL_CALCULATION_PRECISION`) and ECB rates, storing results in EUR-specific fields (e.g., `gross_amount_eur`, `commission_eur`). Enhanced asset information formatting in log messages.
 
-11. Perform Option-to-Stock Trade Linking (`perform_option_trade_linking`): Link `OptionExerciseEvent`/`OptionAssignmentEvent` objects (from the current tax year) to their corresponding stock `TradeEvent` objects by populating `TradeEvent.related_option_event_id`, as detailed in Section 2.4.
+11. Perform Option-to-Stock Trade Linking (`perform_option_trade_linking`): Link `OptionExerciseEvent`/`OptionAssignmentEvent` objects (from the current tax year) to their corresponding stock `TradeEvent` objects by populating `TradeEvent.option_delivery_links`, as detailed in Section 2.4.
 
 12. Initialize FIFO Ledgers for each `Asset`:
     - **Set initial quantities from the opening snapshot recorded for that ledger (as determined per Section 2.1), read through `person_snapshot()` while ledgers are person-wide.**
@@ -638,7 +636,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
       - For `BOND` and `SONSTIGE_KAPITALFORDERUNG` sales/covers, G/L contributes to `kap_other_income_positive` or `kap_other_losses_abs`.
       - For `INVESTMENT_FUND` sales, calculate Teilfreistellung on G/L. The `net_gain_loss_after_teilfreistellung_eur` contributes to `fund_income_net_taxable` (for internal calculations only, not included in Anlage KAP Zeile 19).
       - For `PRIVATE_SALE_ASSET`, check holding period for taxability and G/L contributes to Anlage SO.
-      - Stock trades linked to option events will have their economics adjusted by the option premium before FIFO processing (using the `related_option_event_id` link).
+      - Stock trades linked to option events will have their economics adjusted by the option premium before FIFO processing (using the `option_delivery_links` link).
     - **`CashFlowEvent`:** Record gross income.
       - For fund distributions, calculate Teilfreistellung; the net taxable amount contributes to `fund_income_net_taxable` (for internal calculations only, not included in Anlage KAP Zeile 19).
       - For non-fund dividends, interest, Stückzinsen, these contribute to `kap_other_income_positive` or `kap_other_losses_abs` (after netting for Stückzinsen).
@@ -646,7 +644,7 @@ Summed net income/G/L per tax pot after local calculations and Finanzamt-style o
       - For exercises/assignments, this involves:
         1. Consuming the option lots from the option's FIFO ledger.
         2. Calculating the total EUR premium of the consumed option leg.
-        3. Storing this premium in a temporary context (e.g., `pending_option_adjustments`) associated with the option event's ID, for later use by the linked stock `TradeEvent`.
+        3. Storing this premium in a temporary context (e.g., `OptionPremiumBook`) associated with the option event's ID, for later use by the linked stock `TradeEvent`.
         4. The linked stock `TradeEvent` (processed separately via `TradeProcessor`) will then retrieve this premium to adjust its own economic basis/proceeds (as detailed in Section 2.4).
       - For expirations or closing option trades not resulting in stock delivery, generate `RealizedGainLoss` for option premiums with the correct `RealizationType`. These G/L contribute to `derivative_gains_gross` or `derivative_losses_abs`.
     - Calculate gross and net Vorabpauschale (€0 for current tax year), creating `VorabpauschaleData`. The net Vorabpauschale contributes to `fund_income_net_taxable` (as €0).

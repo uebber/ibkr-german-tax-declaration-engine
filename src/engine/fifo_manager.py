@@ -6,7 +6,7 @@ import uuid
 from datetime import date as date_obj, datetime
 
 from src.domain.assets import Asset, Option, PositionSnapshot
-from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights
+from src.domain.events import FinancialEvent, TradeEvent, CorpActionSplitForward, CorpActionMergerCash, CorpActionStockDividend, CorpActionMergerStock, OptionLifecycleEvent, CorporateActionEvent, CorpActionExpireDividendRights, OptionDeliveryLink
 from src.domain.results import RealizedGainLoss
 from src.domain.enums import AssetCategory, FinancialEventType, TaxReportingCategory, RealizationType, InvestmentFundType
 from src.domain.exceptions import DataIntegrityError, ProcessingError
@@ -77,6 +77,7 @@ class ShortFifoLot:
     unit_sale_proceeds_eur: Decimal # Renamed from sale_proceeds_eur_per_unit
     total_sale_proceeds_eur: Decimal # Total sale proceeds when shorted
     source_transaction_id: str # IBKR Transaction ID (or fallback string like "SOY_FALLBACK_SHORT")
+    acquisition_date_is_known: bool = True
 
     def __post_init__(self):
         if not isinstance(self.quantity_shorted, Decimal) or not self.quantity_shorted.is_finite() or self.quantity_shorted <= Decimal(0):
@@ -158,6 +159,20 @@ class ConsumedLotDetail:
     original_lot_source_tx_id: str
 
 
+@dataclass(frozen=True)
+class LotTransfer:
+    """A delivery of existing lots; acquisition history travels intact (GT-ESTG20-014)."""
+    asset_internal_id: uuid.UUID
+    long_lots: tuple
+    short_lots: tuple
+
+
+@dataclass(frozen=True)
+class PreparedTransferState:
+    long_lots: list
+    short_lots: list
+
+
 def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, available_short_qty: Decimal) -> List[TradeEvent]:
     """Split a position-flip trade (C;O / O;C) into close + open sub-events.
 
@@ -204,6 +219,17 @@ def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, av
         sub_commission_eur = event.commission_eur * ratio if event.commission_eur is not None else None
         sub_net = event.net_proceeds_or_cost_basis_eur * ratio if event.net_proceeds_or_cost_basis_eur is not None else None
 
+        # Allocate each linked delivery once across the close/open split. An option
+        # assignment can cross zero in the underlying account just like another trade.
+        offset = Decimal('0') if sub_type == close_type else close_qty
+        end = offset + sub_abs_qty
+        cursor = Decimal('0')
+        links = []
+        for link in event.option_delivery_links:
+            take = min(end, cursor + link.quantity) - max(offset, cursor)
+            if take > 0:
+                links.append(OptionDeliveryLink(link.option_event_id, take))
+            cursor += link.quantity
         return TradeEvent(
             asset_internal_id=event.asset_internal_id,
             event_date=event.event_date,
@@ -214,7 +240,8 @@ def split_position_flip_event(event: TradeEvent, available_long_qty: Decimal, av
             commission_currency=event.commission_currency,
             commission_eur=sub_commission_eur,
             net_proceeds_or_cost_basis_eur=sub_net,
-            related_option_event_id=None,  # flip events don't arise from option exercise
+            option_delivery_links=links,
+            account_id=event.account_id,
             is_position_flip=False,
             local_currency=event.local_currency,
             gross_amount_foreign_currency=sub_gross_fc,
@@ -631,14 +658,11 @@ class FifoLedger:
         The snapshot supplies a quantity and a cost basis. It supplies no acquisition
         date, so the lot carries `acquisition_date_is_known=False`.
 
-        **Exactly one consumer honours that flag: § 18 Abs. 2, which raises rather than
-        read the placeholder. § 23 does not.** The holding period is computed straight
-        from `acquisition_date`, so a placeholder would decide the Spekulationsfrist
-        with no signal either way. This docstring claimed both refused until 2026-08-09;
-        it now says what the code does. The assumption the gap rests on, measured over
-        2021-2025: two undated lots exist, neither is a `PRIVATE_SALE_ASSET` -- the only
-        category § 23 reaches -- and neither has been disposed of. It becomes live the
-        day an undated lot is crypto, a metal ETP or a currency balance.
+        The calculation entry point refuses current-year securities disposals that
+        depend on such lots, collecting the affected accounts before dispatch.
+        The Vorabpauschale acquisition-month calculation also refuses an unknown date.
+        Reconciliation can still retain quantities for diagnostics or an instrument
+        that is not disposed of; a matching quantity does not establish its history.
 
         **A cost basis this cannot use stops the run; it is never replaced by zero.**
         Three substitutions stood here until 2026-08-09 -- an absent basis, one that
@@ -722,7 +746,8 @@ class FifoLedger:
         fallback_short_lot = ShortFifoLot(
             opening_date=opening_date_str, quantity_shorted=quantity_abs,
             unit_sale_proceeds_eur=proceeds_per_unit, total_sale_proceeds_eur=total_proceeds_eur, # Renamed
-            source_transaction_id=self.soy_fallback_short_lot_source_tx_id
+            source_transaction_id=self.soy_fallback_short_lot_source_tx_id,
+            acquisition_date_is_known=False,
         )
         self.short_lots.append(fallback_short_lot)
         logger.info(
@@ -775,6 +800,7 @@ class FifoLedger:
                 # § 19 Abs. 1 Satz 3 deducts them when it ends. Rebuilding the lot
                 # without this drops them, and the loss is silent.
                 vorabpauschale_gross_eur=lot.vorabpauschale_gross_eur,
+                acquisition_date_is_known=lot.acquisition_date_is_known,
             ))
 
         prepared_short_lots: List[ShortFifoLot] = []
@@ -787,6 +813,7 @@ class FifoLedger:
                 unit_sale_proceeds_eur=new_unit_proceeds,
                 total_sale_proceeds_eur=lot.total_sale_proceeds_eur,
                 source_transaction_id=str(merger_event.event_id),
+                acquisition_date_is_known=lot.acquisition_date_is_known,
             ))
 
         # Phase 2 — COMMIT (cannot fail)
@@ -795,39 +822,88 @@ class FifoLedger:
         self.short_lots.extend(prepared_short_lots)
         self.short_lots.sort(key=lambda l: (parse_ibkr_date(l.opening_date) or datetime.min.date(), l.source_transaction_id))
 
-    def remove_relocated_lots(self, long_lots: List[FifoLot],
-                              short_lots: List[ShortFifoLot]) -> None:
-        """Remove the given lot objects (by identity) -- the sending side of a transfer.
 
-        Identity, not equality: two lots acquired on one day with the same quantity and
-        basis would be equal as dataclasses, and removing "one of them" by value could
-        drop the wrong object. The transfer coordinator has already chosen the exact
-        objects.
+    def prepare_transfer_delivery(self, event, name, data_gap_collector=None):
+        """Validate the sending account's own lots without touching any ledger.
+
+        Lot detail selects whole acquisition days. A summary-only move can select
+        only the entire long or short holding. Sub-day selection remains unsupported.
         """
-        long_ids = {id(lot) for lot in long_lots}
-        short_ids = {id(lot) for lot in short_lots}
-        self.lots = [lot for lot in self.lots if id(lot) not in long_ids]
-        self.short_lots = [lot for lot in self.short_lots if id(lot) not in short_ids]
+        from src.processing.data_gaps import DataGapError, GapSeverity
 
-    def receive_relocated_lots(self, long_lots: List[FifoLot],
-                               short_lots: List[ShortFifoLot]) -> None:
-        """Receive lot objects relocated from another account by an internal transfer.
+        def refuse(detail):
+            subject = f'{name}: transfer on {event.event_date}'
+            if data_gap_collector is not None:
+                data_gap_collector.record(code='INTERNAL_TRANSFER_PARTIAL', subject=subject,
+                    detail=detail, severity=GapSeverity.FAIL_FAST)
+            raise DataGapError(f'[INTERNAL_TRANSFER_PARTIAL] {subject}: {detail}')
 
-        The objects move INTACT -- their acquisition date, cost basis,
-        `acquisition_date_is_known` flag and accumulated Vorabpauschale travel with them,
-        because a move between the taxpayer's own accounts is not a disposal
-        ([GT-ESTG20-014]): nothing is closed and reopened. This is the difference from
-        `receive_all_lots_from_merger`, which REBUILDS the lots because a merger rescales
-        the quantities by a ratio. Here the same objects are re-parented, so the holding
-        period and basis are preserved by construction rather than by care.
+        if event.moved_lots:
+            days = {}
+            for detail in event.moved_lots:
+                if detail.quantity <= 0:
+                    refuse('Lot-detail quantity must be positive')
+                days[detail.acquisition_date] = days.get(detail.acquisition_date, Decimal('0')) + detail.quantity
+            if sum(days.values(), Decimal('0')) != event.quantity:
+                refuse('Lot-detail quantity does not match the transfer total')
+            longs, shorts = [], []
+            for day, quantity in days.items():
+                day_longs = [lot for lot in self.lots if lot.acquisition_date == day]
+                day_shorts = [lot for lot in self.short_lots if lot.opening_date == day]
+                if day_longs and day_shorts:
+                    refuse(f'Long and short lots both exist on {day}; lot-detail is ambiguous')
+                available = (sum((lot.quantity for lot in day_longs), Decimal('0'))
+                             + sum((lot.quantity_shorted for lot in day_shorts), Decimal('0')))
+                if available != quantity:
+                    refuse(f'Lot-detail for {day} moves {quantity} but account {event.account_id} '
+                           f'holds {available}; provide lot-detail for a whole acquisition day')
+                if any(detail.is_short != bool(day_shorts) for detail in event.moved_lots
+                       if detail.acquisition_date == day):
+                    logger.warning('Transfer lot sign disagrees with the sending ledger on %s; '
+                                   'preserving the ledger side', day)
+                longs.extend(day_longs)
+                shorts.extend(day_shorts)
+        else:
+            long_qty = sum((lot.quantity for lot in self.lots), Decimal('0'))
+            short_qty = sum((lot.quantity_shorted for lot in self.short_lots), Decimal('0'))
+            if long_qty == event.quantity and short_qty == 0:
+                longs, shorts = list(self.lots), []
+            elif short_qty == event.quantity and long_qty == 0:
+                longs, shorts = [], list(self.short_lots)
+            else:
+                refuse(f'Account {event.account_id} holds {long_qty} long and {short_qty} short; '
+                       f'transfer moves {event.quantity}. Supply lot-detail for a partial move')
+        long_ids, short_ids = {id(lot) for lot in longs}, {id(lot) for lot in shorts}
+        remaining = PreparedTransferState(
+            [lot for lot in self.lots if id(lot) not in long_ids],
+            [lot for lot in self.short_lots if id(lot) not in short_ids])
+        return LotTransfer(self.asset_internal_id, tuple(longs), tuple(shorts)), remaining
 
-        A list `extend` + `sort`, so it cannot fail: the transfer coordinator validates
-        the move before any ledger is touched, and removal + receipt are pure list ops.
-        """
-        self.lots.extend(long_lots)
-        self.lots.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
-        self.short_lots.extend(short_lots)
-        self.short_lots.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
+    def prepare_transfer_receipt(self, delivery: LotTransfer) -> PreparedTransferState:
+        """Validate and sort the receiving account's replacement state before commit."""
+        if delivery.asset_internal_id != self.asset_internal_id:
+            raise ProcessingError('Transfer receipt names a different instrument')
+        incoming = delivery.long_lots + delivery.short_lots
+        existing_ids = {id(lot) for lot in self.lots + self.short_lots}
+        if len({id(lot) for lot in incoming}) != len(incoming) or any(id(lot) in existing_ids for lot in incoming):
+            raise ProcessingError('Transfer receipt contains a duplicated lot')
+        longs = list(self.lots) + list(delivery.long_lots)
+        shorts = list(self.short_lots) + list(delivery.short_lots)
+        if longs and shorts:
+            raise ProcessingError('Transfer would combine long and short holdings; netting is not a lot relocation')
+        longs.sort(key=lambda lot: (parse_ibkr_date(lot.acquisition_date) or datetime.min.date(), lot.source_transaction_id))
+        shorts.sort(key=lambda lot: (parse_ibkr_date(lot.opening_date) or datetime.min.date(), lot.source_transaction_id))
+        return PreparedTransferState(longs, shorts)
+
+    def commit_transfer_state(self, state: PreparedTransferState) -> None:
+        """Commit already validated state. No parsing, sorting or calculations here."""
+        self.lots = state.long_lots
+        self.short_lots = state.short_lots
+
+
+    def has_unresolved_acquisition_history(self) -> bool:
+        """Account-local provenance check; matching a snapshot proves only quantity."""
+        return any(not lot.acquisition_date_is_known for lot in self.lots + self.short_lots)
 
     def add_long_lot(self, trade_event: TradeEvent):
         if trade_event.event_type != FinancialEventType.TRADE_BUY_LONG: return
