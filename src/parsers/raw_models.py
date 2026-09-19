@@ -314,8 +314,9 @@ class RawTransferRecord(RawBaseRecord):
     wrong -- but in the broker's convention: IBKR nets an option-assignment premium into
     the basis of assigned shares, which German law rejects ([GT-ESTG20-004], BMF
     14.05.2025 Rz. 26). Taking them would understate the basis and tax the premium twice.
-    The German-correct basis is the sending ledger's own reconstruction, which the
-    handover relocates, so these two values are never read to value anything. They are
+    The carried basis is the sending ledger's own reconstruction, which the
+    handover relocates; separate option-treatment limitations remain in the legal
+    implementation map. These two values are never read to value anything. They are
     parsed here only because they complete the required lot-detail export shape (an export
     lacking them is read on a heuristic instead, which is the state this file exists to
     prevent). What the `LOT` rows ARE used for -- the acquisition day, the quantity and the

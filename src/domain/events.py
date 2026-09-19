@@ -60,6 +60,8 @@ class FinancialEvent:
     # determinism is the property being bought here, and it holds whatever the
     # construction order happens to be.
     creation_sequence: int = field(default_factory=_next_creation_sequence)
+    # Assigned by the complete day's dependency resolver, shared by both replay paths.
+    resolved_day_position: Optional[int] = None
 
     # Monetary amounts related to the event
     # These are typically in the original currency of the transaction/event
@@ -91,6 +93,13 @@ class FinancialEvent:
         # raise ValueError(f"event_date format error: {self.event_date}")
 
 
+@dataclass(frozen=True)
+class OptionDeliveryLink:
+    """The stock units allocated to one exercise/assignment, not a tax amount."""
+    option_event_id: uuid.UUID
+    quantity: Decimal
+
+
 @dataclass
 class TradeEvent(FinancialEvent):
     # Trade-specific details (positional after FinancialEvent's positional args)
@@ -108,7 +117,7 @@ class TradeEvent(FinancialEvent):
     net_proceeds_or_cost_basis_eur: Optional[Decimal] = None
 
     # If this trade results from an option event (exercise/assignment)
-    related_option_event_id: Optional[uuid.UUID] = None
+    option_delivery_links: list[OptionDeliveryLink] = field(default_factory=list)
 
     # True if this trade is a position flip (IBKR C;O or O;C indicator),
     # meaning part closes existing position and part opens opposite direction.
@@ -124,7 +133,7 @@ class TradeEvent(FinancialEvent):
                  commission_currency: Optional[str] = None,
                  commission_eur: Optional[Decimal] = None,
                  net_proceeds_or_cost_basis_eur: Optional[Decimal] = None,
-                 related_option_event_id: Optional[uuid.UUID] = None,
+                 option_delivery_links: Optional[list[OptionDeliveryLink]] = None,
                  is_position_flip: bool = False,
                  **kwargs_for_parent_kw_only): # Catches event_id, gross_amount_foreign_currency etc.
         super().__init__(asset_internal_id, event_date, event_type=event_type, **kwargs_for_parent_kw_only)
@@ -134,7 +143,7 @@ class TradeEvent(FinancialEvent):
         self.commission_currency = commission_currency
         self.commission_eur = commission_eur
         self.net_proceeds_or_cost_basis_eur = net_proceeds_or_cost_basis_eur
-        self.related_option_event_id = related_option_event_id
+        self.option_delivery_links = list(option_delivery_links or [])
         self.is_position_flip = is_position_flip
 
     def __post_init__(self):
@@ -449,13 +458,17 @@ class CurrencyConversionEvent(FinancialEvent):
 class FeeEvent(FinancialEvent):
     # For miscellaneous fees (e.g., account fees, market data fees)
     # event_type is FinancialEventType.FEE_TRANSACTION
-    # gross_amount_foreign_currency in FinancialEvent holds the fee amount (typically negative or handled as positive cost)
+    # Amounts are magnitudes; is_refund distinguishes a credit from a charge.
     # local_currency in FinancialEvent holds the currency of the fee
+    is_refund: bool = False
+
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, # Removed the problematic bare '*'
+                 *, is_refund: bool = False,
                  **kwargs_for_parent_kw_only): # asset_internal_id could be general cash account
         super().__init__(asset_internal_id, event_date,
                          event_type=FinancialEventType.FEE_TRANSACTION,
                          **kwargs_for_parent_kw_only)
+        self.is_refund = is_refund
 
     def __post_init__(self):
         super().__post_init__()
@@ -472,7 +485,7 @@ class TransferLot:
     ledger to find the lots that moved, and the sign is cross-checked against the ledger's
     own long-versus-short. The `LOT` row's `CostBasis` is NOT carried here -- it is in
     IBKR's convention (an option-assignment premium netted into the basis, contrary to
-    [GT-ESTG20-004]) and the German basis is the ledger's own reconstruction, so it is
+    [GT-ESTG20-004]) and the carried basis is the ledger's own reconstruction, so it is
     parsed on `RawTransferRecord` to complete the required export shape and not consumed.
     See `src/parsers/raw_models.py::RawTransferRecord`.
     """
@@ -506,21 +519,21 @@ class InternalTransferEvent(FinancialEvent):
     the per-lot sign in `moved_lots` does state long-versus-short, and it is cross-checked
     against the sending ledger, which is authoritative.
 
-    **`ibkr_transaction_id` is deliberately left unset.** The export records each move
-    once per side and the two sides carry different ids, so neither names the move. It
-    would also decide more than identity: `get_event_sort_key` places
-    `ibkr_transaction_id` ahead of the intra-day band, so an id here would let a broker's
-    string decide whether the move lands before or after the same day's trades. That
-    order is fixed deliberately by the band branch in `sorting_utils.py` instead.
+    `ibkr_transaction_id` is unset because neither side's id names the combined
+    move. `source_transaction_ids` retains the account/id observations so the
+    day scheduler can preserve each side's chronology without inventing an id.
     """
     _: KW_ONLY
     to_account_id: str
     quantity: Decimal
     moved_lots: list = field(default_factory=list)
+    # A combined move has no single broker id. Preserve the per-account observations.
+    source_transaction_ids: tuple = ()
 
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
                  to_account_id: str, quantity: Decimal,
                  moved_lots: Optional[list] = None,
+                 source_transaction_ids: tuple = (),
                  **kwargs_for_parent_kw_only):
         super().__init__(asset_internal_id, event_date,
                          event_type=FinancialEventType.INTERNAL_TRANSFER,
@@ -528,6 +541,7 @@ class InternalTransferEvent(FinancialEvent):
         self.to_account_id = to_account_id
         self.quantity = quantity
         self.moved_lots = moved_lots if moved_lots is not None else []
+        self.source_transaction_ids = source_transaction_ids
         # Checked here and not in `__post_init__`: the parent's generated `__init__`
         # calls `__post_init__` before the three lines above have run, so none of the
         # fields exist yet at that point.
@@ -572,19 +586,32 @@ class InternalCashTransferEvent(FinancialEvent):
     **EUR never produces one of these.** § 20 Abs. 2 Satz 1 Nr. 7 reaches a
     *Fremdwaehrungs*guthaben, and this engine's base currency is EUR, so a move of euros
     between the accounts realises nothing to declare.
+
+    The two exported rows -- the sending account's and the receiving account's -- share one
+    broker `TransactionID`, which is how they are recognised as one move. That id is kept in
+    `ibkr_transaction_id` so `get_event_sort_key` places the move in the broker's own
+    chronology among the day's currency events (the trade band), rather than ahead of them.
+    `source_transaction_ids` retains each side's (account, id) observation as provenance: both
+    rows are kept, not the first one only, and the two are checked to agree before they become
+    one move.
     """
     _: KW_ONLY
     to_account_id: str
     quantity: Decimal
+    # Each side's (account, id) observation. Both rows report the same move; keeping both
+    # is what lets a later reader see the two observations the one move was assembled from.
+    source_transaction_ids: tuple = ()
 
     def __init__(self, asset_internal_id: uuid.UUID, event_date: str, *,
                  to_account_id: str, quantity: Decimal,
+                 source_transaction_ids: tuple = (),
                  **kwargs_for_parent_kw_only):
         super().__init__(asset_internal_id, event_date,
                          event_type=FinancialEventType.INTERNAL_CASH_TRANSFER,
                          **kwargs_for_parent_kw_only)
         self.to_account_id = to_account_id
         self.quantity = quantity
+        self.source_transaction_ids = source_transaction_ids
         # Checked here rather than in `__post_init__`, for the reason
         # `InternalTransferEvent` records: the parent's generated `__init__` runs
         # `__post_init__` before these two fields exist.

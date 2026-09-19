@@ -106,7 +106,7 @@ class TestMergerIntraDayOrdering:
 
     **That ordering is an explicit rule, not an accident.** `sorting_utils.py`
     partitions the same-day key by precedence: lot-DELIVERING kinds (corporate
-    actions and mergers, internal transfers, option lifecycle events) sort ahead
+    actions and mergers, internal transfers) sort ahead
     of that day's disposals regardless of transaction id, and only within a part
     does IBKR's txid chronology decide. So a merger sorts before the same day's
     trades by the rule -- it would still do so if IBKR ever gave the corporate

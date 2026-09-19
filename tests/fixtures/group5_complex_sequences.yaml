@@ -29,6 +29,12 @@ tests:
         symbol: ASSET.LS001.EUR
         isin: TESTISINLS001EUR
         category: STOCK
+      historical_trades:
+        - type: BL
+          date: "2022-12-31"
+          qty: 10
+          price: "99.90"
+          currency: EUR
       positions_soy:
         quantity: 10
         cost_basis: 1000.00
@@ -197,8 +203,8 @@ tests:
   # ===========================================================================
 
   - id: CTX_SOYF_001
-    description: "SOY Position Full Consumption then New Intra-Year Position"
-    notes: "SOY Long 10@1000, SL(10@120) closes SOY, BL(5@125), SL(3@130)"
+    description: "CTX_SOYF_001: refuse a disposal with unobserved acquisition history"
+    notes: "A snapshot supplies quantity and cost, not acquisition dates. GT-ESTG20-013/014/022."
     inputs:
       asset:
         symbol: ASSET.SOYF001.EUR
@@ -227,29 +233,11 @@ tests:
       positions_eoy_report:
         quantity: 2
     expected:
-      rgls:
-        - realization_type: SOLD_LONG
-          quantity: 10
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-03-01"
-          total_cost_basis_eur: 1000.00
-          total_proceeds_eur: 1199.00
-          gain_loss_eur: 199.00
-        - realization_type: SOLD_LONG
-          quantity: 3
-          acquisition_date: "2023-05-01"
-          realization_date: "2023-11-01"
-          # 3 from intra-year lot @125, sold @130
-          total_cost_basis_eur: 375.60
-          total_proceeds_eur: 389.00
-          gain_loss_eur: 13.40
-      eoy_state:
-        quantity: 2
-      errors: 0
-
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
   - id: CTX_SOYF_002
-    description: "SOY Position Partial Consumption then Intra-Year Buys and More Sells"
-    notes: "SOY 20@2000, SL(5@110) partial, BL(10@115), SL(15@120) sells rest of SOY"
+    description: "CTX_SOYF_002: refuse a disposal with unobserved acquisition history"
+    notes: "A snapshot supplies quantity and cost, not acquisition dates. GT-ESTG20-013/014/022."
     inputs:
       asset:
         symbol: ASSET.SOYF002.EUR
@@ -278,20 +266,8 @@ tests:
       positions_eoy_report:
         quantity: 10
     expected:
-      rgls:
-        - realization_type: SOLD_LONG
-          quantity: 5
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-02-15"
-          gain_loss_eur: 49.00
-        - realization_type: SOLD_LONG
-          quantity: 15
-          acquisition_date: "2022-12-31"
-          realization_date: "2023-09-01"
-          gain_loss_eur: 299.00
-      eoy_state:
-        quantity: 10
-      errors: 0
+      rgls: []
+      error_code: SECURITIES_ACQUISITION_HISTORY_UNKNOWN
 
   # ===========================================================================
   # §23 EStG Holding Period Boundary Tests (CTX_P23_*)

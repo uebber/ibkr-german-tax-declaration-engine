@@ -161,8 +161,9 @@ def test_the_models_that_deliberately_drop_a_requested_column_are_listed():
         # ReportDate, SettleDate, TransferAccountName, UnderlyingConid/Symbol), the
         # broker's own position/PnL figures (PositionAmount(InBase), PnlAmount(InBase)),
         # the `Code` "ST" marker that `LevelOfDetail` replaces, and `DateTime` -- the
-        # intraday timestamp the engine deliberately never reads (same-day order is a band
-        # rule, not a clock; see sorting_utils). `CashTransfer` is now READ, not dropped: it
+        # intraday clock the engine deliberately never reads: same-day order comes from the
+        # sort bands and, within the trade band, the broker's `TransactionID` chronology, not
+        # the wall-clock time (see sorting_utils). `CashTransfer` is now READ, not dropped: it
         # carries the amount of a currency move ([GT-FX-009]), the only column that does.
         "RawTransferRecord": [
             "AccountAlias", "ClientReference", "Code", "CommodityType",

@@ -31,7 +31,7 @@ from src.processing.data_gaps import DataGapError
 from tests.support.base import FifoTestCaseBase
 from tests.support.mock_providers import MockECBExchangeRateProvider
 from tests.support.multi_account import (
-    cash_balance_row, position_row, trade_row, transfer_row)
+    cash_balance_row, fx_trade_row, position_row, trade_row, transfer_row)
 
 A, B = "U10000001", "U10000002"
 TAX_YEAR = 2025
@@ -281,6 +281,52 @@ class TestTheEndOfYearCheckRunsPerAccount(FifoTestCaseBase):
         assert {g.subject for g in gaps} == {f"USD (Konto {A})", f"USD (Konto {B})"}
 
 
+class TestALedgerWithNoReportedBalanceIsRecorded(FifoTestCaseBase):
+    """A currency ledger the cash report does not cover is reconciled against nothing.
+
+    A holds 1000 USD and moves all of it to B, which then simply holds it. B does
+    nothing else with dollars, and B's Cash_Balance row is zero on both ends, so it is
+    dropped as dust — B's USD has no reported end-of-year position at all. B's ledger
+    says 1000; there is nothing to check it against.
+
+    Absent is not empty: the §20 Abs. 2 Satz 1 Nr. 7 gains computed from that ledger are
+    unconfirmed, so the run records `CURRENCY_EOY_UNRECONCILED` for B rather than
+    skipping the account in silence. A, which moved everything out and reports zero,
+    reconciles cleanly and gets no such gap.
+
+    Red-first: with the skip (`if reported_eoy is None: continue`) B's 1000 vanishes
+    without a gap.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[
+                trade_row(B, "US000000FX12", "2025-01-05", "10", "10", "BUY", "O", "E1"),
+            ],
+            positions_start_data=[_usd_position(A, "1000", "500")],
+            positions_end_data=[
+                position_row(B, "US000000FX12", "10", "100", price="10"),
+            ],
+            cash_balance_data=[cash_balance_row(A, "USD", "1000", "0", year=TAX_YEAR)],
+            transfers_data=[
+                transfer_row(A, B, "OUT", "20250601", asset_class="CASH",
+                             currency="USD", quantity="0", cash_transfer="-1000",
+                             tx_id="X1", multiplier=""),
+                transfer_row(B, A, "IN", "20250601", asset_class="CASH",
+                             currency="USD", quantity="0", cash_transfer="1000",
+                             tx_id="X1", multiplier=""),
+            ],
+            custom_rate_provider=_Rates({"2025-06-01": "1.00"}),
+            tax_year=TAX_YEAR,
+        )
+
+    def test_the_unreconciled_ledger_is_recorded_not_skipped(self):
+        gaps = _gaps(self._run(), "CURRENCY_EOY_UNRECONCILED")
+        assert len(gaps) == 1, \
+            "B holds 1000 USD from the move with no reported balance to check it against"
+        assert gaps[0].subject == f"USD (Konto {B})"
+
+
 class TestASingleAccountRunIsUnchanged(FifoTestCaseBase):
     """The account is named only when there is one to name."""
 
@@ -401,6 +447,55 @@ class TestMovingMoneyBetweenYourAccounts(FifoTestCaseBase):
                     if r.realization_date == "2025-06-01"]) == 1
 
 
+class TestACashMoveKeepsItsBrokerChronology(FifoTestCaseBase):
+    """A cash Umbuchung is ordered by the broker's own chronology among the day's
+    currency events, not forced ahead of them.
+
+    On 2025-06-01, in the broker's order, B:
+      1. buys USD 100 for EUR 50            (tx 100) -> a lot at 0.50 EUR/USD
+      2. receives USD 100 by Umbuchung, valued EUR 80 at that day's rate (tx 200)
+      3. buys a share for USD 100           (tx 300), consuming USD 100
+
+    FIFO consumes the earlier, cheaper lot: the USD spent on the share is valued at
+    0.80 and the consumed lot cost 0.50, realising +30, and the 0.80 lot from the move
+    remains. The sending account A held its 100 USD at 0.80 and disposes at 0.80, so
+    the move realises 0 on A. Total FX = 30.
+
+    Forcing the move ahead of the whole day (the corporate-action band it used to take)
+    consumed the 0.80 move-lot on the share purchase and realised 0 -- the F1 defect.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[
+                fx_trade_row(B, "USD", "BUY", "100", "50", "2", "2025-06-01", "100"),
+                trade_row(B, "US000000RV89", "2025-06-01", "1", "100", "BUY", "O",
+                          "300", currency="USD"),
+            ],
+            positions_start_data=[_usd_position(A, "100", "80")],
+            positions_end_data=[
+                position_row(B, "US000000RV89", "1", "100", currency="USD"),
+            ],
+            cash_balance_data=[
+                cash_balance_row(A, "USD", "100", "0"),
+                cash_balance_row(B, "USD", "0", "100"),
+            ],
+            transfers_data=[
+                transfer_row(A, B, "OUT", "20250601", asset_class="CASH",
+                             currency="USD", cash_transfer="-100", tx_id="200"),
+                transfer_row(B, A, "IN", "20250601", asset_class="CASH",
+                             currency="USD", cash_transfer="100", tx_id="200"),
+            ],
+            custom_rate_provider=_Rates({"2025-06-01": "0.80"}), tax_year=TAX_YEAR)
+
+    def test_the_earlier_cheaper_lot_is_consumed_before_the_moves_lot(self):
+        out = self._run()
+        assert not _gaps(out, "CURRENCY_EOY_MISMATCH")
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED")
+        assert _fx_total(out) == Decimal("30"), \
+            "the 0.50 lot is consumed, not the 0.80 lot the move delivered"
+
+
 class TestAMoveInAnEarlierYear(FifoTestCaseBase):
     """The replay half, which is the half a real export usually exercises.
 
@@ -496,6 +591,62 @@ class TestAMoveInAnEarlierYear(FifoTestCaseBase):
                     if r.realization_date and r.realization_date < f"{TAX_YEAR}-01-01"]
 
 
+class TestAnEarlierMoveReconcilesAtYearEnd(FifoTestCaseBase):
+    """The completed-run half the contributor's real export cannot reach: it aborts at an
+    unrelated securities grant before the currency reconciliation, so this stands in for it
+    as a self-contained synthetic run.
+
+    A move from before the tax year builds each account's balance, and the year-end currency
+    reconciliation ties the ledger out against the broker's reported cash balance with no gap
+    — the whole point of routing the historical move through the same account-local
+    coordinator the tax-year path uses. A buys 1000 USD in 2023; in 2024, before this
+    return's year, 400 move to B; nobody spends in 2025. At the close of 2025 A holds 600 and
+    B holds 400, both of which exist only because the historical move was replayed onto the
+    two ledgers, and both of which the broker reports, so the run completes and every currency
+    ledger reconciles.
+
+    SoY balances are given as zero on purpose: a non-zero SoY snapshot makes
+    `_reconcile_currency_soy` rebuild the ledger from the reported figure and mask the move
+    (CLAUDE.md's "anything a start-of-year snapshot can rebuild"). With SoY zero the year-end
+    check compares the historically-built ledger itself — break the receiving side and B
+    reconciles 0 against a reported 400, a CURRENCY_EOY_MISMATCH.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[
+                fx_trade_row(A, "USD", "BUY", "1000", "500", "2.0", "2023-06-01", "H1"),
+            ],
+            positions_start_data=[],
+            positions_end_data=[],
+            cash_balance_data=[
+                cash_balance_row(A, "USD", "0", "600", year=TAX_YEAR),
+                cash_balance_row(B, "USD", "0", "400", year=TAX_YEAR),
+            ],
+            transfers_data=[
+                transfer_row(A, B, "OUT", "20240301", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="-400", tx_id="H2",
+                             multiplier=""),
+                transfer_row(B, A, "IN", "20240301", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="400", tx_id="H2",
+                             multiplier=""),
+            ],
+            custom_rate_provider=_Rates({"2023-06-01": "0.50", "2024-03-01": "1.0"}),
+            tax_year=TAX_YEAR,
+        )
+
+    def test_both_accounts_reconcile_with_no_gap(self):
+        out = self._run()
+        assert not _gaps(out, "CURRENCY_EOY_MISMATCH"), \
+            "the move built 600 in A and 400 in B, each matching its reported balance"
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED"), \
+            "both balances are reported, so neither is unreconciled"
+
+    def test_the_earlier_move_declares_nothing_this_year(self):
+        assert _fx_total(self._run()) == Decimal("0"), \
+            "the move belonged to an earlier return; nothing is spent in this one"
+
+
 class TestWhatACashMoveDoesNotDo(FifoTestCaseBase):
     ISIN = "US000000FX04"
 
@@ -541,40 +692,42 @@ class TestWhatACashMoveDoesNotDo(FifoTestCaseBase):
             ], cash=[cash_balance_row(A, "USD", "1000", "0", year=TAX_YEAR)])
 
     def test_a_move_whose_day_has_no_rate_stops_the_historical_replay(self):
-        """Both paths refuse, and the historical one had to be made to.
-
-        Every other branch of the historical currency replay is wrapped in a catch-all
-        that logs at DEBUG and carries on (issue #49). A move swallowed there leaves the
-        sending account holding a balance it no longer has and the receiving one short
-        of what it received -- and the opening reconciliation then repairs the QUANTITY
-        against the cash report and synthesises the lots, so the run finishes with
-        acquisition dates nobody measured. That is the blind spot `CLAUDE.md` names, and
-        it is why this branch raises rather than skips.
+        """The historical cash-move path refuses a move it cannot value, rather than
+        skipping it. A move swallowed would leave the sending account holding a balance it
+        no longer has and the receiving one short of what it received -- and the opening
+        reconciliation then repairs the QUANTITY against the cash report and synthesises the
+        lots, so the run finishes with acquisition dates nobody measured. That is the blind
+        spot `CLAUDE.md` names, and it is why this path raises rather than skips.
         """
         import uuid as _uuid
         from decimal import Context
+        from types import SimpleNamespace
         from src.domain.enums import AssetCategory
         from src.domain.events import InternalCashTransferEvent
         from src.domain.exceptions import ProcessingError
-        from src.engine.calculation_engine import _apply_historical_currency_event
-        from src.engine.fifo_manager import FifoLedger
+        from src.engine.calculation_engine import apply_historical_cash_transfer
+        from src.utils.account_utils import account_key
+        from tests.test_stock_merger_fifo import _make_ledger
 
-        ledger = FifoLedger(
-            asset_internal_id=_uuid.uuid4(), asset_category=AssetCategory.CASH_BALANCE,
-            asset_multiplier_from_asset=None, currency_converter=None,
-            exchange_rate_provider=None, internal_working_precision=28,
-            decimal_rounding_mode="ROUND_HALF_EVEN")
+        asset_id = _uuid.uuid4()
+        source = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        target = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
         event = InternalCashTransferEvent(
             _uuid.uuid4(), "2023-06-19", to_account_id=B, quantity=Decimal("1000"),
             account_id=A, local_currency="USD",
             gross_amount_foreign_currency=Decimal("1000"))
         # What enrichment leaves behind when the day has no rate after its fallback.
         event.gross_amount_eur = None
+        resolver = SimpleNamespace(
+            get_cash_balance_asset=lambda _: SimpleNamespace(internal_asset_id=asset_id))
 
         with pytest.raises(ProcessingError, match="no exchange rate"):
-            _apply_historical_currency_event(
-                event, ledger, "USD", None, Context(prec=28), ledger_account=A)
-        assert not ledger.lots and not ledger.short_lots
+            apply_historical_cash_transfer(
+                event, {(account_key(A), asset_id): source,
+                        (account_key(B), asset_id): target},
+                resolver, Context(prec=28))
+        assert not source.lots and not source.short_lots
+        assert not target.lots and not target.short_lots
 
     def test_a_cash_row_with_no_amount_stops_the_run(self):
         """`CashTransfer` is the only column carrying it — `Quantity`,
@@ -603,3 +756,213 @@ def _usd_position(account, quantity, cost_basis_eur):
     return [account, "USD", "CASH", "", "USD", "Cash Balance USD", "", q,
             q * unit, unit, Decimal(str(cost_basis_eur)), None, None, None,
             Decimal("1")]
+
+
+class TestASuppliedBalanceIsComparedNotCalledAbsent(FifoTestCaseBase):
+    """A cash-balance row below the parser's threshold is still a value the broker
+    reported. The end-of-year reconciliation compares the ledger against it instead of
+    recording CURRENCY_EOY_UNRECONCILED as though nothing was reported (F4). The opening
+    is still not seeded from a sub-threshold row, so no figure moves."""
+
+    def test_a_reported_zero_is_a_comparison_value_not_an_absent_report(self):
+        out = self._run_pipeline(
+            trades_data=[fx_trade_row(A, "USD", "BUY", "100", "80", "1.25",
+                                      "2025-06-01", "100")],
+            positions_start_data=[], positions_end_data=[],
+            cash_balance_data=[cash_balance_row(A, "USD", "0", "0")],
+            custom_rate_provider=_Rates({"2025-06-01": "0.80"}), tax_year=TAX_YEAR)
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED"), \
+            "a supplied zero is not an absent report"
+        assert len(_gaps(out, "CURRENCY_EOY_MISMATCH")) == 1, \
+            "ledger of 100 against a reported 0 is a mismatch, and it is compared"
+
+
+class TestCurrencyDiagnosticsAreOrderedStably(FifoTestCaseBase):
+    """The per-account currency diagnostics are ordered by (currency, account) -- stable
+    identifiers -- not by the asset's uuid4 internal id, which is redrawn every run and
+    reordered the warnings, PDF included, between two runs of the same tree (F4)."""
+
+    def test_the_diagnostics_come_out_in_a_stable_currency_order(self):
+        currencies = ["USD", "GBP", "CHF", "JPY", "AUD"]
+        out = self._run_pipeline(
+            trades_data=[fx_trade_row(A, c, "BUY", "100", "80", "1.25", "2025-06-01",
+                                      f"T{i}") for i, c in enumerate(currencies)],
+            positions_start_data=[], positions_end_data=[],
+            cash_balance_data=[cash_balance_row(A, c, "0", "0") for c in currencies],
+            custom_rate_provider=_Rates({"2025-06-01": "0.80"}), tax_year=TAX_YEAR)
+        subjects = [g.subject for g in _gaps(out, "CURRENCY_EOY_MISMATCH")]
+        assert len(subjects) == len(currencies)
+        assert subjects == sorted(subjects), \
+            "diagnostics must be ordered by stable currency/account ids, not asset uuid"
+
+
+class TestACashMoveIsAtomic:
+    """The two sides of a cash Umbuchung fall on two ledgers. Both are prepared on isolated
+    copies and committed only once both succeed, so a failure on the receiving side never
+    leaves the sending balance already disposed of. Before the fix the sending disposal was
+    committed before the receiving acquisition was even attempted."""
+
+    def test_a_receiving_side_failure_leaves_the_sender_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+        from uuid import uuid4
+        from src.domain.enums import AssetCategory
+        from src.domain.events import InternalCashTransferEvent
+        from src.domain.exceptions import ProcessingError
+        from src.engine.event_processors.currency_conversion_processor import (
+            CurrencyConversionProcessor)
+        from src.engine.event_processors.transfer_processor import (
+            InternalCashTransferProcessor)
+        from tests.test_stock_merger_fifo import _make_ledger, _make_long_lot
+
+        asset_id = uuid4()
+        source = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        target = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        lot = _make_long_lot("2023-01-01", "100", "0.50", "OPEN")
+        source.lots = [lot]
+        currency = CurrencyConversionProcessor(source.currency_converter, 28, "ROUND_HALF_UP")
+        monkeypatch.setattr(currency, "create_long_lot_for_cashflow_income",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                ProcessingError("receiving-side validation failed")))
+        event = InternalCashTransferEvent(
+            asset_id, "2025-06-01", account_id="A", to_account_id="B",
+            quantity=Decimal("100"), local_currency="USD", gross_amount_eur=Decimal("80"))
+        resolver = SimpleNamespace(
+            get_cash_balance_asset=lambda _: SimpleNamespace(internal_asset_id=asset_id))
+        with pytest.raises(ProcessingError, match="receiving-side"):
+            InternalCashTransferProcessor().process(event, source, {
+                "asset_resolver": resolver,
+                "currency_fifo_ledgers": {("A", asset_id): source, ("B", asset_id): target},
+                "currency_processor": currency})
+        assert source.lots == [lot] and source.lots[0].quantity == Decimal("100")
+        assert not target.lots
+
+
+class TestAHistoricalCashMoveIsAtomic:
+    """A cash Umbuchung replayed from before the tax year falls on two ledgers, exactly like
+    the tax-year move, and goes through the same prepare-both-then-commit boundary. A failure
+    on the receiving side never leaves the sending balance already disposed of. Before the
+    fix the historical replay registered the two sides as separate per-account stream
+    callbacks, so the sending disposal was committed before the receiving acquisition was
+    attempted -- partial mutation on an aborted run."""
+
+    def test_a_receiving_side_failure_leaves_the_sender_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+        from decimal import Context
+        from uuid import uuid4
+        from src.domain.enums import AssetCategory
+        from src.domain.events import InternalCashTransferEvent
+        from src.domain.exceptions import ProcessingError
+        from src.engine import calculation_engine as engine
+        from src.utils.account_utils import account_key
+        from tests.test_stock_merger_fifo import _make_ledger, _make_long_lot
+
+        asset_id = uuid4()
+        source = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        target = _make_ledger(asset_id, AssetCategory.CASH_BALANCE)
+        lot = _make_long_lot("2023-01-01", "100", "0.50", "OPEN")
+        source.lots = [lot]
+        # The receiving side (a historical lot creation) refuses. It runs after the sending
+        # side has already been computed -- on an isolated copy, which is the whole point.
+        monkeypatch.setattr(engine, "_create_lot_historical",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                ProcessingError("receiving-side validation failed")))
+        event = InternalCashTransferEvent(
+            asset_id, "2024-06-01", account_id="A", to_account_id="B",
+            quantity=Decimal("100"), local_currency="USD", gross_amount_eur=Decimal("80"))
+        resolver = SimpleNamespace(
+            get_cash_balance_asset=lambda _: SimpleNamespace(internal_asset_id=asset_id))
+        with pytest.raises(ProcessingError, match="receiving-side"):
+            engine.apply_historical_cash_transfer(
+                event, {(account_key("A"), asset_id): source,
+                        (account_key("B"), asset_id): target},
+                resolver, Context(prec=28))
+        assert source.lots == [lot] and source.lots[0].quantity == Decimal("100")
+        assert not target.lots and not target.short_lots
+
+
+class TestACashMoveWithoutItsLedgerFailsFast(FifoTestCaseBase):
+    """The cash-transfer dispatch resolves both account ledgers inside the processor and
+    fails fast if one is missing, so the move is dispatched even when the loop found no ledger
+    for the sending account. Otherwise its CASH_BALANCE category dodges the non-cash "requires
+    a FIFO ledger" raise and the move is silently dropped -- a disposal lost with no warning.
+    Unreachable while registration builds every named account's ledger; this pins the
+    fail-fast against a registration/lookup drift.
+    """
+
+    def test_a_missing_sending_ledger_raises_instead_of_dropping(self, monkeypatch):
+        from src.engine import calculation_engine as engine
+        from src.utils.account_utils import account_key
+
+        original = engine._ensure_currency_ledger_exists
+
+        def skip_the_senders_usd_ledger(currency_code, ledger_account, *rest):
+            # Simulate a registration/lookup drift: the sending account's USD ledger is
+            # never built, so the current-year dispatch finds no ledger for the move.
+            if currency_code == "USD" and account_key(ledger_account) == account_key(A):
+                return
+            return original(currency_code, ledger_account, *rest)
+
+        monkeypatch.setattr(engine, "_ensure_currency_ledger_exists",
+                            skip_the_senders_usd_ledger)
+
+        # `_run_pipeline` converts a pipeline `ProcessingError` into `pytest.fail`, so the
+        # raise surfaces here as `pytest.fail.Exception` carrying the original message.
+        with pytest.raises(pytest.fail.Exception, match="no currency ledger"):
+            self._run_pipeline(
+                trades_data=[],
+                positions_start_data=[],
+                positions_end_data=[],
+                cash_balance_data=[cash_balance_row(A, "USD", "0", "0", year=TAX_YEAR),
+                                   cash_balance_row(B, "USD", "0", "100", year=TAX_YEAR)],
+                transfers_data=[
+                    transfer_row(A, B, "OUT", f"{TAX_YEAR}0601", asset_class="CASH",
+                                 currency="USD", quantity="0", cash_transfer="-100",
+                                 tx_id="M1", multiplier=""),
+                    transfer_row(B, A, "IN", f"{TAX_YEAR}0601", asset_class="CASH",
+                                 currency="USD", quantity="0", cash_transfer="100",
+                                 tx_id="M1", multiplier=""),
+                ],
+                custom_rate_provider=_Rates({f"{TAX_YEAR}-06-01": "1.0"}),
+                tax_year=TAX_YEAR,
+            )
+
+
+class TestASingleSidedMoveInTheYearRealisesTheDisposal(FifoTestCaseBase):
+    """The shape the contributor's real export carries, pinned as a figure. A non-EUR
+    Umbuchung between the taxpayer's own accounts is reported by the sending OUT row alone --
+    no matching IN -- dated inside the tax year. It is a current-year § 20 Abs. 2 disposal of
+    the sending account's Kapitalforderung: the move is built from the one observed side and
+    realises the gain accrued up to that day. On the contributor's full run this figure is
+    reached but never emitted, because an unrelated securities reconciliation aborts first; it
+    is pinned here directly so the § 20 delta is measured, not left to that abort.
+
+    A opens the year holding 100 USD at 0.80 EUR/USD. On 2025-06-01, at 1.00, all 100 move to
+    B. The disposal realises 100 x (1.00 - 0.80) = +20 EUR.
+    """
+
+    def _run(self):
+        return self._run_pipeline(
+            trades_data=[],
+            positions_start_data=[_usd_position(A, "100", "80")],
+            positions_end_data=[],
+            cash_balance_data=[cash_balance_row(A, "USD", "100", "0", year=TAX_YEAR),
+                               cash_balance_row(B, "USD", "0", "100", year=TAX_YEAR)],
+            transfers_data=[
+                # Single-sided, exactly as the real export reports it: the sending OUT row
+                # with no matching IN. The receiving leg is synthesised.
+                transfer_row(A, B, "OUT", f"{TAX_YEAR}0601", asset_class="CASH",
+                             currency="USD", quantity="0", cash_transfer="-100",
+                             tx_id="T1", multiplier=""),
+            ],
+            custom_rate_provider=_Rates({f"{TAX_YEAR}-06-01": "1.00"}),
+            tax_year=TAX_YEAR,
+        )
+
+    def test_the_single_sided_move_realises_the_year_disposal(self):
+        assert _fx_total(self._run()) == Decimal("20"), \
+            "100 USD disposed at 1.00 against an 0.80 basis is a +20 EUR gain"
+
+    def test_both_accounts_reconcile(self):
+        out = self._run()
+        assert not _gaps(out, "CURRENCY_EOY_MISMATCH")
+        assert not _gaps(out, "CURRENCY_EOY_UNRECONCILED")

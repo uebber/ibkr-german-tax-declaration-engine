@@ -18,6 +18,7 @@ from collections import defaultdict
 
 from src.domain.assets import (
     InvestmentFund, Asset, SnapshotsByAccount, person_snapshot)
+from src.domain.exceptions import ProcessingError
 from tests.support.prior_year_snapshots import snapshot_row
 from src.domain.enums import (
     AssetCategory, InvestmentFundType, FinancialEventType, TaxReportingCategory,
@@ -825,7 +826,7 @@ class TestAFundTheEngineCannotPrice:
 # ---------------------------------------------------------------------------
 
 class TestUnitsTheReconstructionCouldNotDate:
-    """A lot with no acquisition date, and a report that answers Abs. 2 anyway.
+    """An opening position count cannot establish the acquisition of surviving lots.
 
     legal_basis: GT-INVSTG-011. Abs. 2 reduces the Vorabpauschale by a twelfth
     for each full month preceding the month of acquisition, and the store settles
@@ -834,12 +835,10 @@ class TestUnitsTheReconstructionCouldNotDate:
     already held when the year opened are not in their year of acquisition and
     keep twelve twelfths"*.
 
-    Where reconciliation replaced the reconstruction, its lots carry a date the
-    engine invented, and no Vorabpauschale may be computed from one. But Abs. 2
-    asks a narrower question than "which month": it asks whether the units were
-    acquired *during* the year. The preceding snapshot answers that for units the
-    broker already reported at the close of the year before -- evidence, not a
-    guess -- and only above that count is the question unanswerable.
+    That rule requires evidence that these units survived. The old holding may
+    have been sold and replaced, even when opening and closing counts agree.
+    An undated tranche therefore cannot receive twelve twelfths merely from a
+    matching snapshot count. See GT-INVSTG-055 for the separate withholding rule.
     """
 
     def _fund_with_an_undated_lot(self, held_before):
@@ -868,18 +867,16 @@ class TestUnitsTheReconstructionCouldNotDate:
             data_gap_collector=None,
         )
 
-    def test_units_the_report_shows_were_held_keep_the_full_year(self):
-        """The whole holding was on the broker's books before the year began."""
-        results = self._run(self._fund_with_an_undated_lot("100"))
-
-        assert len(results) == 1
-        assert results[0].gross_vorabpauschale_eur == Decimal("160.30")
+    def test_a_matching_prior_position_does_not_establish_continuity(self):
+        with pytest.raises(ProcessingError, match="ACQUISITION_DATE_UNKNOWN"):
+            self._run(self._fund_with_an_undated_lot("100"))
 
     def test_units_the_report_cannot_account_for_are_refused(self):
         """Above the reported count the question is unanswerable, and a figure
         computed from an invented month would be indistinguishable from a real
         one."""
-        assert self._run(self._fund_with_an_undated_lot("60")) == []
+        with pytest.raises(ProcessingError, match="ACQUISITION_DATE_UNKNOWN"):
+            self._run(self._fund_with_an_undated_lot("60"))
 
     def test_no_acquisition_date_is_invented_to_reach_the_answer(self):
         """The date stays unknown; only the Abs. 2 question is answered.
@@ -896,13 +893,14 @@ class TestUnitsTheReconstructionCouldNotDate:
         ctx = Context(prec=config.INTERNAL_CALCULATION_PRECISION,
                       rounding=config.DECIMAL_ROUNDING_MODE)
 
-        _calculate_vorabpauschale(
-            asset_resolver=resolver, distributions_by_asset={},
-            currency_converter=_eur_converter(), vorabpauschale_year=2024,
-            opening_lots_by_asset=lots, prior_soy_positions=fund.prior_soy,
-            prior_eoy_positions=fund.prior_eoy,
-            prior_opening_positions=fund.prior_opening, ctx=ctx,
-            data_gap_collector=None)
+        with pytest.raises(ProcessingError, match="ACQUISITION_DATE_UNKNOWN"):
+            _calculate_vorabpauschale(
+                asset_resolver=resolver, distributions_by_asset={},
+                currency_converter=_eur_converter(), vorabpauschale_year=2024,
+                opening_lots_by_asset=lots, prior_soy_positions=fund.prior_soy,
+                prior_eoy_positions=fund.prior_eoy,
+                prior_opening_positions=fund.prior_opening, ctx=ctx,
+                data_gap_collector=None)
 
         [tranche] = lots[fund.internal_asset_id]
         assert tranche.acquisition_date_is_known is False

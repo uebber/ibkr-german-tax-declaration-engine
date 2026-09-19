@@ -176,6 +176,11 @@ tests:
           notes_codes: "A"
           currency: EUR
       stock_trades:
+        - type: BL
+          date: "2022-12-01"
+          qty: 100
+          price: "50.00"
+          currency: EUR
         - type: SL           # Stock sold due to assignment
           date: "2023-01-20"
           qty: 100
@@ -233,6 +238,11 @@ tests:
           notes_codes: "Ex"
           currency: EUR
       stock_trades:
+        - type: BL
+          date: "2022-12-01"
+          qty: 100
+          price: "60.00"
+          currency: EUR
         - type: SL           # Stock sold due to put exercise
           date: "2023-01-15"
           qty: 100

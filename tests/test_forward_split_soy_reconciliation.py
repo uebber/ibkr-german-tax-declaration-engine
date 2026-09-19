@@ -53,6 +53,7 @@ class TestForwardSplitAcrossSoy(FifoTestCaseBase):
         ]]
         return self._run_pipeline(
             trades_data=[
+                _trade("20221201", 4, 100, "T_OPENING", "O"),     # observed acquisition of opening holding
                 _trade("20230201", 1, 100.00, "T_PRE", "O"),      # pre-split buy -> 5 held
                 _trade("20230607", -100, 5.00, "T_POST", "C"),    # sells the whole post-split position
             ],

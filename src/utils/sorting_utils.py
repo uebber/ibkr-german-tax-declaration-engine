@@ -45,6 +45,9 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     if not parsed_date:
         raise ValueError(f"Event {event.event_id} ({type(event).__name__}) has unparseable date '{event.event_date}'. Cannot generate sort key.")
 
+    if event.resolved_day_position is not None:
+        return parsed_date, (event.resolved_day_position, event.creation_sequence)
+
     asset = asset_resolver.get_asset_by_id(event.asset_internal_id)
     if not asset:
         raise ValueError(f"Event {event.event_id} ({type(event).__name__}) on {parsed_date} references unknown asset {event.asset_internal_id}. Cannot generate sort key.")
@@ -85,27 +88,23 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.ibkr_activity_description or "",
             event.creation_sequence,
         )
-    elif isinstance(event, (InternalTransferEvent, InternalCashTransferEvent)):
-        # Same intra-day slot as a corporate action, and for the same reason a merger
-        # takes it (see engine/replay.py): the units must be in the RECEIVING account
+    elif isinstance(event, InternalTransferEvent):
+        # A SECURITIES move takes the corporate-action slot, and for the same reason a
+        # merger does (see engine/replay.py): the units must be in the RECEIVING account
         # before that day's disposals, or a sale of what just arrived hits an empty
         # ledger. The price is the other end of the day -- a sale out of the SENDING
         # account booked on the move date is applied after the move, so the ledger then
         # holds less than the move claims; that case is loud, not silent, because the
         # closing reconciliation compares the sending account against the broker.
         #
-        # A CASH move shares the band and the argument -- the balance has to be in the
-        # receiving account before that day's spending -- but not the loudness: a
-        # currency ledger that runs short opens a short position rather than refusing
-        # ([GT-FX-006]), so the sending side simply sells what it has and shorts the rest.
-        # Nothing in the export orders a move against a trade on the same day, so this is
-        # a choice between two unsourced orders, and it is the one that keeps the
-        # receiving side able to spend what it just received.
+        # It carries no transaction id (neither side's names the combined move), so the
+        # lot-DELIVERING partition below is what puts it ahead of the day's trades BY THE
+        # RULE, not by the accident of an empty id -- it would sort first even with one.
         #
-        # This band puts the move in the lot-DELIVERING partition below, which sorts
-        # ahead of that day's trades BY THE RULE, not by the accident of an empty
-        # transaction id -- the move would sort first even if it carried one. See the
-        # precedence comment at the end of this function.
+        # A CASH Umbuchung is deliberately NOT here. It is a valued disposal whose FIFO
+        # gain depends on consuming the currency lots in the broker's true order; forcing
+        # it ahead of an earlier same-day currency purchase consumed the wrong lot and
+        # realised the wrong gain. It sits in the TRADE band, ordered by its own broker id.
         intra_day_order = _INTRA_DAY_SORT_ORDER_CORP_ACTION
         # Four elements, all strings but the last, because that is the shape the
         # corporate-action branch above produces and this event shares its band. Two
@@ -118,6 +117,33 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             asset.asset_category.name,
             event.account_id or "",
             event.to_account_id,
+            event.creation_sequence,
+        )
+    elif isinstance(event, InternalCashTransferEvent):
+        # A cash Umbuchung is ordered by the broker's own chronology among the day's
+        # currency events -- the same TRADE band as a currency conversion. It is a valued
+        # disposal of one currency balance and an acquisition of another, and the currency
+        # FIFO gain is right only if the lots are consumed in the broker's true order. So
+        # the move must sit where its transaction id places it: after an earlier same-day
+        # currency purchase, before a later spend. The corporate-action band it used to
+        # take forced it ahead of the whole day and consumed the wrong lot.
+        #
+        # The bare `asset.asset_category` Enum, exactly as this band's other members emit it
+        # (`TradeEvent`, `CurrencyConversionEvent`). It MUST match them: with a no-id move
+        # the earlier elements tie and the comparison reaches this one, and a member is a
+        # currency conversion of the SAME category, so Enum-vs-Enum resolves by equality and
+        # never needs `<`. Using `.name` here (a str) would compare str-vs-Enum against those
+        # same-category siblings and raise TypeError. (The securities branch above uses
+        # `.name` for the opposite reason: ITS band-mates are strings.) Two no-id trade-band
+        # events of DIFFERENT categories is a separate, pre-existing limit of this band.
+        intra_day_order = _INTRA_DAY_SORT_ORDER_TRADE
+        if not event.ibkr_transaction_id:
+            logger.warning(f"Internal cash transfer {event.event_id} on {parsed_date} lacks "
+                           f"ibkr_transaction_id; its intra-day order falls to the front of "
+                           f"the trade band.")
+        specific_secondary_elements = (
+            event.ibkr_transaction_id or "",
+            asset.asset_category,
             event.creation_sequence,
         )
     elif isinstance(event, OptionLifecycleEvent): # Option Lifecycles before regular trades
@@ -167,28 +193,12 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
     # gain right.
     transaction_id_for_sort = event.ibkr_transaction_id or ""
 
-    # There is ONE legitimate override of that chronology: an event that DELIVERS lots
-    # must precede a same-day disposal of the lots it delivers, because a sale cannot
-    # consume what has not yet arrived. §20 Abs. 4a Satz 6 fixes a merger at the
-    # Einbuchung; an internal transfer-in must exist before a same-day sale out of the
-    # receiving account; an option exercise/assignment creates the position the resulting
-    # trade settles. So the day is partitioned: lot-DELIVERING kinds (corporate actions
-    # and mergers, internal transfers -- which share the corp-action band -- and option
-    # lifecycle events) sort ahead of everything else; WITHIN each part the true txid
-    # chronology is kept, so trades, dividends, interest and FX -- which touch the
-    # currency ledger and have no delivery dependency between them -- keep their real
-    # order and the currency figure stays correct.
-    #
-    # This is the explicit domain rule, not the accident it replaced: the old key put the
-    # transaction id ahead of the band, so a delivering event landed before a trade only
-    # when its id happened to be smaller (e.g. corporate actions, whose export carries no
-    # id, sorted to ""). An event that delivers lots AND carries an id -- an internal
-    # transfer given one, an option lifecycle event -- would otherwise sort by the
-    # broker's string rather than by the rule. See engine/replay.py on the merger, which
-    # this fixes too.
+    # Corporate deliveries retain their established before-trades position. Options
+    # must retain transaction order: exercise/assignment CONSUMES option lots, including
+    # those opened earlier on the same day (GT-ESTG20-011/013). A dependency on a linked
+    # stock leg does not permit moving the exercise ahead of its own purchase.
     _LOT_DELIVERING_BANDS = (
         _INTRA_DAY_SORT_ORDER_CORP_ACTION,      # corporate actions, mergers, internal transfers
-        _INTRA_DAY_SORT_ORDER_OPTION_LIFECYCLE,  # option exercise/assignment/expiry
     )
     precedence = 0 if intra_day_order in _LOT_DELIVERING_BANDS else 1
 

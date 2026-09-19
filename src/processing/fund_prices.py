@@ -247,6 +247,7 @@ def _record_year_start_price(prior_soy: SnapshotsByAccount,
             mark_price=price.price,
             mark_price_currency=price.currency,
             mark_price_date=price.date_set,
+            mark_price_conflicted=False,
         )
 
 

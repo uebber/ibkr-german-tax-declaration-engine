@@ -136,31 +136,13 @@ def _sum_snapshot_column(total: Optional[Decimal],
     and one Flex Query covering several accounts emits one row per account, so a
     quantity or an amount is read by adding rather than by assigning.
 
-    `None` on the left is "nothing recorded yet"; on the right it is "the broker
-    left the column blank". A blank is skipped rather than read as zero, so an
-    asset whose every row is blank keeps `None` and reaches the guard in
-    `_ensure_soy_quantities_are_set`, which refuses a holding reported with no
-    cost basis rather than declaring its whole proceeds as gain.
-
-    What that cannot distinguish is one account blank and another filled: the
-    total is then the filled one alone, understating the basis. This rests on the
-    assumption that every account's row carries the column, which is an assumption
-    and not a checked condition. Filling the blank instead is not the answer: a
-    substituted cost basis is an invented figure.
-
-    That gap no longer reaches the SoY/EoY reconciliation, which is now per
-    account: each ledger reconciles against its own account's record, so an
-    account with a blank cost basis is examined on its own -- its reconstruction
-    either disagrees with its reported quantity and `_create_fallback_long_lot`
-    refuses a holding reported with no basis, or agrees and the reported basis is
-    never read. The undetected mixed case is confined to the PERSON-LEVEL view
-    this sum still feeds -- `person_snapshot`, i.e. the `prior_year_*` fields and
-    the funds-held set -- not to any account's ledger basis.
+    The first row is stored directly, so `None` on either side means an unknown
+    contribution, not an empty accumulator. Keep the total unknown even when later
+    rows are populated: GT-ESTG20-011 requires the acquisition cost of all the units,
+    not the known subset. Required incomplete totals reach the missing-data guard.
     """
-    if addend is None:
-        return total
-    if total is None:
-        return addend
+    if total is None or addend is None:
+        return None
     return total + addend
 
 
@@ -181,8 +163,8 @@ def _replace_snapshot_quantity(existing: Optional[PositionSnapshot],
 
 
 def _one_snapshot_price(existing: Optional[PositionSnapshot],
-                        row_price: Optional[Decimal]) -> Optional[Decimal]:
-    """The per-unit price the accumulated rows agree on, or `None` where they do not.
+                        row_price: Optional[Decimal]) -> Tuple[Optional[Decimal], bool]:
+    """Return the agreed price and whether the observations conflict.
 
     Quantities and amounts belong to the account and are added. A per-unit price is
     not: it describes the instrument, and two rows for one (account, asset) can carry
@@ -200,7 +182,7 @@ def _one_snapshot_price(existing: Optional[PositionSnapshot],
     one exchange, and no arithmetic turns two of them into the Ruecknahmepreis the
     statute asks for, which is a number the fund sets and not an average of venues.
 
-    So an ambiguous price is recorded as no price, and each consumer already does the
+    An ambiguous price is recorded as no price with a conflict flag. Consumers do the
     right thing with that: the diagnostic report prints N/A; `resolve_year_start_prices`
     goes to the stored figure, the issuer's NAV, then the taxpayer, and stops naming the
     fund if nobody can answer; and the Satz 3 cap records `VORABPAUSCHALE_PRICE_UNUSABLE`,
@@ -208,20 +190,20 @@ def _one_snapshot_price(existing: Optional[PositionSnapshot],
 
     A row reporting no price adds nothing and leaves the accumulated one standing: a
     blank is the broker omitting a figure, not a second venue disagreeing about it.
-    Once dropped the price stays dropped, however many further rows arrive -- which is
-    why a price arriving after a blank FIRST row is dropped too, the record having no
-    way to tell that state from an earlier disagreement. That needs a blank price to
-    exist at all: `MarkPrice` is populated on every row of every Positions export in
-    the window, so nothing measurable rests on it, and the direction it errs in is
-    towards fetching the Ruecknahmepreis rather than towards guessing it.
+    The conflict flag survives further rows and person-level aggregation. An absent
+    observation can be supplied by another row; a conflicting observation cannot.
     """
     if existing is None:
-        return row_price
+        return row_price, False
+    if existing.mark_price_conflicted:
+        return None, True
     if row_price is None:
-        return existing.mark_price
+        return existing.mark_price, False
     if existing.mark_price is None:
-        return None
-    return existing.mark_price if existing.mark_price == row_price else None
+        return row_price, False
+    if existing.mark_price != row_price:
+        return None, True
+    return existing.mark_price, False
 
 
 def _one_snapshot_currency(existing: Optional[str], row_currency: Optional[str],
@@ -419,6 +401,7 @@ class ParsingOrchestrator:
                 mark_price_date=mark_price_date,
             )
             return
+        price, price_conflicted = _one_snapshot_price(existing, raw_pos.mark_price)
         snapshots[key] = PositionSnapshot(
             quantity=_sum_snapshot_column(existing.quantity, raw_pos.position),
             cost_basis_amount=_sum_snapshot_column(
@@ -429,10 +412,11 @@ class ParsingOrchestrator:
                 existing.position_value, raw_pos.position_value),
             # Per unit, so it is not added -- and not simply taken either, since two
             # rows can disagree. See `_one_snapshot_price`.
-            mark_price=_one_snapshot_price(existing, raw_pos.mark_price),
+            mark_price=price,
             mark_price_currency=_one_snapshot_currency(
                 existing.mark_price_currency, raw_pos.currency_primary, asset, snapshot_label),
             mark_price_date=mark_price_date,
+            mark_price_conflicted=price_conflicted,
         )
 
     @staticmethod
@@ -640,6 +624,10 @@ class ParsingOrchestrator:
             if asset_id not in reported_at_open:
                 continue
             reported = person_snapshot(self.prior_soy_positions, asset_id)
+            if reported is not None and reported.mark_price_conflicted:
+                # An older snapshot cannot resolve conflicting current-year prices.
+                # Let fund_prices resolve an independent price or report the gap.
+                continue
             if reported is not None and reported.mark_price is not None:
                 continue
 
@@ -1097,13 +1085,23 @@ class ParsingOrchestrator:
                 balances_skipped += 1
                 continue
 
-            # Skip tiny balances (below threshold)
-            if (abs(raw_balance.starting_cash) < MIN_BALANCE_THRESHOLD and
-                abs(raw_balance.ending_cash) < MIN_BALANCE_THRESHOLD):
-                logger.debug(f"Skipping tiny cash balance {raw_balance.currency_primary}: "
-                           f"SOY={raw_balance.starting_cash}, EOY={raw_balance.ending_cash}")
-                balances_skipped += 1
-                continue
+            # A balance below the threshold is rounding dust for the OPENING: a
+            # sub-threshold SOY is not fed to the ledger's SOY reconciler, exactly as
+            # before -- feeding it could move a figure (see _reconcile_currency_soy, which
+            # would adjust a ledger against a dust opening). But the reported CLOSING is a
+            # different thing: it is the value the end-of-year reconciliation compares the
+            # ledger against, and a supplied zero or tiny balance is a comparison value, not
+            # the absence of a report. Dropping the whole row made the reconciler read a
+            # filtered observation as absent and record CURRENCY_EOY_UNRECONCILED against a
+            # balance the broker had in fact reported (F4). So the row is no longer dropped;
+            # only the SOY seeding keeps its threshold.
+            both_tiny = (abs(raw_balance.starting_cash) < MIN_BALANCE_THRESHOLD and
+                         abs(raw_balance.ending_cash) < MIN_BALANCE_THRESHOLD)
+            if both_tiny:
+                logger.debug(
+                    f"Sub-threshold cash balance {raw_balance.currency_primary}: "
+                    f"SOY={raw_balance.starting_cash}, EOY={raw_balance.ending_cash} -- "
+                    f"opening not seeded, closing kept as a reconciliation value")
 
             # Get or create CashBalance asset
             cash_asset = self.asset_resolver.get_or_create_asset(
@@ -1119,9 +1117,7 @@ class ParsingOrchestrator:
             # Record the opening and closing balance (can be negative for short positions)
             # under the account that reported it. One currency held in two accounts is
             # reported on two rows and the person's balance is both of them
-            # ([GT-ESTG20-061]); `person_snapshot` adds them. The threshold above still
-            # applies per row, which is what it was written for: it drops rounding dust,
-            # and dust is dust in each account separately.
+            # ([GT-ESTG20-061]); `person_snapshot` adds them.
             #
             # These REPLACE whatever a Positions row said about this currency, which is
             # what they have always done by running second -- a currency reported in both
@@ -1129,8 +1125,13 @@ class ParsingOrchestrator:
             # it. Keyed by account, so a Positions row for a currency in a DIFFERENT
             # account survives; there is no such row in any export this engine has seen.
             key = (account_key(raw_balance.client_account_id), cash_asset.internal_asset_id)
-            self.soy_positions[key] = _replace_snapshot_quantity(
-                self.soy_positions.get(key), raw_balance.starting_cash)
+            # SOY seeds the opening ledger. Recorded exactly as before -- dropped only when
+            # BOTH sides are dust -- so the seeding this change must not move stays identical.
+            if not both_tiny:
+                self.soy_positions[key] = _replace_snapshot_quantity(
+                    self.soy_positions.get(key), raw_balance.starting_cash)
+            # EOY is the reported closing the reconciliation compares against; recorded
+            # whatever its size.
             self.eoy_positions[key] = _replace_snapshot_quantity(
                 self.eoy_positions.get(key), raw_balance.ending_cash)
 
@@ -1148,6 +1149,7 @@ class ParsingOrchestrator:
         # ... (implementation is the same)
         logger.info("Ensuring all non-cash assets have Start-of-Year (SOY) quantities initialized...")
         assets_updated_count = 0
+        incomplete_basis = []
         for asset_id, asset_obj in self.asset_resolver.assets_by_internal_id.items():
             if asset_obj.asset_category != AssetCategory.CASH_BALANCE:
                 opening = person_snapshot(self.soy_positions, asset_id)
@@ -1176,11 +1178,18 @@ class ParsingOrchestrator:
                     # `CostBasisMoney` is blank in 0 of 87 position rows across 2021-2025, so
                     # nothing was ever floored -- but a zero here is an invented figure, not a
                     # missing one, and the run must not carry it.
-                    raise ProcessingError(
-                        f"Asset {asset_obj.get_classification_key()}: the start-of-year "
-                        f"snapshot reports {opening.quantity} units with no cost basis. "
-                        f"Their gain on disposal cannot be computed, and a zero basis would "
-                        f"declare the whole proceeds as gain.")
+                    accounts = [account for account, snap in
+                                snapshots_for_asset(self.soy_positions, asset_id)
+                                if snap.cost_basis_amount is None]
+                    incomplete_basis.append(
+                        f"{asset_obj.get_classification_key()} ({', '.join(accounts)})")
+
+        if incomplete_basis:
+            raise ProcessingError(
+                "The start-of-year snapshot has an incomplete cost basis for "
+                f"{len(incomplete_basis)} holding(s): {'; '.join(incomplete_basis)}. "
+                "Their gains cannot be computed from a partial or zero substitute. "
+                "Supply the missing acquisition costs.")
 
         if assets_updated_count > 0:
             logger.info(f"Initialized SOY quantity to 0 for {assets_updated_count} assets not found in the SOY position report.")
@@ -1420,7 +1429,7 @@ class ParsingOrchestrator:
                 candidate_option_lifecycle_events=self.candidate_option_lifecycle_events,
                 candidate_stock_trades_for_linking=self.candidate_stock_trades_for_linking
             )
-            # self.domain_financial_events now contains events with potentially updated related_option_event_id
+            # Stock events now carry validated quantity allocations to option events.
             
             # NEW STEP: Perform withholding tax linking
             logger.info("Performing withholding tax linking...")

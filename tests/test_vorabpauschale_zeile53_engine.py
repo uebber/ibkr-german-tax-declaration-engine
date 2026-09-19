@@ -473,7 +473,7 @@ class TestUnitsWhoseHoldingPeriodIsUnknown:
     and a silent zero on Zeile 53 would look exactly like a fund that owed
     nothing."""
 
-    def test_an_invented_acquisition_date_is_reported_against_zeile_53(self, tmp_path):
+    def test_an_invented_acquisition_date_prevents_the_disposal(self, tmp_path):
         # The reported holding at the 2023 mark exceeds anything the trades can
         # build, so reconciliation discards the reconstruction and synthesises an
         # undated lot. The 2024 price falls, so the Satz 3 cap leaves no
@@ -483,13 +483,10 @@ class TestUnitsWhoseHoldingPeriodIsUnknown:
             fund.internal_asset_id, quantity=Decimal("100"), mark_price=Decimal("95.00"),
             mark_price_currency="EUR", mark_price_date=date(2024, 12, 30))
         collector = DataGapCollector()
-        _f, _rgls, _vp, _c = _run(
-            _store(tmp_path, [(2023, "120.00")]), fund=fund, collector=collector,
-            events=[_buy(fund, "10", "2023-02-01"), _sell(fund, "40", "2025-06-02")])
-
-        gap = next(g for g in collector.gaps
-                   if g.code == "KAP_INV_Z53_VORABPAUSCHALE_NOT_ATTRIBUTABLE")
-        assert "Ersatz-Anschaffungsdatum" in gap.detail
+        from src.processing.data_gaps import DataGapError
+        with pytest.raises(DataGapError, match="SECURITIES_ACQUISITION_HISTORY_UNKNOWN"):
+            _run(_store(tmp_path, [(2023, "120.00")]), fund=fund, collector=collector,
+                events=[_buy(fund, "10", "2023-02-01"), _sell(fund, "40", "2025-06-02")])
 
 
 class TestThePipelineDecidesWhoCanBeAsked:

@@ -1,0 +1,70 @@
+"""Independent review probes; all identifiers and figures are synthetic.
+
+Account ownership: GT-ESTG20-013. Transfer continuity: GT-ESTG20-014.
+"""
+from decimal import Decimal
+import pytest
+from tests.support.base import FifoTestCaseBase
+from tests.support.mock_providers import MockECBExchangeRateProvider
+from tests.support.multi_account import trade_row, position_row, cash_transaction_row, cash_balance_row
+from tests.support.option_helpers import create_option_trade_data, create_stock_trade_data
+
+
+class TestReviewAccountBoundaries(FifoTestCaseBase):
+    def test_single_account_currency_result_is_independent_of_account_label(self):
+        def run(account):
+            out = self._run_pipeline(
+                trades_data=[], positions_start_data=[], positions_end_data=[], tax_year=2024,
+                cash_transactions_data=[cash_transaction_row(account, "USD", "10", "Deposits/Withdrawals",
+                    "2024-06-01", description="COMMISSION REFUND", tx_id="870010")],
+                cash_balance_data=[cash_balance_row(account, "USD", "-100", "-90", year=2024)],
+                custom_rate_provider=MockECBExchangeRateProvider(Decimal("2")))
+            return ([(r.realization_type.name, r.gross_gain_loss_eur) for r in out.realized_gains_losses],
+                    sorted(g.code for g in out.data_gaps))
+        assert run("REVIEW_A") == run(""), "Naming a sole account must not select a different cash-refund algorithm"
+
+    def test_historical_transfer_does_not_invent_acquisition_date(self):
+        isin = "US000000RV87"
+        out = self._run_pipeline(
+            trades_data=[
+                trade_row("REVIEW_A", isin, "2023-05-01", "100", "10", "BUY", "O", "BUY1"),
+                trade_row("REVIEW_B", isin, "2025-06-01", "-100", "20", "SELL", "C", "SELL1"),
+            ],
+            positions_start_data=[position_row("REVIEW_B", isin, "100", "1000", price="10")],
+            positions_end_data=[], tax_year=2025,
+            custom_rate_provider=MockECBExchangeRateProvider(Decimal("1")),
+        )
+        sales = [r for r in out.realized_gains_losses if r.quantity_realized == Decimal("100")]
+        assert len(sales) == 1
+        assert sales[0].acquisition_date == "2023-05-01", "Refuse untraceable lots instead of inventing their acquisition date"
+
+    @pytest.mark.parametrize("accounts", [("REVIEW_A",), ("REVIEW_B",), ("REVIEW_A", "REVIEW_B")])
+    def test_simultaneous_exercises_are_independent(self, accounts):
+        rows = []
+        for account in accounts:
+            premium = Decimal("2") if account == "REVIEW_A" else Decimal("7")
+            for when, typ, price, notes, suffix in [
+                ("2025-01-02", "BL", premium, "", "OPEN"),
+                ("2025-06-20", "SL", Decimal("0"), "Ex", "EXERCISE"),
+            ]:
+                rows.append(create_option_trade_data(
+                    account_id=account, currency="EUR", symbol="C REVIEW 20250620 50 M",
+                    description="REVIEW 20JUN25 50 C", underlying_symbol="REVIEW",
+                    underlying_conid="870001", option_conid="870002", strike=Decimal("50"),
+                    expiry_date="2025-06-20", option_type="C", trade_date=when,
+                    trade_type=typ, quantity=Decimal("1"), price=price, commission=Decimal("0"),
+                    transaction_id="10"+account+suffix, notes_codes=notes))
+            for when, typ, price, notes, suffix in [
+                ("2025-06-20", "BL", Decimal("50"), "Ex", "DELIVERY"),
+                ("2025-07-01", "SL", Decimal("60"), "", "SALE"),
+            ]:
+                rows.append(create_stock_trade_data(
+                    account_id=account, currency="EUR", symbol="REVIEW", description="REVIEW STOCK",
+                    isin="US000000RV88", conid="870001", trade_date=when, trade_type=typ,
+                    quantity=Decimal("100"), price=price, commission=Decimal("0"),
+                    transaction_id="20"+account+suffix, notes_codes=notes))
+        out = self._run_pipeline(trades_data=rows, positions_start_data=[], positions_end_data=[],
+            tax_year=2025, custom_rate_provider=MockECBExchangeRateProvider(Decimal("1")))
+        # The combined run must complete as each independent account does.
+        assert out.eoy_mismatch_error_count == 0
+        assert len([r for r in out.realized_gains_losses if r.quantity_realized == Decimal("100")]) == len(accounts)

@@ -44,13 +44,16 @@ Items are processed in ascending (phase, sort_key, seq) order:
 
    **That rule is explicit, not accidental.** ``sorting_utils.py`` partitions
    the same-day secondary key by precedence: lot-DELIVERING kinds (corporate
-   actions and mergers, internal transfers, option lifecycle events) sort ahead
+   actions and mergers, internal transfers) sort ahead
    of that day's disposals regardless of transaction id, and only within a part
    does IBKR's txid chronology decide. So a merger sorts before that day's
    trades by the rule -- it would still do so if IBKR ever gave the corporate
    action export a ``TransactionID`` column. Pinned by
    ``test_merger_sorts_before_same_day_trades`` and
    ``test_a_transaction_id_on_the_merger_does_not_break_it``.
+   Option lifecycle events retain broker transaction order, including same-day
+   purchases before exercises; they consume option lots as well as causing a
+   stock delivery. ``test_event_chronology.py`` covers this boundary.
 2. ``Phase.RECONCILE`` — start-of-year reconciliation against the reported
    snapshots, after all lot state exists: securities ledgers against SoY
    positions, currency ledgers against SoY cash balances.

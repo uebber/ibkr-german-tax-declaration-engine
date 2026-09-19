@@ -382,18 +382,24 @@ longer uses; the two disagree, and the difference is itself a finding (last two 
 | Non-EUR currencies held in **more than one account** in the same year | 3 in 2023 and 3 in 2024 (CAD, SGD, USD each in both accounts); 0 otherwise |
 | `Quantity`, `PositionAmount`, `TransferPrice` on the cash transfer rows | `0` on every one; the amount is in `CashTransfer` |
 | `CASH` rows in any `Positions-*.csv` | none, any year — no export supplies a cost basis for a currency balance, and none is read |
-| `AssetClass=CASH` transfer rows in the default (35-column) Transfers export | one **EUR** move (one OUT, one IN) in 2023; **no non-EUR move** |
-| The one non-EUR (USD) currency Umbuchung | present only in `data_import/obsolete/` (the 32-column export); the re-exported 35-column Transfers dropped it — the same incompleteness PR-C recorded for the LEG securities move |
+| `AssetClass=CASH` transfer rows in the currently resolved (35-column) Transfers-2023 export | one **EUR** move (OUT+IN, one id) **and one non-EUR (USD) move** (a single OUT row, no matching IN, its own id); none in other years |
+| The USD move's shape and effect | single-sided and dated inside 2023 — built from the one observed side into a current-year § 20 Abs. 2 disposal of the sending account's Kapitalforderung. **Corrected 2026-09-18:** an earlier arrangement of gitignored `data_import/` carried this row only in `obsolete/`, which is why the row above once read "no non-EUR move"; the resolved file now carries it, so that reading was stale. |
 
 **What this settles.** [GT-FX-009] is **not latent**: non-EUR currencies sit in both accounts in
 2023 and 2024, so the pooled ledger measures a disposal against another account's lots today and
 the per-account split changes which lots are consumed — an observable delta up to each year's
-abort. [GT-FX-010]'s move valuation **is latent on the default export**: the only move in it is
-EUR, which is inert because the base currency is not a Fremdwährungsguthaben. The real USD
-Umbuchung the taxpayer made in 2023 survives only in the obsolete 32-column export, which the
-securities half of the train cannot read. So the currency-move code is exercised by the test
-scenarios and by the obsolete export, not by the default run — stated rather than left implicit.
-Neither half is zero, so the counting gate does not stop the work.
+abort. **[GT-FX-010]'s move valuation is exercised on the resolved export, not latent:** the 2023
+USD Umbuchung is a non-EUR move in the 35-column Transfers file, dated inside the year, so it builds
+a current-year § 20 disposal of the sending account's Kapitalforderung (pinned as a figure in
+`test_per_account_currency.py::TestASingleSidedMoveInTheYearRealisesTheDisposal`). That figure is
+computed but **not emitted on the full real run**, because the pre-existing securities reconciliation
+(the #90 grant ISIN and the LEG move) aborts every supported year before any form line — fail-closed,
+not latent. So the currency-move code is exercised by both the test scenarios and the default real
+export; the § 20 delta becomes a **declared figure the first time the securities aborts clear**
+(later in the train), and is the maintainer's to approve, named to VZ 2023. Because `data_import/`
+is local and has drifted between arrangements, this counting gate is pinned to the currently
+resolved file and must be re-run against the maintainer's production export. Neither half is zero,
+so the counting gate does not stop the work.
 
 **Reproduce with:** for each Cash_Balance file, take the header from the first line, drop any later
 line equal to it, group the non-EUR (non-`BASE_SUMMARY`) rows by `CurrencyPrimary` and count
@@ -599,6 +605,10 @@ rule and the PR-hygiene rule against a portfolio census in published text.
 
 ## 2026-09-01 — PR-C (own-account transfers) real-data validation
 
+**Historical contributor record.** The later PR #88 review below supersedes its
+acceptance/ordering conclusions; these captures were not completed declarations
+on the maintainer's accepted input baseline.
+
 Run against the maintainer's export with the 35-column Transfers report
 (`data_import/data_new_transfers/`) copied into `data_import/`; `cache/` present so no
 early classification abort. Baseline is PR-B (`2c8c45b`), which does not read Transfers.
@@ -692,3 +702,112 @@ current-year dispatch entry (1), historical bucket entry (2), enrichment EUR con
 parser unclassified-kind refusal (1), zero-quantity guard (1), over-reversal guard (1),
 undeclared-receipt recording (1); the eighth, the stock-award sort band, is GREEN when deleted and
 is the documented blind spot recorded under *Where the suite is blind* in `CLAUDE.md`.
+
+## 2026-09-17 — PR #86 correctness review and fixes
+
+**Category:** `fix-func`. The maintainer authorized correction and merge after an
+independent review of `ea45c42` against base `5a64079` and the knowledge store.
+
+- Missing additive contributions now keep snapshot totals unknown, within an
+  account and across accounts. Opening reconciliation reports every affected
+  holding; checkpoint fallback cannot consume a partial basis. Source:
+  GT-ESTG20-011. Explicit zero cost remains a known value.
+- Snapshot price conflicts are separate from absent prices and survive grouping
+  and row-order changes. An older snapshot cannot clear a current-year conflict;
+  an independently resolved price can. Source: GT-INVSTG-010.
+- A prior position count cannot establish acquisition timing for undated surviving
+  units. Positive Vorabpauschale calculations requiring that timing stop, including
+  when the old units were sold and replaced. No factor is needed when the cap,
+  distributions or Basiszins already establish zero. Sources: GT-INVSTG-011/055.
+
+**Regression evidence:** the original five review probes had four failures and
+one passing control on `ea45c42`. All five pass after correction. The final
+`test_snapshot_integrity.py` expands them to 36 passing cases, including row-order
+permutations, both price endpoints, checkpoint basis, explicit zero basis, grouped
+error reporting and independent price resolution. Five existing tests were updated
+because they had accepted the unsupported quantity-only acquisition inference or
+silent omission when no gap collector was supplied; dates remain unknown on refusal.
+
+**Full suite:** 1,193 passed / 1 skipped without private data; 1,194 passed with a
+copy of the maintainer's exports. Python 3.12.12 and the frozen lockfile dependencies.
+
+**Actual-data validation:** the maintainer's 34 exports span 2021-2025 and one
+account. Their 87 position rows contain no blank quantity, account, cost basis or
+mark price; missing-input and multi-account cases therefore require synthetic tests.
+For VZ 2023, 2024 and 2025, the corrected PR completes with console and PDF identical
+to base `5a64079` (excluding volatile PDF metadata), with unchanged data-gap codes.
+Both base control captures also match. Every capture used fresh identical copies
+of the supplied classification, FX-rate and fund-price caches, with automatic NAV
+fetching disabled. Original export/cache hashes remained unchanged. These results
+establish regression parity, not correctness of every pre-existing figure.
+
+**Architectural acceptance:** bounded follow-up requirements are recorded in
+`docs/reviews/pr-86-required-rework.md`. Account independence and declaration-level
+aggregation remain the target; a separate Person entity is not required. Later PRs
+still need individual review.
+
+## 2026-09-17 — PR #87 account boundaries and safe refusal
+
+Category: `fix-func`. The maintainer authorized fixes and merge after review of
+`2c8c45b` and local corrected-history candidate `0d5c958` against accepted main
+`8b7e49f`. Option linking is explicitly deferred as PM-005.
+
+- Before current-year securities disposals, every account/asset with unresolved
+  acquisition history is collected and refused. Short-lot provenance and merger
+  preservation match the long-lot contract (GT-ESTG20-011/013/014/022).
+- Currency dispatch has an explicit pooled boundary at this stage. A positive
+  commission adjustment cannot masquerade as capital repayment or a negative fee;
+  all unclassified credits are refused during import. GT-ESTG20-010/048 and
+  GT-ESTG20-011 distinguish the possible treatments; no new filing position is chosen.
+- The initial 11 regression cases were 10 failed/1 passed before the change.
+  The final 13 cases, including merger provenance, are 12 failed/1 passed on
+  `0d5c958` and 13 passed on the fixed code. Full suite with copied private exports:
+  **1,225 passed**. The clean-checkout result is recorded in the review handoff.
+- Nine snapshot-only FIFO scenarios and two dedicated undated-lot tests now require
+  refusal. EOY, split, option and currency scenarios whose purpose is unrelated to
+  missing history have explicit synthetic acquisition inputs; numerical assertions
+  remain unchanged. No tests bypass the new production guard.
+
+The maintainer's input window has one unclassified positive commission credit
+among 920 cash-transaction data rows (2021–2025). It says only
+`ADJUSTMENT: COMMISSION`; asset class, symbol, ISIN and contract identifier are
+blank, so its original transaction/service is not established. Across all 34 CSVs,
+account IDs are populated in 6,976 trades, 920 cash transactions, 13 corporate
+actions, 170 option-EAE rows, 87 positions and 55 cash-balance rows. One account
+is represented; synthetic cases are needed for transfers/account isolation.
+
+Fresh identical input/cache copies, tracked configuration, non-interactive execution
+and automatic NAV fetching disabled: VZ 2023 console/PDF match accepted base
+(volatile PDF metadata excluded). VZ 2024 and VZ 2025 exit 1 on
+`COMMISSION_REFUND_UNCLASSIFIED`, producing no PDF; the latter imports the earlier
+credit as history. These are intentional data refusals, not successful declarations
+or parity claims. The original export/cache hashes are unchanged. No inputs were
+removed or overridden. Previous base controls matched for all three years.
+
+The old mixed-basis/refund algorithms are not validated by making two representations
+agree. Resolving the refund requires evidence and explicit supported treatment.
+The no-account and named-account inputs now both refuse the same unclassified
+credit. Source/spec/docstring claims about successful disposal from snapshot-only
+history were updated alongside the code; accepted architectural work remains open.
+
+## 2026-09-17 — restore commission-correction cash processing (TR-008)
+
+Category: `fix-func`. The maintainer rejected the new import refusal and confirmed
+the credit as a refund of an earlier commission overcharge. `FeeEvent.is_refund`
+now distinguishes credits from charges. The same cash direction is used for the
+tax year and historical replay, without converting the credit into capital
+repayment or inventing a security link. Acquisition-history safeguards remain.
+
+Focused verification before the change: 10 failed, 8 passed. After correction,
+the focused set passes; two additional charge controls retain the prior debit
+behavior. Final clean checkout suite: **1,231 passed, 1 data-dependent skip**.
+No option-linking or reference-law files changed.
+
+Fresh copies of saved inputs/caches through the normal entry point now complete
+VZ 2023, 2024 and 2025 with PDFs. VZ 2023 and 2025 console/PDF bytes match accepted
+pre-#87 main `8b7e49f`, excluding volatile PDF metadata. All 24 parsed VZ 2024
+form-line values match the working #87 candidate before the refusal. Compared
+with `8b7e49f`, the known refund currency bug changes two VZ 2024 form lines;
+the currency mismatch disappears and the refund no longer appears as capital
+repayment. Private differences remain in the review captures. Original export
+and cache hashes are unchanged. This is not an all-years byte-parity claim.
