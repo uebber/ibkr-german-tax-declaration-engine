@@ -321,7 +321,11 @@ settles it.
 - **Optional as a whole, but not per year.** A person whose broker has never awarded them shares
   has no rows. A window with a hole is different: a year of awards that does not arrive is a year
   whose holding cannot be reconstructed. `prepare_data_for_tax_year` counts the missing years the
-  same way it does for Transfers.
+  same way it does for Transfers, and a hole in a supplied export **stops the run**
+  (`GRANTS_WINDOW_INCOMPLETE`), exactly as the Transfers hole does — export the missing year, even if
+  no shares were awarded in it. The replay's reconciliation against the broker snapshots remains the
+  backstop for what a hole does not describe (a shortfall reaching a mark), and only where the
+  interval began at a reported snapshot.
 - **Associated Pydantic Model:** `RawGrantRecord`
 
 **Three activity kinds share the file and only two move the position.**

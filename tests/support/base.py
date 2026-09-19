@@ -80,6 +80,7 @@ class FifoTestCaseBase:
                       transfers_data: Optional[List[List[Any]]] = None,
                       grants_data: Optional[List[List[Any]]] = None,
                       transfers_missing_years: str = "",
+                      grants_missing_years: str = "",
                       custom_rate_provider: Optional[ExchangeRateProvider] = None,
                       tax_year: int = 2023,
                       monkeypatch_global_tax_year: bool = True
@@ -179,6 +180,7 @@ class FifoTestCaseBase:
                 transfers_file_path=transfers_path,
                 grants_file_path=grants_path,
                 transfers_missing_years=transfers_missing_years,
+                grants_missing_years=grants_missing_years,
                 **prior_paths,
             )
             return results

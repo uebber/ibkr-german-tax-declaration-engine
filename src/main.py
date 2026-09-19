@@ -159,6 +159,7 @@ def main_application():
             transfers_file_path=data_paths.get("transfers", "") or None,
             grants_file_path=data_paths.get("grants", "") or None,
             transfers_missing_years=data_paths.get("transfers_missing_years", ""),
+            grants_missing_years=data_paths.get("grants_missing_years", ""),
             positions_mark_file_paths={
                 int(key.rsplit("_", 1)[1]): path
                 for key, path in data_paths.items()

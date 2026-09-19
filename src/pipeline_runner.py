@@ -91,6 +91,9 @@ def run_core_processing_pipeline(
     # data_preparation). A hole in a supplied export stops the run; an absent export
     # only warns. Empty when the export is complete or absent altogether.
     transfers_missing_years: str = "",
+    # Grants counterpart: years missing from a supplied Grants export (a hole). Stops the run
+    # like the Transfers hole; empty when the export is complete or absent altogether.
+    grants_missing_years: str = "",
     # Preceding calendar year's position snapshots. Required for the Vorabpauschale, which for
     # a VZ Y declaration is the one computed for calendar Y-1 (18 Abs. 3 InvStG). Optional at
     # this boundary: the engine decides what a missing snapshot means once it knows whether any
@@ -254,6 +257,8 @@ def run_core_processing_pipeline(
                 make_declaration_prompt() if interactive_classification_mode else None),
             transfers_file_supplied=orchestrator.transfers_file_supplied,
             transfers_missing_years=transfers_missing_years,
+            grants_file_supplied=orchestrator.grants_file_supplied,
+            grants_missing_years=grants_missing_years,
         )
     except Exception as e:
         logger.critical(f"Calculation engine failed with unexpected error: {e}", exc_info=True)

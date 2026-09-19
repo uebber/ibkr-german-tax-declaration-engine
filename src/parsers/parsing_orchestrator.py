@@ -307,6 +307,11 @@ class ParsingOrchestrator:
         # multi-account warning and the incomplete-window refusal in calculation_engine.
         self.transfers_file_supplied: bool = False
 
+        # Whether a Grants export was offered at all, as opposed to offered and empty. Only
+        # the difference between "no report" and "report present" turns on it -- the
+        # incomplete-window refusal in calculation_engine, the parallel of transfers'.
+        self.grants_file_supplied: bool = False
+
         self.domain_financial_events: List[FinancialEvent] = []
         # NEW: Store collections for linking
         self.candidate_option_lifecycle_events: List[OptionLifecycleEvent] = []
@@ -366,6 +371,7 @@ class ParsingOrchestrator:
             self.raw_transfers = parse_transfers_csv(transfers_file)
             logger.info(f"Loaded {len(self.raw_transfers)} raw transfer records.")
         if grants_file:
+            self.grants_file_supplied = True
             self.raw_grants = parse_grants_csv(grants_file)
             logger.info(f"Loaded {len(self.raw_grants)} raw stock-award records.")
         for mark_year, mark_file in sorted((positions_mark_files or {}).items()):

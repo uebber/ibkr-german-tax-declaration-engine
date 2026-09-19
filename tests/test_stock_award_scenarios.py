@@ -418,3 +418,60 @@ def test_a_same_day_reversal_and_sale_apply_reversal_first_and_warn():
                 if g.code == STOCK_AWARD_REVERSAL_ORDER_ASSUMED]
     assert subjects == ["AAA am 2023-06-01", "ZZZ am 2023-06-01"], (
         "warnings must order by the stable classification key, not the per-run asset id")
+
+
+def test_a_grants_window_hole_stops_the_run_unit():
+    """The condition, unit level: a hole in a SUPPLIED Grants export is refused (FAIL_FAST);
+    a complete supplied export and a total absence are both quiet. Mirrors the Transfers
+    window rule, minus the multi-account gate -- an award belongs to one account.
+
+    Red on the base: `_require_a_complete_grants_window` did not exist, so a grants hole was
+    only logged in data_preparation and nothing stopped the run.
+    """
+    from src.engine.calculation_engine import (
+        _require_a_complete_grants_window, GRANTS_WINDOW_INCOMPLETE)
+    from src.processing.data_gaps import DataGapCollector, DataGapError, GapSeverity
+
+    # Supplied export with a hole -> FAIL_FAST, naming the year to export.
+    c = DataGapCollector()
+    with pytest.raises(DataGapError) as e:
+        _require_a_complete_grants_window(True, "2024", c)
+    assert GRANTS_WINDOW_INCOMPLETE in str(e.value) and "2024" in str(e.value)
+    assert any(g.code == GRANTS_WINDOW_INCOMPLETE and g.severity is GapSeverity.FAIL_FAST
+               for g in c.gaps)
+
+    # Supplied and complete -> quiet.
+    c2 = DataGapCollector()
+    _require_a_complete_grants_window(True, "", c2)
+    assert not c2.gaps
+
+    # Absent for every year -> quiet: the feature simply does not fire, absence is legitimate.
+    c3 = DataGapCollector()
+    _require_a_complete_grants_window(False, "2024", c3)
+    assert not c3.gaps
+
+
+class TestAPartlyExportedGrantsWindowStopsTheRun(FifoTestCaseBase):
+    """The engine acts on the grants hole data_preparation counted -- end to end, so the
+    wiring (main -> pipeline_runner -> run_main_calculations) is exercised, not just the
+    predicate. A supplied Grants export missing a year of the window stops the run."""
+
+    def test_a_missing_grant_year_in_a_supplied_export_stops_the_run(self):
+        from decimal import Decimal as D
+        from src.processing.data_gaps import DataGapError
+        from tests.support.mock_providers import MockECBExchangeRateProvider
+
+        with pytest.raises(DataGapError) as excinfo:
+            self._run_pipeline(
+                tax_year=TAX_YEAR,
+                grants_data=[],                    # an export WAS supplied ...
+                grants_missing_years="2024",        # ... but it is missing a year
+                trades_data=[
+                    trade_row(ACCOUNT, ISIN, "2023-03-01", "10", "20", "BUY", "O", "T1")],
+                positions_start_data=[],
+                positions_end_data=[position_row(ACCOUNT, ISIN, "10", "200", price="20")],
+                custom_rate_provider=MockECBExchangeRateProvider(D("1.00")),
+            )
+        msg = str(excinfo.value)
+        assert "GRANTS_WINDOW_INCOMPLETE" in msg
+        assert "2024" in msg, "the year the reader must export"
