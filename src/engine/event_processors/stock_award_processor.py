@@ -116,6 +116,9 @@ class StockAwardProcessor(EventProcessor):
             f"which is also the acquisition cost the engine has used for these units -- "
             f"so the gain declared on their later disposal is reduced by it while the "
             f"receipt itself is absent. Declare it yourself, or the return understates. "
-            f"§ 22 Nr. 3 Satz 2's Freigrenze is not applied here ([GT-ESTG23-009]).",
+            f"§ 22 Nr. 3 Satz 2's Freigrenze ([GT-ESTG20-062]) is not applied here -- "
+            f"out of scope for the same reason as the § 23 Freigrenze ([GT-ESTG23-009]), "
+            f"a per-Kalenderjahr total across all Leistungen that one portfolio cannot "
+            f"establish.",
             severity=GapSeverity.WARNING,
         )
