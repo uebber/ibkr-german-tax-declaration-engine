@@ -209,6 +209,24 @@ run.
   the ledger and hides the disagreement. Probe by reconciling at every yearly snapshot, not only
   the tax year's. Written up in `docs/research_historical_replay_defects.md`.
 
+- **The intra-day sort band of a new event kind.** Deleting the stock-award branch from
+  `get_event_sort_key` leaves the suite green, including a scenario built to sort a
+  same-day disposal against it. The event falls to the unknown-type band, which orders it
+  after that day's trades. It is currently harmless for stock awards, because the only
+  kind that touches the ledger is dated on the day the shares arrive; it would stop being
+  harmless the moment a kind that changes a lot is added.
+- **Which date column an event is built from, where the export's columns agree.** Dating a
+  stock award on the broker's report date instead of the award date leaves the suite
+  green. The two coincide on every award row of the current export, so no fixture
+  distinguishes them, and the scenario written to do so passes either way.
+
+- **A WARNING data gap's emission from a full run.** The test harness (`_run_pipeline`) returns
+  `ProcessingOutput`, which does not carry the data-gap collector, and it returns before the report
+  renders — so a `GapSeverity.WARNING` recorded during a run is invisible to a scenario test.
+  Deleting the call site that records one (the undeclared-receipt gap, the same-day
+  reversal/disposal ordering gap) leaves the suite green; only the recording function itself is
+  unit-tested, by calling it directly. Probe the call site by mutation.
+
 Add to this list whenever a probe finds a site the suite cannot observe.
 
 Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support/`;

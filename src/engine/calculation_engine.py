@@ -16,6 +16,7 @@ from src.domain.events import (
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
     WithholdingTaxEvent, CurrencyConversionEvent, InternalTransferEvent,
+    StockAwardEvent,
     InternalCashTransferEvent
 )
 from src.domain.assets import (
@@ -60,6 +61,9 @@ from .event_processors.currency_conversion_processor import CurrencyConversionPr
 from .event_processors.transfer_processor import (
     InternalTransferProcessor, InternalCashTransferProcessor, apply_internal_transfer,
     _coordinate_cash_umbuchung)
+from src.engine.event_processors.stock_award_processor import (
+    StockAwardProcessor
+)
 
 
 logger = logging.getLogger(__name__)
@@ -387,6 +391,67 @@ def _report_multi_account_limitations(accounts, data_gap_collector,
         logger.warning("[%s] %s: %s", MULTI_ACCOUNT_LIMITATIONS, subject, detail)
 
 
+STOCK_AWARD_REVERSAL_ORDER_ASSUMED = "STOCK_AWARD_REVERSAL_ORDER_ASSUMED"
+
+
+def _report_reversal_ordering_assumption(
+        events, asset_resolver, data_gap_collector, tax_year_end_date_obj) -> None:
+    """Warn when an award reversal and a disposal of the same security fall on one day.
+
+    Which is applied first is not fixed by law (Q18, [GT-ESTG20-066]): § 20 Abs. 4 Satz 7
+    FIFO ([GT-ESTG20-012]) orders the lots of a single disposal, not a disposal against a
+    same-day non-disposal event, and the award report carries no intra-day id. A reversal
+    takes the lot-delivering sort band, so it is applied before the same-day sale -- Reading
+    A, the taxpayer's grey-area filing position of 2026-09-19. The choice moves a figure only
+    where the reversed lot is within the sale's FIFO reach, so it is surfaced rather than
+    left silent: a WARNING, because the figures are produced under a stated reading, not
+    withheld.
+
+    Checked across every processed year -- a historical collision moves a carried basis, a
+    tax-year one moves the year's gain; events after the tax year are not processed and do
+    not warn. Zero incidence in the export today.
+    """
+    reversal_days: set = set()
+    disposal_days: set = set()
+    for e in events:
+        parsed = parse_ibkr_date(e.event_date)
+        if not parsed or parsed > tax_year_end_date_obj:
+            continue
+        key = (e.asset_internal_id, e.event_date)
+        if e.event_type == FinancialEventType.STOCK_AWARD_REVERSED:
+            reversal_days.add(key)
+        elif e.event_type == FinancialEventType.TRADE_SELL_LONG:
+            disposal_days.add(key)
+    # Order by (day, stable name), never by asset_internal_id -- that is a per-run uuid4,
+    # so sorting on it reorders the warning lines run to run and breaks byte-parity when two
+    # collisions fall on distinct assets. The classification key is derived from the
+    # instrument's own identity and is stable.
+    collisions = []
+    for asset_id, day in reversal_days & disposal_days:
+        asset = asset_resolver.get_asset_by_id(asset_id)
+        name = asset.get_classification_key() if asset else str(asset_id)
+        collisions.append((day, name))
+    for day, name in sorted(collisions):
+        subject = f"{name} am {day}"
+        detail = (
+            "On the same day, a reversal of awarded shares (Stock Award Reversal) and a "
+            "disposal of the same share coincided. Which event applies first is not fixed "
+            "by any Tier 1 or Tier 2 source (Q18, GT-ESTG20-066): the FIFO order "
+            "(§ 20 Abs. 4 Satz 7, GT-ESTG20-012) sequences the lots of a SINGLE disposal, "
+            "not a disposal against a same-day non-disposal event, and the grant report "
+            "carries no intra-day id. The reversal is applied FIRST (Reading A), a taxpayer "
+            "choice in a legal grey area made on 2026-09-19. This moves a figure only where "
+            "the reversed lot is within the disposal's FIFO reach; in that case check the "
+            "acquisition cost used before adopting the figure."
+        )
+        if data_gap_collector is not None:
+            data_gap_collector.record(
+                code=STOCK_AWARD_REVERSAL_ORDER_ASSUMED, subject=subject, detail=detail,
+                severity=GapSeverity.WARNING)
+        else:
+            logger.warning("[%s] %s: %s", STOCK_AWARD_REVERSAL_ORDER_ASSUMED, subject, detail)
+
+
 TRANSFERS_WINDOW_INCOMPLETE = "TRANSFERS_WINDOW_INCOMPLETE"
 
 
@@ -435,6 +500,55 @@ def _require_a_complete_transfers_window(accounts, transfers_file_supplied: bool
         )  # records, logs CRITICAL and raises DataGapError
     else:
         raise DataGapError(f"[{TRANSFERS_WINDOW_INCOMPLETE}] {subject}: {detail}")
+
+
+GRANTS_WINDOW_INCOMPLETE = "GRANTS_WINDOW_INCOMPLETE"
+
+
+def _require_a_complete_grants_window(grants_file_supplied: bool,
+                                      grants_missing_years: str,
+                                      data_gap_collector) -> None:
+    """A Grants export that covers some years and not others stops the run.
+
+    A hole is not the same as an absence, and only the hole is refused -- the same rule the
+    Transfers window uses. A person whose broker never awarded them shares has no Grants
+    file at all, and that stays legitimate: the feature does not fire and nothing is
+    missing. A person whose export covers some years of the replayed window but not others
+    plainly HAS the report, so a year of it is simply missing -- and an award in that year
+    is not booked, so the awarded lot is rebuilt from the position snapshot with an invented
+    acquisition date, or, where the interval began at a reported snapshot, the
+    reconciliation refuses the year. Exporting the year is cheap and the basis it protects
+    is not recoverable afterwards.
+
+    Unlike Transfers this needs no second account: an award belongs to a single account, so
+    a missing year gets a single account's lot wrong -- there is no multi-account condition.
+
+    The years are named because the reader's next action is to export exactly those.
+    """
+    missing = (grants_missing_years or "").strip()
+    if not grants_file_supplied or not missing:
+        return
+
+    subject = f"Grants export missing for: {missing}"
+    detail = (
+        f"The Grants (Stock Grant Activity) export covers some years of the replayed window "
+        f"and not {missing}. Shares awarded in an uncovered year are not booked: the ledger "
+        f"is rebuilt from the position snapshot -- the broker's quantity with an invented "
+        f"acquisition date -- or, where the interval began at a reported snapshot, the "
+        f"reconciliation refuses the year. The acquisition date decides the holding period "
+        f"(§ 23 EStG), the cost basis a later sale is measured against, and which units that "
+        f"sale consumes. Because the export exists for other years, the query exists too: "
+        f"export {missing} as well (see README), even if no shares were awarded that year, "
+        f"and this stops. An export absent for every year is a different case -- the feature "
+        f"simply does not fire -- and is not reported here."
+    )
+    if data_gap_collector is not None:
+        data_gap_collector.record(
+            code=GRANTS_WINDOW_INCOMPLETE, subject=subject, detail=detail,
+            severity=GapSeverity.FAIL_FAST,
+        )  # records, logs CRITICAL and raises DataGapError
+    else:
+        raise DataGapError(f"[{GRANTS_WINDOW_INCOMPLETE}] {subject}: {detail}")
 
 
 TRANSFER_COUNTERPARTY_UNKNOWN = "TRANSFER_COUNTERPARTY_UNKNOWN"
@@ -555,6 +669,10 @@ def run_main_calculations(
     # Years in the replayed window for which no Transfers file was offered, comma-joined
     # and in order. Only meaningful when a report WAS supplied (a hole, not an absence).
     transfers_missing_years: str = "",
+    # Grants counterparts, same meaning: whether a Grants export was offered at all, and the
+    # years missing from a supplied one (a hole). Drive `_require_a_complete_grants_window`.
+    grants_file_supplied: bool = False,
+    grants_missing_years: str = "",
 ) -> Tuple[List[RealizedGainLoss], List[VorabpauschaleData], List[FinancialEvent], int]:
     """
     Runs the main calculation logic:
@@ -629,7 +747,7 @@ def run_main_calculations(
                 historical_transfer_events.append(event)
             elif isinstance(event, (TradeEvent, CorpActionSplitForward, CorpActionStockDividend,
                                     OptionLifecycleEvent, CorpActionMergerCash,
-                                    CorpActionExpireDividendRights)):
+                                    CorpActionExpireDividendRights, StockAwardEvent)):
                 # OptionLifecycleEvent joined this bucket when checkpointing exposed what its
                 # absence cost: an option opened and closed inside the historical window kept
                 # its lots forever, because nothing removed them. Nine option ledgers on the
@@ -795,8 +913,17 @@ def run_main_calculations(
     _require_a_complete_transfers_window(
         _known_accounts, transfers_file_supplied, transfers_missing_years,
         data_gap_collector)
+    # A Grants export with a per-year hole is refused for the same reason, and needs no
+    # second account -- an award belongs to one.
+    _require_a_complete_grants_window(
+        grants_file_supplied, grants_missing_years, data_gap_collector)
     _report_multi_account_limitations(
         _known_accounts, data_gap_collector, transfers_file_supplied)
+    # A same-day award reversal and disposal are ordered reversal-first by the sort band
+    # (Reading A); the order is a grey-area choice no source fixes, so surface it where it
+    # can move a figure. See Q18 / GT-ESTG20-066.
+    _report_reversal_ordering_assumption(
+        financial_events, asset_resolver, data_gap_collector, tax_year_end_date_obj)
 
     logger.info("Building unified historical replay stream (securities, mergers, currencies)...")
     for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
@@ -1317,6 +1444,7 @@ def run_main_calculations(
     option_assignment_processor = OptionAssignmentProcessor()
     option_expiration_processor = OptionExpirationWorthlessProcessor()
     option_cash_settlement_processor = OptionCashSettlementProcessor()
+    stock_award_processor = StockAwardProcessor()
 
     # Currency conversion processor for FX trades
     currency_conversion_processor = CurrencyConversionProcessor(
@@ -1343,6 +1471,13 @@ def run_main_calculations(
         FinancialEventType.OPTION_CASH_SETTLEMENT: option_cash_settlement_processor,
         FinancialEventType.INTERNAL_TRANSFER: internal_transfer_processor,
         FinancialEventType.INTERNAL_CASH_TRANSFER: internal_cash_transfer_processor,
+        # All three; the award is the one that carries a figure. An award or a reversal
+        # dated inside the tax year is caught by the EoY reconciliation if it goes
+        # unapplied; a vesting moves no shares and is inert (Zufluss fell on the award),
+        # so it is dispatched here only to be handled explicitly rather than fall through.
+        FinancialEventType.STOCK_AWARD_GRANTED: stock_award_processor,
+        FinancialEventType.STOCK_AWARD_REVERSED: stock_award_processor,
+        FinancialEventType.STOCK_AWARD_VESTED: stock_award_processor,
     }
 
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")

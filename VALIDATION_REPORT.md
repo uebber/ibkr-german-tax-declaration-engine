@@ -667,6 +667,42 @@ trade regardless of transaction id (previously a smaller-id trade could precede 
 intended dependency, declared. The full suite (every currency/FX/option figure test) is green
 and VZ 2024 is byte-identical to the baseline, consistent with no unintended movement.
 
+## 2026-09-02 — PR-E: the share-grant report read, real-data effect
+
+**Base = the per-account train (snapshot+fifo+transfers+currency), no grants.** On the real
+export, VZ 2023 aborts at `EOY_RECONCILIATION_FAILED` naming three positions: the share grant
+`ISIN:US45841N1072` (short by the granted units, and given a synthesised fallback lot dated
+`{tax_year-1}-12-31` via `REPLAY_MARK_UNCONFIRMED_START`) and `ISIN:DE000LEG1110` in each of two
+accounts. VZ 2024 / VZ 2025 abort at `REPLAY_MARK_MISMATCH` on the same two instruments.
+
+**With PR-E, the grant half is resolved.** The awarded shares reconcile against the broker
+snapshot at every checkpoint mark — VZ 2023 (1 mark), VZ 2024 (2), VZ 2025 (3), all kept — and
+**zero** fallback lots are synthesised where the base synthesised one; the lot keeps its real
+acquisition date instead of an invented 31 December. `ISIN:US45841N1072` drops out of the
+reconciliation failure entirely. The § 22 Nr. 3 receipt is reported as a data gap
+(`STOCK_AWARD_RECEIPT_NOT_DECLARED`) in VZ 2023 — the one year an award is dated inside the
+processed year — naming the year and the amount; nothing is silently declared or omitted
+([GT-ESTG20-063], issue #76).
+
+**The remaining `DE000LEG1110` abort is the Transfers re-export completeness gap already
+recorded under PR-C, not PR-E's.** Measured cause: the 2023 Transfers re-export's date window
+began after the own-account move's date, so the move — and a same-day currency Umbuchung — were
+dropped; the surviving rows are all from three days later. The move survives in the maintainer's
+earlier export. Restoring it (the securities move's own side is enough — the parser de-duplicates
+the two sides) makes **all three years — VZ 2023, VZ 2024, VZ 2025 — reconcile at every mark and
+produce a declaration PDF**, "Every ledger agreed with the reported snapshot at every checkpoint
+mark", the only residual data gaps being the intended § 22 Nr. 3 receipt notice and the ordinary
+Vorabpauschale / KESt notices. The Transfers export is input, gitignored, and not part of this
+change.
+
+**Suite:** 1278 passed, 1 deselected (the pre-existing `test_the_column_tuples_match_the_real_exports`,
+the Cash_Balance 35-vs-tuple mismatch, failing identically on the base). **Mutation probes** on the
+eight sites PR-E adds, grant test files, failing ids recorded, no `-x`: seven RED (observable) —
+current-year dispatch entry (1), historical bucket entry (2), enrichment EUR conversion (6),
+parser unclassified-kind refusal (1), zero-quantity guard (1), over-reversal guard (1),
+undeclared-receipt recording (1); the eighth, the stock-award sort band, is GREEN when deleted and
+is the documented blind spot recorded under *Where the suite is blind* in `CLAUDE.md`.
+
 ## 2026-09-17 — PR #86 correctness review and fixes
 
 **Category:** `fix-func`. The maintainer authorized correction and merge after an
@@ -775,3 +811,26 @@ with `8b7e49f`, the known refund currency bug changes two VZ 2024 form lines;
 the currency mismatch disappears and the refund no longer appears as capital
 repayment. Private differences remain in the review captures. Original export
 and cache hashes are unchanged. This is not an all-years byte-parity claim.
+
+## 2026-09-19 — PR #90 grants re-measured on the merged tree (onto merged main)
+
+Re-ran the share-grant real-data check on the merged candidate `01ebea5` (grants re-applied onto
+merged main = per-account currency #89 + corrected #86/#87/#88/#93) against base `origin/main`
+`7d27755`, on the contributor's own exports, VZ 2023–2025. Trades used the pre-`Taxes`-column export
+(PR #91's `Taxes` column is not parsed by main or #90, so both sides are fed the same parseable
+input; the swap isolates the grant). `scripts/parity_check.sh`; same-tree control identical
+(console/log/PDF), so the comparison is reliable.
+
+The grant instrument is the **sole** reconciliation blocker in every supported year. On base each
+year aborts on it alone and produces no declaration — VZ 2023 `EOY_RECONCILIATION_FAILED`, VZ 2024
+and VZ 2025 `REPLAY_MARK_MISMATCH` (the reconstructed opening quantity is short by the awarded
+units). On the merged tree all three years complete and produce a declaration: the awarded shares
+reconcile at every checkpoint mark, no fallback lot is synthesised, and VZ 2023 records exactly one
+`STOCK_AWARD_RECEIPT_NOT_DECLARED` WARNING. The `DE000LEG1110` transfers-completeness abort recorded
+on 2026-09-02 is no longer present, so the grant is now the only blocker.
+
+This confirms the 2026-09-02 measurement on the merged architecture. It is a Band A feature
+movement, not output-neutral — base cannot declare these years and the merged tree can — so it is
+the maintainer's to approve, named to VZ 2023, VZ 2024 and VZ 2025. That no non-grant figure moved
+is not shown by a real-data figure diff (base produces no declaration to diff); it rests on the
+merged tree differing from main by exactly the grant change and on the green clean-clone suite.

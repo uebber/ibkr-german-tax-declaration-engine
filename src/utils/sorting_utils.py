@@ -7,7 +7,7 @@ from typing import Tuple, Any
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, WithholdingTaxEvent, CorporateActionEvent,
     OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent, InternalTransferEvent,
-    InternalCashTransferEvent
+    InternalCashTransferEvent, StockAwardEvent
 )
 from src.identification.asset_resolver import AssetResolver
 from src.domain.assets import Asset
@@ -66,6 +66,33 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.ca_action_id_ibkr or "", 
             event.ibkr_activity_description or "", # PRD's event.description (FinancialEvent.ibkr_activity_description)
             event.creation_sequence
+        )
+    elif isinstance(event, StockAwardEvent):
+        # Same intra-day slot as a corporate action, for the same reason a transfer takes
+        # it: the shares must be in the ledger before that day's disposals, or a sale on
+        # the award date hits a lot that does not exist yet. A vesting shares the band
+        # although it changes nothing, so that all three kinds of one export sort the same
+        # way and a future kind that DOES touch the ledger inherits the safe order.
+        #
+        # A reversal here is therefore applied BEFORE a same-day disposal of the same share
+        # (Reading A). Which of the two comes first is not fixed by any source -- FIFO orders
+        # a disposal's own lots, not a disposal against a same-day non-disposal event -- so it
+        # is the taxpayer's grey-area choice (Q18, [GT-ESTG20-066]); the calculation engine
+        # warns on the collision (STOCK_AWARD_REVERSAL_ORDER_ASSUMED) so the choice is visible.
+        #
+        # The band decides this only because the event carries no `ibkr_transaction_id`:
+        # the export's SerialNumber is blank on every row, so there is none to carry, and
+        # the shared tail below would otherwise put it ahead of the band.
+        intra_day_order = _INTRA_DAY_SORT_ORDER_CORP_ACTION
+        # Four elements, all strings but the last, matching the shape of the two branches
+        # that share this band. Two items in one band whose element types differ at some
+        # position raise TypeError the moment everything before it ties -- the defect
+        # recorded on the transfer branch below.
+        specific_secondary_elements = (
+            asset.ibkr_symbol or "",
+            event.award_date or "",
+            event.ibkr_activity_description or "",
+            event.creation_sequence,
         )
     elif isinstance(event, InternalTransferEvent):
         # A SECURITIES move takes the corporate-action slot, and for the same reason a

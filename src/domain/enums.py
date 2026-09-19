@@ -61,6 +61,22 @@ class FinancialEventType(Enum):
     # an acquisition of the receiving account's ([GT-FX-009]). One enum member per legal
     # consequence, so no dispatch can confuse them.
     INTERNAL_CASH_TRANSFER = auto()
+    # Shares a broker awarded for capital placed with it. Three members, not one, because
+    # the three rows of the grant export have three different consequences and a single
+    # member would let a dispatch confuse them:
+    #   * AWARD books the shares in. They are in the account from this day, which is what
+    #     the broker's snapshot reports, and this is also where they are acquired for tax:
+    #     Zufluss falls on the booking ([GT-ESTG20-064]), so this day gives the acquisition
+    #     date and the Anschaffungskosten ([GT-ESTG20-065]).
+    #   * REVERSAL takes some back when the condition fails. It is NOT a disposal and
+    #     realises nothing -- deliberately not routed through the trade path, which would
+    #     produce a RealizedGainLoss the law does not recognise here.
+    #   * VESTING moves no shares at all. It is the day the condition lapses, and a
+    #     contractual condition does not postpone Zufluss ([GT-ESTG20-064]), so the
+    #     acquisition has already happened and the vesting is inert.
+    STOCK_AWARD_GRANTED = auto()
+    STOCK_AWARD_REVERSED = auto()
+    STOCK_AWARD_VESTED = auto()
 
 class RealizationType(Enum):
     """Defines how a gain or loss was realized."""
