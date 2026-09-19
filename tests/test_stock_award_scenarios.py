@@ -1,9 +1,9 @@
 """Awarded shares, end to end, through the real pipeline.
 
-legal_basis: [GT-ESTG20-064] puts Zufluss where wirtschaftliche Verfuegungsmacht arrives,
-which while the grantor may still take the shares back is not the booking;
-[GT-ESTG20-065] makes the value brought to tax then the Anschaffungskosten on a later
-disposal. Both in reference/tax-law/estg-22-nr3-leistungen.md.
+legal_basis: [GT-ESTG20-064] puts Zufluss on the booking -- a condition under which the
+grantor may later reclaim the shares does not defer it, only a disposal being rechtlich
+unmoeglich would; [GT-ESTG20-065] makes the value brought to tax then the
+Anschaffungskosten on a later disposal. Both in reference/tax-law/estg-22-nr3-leistungen.md.
 
 **What the unit tests beside this file cannot see.** `test_stock_award_lots.py` calls the
 three `FifoLedger` methods directly, so it stays green while the events never reach the
@@ -29,10 +29,11 @@ aimed at them (`test_a_same_day_sale_is_measured_after_the_vesting_not_before_it
 figures and pass, but they pass with the code broken too, so they document the intent
 without instrumenting it. Do not read them as guards.
 
-The vesting-inside-the-tax-year case is the one that motivated the file: an award or a
-reversal that goes unapplied is caught by the end-of-year quantity reconciliation, but a
-vesting moves no shares, so it reconciled clean while leaving the provisional award price
-on the lot for the disposal to be measured against. A wrong figure that looks right.
+The award-inside-the-tax-year case is the one that motivated the file: an award or a
+reversal that goes unapplied is caught by the end-of-year quantity reconciliation, and
+the award also records the undeclared § 22 Nr. 3 receipt. A vesting moves no shares and
+is inert (Zufluss fell on the award), so it is handled explicitly rather than left to
+fall through.
 
 All identifiers and amounts are invented. CLAUDE.md forbids an account number, a position
 value or a cash balance copied from a real export reaching a commit.
@@ -280,7 +281,7 @@ class TestTheGuardsAreObserved(FifoTestCaseBase):
 def test_an_award_in_the_tax_year_reports_the_receipt_it_does_not_declare():
     """The one thing standing between a user and an understated return.
 
-    The engine takes the vesting value as the Anschaffungskosten -- which LOWERS the
+    The engine takes the award value as the Anschaffungskosten -- which LOWERS the
     gain declared on a later disposal -- and cannot declare the matching § 22 Nr. 3
     receipt, because there is no Anlage SO line for it (issue #76). Taking the half that
     reduces a figure and dropping the half that adds one is understatement, so the

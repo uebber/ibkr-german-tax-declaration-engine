@@ -1,28 +1,27 @@
 # src/engine/event_processors/stock_award_processor.py
 """Shares a broker awarded for capital placed with it, in the tax year.
 
-**The whole reason this file exists is that a vesting can fall inside the declared
-year.** The historical replay applies awards dated before the tax year
+**This file exists because an award or a reversal can fall inside the declared year.**
+The historical replay applies awards dated before the tax year
 (`FifoLedger.apply_historical_event`), and for a while that was the only dispatch there
 was. An award event dated inside the year then reached the current-year table, found no
 processor, and produced a log line -- and the run continued.
 
 For an award or a reversal that is loud: the quantity is wrong and the end-of-year
-reconciliation refuses it. **For a vesting it was silent**, because a vesting moves no
-shares. The quantity reconciled, no gap was recorded, and a disposal later that year was
-measured against the PROVISIONAL award price instead of the value at Zufluss -- a wrong
-figure that looks exactly like a right one, which is the failure this repository exists
-to prevent. It is also precisely the blind spot CLAUDE.md names: a green reconciliation
-compares net quantity and cannot see a wrong basis.
+reconciliation refuses it. A vesting moves no shares, so an unhandled one would reconcile
+clean; it is dispatched here and made explicitly inert rather than left to fall through,
+and an award kind nobody has classified raises instead of being dropped in silence.
 
 The three kinds do here what they do in the replay, and the two paths call the same
 `FifoLedger` methods so they cannot disagree about what an award means.
 
-None of the three declares anything by itself. An award and a reversal are not disposals,
-and a vesting is a receipt under § 22 Nr. 3 EStG ([GT-ESTG20-063]) which belongs on
-Anlage SO -- a category the reporting layer does not have, tracked as issue #76. What a
-vesting does affect is the Anschaffungskosten of the lot ([GT-ESTG20-065]), and that
-reaches a declared figure through the disposal, not through this processor.
+None of the three declares anything by itself. An award and a reversal are not disposals.
+The award -- not the vesting -- is the § 22 Nr. 3 receipt ([GT-ESTG20-063]): Zufluss falls
+on the booking and the holding period does not postpone it ([GT-ESTG20-064]), so the
+vesting is inert. The receipt belongs on Anlage SO, a category the reporting layer does
+not have, tracked as issue #76. The value at the award is the Anschaffungskosten of the
+lot ([GT-ESTG20-065]), and that reaches a declared figure through the disposal, not
+through this processor.
 """
 import logging
 from typing import Any, Dict, List
@@ -83,7 +82,7 @@ class StockAwardProcessor(EventProcessor):
         """Say, in the report, that a taxable receipt fell in this year and is not in it.
 
         **The gap exists because the omission is otherwise invisible and points one way.**
-        The engine takes the vesting value as the lot's Anschaffungskosten, which LOWERS
+        The engine takes the award value as the lot's Anschaffungskosten, which LOWERS
         the declared gain on a later disposal, and omits the matching § 22 Nr. 3 receipt
         ([GT-ESTG20-063]) because the reporting layer has no Anlage SO *Einkuenfte aus
         Leistungen* category -- issue #76. Taking the half that reduces a figure and
