@@ -33,6 +33,7 @@ The conditions routed through this channel, as of 2026-09-01:
 
     ANLAGE_KAP_GERMAN_KEST_NOT_DECLARABLE              WARNING
     CURRENCY_EOY_MISMATCH                              WARNING
+    CURRENCY_EOY_UNRECONCILED                          WARNING
     EOY_QTY_MISMATCH                                   WARNING
     KAP_INV_Z53_VORABPAUSCHALE_DECLARATION_UNKNOWN     WARNING
     KAP_INV_Z53_VORABPAUSCHALE_NOT_ATTRIBUTABLE        WARNING
@@ -69,7 +70,12 @@ describing the "log, count, continue" behaviour that predates the abort.
 
 `CURRENCY_EOY_MISMATCH` is the one that genuinely does continue: a cash-balance
 divergence is about input completeness rather than a ledger disagreeing about a
-holding, so it is recorded and the run proceeds.
+holding, so it is recorded and the run proceeds. `CURRENCY_EOY_UNRECONCILED` is
+its absent-report twin: a per-account currency ledger computed a non-zero balance
+but nothing was reported to check it against, so it too is recorded and the run
+proceeds rather than skipping the account in silence — a report that does not
+cover a ledger cannot confirm the §20 gains computed from it, and absent is not
+the same as empty.
 
 Two of the WARNING entries record something the run then *uses* rather than
 something it lacks: a Vorabpauschale price taken from the wrong day, and one the

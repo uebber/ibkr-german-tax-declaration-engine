@@ -204,16 +204,63 @@ class TestCollapsingRowsIntoMoves:
         assert len(moves) == 2
         assert sorted(m.event_date for m in moves) == ["2023-06-01", "2023-07-15"]
 
-    def test_a_cash_row_produces_no_move(self, tmp_path):
-        """Currency is held as one balance per person, so a move between two of that
-        person's accounts changes nothing in it. Reading these rows is what
-        per-account currency would need, and the engine does not do that yet."""
-        assert _moves(tmp_path, [
+    def test_a_cash_row_produces_a_move(self, tmp_path):
+        """A non-EUR cash row is a disposal of the sending account's Kapitalforderung and
+        an acquisition of the receiving account's ([GT-FX-009]); it becomes one
+        InternalCashTransferEvent. Both sides carry the SAME TransactionID -- measured on
+        the export -- so the pair collapses to one move rather than being counted twice.
+        (Rewritten for PR-D from `test_a_cash_row_produces_no_move`, which asserted the old
+        pooled reading where the rows changed nothing.)"""
+        from src.domain.events import InternalCashTransferEvent
+        moves = _moves(tmp_path, [
             transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
                          quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
             transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="500", tx_id="X1", multiplier=""),
+        ])
+        assert len(moves) == 1
+        move = moves[0]
+        assert isinstance(move, InternalCashTransferEvent)
+        assert move.account_id == A       # the sending account
+        assert move.to_account_id == B    # the receiving account
+        assert move.quantity == Decimal("500")
+        assert move.local_currency == "USD"
+
+    def test_two_distinct_cash_moves_of_one_shape_stay_two(self, tmp_path):
+        """Two genuine moves of 500 USD from A to B on the same day are two disposals, not
+        one. The cash path keys on the TransactionID, so the two moves (X1 and X2) stay
+        apart; keying on the shape (accounts, currency, day, amount) would collapse them
+        into one and understate the year in silence, because a currency ledger that runs
+        short opens a short rather than refusing ([GT-FX-006]) -- there is no whole-position
+        backstop as on the securities path. Each move's two sides share one id, so the
+        pair still collapses to one."""
+        from src.domain.events import InternalCashTransferEvent
+        moves = _moves(tmp_path, [
+            transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="500", tx_id="X1", multiplier=""),
+            transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-500", tx_id="X2", multiplier=""),
+            transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
                          quantity="0", cash_transfer="500", tx_id="X2", multiplier=""),
-        ]) == []
+        ])
+        cash = [m for m in moves if isinstance(m, InternalCashTransferEvent)]
+        assert len(cash) == 2
+
+    def test_both_sides_of_a_cash_move_are_kept_as_provenance(self, tmp_path):
+        """The two rows are one move, but both are kept: `source_transaction_ids` records
+        each side's (account, id) observation. Discarding the second row would drop the
+        evidence the move was assembled from."""
+        from src.domain.events import InternalCashTransferEvent
+        moves = _moves(tmp_path, [
+            transfer_row(A, B, "OUT", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20230601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="500", tx_id="X1", multiplier=""),
+        ])
+        move = [m for m in moves if isinstance(m, InternalCashTransferEvent)][0]
+        assert set(move.source_transaction_ids) == {(A, "X1"), (B, "X1")}
 
     def test_the_event_carries_no_transaction_id(self, tmp_path):
         """The two sides carry different ids, so neither names the move -- and the id
@@ -253,6 +300,35 @@ class TestWhatItRefusesToRead:
                 transfer_row(A, "", "OUT", "20230601", isin=ISIN, quantity="-100",
                              tx_id="X1"),
             ])
+
+    def test_a_cash_row_naming_one_account_on_both_sides_stops_the_run(self, tmp_path):
+        """A Kapitalforderung cannot be disposed of to itself ([GT-FX-009]). Were the two
+        sides one account, the sending and receiving ledgers would be the same object and
+        the move would emit a realised FX gain against a lot it then re-creates -- a figure
+        from nothing. Guarded like the securities move, not left to the zero-incidence
+        assumption."""
+        with pytest.raises(DataIntegrityError, match="same account"):
+            _moves(tmp_path, [
+                transfer_row(A, A, "OUT", "20230601", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="-500", tx_id="X1", multiplier=""),
+            ])
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_two_cash_sides_that_disagree_on_the_amount_stop_the_run(self, tmp_path, reverse):
+        """The two rows share a TransactionID, so they are one move; but they report
+        different amounts. Collapsing them first-wins would declare whichever amount the row
+        order happened to put first. Refused instead, and the refusal does not depend on the
+        order the rows arrive in."""
+        rows = [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="200", tx_id="X1", multiplier=""),
+        ]
+        if reverse:
+            rows.reverse()
+        with pytest.raises(DataIntegrityError, match="different amount"):
+            _moves(tmp_path, rows)
 
     def test_a_row_with_an_unreadable_date_stops_the_run(self, tmp_path):
         with pytest.raises(DataIntegrityError, match="Date"):
@@ -421,3 +497,99 @@ class TestTheMoveTakesItsIntraDaySlot:
         assert len(moves) == 2
         keys = sorted(get_event_sort_key(m, factory.asset_resolver) for m in moves)
         assert keys[0] != keys[1], "two distinct moves must not collide on one key"
+
+
+class TestACashMoveIsOrderedByBrokerChronology:
+    """A cash Umbuchung is NOT forced ahead of the day like a securities move. It sits
+    in the trade band, ordered by its own transaction id, so an earlier same-day
+    currency event is consumed first. The defect it replaces put the move in the
+    lot-delivering band, ahead of everything, and realised the wrong FX gain."""
+
+    def test_the_move_sorts_between_an_earlier_and_a_later_same_day_trade(self, tmp_path):
+        from decimal import Decimal as D
+        from src.domain.enums import FinancialEventType
+        from src.domain.events import TradeEvent
+        from src.utils.sorting_utils import get_event_sort_key
+
+        factory = _factory(tmp_path)
+        moves = factory.create_events_from_transfers(parse_transfers_csv(_write(tmp_path, [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", tx_id="200", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="100", tx_id="200", multiplier=""),
+        ])))
+        move = moves[0]
+        resolver = factory.asset_resolver
+        asset_id = move.asset_internal_id
+        earlier = TradeEvent(asset_id, "2025-06-01", quantity=D("100"),
+                             price_foreign_currency=D("1"),
+                             event_type=FinancialEventType.TRADE_BUY_LONG,
+                             account_id=B, ibkr_transaction_id="100", local_currency="USD")
+        later = TradeEvent(asset_id, "2025-06-01", quantity=D("-100"),
+                           price_foreign_currency=D("1"),
+                           event_type=FinancialEventType.TRADE_SELL_LONG,
+                           account_id=B, ibkr_transaction_id="300", local_currency="USD")
+        km = get_event_sort_key(move, resolver)
+        assert get_event_sort_key(earlier, resolver) < km, "an earlier tx must precede the move"
+        assert km < get_event_sort_key(later, resolver), "a later tx must follow the move"
+
+    def test_a_no_id_move_sorts_against_a_no_id_currency_conversion_without_crashing(self, tmp_path):
+        """The move shares the trade band with currency conversions, so it must emit the
+        SAME asset_category type they do. With no transaction id (the degraded case) the
+        earlier key elements tie and the comparison reaches asset_category; emitting its
+        `.name` (a str) there raised TypeError against a same-category conversion's bare
+        Enum. Regression: both no-id, both CASH_BALANCE, must sort cleanly."""
+        from decimal import Decimal as D
+        from src.domain.events import CurrencyConversionEvent
+        from src.utils.sorting_utils import get_event_sort_key
+
+        factory = _factory(tmp_path)
+        moves = factory.create_events_from_transfers(parse_transfers_csv(_write(tmp_path, [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="100", multiplier=""),
+        ])))
+        move = moves[0]
+        assert move.ibkr_transaction_id is None
+        conv = CurrencyConversionEvent(move.asset_internal_id, "2025-06-01",
+            from_currency="EUR", from_amount=D("80"), to_currency="USD", to_amount=D("100"),
+            exchange_rate=D("1.25"), account_id=A)  # also no transaction id
+        resolver = factory.asset_resolver
+        ordered = sorted([move, conv], key=lambda e: get_event_sort_key(e, resolver))
+        assert len(ordered) == 2
+
+
+class TestCashSidesAreValidatedBeforeInterpreted:
+    """The two sides of a cash move are assembled and compared as one unit BEFORE either is
+    dropped, so a contradictory side is caught rather than silently discarded, and two rows
+    that cannot be proven to be one move are not silently collapsed into one (F2)."""
+
+    @pytest.mark.parametrize("other_currency", ["GBP", "EUR"])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_two_sides_under_one_id_that_disagree_on_currency_are_refused(
+            self, tmp_path, other_currency, reverse):
+        """One side USD, the other GBP or EUR, under one TransactionID -- a move has one
+        currency. Dropping the euro side before the comparison (as the euro-skip once did)
+        let the USD side stand as a move the export contradicts; GBP already raised because
+        it was not dropped first. Validated before the EUR decision now, in either row order."""
+        rows = [
+            transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                         quantity="0", cash_transfer="-100", tx_id="X1", multiplier=""),
+            transfer_row(B, A, "IN", "20250601", asset_class="CASH", currency=other_currency,
+                         quantity="0", cash_transfer="100", tx_id="X1", multiplier=""),
+        ]
+        if reverse:
+            rows.reverse()
+        with pytest.raises(DataIntegrityError):
+            _moves(tmp_path, rows)
+
+    def test_two_same_side_no_id_rows_are_not_collapsed_into_one(self, tmp_path):
+        """Two OUT rows from A to B with no TransactionID. Two rows reported by the SAME
+        account cannot be told apart from one move reported twice, so the run refuses rather
+        than silently collapse them into a single move and understate the year."""
+        rows = [transfer_row(A, B, "OUT", "20250601", asset_class="CASH", currency="USD",
+                             quantity="0", cash_transfer="-100", multiplier="")
+                for _ in range(2)]
+        with pytest.raises(DataIntegrityError):
+            _moves(tmp_path, rows)

@@ -162,7 +162,9 @@ class TestCurrencyEoyStaysNonFatal(FifoTestCaseBase):
         )
         recorded = [g for g in out.data_gaps if g.code == "CURRENCY_EOY_MISMATCH"]
         assert len(recorded) == 1, out.data_gaps
-        assert recorded[0].subject == "USD"
+        # The gap now names its account, as the securities gap already does: each account's
+        # balance is its own Kapitalforderung ([GT-FX-009]), so the check runs per account.
+        assert recorded[0].subject == "USD (Konto U_GAP_TEST)"
         assert "100.51" in recorded[0].detail
         assert recorded[0].severity is GapSeverity.WARNING
 

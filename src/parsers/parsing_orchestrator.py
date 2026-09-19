@@ -1062,13 +1062,23 @@ class ParsingOrchestrator:
                 balances_skipped += 1
                 continue
 
-            # Skip tiny balances (below threshold)
-            if (abs(raw_balance.starting_cash) < MIN_BALANCE_THRESHOLD and
-                abs(raw_balance.ending_cash) < MIN_BALANCE_THRESHOLD):
-                logger.debug(f"Skipping tiny cash balance {raw_balance.currency_primary}: "
-                           f"SOY={raw_balance.starting_cash}, EOY={raw_balance.ending_cash}")
-                balances_skipped += 1
-                continue
+            # A balance below the threshold is rounding dust for the OPENING: a
+            # sub-threshold SOY is not fed to the ledger's SOY reconciler, exactly as
+            # before -- feeding it could move a figure (see _reconcile_currency_soy, which
+            # would adjust a ledger against a dust opening). But the reported CLOSING is a
+            # different thing: it is the value the end-of-year reconciliation compares the
+            # ledger against, and a supplied zero or tiny balance is a comparison value, not
+            # the absence of a report. Dropping the whole row made the reconciler read a
+            # filtered observation as absent and record CURRENCY_EOY_UNRECONCILED against a
+            # balance the broker had in fact reported (F4). So the row is no longer dropped;
+            # only the SOY seeding keeps its threshold.
+            both_tiny = (abs(raw_balance.starting_cash) < MIN_BALANCE_THRESHOLD and
+                         abs(raw_balance.ending_cash) < MIN_BALANCE_THRESHOLD)
+            if both_tiny:
+                logger.debug(
+                    f"Sub-threshold cash balance {raw_balance.currency_primary}: "
+                    f"SOY={raw_balance.starting_cash}, EOY={raw_balance.ending_cash} -- "
+                    f"opening not seeded, closing kept as a reconciliation value")
 
             # Get or create CashBalance asset
             cash_asset = self.asset_resolver.get_or_create_asset(
@@ -1084,9 +1094,7 @@ class ParsingOrchestrator:
             # Record the opening and closing balance (can be negative for short positions)
             # under the account that reported it. One currency held in two accounts is
             # reported on two rows and the person's balance is both of them
-            # ([GT-ESTG20-061]); `person_snapshot` adds them. The threshold above still
-            # applies per row, which is what it was written for: it drops rounding dust,
-            # and dust is dust in each account separately.
+            # ([GT-ESTG20-061]); `person_snapshot` adds them.
             #
             # These REPLACE whatever a Positions row said about this currency, which is
             # what they have always done by running second -- a currency reported in both
@@ -1094,8 +1102,13 @@ class ParsingOrchestrator:
             # it. Keyed by account, so a Positions row for a currency in a DIFFERENT
             # account survives; there is no such row in any export this engine has seen.
             key = (account_key(raw_balance.client_account_id), cash_asset.internal_asset_id)
-            self.soy_positions[key] = _replace_snapshot_quantity(
-                self.soy_positions.get(key), raw_balance.starting_cash)
+            # SOY seeds the opening ledger. Recorded exactly as before -- dropped only when
+            # BOTH sides are dust -- so the seeding this change must not move stays identical.
+            if not both_tiny:
+                self.soy_positions[key] = _replace_snapshot_quantity(
+                    self.soy_positions.get(key), raw_balance.starting_cash)
+            # EOY is the reported closing the reconciliation compares against; recorded
+            # whatever its size.
             self.eoy_positions[key] = _replace_snapshot_quantity(
                 self.eoy_positions.get(key), raw_balance.ending_cash)
 

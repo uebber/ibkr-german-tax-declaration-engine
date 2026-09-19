@@ -81,7 +81,22 @@ def test_currency_eoy_gaps_reach_the_pdf():
     text = _eoy_section_text(eoy_mismatch_count=0, data_gaps=gaps)
     assert ALL_CLEAR not in text
     assert "USD" in text and "100.51" in text
-    assert "20 Abs. 2 Nr. 3" in text
+    assert "20 Abs. 2 Satz 1 Nr. 7" in text
+
+
+def test_currency_unreconciled_gaps_reach_the_pdf():
+    """The absent-report twin of CURRENCY_EOY_MISMATCH: a ledger with no reported
+    balance to check against. It is recorded, and it must reach the PDF too — not only
+    the console — or the §20 caveat never lands in the primary deliverable. Red-first:
+    with `_currency_eoy_gaps()` filtering only CURRENCY_EOY_MISMATCH, this text is absent."""
+    gaps = [DataGap(code="CURRENCY_EOY_UNRECONCILED", subject="USD",
+                    detail="Dem FIFO-Bestand 1000.00 steht kein gemeldeter Kontostand "
+                           "gegenüber, gegen den er geprüft werden könnte.")]
+    text = _eoy_section_text(eoy_mismatch_count=0, data_gaps=gaps)
+    assert ALL_CLEAR not in text
+    assert "USD" in text and "1000.00" in text
+    assert "kein gemeldeter Kontostand" in text
+    assert "20 Abs. 2 Satz 1 Nr. 7" in text
 
 
 def test_structured_details_still_render_the_table():

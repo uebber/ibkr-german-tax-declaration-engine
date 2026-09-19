@@ -367,6 +367,77 @@ columns `CASH_BALANCE_COLUMNS` does not declare (`StartingCashSecurities`,
 parser accepts them and nothing reads them; a clean clone has no `data_import/` and skips the test.
 Present on `main` at `5a64079` with the same data.
 
+## 2026-09-02 — incidence behind per-account currency, measured on the current data_import
+
+The counting gate for [GT-FX-009] and [GT-FX-010]. Measured on the export the train now reads —
+`data_import/` holding the 35-column lot-detail Transfers and the Cash_Balance reports — with
+repeated mid-file headers stripped the way the engine strips them. **This supersedes the
+2026-08-12 currency incidence**, which was measured on the earlier 32-column export the default no
+longer uses; the two disagree, and the difference is itself a finding (last two rows).
+
+| Measurement | Result |
+|---|---|
+| Cash-balance reports carrying `ClientAccountID` | 2022, 2023, 2024; the 2025 report has 10 columns and no `ClientAccountID`, so 2025 cash keys to the one default account |
+| Years whose cash report names more than one account | 2 (2023, 2024); 2022 is one account |
+| Non-EUR currencies held in **more than one account** in the same year | 3 in 2023 and 3 in 2024 (CAD, SGD, USD each in both accounts); 0 otherwise |
+| `Quantity`, `PositionAmount`, `TransferPrice` on the cash transfer rows | `0` on every one; the amount is in `CashTransfer` |
+| `CASH` rows in any `Positions-*.csv` | none, any year — no export supplies a cost basis for a currency balance, and none is read |
+| `AssetClass=CASH` transfer rows in the currently resolved (35-column) Transfers-2023 export | one **EUR** move (OUT+IN, one id) **and one non-EUR (USD) move** (a single OUT row, no matching IN, its own id); none in other years |
+| The USD move's shape and effect | single-sided and dated inside 2023 — built from the one observed side into a current-year § 20 Abs. 2 disposal of the sending account's Kapitalforderung. **Corrected 2026-09-18:** an earlier arrangement of gitignored `data_import/` carried this row only in `obsolete/`, which is why the row above once read "no non-EUR move"; the resolved file now carries it, so that reading was stale. |
+
+**What this settles.** [GT-FX-009] is **not latent**: non-EUR currencies sit in both accounts in
+2023 and 2024, so the pooled ledger measures a disposal against another account's lots today and
+the per-account split changes which lots are consumed — an observable delta up to each year's
+abort. **[GT-FX-010]'s move valuation is exercised on the resolved export, not latent:** the 2023
+USD Umbuchung is a non-EUR move in the 35-column Transfers file, dated inside the year, so it builds
+a current-year § 20 disposal of the sending account's Kapitalforderung (pinned as a figure in
+`test_per_account_currency.py::TestASingleSidedMoveInTheYearRealisesTheDisposal`). That figure is
+computed but **not emitted on the full real run**, because the pre-existing securities reconciliation
+(the #90 grant ISIN and the LEG move) aborts every supported year before any form line — fail-closed,
+not latent. So the currency-move code is exercised by both the test scenarios and the default real
+export; the § 20 delta becomes a **declared figure the first time the securities aborts clear**
+(later in the train), and is the maintainer's to approve, named to VZ 2023. Because `data_import/`
+is local and has drifted between arrangements, this counting gate is pinned to the currently
+resolved file and must be re-run against the maintainer's production export. Neither half is zero,
+so the counting gate does not stop the work.
+
+**Reproduce with:** for each Cash_Balance file, take the header from the first line, drop any later
+line equal to it, group the non-EUR (non-`BASE_SUMMARY`) rows by `CurrencyPrimary` and count
+distinct `ClientAccountID`; for each Transfers file, count `AssetClass=CASH` rows by
+`CurrencyPrimary`.
+
+
+## 2026-09-02 (second) — per-account currency, real-data effect up to each year's abort
+
+PR-D keys the currency FIFO ledgers by account. Measured against `data_import/` (the default
+35-column export), comparing the run on the base (`4da165a`, pooled) with the run on the per-account
+tree, up to each year's abort. cache/ copied into the base worktree so both start from the same
+classifications and fund prices (a parity baseline without it aborts early on an unclassified asset).
+
+**No year reaches a figure** — all three still stop at the same securities reconciliation, unchanged
+by this change: VZ 2023 at `EOY_RECONCILIATION_FAILED`, VZ 2024 and VZ 2025 at `REPLAY_MARK_MISMATCH`,
+every case on `ISIN:US45841N1072` (the share grant PR-E reads) and `ISIN:DE000LEG1110` (the own-account
+move the re-exported Transfers report does not contain). So the securities half is byte-for-byte the
+same run; the currency half changes state that is computed before the abort.
+
+**The observable delta is the currency SoY reconciliation splitting per account** — GT-FX-009 in one
+line: the pool nets a balance across accounts, per-account keeps each account's own.
+
+| Year | Base (pooled): currency SoY reconciliations logged | Per-account tree |
+|---|---|---|
+| VZ 2025 | 1 (GBP only) | 3 — the same GBP, **plus two USD reconciliations, one per account** |
+| VZ 2024 | 0 | 2 — both USD, one per account |
+
+The two USD reconciliations the per-account run logs are equal and opposite (one account short by a
+unit, the other long by a unit); pooled, they cancel and the pool logs neither. The adjustment
+amounts are single-unit reconciliation dust; the account balances they sit against are not reproduced
+here (public-repo rule). VZ 2023 initialises 9 currency ledgers (one per account that holds each
+currency) where the pool would build one per currency.
+
+**Reproduce with:** run `--tax-year {2024,2025} --report-tax-declaration --no-interactive` on
+`4da165a` (cache/ copied in) and on the per-account tree; grep the log for
+`Currency [A-Z]+: SOY reconciliation`. The abort code is identical on both.
+
 ## 2026-08-07
 
 **Supersedes the 2026-08-06 row reading "2024 | aborts on

@@ -15,7 +15,8 @@ from src.domain.events import (
     CorpActionExpireDividendRights, OptionExerciseEvent, OptionAssignmentEvent,
     OptionExpirationWorthlessEvent, OptionCashSettlementEvent,
     OptionLifecycleEvent, CashFlowEvent, FeeEvent,
-    WithholdingTaxEvent, CurrencyConversionEvent, InternalTransferEvent
+    WithholdingTaxEvent, CurrencyConversionEvent, InternalTransferEvent,
+    InternalCashTransferEvent
 )
 from src.domain.assets import (
     Asset, Stock, Bond, AssetCategory, Option, InvestmentFund, CashBalance,
@@ -57,7 +58,8 @@ from .event_processors.option_processor import (
 )
 from .event_processors.currency_conversion_processor import CurrencyConversionProcessor
 from .event_processors.transfer_processor import (
-    InternalTransferProcessor, apply_internal_transfer)
+    InternalTransferProcessor, InternalCashTransferProcessor, apply_internal_transfer,
+    _coordinate_cash_umbuchung)
 
 
 logger = logging.getLogger(__name__)
@@ -332,70 +334,49 @@ def _require_disposal_history(events, fifo_ledgers, asset_resolver, data_gap_col
 
 def _report_multi_account_limitations(accounts, data_gap_collector,
                                       transfers_file_supplied: bool = False) -> None:
-    """Say what per-Depot lot tracking does NOT yet cover, whenever it is in play.
+    """Warn when several accounts are held and no Transfers export was offered at all.
 
-    A WARNING, because the run still produces figures. The text carries what the
-    severity does not, and **what it has to carry depends on whether a Transfers export
-    was read**, which is why that is a parameter rather than a constant:
+    **One limitation, and it is the only one left.** Lot selection is per Depot
+    ([GT-ESTG20-013]), a securities move between the taxpayer's own accounts is read and
+    relocates its lots ([GT-ESTG20-014]), and each account's currency balance is its own
+    Kapitalforderung whose Umbuchung is measured ([GT-FX-009], [GT-FX-010]). What remains
+    is not a limitation of the engine but a gap in the input: with no Transfers export a
+    move that happened is invisible. The receiving account then holds units it never
+    bought and the sending one still shows units it never sold, the reconciliation rebuilds
+    both from the broker's snapshot, and the acquisition dates it substitutes are invented
+    -- which reaches the holding period (§ 23 EStG), the FIFO order and the currency gains,
+    in the year of the move and every year after it.
 
-    * read -- moves between the taxpayer's own accounts are applied, the lots keep their
-      date and cost, and only the currency limitation is left.
-    * not read at all -- a move that happened is invisible. The receiving account holds
-      units it never bought and the sending one still shows units it never sold, the
-      reconciliation rebuilds both from the broker's snapshot, and the acquisition dates
-      it substitutes are invented. This is exactly the run whose reader most needs the
-      caveat, so the text must not tell them the moves were read.
+    **So this fires only when the export is absent.** When it was read there is nothing to
+    warn about, and warning anyway would be the defect this function used to be: its text
+    said currency was held per person long after the store settled that it is not, and a
+    caveat nobody can act on teaches the reader to skip the section. The currency clause is
+    gone with the change that keys currency ledgers by account; the securities clause is
+    gone when the export is read.
 
-    **The third case is not here, because it is not a warning.** An export that covers
-    some years and not others is refused by `_require_a_complete_transfers_window` before
-    this runs: the person plainly has the report, so a missing year is something to fix
-    rather than to work around.
+    A WARNING rather than a refusal, because an absent export is the ordinary state of
+    anyone holding one account or having never moved anything. The other shape -- an export
+    covering some years and not others -- is refused by `_require_a_complete_transfers_window`
+    before this runs, since the person plainly has the report and a missing year costs one
+    export to fix.
 
     Defaults to not-read: a caller that has not been updated says the cautious thing.
-
-    Removed piece by piece as each limitation is closed. The securities clause became
-    conditional with the change that reads the Transfers export and relocates lots
-    between accounts ([GT-ESTG20-014]); the currency clause is the last one, and it
-    takes this function and its tests with it.
     """
     named = sorted(a for a in accounts if a != DEFAULT_ACCOUNT)
-    if len(named) < 2:
+    if len(named) < 2 or transfers_file_supplied:
         return
-    if transfers_file_supplied:
-        transfers_clause = (
-            "Überträge zwischen Ihren eigenen Konten werden eingelesen; die Bestände "
-            "wechseln dabei das Konto und behalten Anschaffungsdatum und "
-            "Anschaffungskosten. "
-        )
-        closing_clause = (
-            "Die Wertpapier-Zahlen dieses Berichts sind davon nicht betroffen."
-        )
-    else:
-        transfers_clause = (
-            "ES WURDE KEIN TRANSFERS-BERICHT EINGELESEN. "
-            "Wurde in einem nicht abgedeckten Jahr eine Position zwischen Ihren Konten "
-            "übertragen, kann die Engine den Übertrag nicht sehen: sie rekonstruiert "
-            "den Bestand aus dem Positionsbericht -- die Stückzahl ist die des "
-            "Brokers, das Anschaffungsdatum ist erfunden. Betroffen sind die "
-            "Haltefrist (§ 23 EStG) und die FIFO-Reihenfolge, im Jahr des Übertrags "
-            "UND in allen Folgejahren. Exportieren Sie den Transfers-Bericht für jedes "
-            "Jahr (siehe README), dann entfällt dieser Punkt. AUSSERDEM: "
-        )
-        closing_clause = (
-            "Wurde in den nicht abgedeckten Jahren nie eine Position zwischen Ihren "
-            "Konten übertragen, ist der erste Punkt für Sie ohne Bedeutung. Andernfalls "
-            "sind die Wertpapier-Zahlen dieses Berichts NICHT BELASTBAR -- prüfen Sie "
-            "sie, bevor Sie sie übernehmen."
-        )
     detail = (
-        "Die Depot-bezogene FIFO-Zuordnung ist aktiv (BMF 14.05.2025 Rz. 97 Satz 2): "
-        "Ein Verkauf verbraucht die Bestände des Kontos, aus dem er erfolgte. "
-        + transfers_clause +
-        "HINWEIS ZUR WÄHRUNG: Fremdwährungsbestände werden je Person geführt, nicht je "
-        "Konto. Devisengewinne werden gegen den zusammengefassten Bestand gerechnet, und "
-        "eine Umbuchung von Geld zwischen Ihren Konten bleibt dabei ohne Wirkung. Das ist "
-        "die derzeit vom Regelwerk gestützte Lesart, keine bekannte Fehlbuchung. "
-        + closing_clause
+        "ES WURDE KEIN TRANSFERS-BERICHT EINGELESEN. "
+        "Wurde eine Position oder ein Fremdwährungsbetrag zwischen Ihren Konten "
+        "übertragen, kann die Engine den Übertrag nicht sehen: sie rekonstruiert den "
+        "Bestand aus dem Positionsbericht -- die Stückzahl ist die des Brokers, das "
+        "Anschaffungsdatum ist erfunden. Betroffen sind die Haltefrist (§ 23 EStG), die "
+        "FIFO-Reihenfolge und die Fremdwährungsgewinne, im Jahr des Übertrags UND in "
+        "allen Folgejahren. Exportieren Sie den Transfers-Bericht für jedes Jahr (siehe "
+        "README), dann entfällt dieser Hinweis. "
+        "Wurde nie etwas zwischen Ihren Konten übertragen, ist er für Sie ohne "
+        "Bedeutung. Andernfalls sind die Zahlen dieses Berichts NICHT BELASTBAR -- "
+        "prüfen Sie sie, bevor Sie sie übernehmen."
     )
     subject = f"{len(named)} Konten im Export"
     if data_gap_collector is not None:
@@ -600,9 +581,6 @@ def run_main_calculations(
 
     def person_soy(asset_id: uuid.UUID) -> Optional["PositionSnapshot"]:
         return person_snapshot(soy_positions, asset_id)
-
-    def person_eoy(asset_id: uuid.UUID) -> Optional["PositionSnapshot"]:
-        return person_snapshot(eoy_positions, asset_id)
     ctx = Context(prec=internal_calculation_precision, rounding=decimal_rounding_mode) # Renamed internal_working_precision
 
     realized_gains_losses: List[RealizedGainLoss] = []
@@ -700,8 +678,13 @@ def run_main_calculations(
     }
 
     fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}  # one per (account_key, asset_id): a disposal consumes its own account's lots ([GT-ESTG20-013])
-    # Separate dict for currency ledgers; same (account_key, asset_id) key shape. Currency
-    # stays pooled under DEFAULT_ACCOUNT for now — per-account currency is a later change.
+    # Separate dict for currency ledgers, same (account_key, asset_id) key shape and now the
+    # real account in it. Each account's balance in a currency is its own Kapitalforderung
+    # (BMF 14.05.2025 Rz. 131 ¶2, [GT-FX-009]), so a disposal out of one account consumes the
+    # amounts paid into that account and is measured against their cost. The route is
+    # Rz. 131, never Rz. 97: Rz. 97 draws the Depot boundary for § 20 Abs. 4 Satz 7, which by
+    # its own wording reaches only Wertpapiere in Sammelverwahrung (the [GT-FX-008]
+    # correction). Same shape, different provision.
     currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], FifoLedger] = {}
 
     # === Unified historical replay (AR5) ===
@@ -778,16 +761,20 @@ def run_main_calculations(
     # by a transfer.
     _require_transfer_counterparties_are_the_persons_own(
         historical_transfer_events
-        + [e for e in current_year_events if isinstance(e, InternalTransferEvent)],
+        + [e for events in historical_currency_events.values() for e in events
+           if isinstance(e, InternalCashTransferEvent)]
+        + [e for e in current_year_events
+           if isinstance(e, (InternalTransferEvent, InternalCashTransferEvent))],
         # An account is the taxpayer's own if their OWN exports report it -- a trade, a
-        # snapshot, a mark. A transfer event must NOT self-certify: its own account_id is
-        # the sending account, and the whole question is whether that account is the
-        # taxpayer's, so internal-transfer events are excluded from this set (both the
-        # current-year ones here and the historical ones, which live in
-        # historical_transfer_events, not historical_events_by_asset).
+        # snapshot, a mark, a cash balance. A transfer event must NOT self-certify: its own
+        # account_id is the sending account, and the whole question is whether that account
+        # is the taxpayer's, so both kinds of internal-transfer event are excluded from this
+        # set -- the current-year ones here and the historical ones (securities in
+        # historical_transfer_events, currency in historical_currency_events, neither in
+        # historical_events_by_asset).
         own_accounts=(
             {account_key(e.account_id) for e in current_year_events
-             if not isinstance(e, InternalTransferEvent)}
+             if not isinstance(e, (InternalTransferEvent, InternalCashTransferEvent))}
             | {account_key(e.account_id)
                for events in historical_events_by_asset.values() for e in events}
             | {account for account, _ in soy_positions}
@@ -956,75 +943,161 @@ def run_main_calculations(
             if ccy != "EUR":
                 currencies_to_init.add(ccy)
 
+    # Which accounts hold which currency, and therefore which currency ledgers exist -- the
+    # mirror of `ledger_accounts` for securities, and needed for the same reason: a disposal
+    # consumes the balance of the account it was made from ([GT-FX-009]), so every account
+    # that touches a currency needs its own queue of lots.
+    #
+    # Three sources. The CLOSING balances are deliberately NOT one, exactly as the closing
+    # snapshot is not a source for securities: an account reporting a balance it never
+    # acquired is a divergence to report, and giving it a ledger would not make it one. The
+    # end-of-year check reads the report directly.
+    #   * the cash report's OPENING balances, recorded per (account, currency) in
+    #     soy_positions ([GT-ESTG20-061]). An account holding a currency from before the
+    #     input window has no event anywhere, and without a ledger its balance would
+    #     silently vanish.
+    #   * the historical events, by the account that made them.
+    #   * the tax year's own events, likewise.
+    currency_ledger_accounts: DefaultDict[uuid.UUID, Set[str]] = defaultdict(set)
+    for (_account, _asset_id), _snap in soy_positions.items():
+        _cash_obj = asset_resolver.get_asset_by_id(_asset_id)
+        if (isinstance(_cash_obj, CashBalance) and (_cash_obj.currency or "").upper() != "EUR"
+                and _snap.quantity is not None):
+            currency_ledger_accounts[_asset_id].add(_account)
+
+    def _register_currency_event_account(event) -> None:
+        for ccy in _currencies_of_event(event):
+            ccy_asset = asset_resolver.get_cash_balance_asset(ccy)
+            if ccy_asset is None:
+                continue
+            currency_ledger_accounts[ccy_asset.internal_asset_id].add(
+                account_key(event.account_id))
+            # A cash move names a second ACCOUNT: the balance arrives there and is acquired
+            # there ([GT-FX-009]), so the receiving side needs a ledger even when it appears
+            # nowhere else in the input.
+            to_account_id = getattr(event, "to_account_id", None)
+            if to_account_id:
+                currency_ledger_accounts[ccy_asset.internal_asset_id].add(
+                    account_key(to_account_id))
+
+    for _events in historical_currency_events.values():
+        for _event in _events:
+            _register_currency_event_account(_event)
+    for _event in current_year_events:
+        _register_currency_event_account(_event)
+
     currency_replay_counts: Dict[str, list] = {}
     for currency_code in sorted(currencies_to_init):
-        # Ensure CashBalance asset and ledger exist (creation is unordered
-        # setup, not stream work — the stream replays EVENTS).
-        _ensure_currency_ledger_exists(
-            currency_code, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
-            currency_converter, exchange_rate_provider,
-            internal_calculation_precision, decimal_rounding_mode,
-            f"Currency init {currency_code}"
-        )
-
         currency_asset = asset_resolver.get_cash_balance_asset(currency_code)
         if not currency_asset:
             continue
 
-        currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
-        if not currency_ledger:
-            continue
+        # An asset that appears nowhere with an account still gets its one DEFAULT ledger,
+        # so a caller building assets directly, and every single-account run, behave as
+        # before. Same rule as the securities loop above.
+        accounts_for_currency = sorted(
+            currency_ledger_accounts.get(currency_asset.internal_asset_id) or {DEFAULT_ACCOUNT})
 
-        # Stream every historical event with a currency impact; per-currency
-        # relative order = get_event_sort_key (ties: insertion seq), exactly
-        # the previous per-currency sorted replay. Events of different
-        # currencies commute (one ledger each).
-        hist_events = historical_currency_events.get(currency_code, [])
-        if hist_events:
-            currency_replay_counts[currency_code] = [0, len(hist_events)]
+        for ledger_account in accounts_for_currency:
+            # Ensure CashBalance asset and ledger exist (creation is unordered setup, not
+            # stream work — the stream replays EVENTS).
+            _ensure_currency_ledger_exists(
+                currency_code, ledger_account, asset_resolver, currency_fifo_ledgers,
+                fifo_ledgers, currency_converter, exchange_rate_provider,
+                internal_calculation_precision, decimal_rounding_mode,
+                f"Currency init {currency_code}"
+            )
 
-            def _apply_ccy_event(event, led=currency_ledger, ccy=currency_code):
-                currency_replay_counts[ccy][0] += _apply_historical_currency_event(
-                    event, led, ccy, currency_converter, ctx
+            currency_ledger = currency_fifo_ledgers.get(
+                (ledger_account, currency_asset.internal_asset_id))
+            if not currency_ledger:
+                continue
+
+            # Stream every historical event with a currency impact THIS ACCOUNT made;
+            # per-currency relative order = get_event_sort_key (ties: insertion seq).
+            # Events of different currencies commute, and so now do events of different
+            # accounts — one ledger each.
+            # A cash Umbuchung touches two ledgers and is streamed once, as a single
+            # two-ledger coordinator item below -- not once per account here, which could
+            # commit the sending disposal before the receiving acquisition was attempted.
+            hist_events = [e for e in historical_currency_events.get(currency_code, [])
+                           if not isinstance(e, InternalCashTransferEvent)
+                           and _currency_event_touches_account(e, ledger_account)]
+            if hist_events:
+                counter_key = f"{currency_code}@{ledger_account}"
+                currency_replay_counts[counter_key] = [0, len(hist_events)]
+
+                def _apply_ccy_event(event, led=currency_ledger, ccy=currency_code,
+                                     ck=counter_key):
+                    currency_replay_counts[ck][0] += _apply_historical_currency_event(
+                        event, led, ccy, currency_converter, ctx,
+                    )
+
+                for hist_event in hist_events:
+                    try:
+                        hist_key = get_event_sort_key(hist_event, asset_resolver)
+                    except ValueError as e:
+                        # Fatal, like the securities branch above and the merger branch
+                        # between them: an event that cannot be placed in the chronology
+                        # cannot be replayed, and the replay order fixes the EUR cost basis
+                        # of every currency lot it touches. Unreachable as things stand --
+                        # the event separation loop at the top of this function already
+                        # builds a sort key for every event and drops the ones that raise.
+                        logger.critical(f"Fatal error sorting historical currency event {hist_event.event_id} "
+                                        f"for {currency_code}: {e}. Cannot guarantee deterministic order "
+                                        f"for FIFO init. Aborting.")
+                        raise
+                    _defer(
+                        Phase.LEDGER_EVENTS, hist_key,
+                        (lambda e=hist_event, f=_apply_ccy_event: f(e)),
+                        label=f"ccy:{currency_code}",
+                    )
+
+            # SOY quantity is authoritative - always reconcile to match it -- of THIS
+            # account, because that account's balance is the Kapitalforderung ([GT-FX-009]).
+            # An account with no row in the cash report has no reported balance
+            # (soy_positions.get returns None) and is left alone by the reconciler, which is
+            # not the same as reconciling it to zero.
+            # Currencies reconcile at the FINAL mark only: the intermediate marks come from
+            # the Positions files, which report securities, and no per-year cash-balance
+            # snapshot is loaded. Currency events still replay in strict chronological order
+            # across the whole window, because the intervals are contiguous and ordered.
+            if isinstance(currency_asset, CashBalance):
+                reported_snapshot = soy_positions.get(
+                    (ledger_account, currency_asset.internal_asset_id))
+                currency_reconcilers.append(
+                    (lambda l=currency_ledger, a=currency_asset, c=currency_code,
+                            acct=ledger_account, snap=reported_snapshot:
+                        (f"reconcile-ccy:{c}@{acct}",
+                         _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider,
+                                                 ctx, snap)))
                 )
 
-            for hist_event in hist_events:
-                try:
-                    hist_key = get_event_sort_key(hist_event, asset_resolver)
-                except ValueError as e:
-                    # Fatal, like the securities branch above and the merger branch
-                    # between them: an event that cannot be placed in the chronology
-                    # cannot be replayed, and the replay order fixes the EUR cost
-                    # basis of every currency lot it touches. Unreachable as things
-                    # stand -- the event separation loop at the top of this function
-                    # already builds a sort key for every event and drops the ones
-                    # that raise -- but the previous fallback was worse than dead: it
-                    # sorted the event to (date.min, ()), which is ahead of every
-                    # other item in the phase, not "insertion order" as its comment
-                    # claimed.
-                    logger.critical(f"Fatal error sorting historical currency event {hist_event.event_id} "
-                                    f"for {currency_code}: {e}. Cannot guarantee deterministic order "
-                                    f"for FIFO init. Aborting.")
-                    raise
-                _defer(
-                    Phase.LEDGER_EVENTS, hist_key,
-                    (lambda e=hist_event, f=_apply_ccy_event: f(e)),
-                    label=f"ccy:{currency_code}",
-                )
-
-        # SOY quantity is authoritative - always reconcile to match it.
-        # Historical replay provides accurate lot-level cost basis,
-        # but the total quantity MUST match the reported SOY balance.
-        # Currencies reconcile at the FINAL mark only: the intermediate marks come from the
-        # Positions files, which report securities, and no per-year cash-balance snapshot is
-        # loaded. Currency events still replay in strict chronological order across the whole
-        # window, because the intervals are contiguous and ordered.
-        if isinstance(currency_asset, CashBalance):
-            currency_reconcilers.append(
-                (lambda l=currency_ledger, a=currency_asset, c=currency_code:
-                    (f"reconcile-ccy:{c}",
-                     _reconcile_currency_soy(l, a, tax_year, exchange_rate_provider, ctx,
-                                             person_soy(a.internal_asset_id))))
+    # Historical cash Umbuchungen between the taxpayer's own accounts touch TWO currency
+    # ledgers, so -- like a securities transfer (above) or a historical merger -- each is
+    # streamed ONCE, as a single two-ledger item through the shared coordinator, not as two
+    # per-account callbacks. Prepare-both-then-commit: a receiving-side rejection leaves the
+    # sending balance untouched ([GT-FX-009]). Both ledgers exist by now (registered from the
+    # event via `_register_currency_event_account` and built in the loop above). Each move is
+    # under exactly one currency key, so flattening the values yields it once.
+    historical_cash_transfers = [
+        e for events in historical_currency_events.values() for e in events
+        if isinstance(e, InternalCashTransferEvent)]
+    if historical_cash_transfers:
+        logger.info("Streaming %d historical cash transfer(s) chronologically...",
+                    len(historical_cash_transfers))
+        for cash_event in historical_cash_transfers:
+            try:
+                cash_key = get_event_sort_key(cash_event, asset_resolver)
+            except ValueError as e:
+                logger.critical(f"Fatal error sorting historical cash transfer "
+                                f"{cash_event.event_id}: {e}. Aborting.")
+                raise
+            _defer(
+                Phase.LEDGER_EVENTS, cash_key,
+                (lambda ev=cash_event: apply_historical_cash_transfer(
+                    ev, currency_fifo_ledgers, asset_resolver, ctx)),
+                label="cash-transfer",
             )
 
     # === Run the historical replay, one interval per checkpoint mark ===
@@ -1252,6 +1325,7 @@ def run_main_calculations(
         decimal_rounding_mode=decimal_rounding_mode
     )
     internal_transfer_processor = InternalTransferProcessor()
+    internal_cash_transfer_processor = InternalCashTransferProcessor()
 
     event_processor_map: Dict[FinancialEventType, EventProcessor] = {
         FinancialEventType.TRADE_BUY_LONG: trade_processor,
@@ -1268,6 +1342,7 @@ def run_main_calculations(
         FinancialEventType.OPTION_EXPIRATION_WORTHLESS: option_expiration_processor,
         FinancialEventType.OPTION_CASH_SETTLEMENT: option_cash_settlement_processor,
         FinancialEventType.INTERNAL_TRANSFER: internal_transfer_processor,
+        FinancialEventType.INTERNAL_CASH_TRANSFER: internal_cash_transfer_processor,
     }
 
     logger.info(f"Processing {len(current_year_events)} current tax year events using dispatch table...")
@@ -1281,14 +1356,9 @@ def run_main_calculations(
 
         # The disposal consumes the lots of the account it was made from -- Rz. 97 Satz 2,
         # [GT-ESTG20-013]. Every account this asset's events name has a ledger
-        # (`ledger_accounts` was built from those same events). Cash has a separate,
-        # explicit pooled-ledger lookup until the per-account currency change.
-        if asset_object.asset_category == AssetCategory.CASH_BALANCE:
-            # Currency remains pooled in #87. Its explicit boundary must not depend
-            # on whether the export supplies an account label (GT-FX-008).
-            ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, asset_object.internal_asset_id))
-        else:
-            ledger = fifo_ledgers.get((account_key(event.account_id), asset_object.internal_asset_id))
+        # (`ledger_accounts` was built from those same events), so a miss here is a cash
+        # balance or an option, both handled in the branches below.
+        ledger = fifo_ledgers.get((account_key(event.account_id), asset_object.internal_asset_id))
         processor = event_processor_map.get(event.event_type)
 
         if not processor and isinstance(event, CorporateActionEvent):
@@ -1298,7 +1368,15 @@ def run_main_calculations(
             logger.warning(f"Event {event.event_id} is generic CorporateActionEvent with type {event.event_type.name} for asset {_format_asset_info(asset_object)} but specific processor expects subclass. Using GenericCorporateActionProcessor.")
             processor = generic_ca_processor
 
-        if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS, FinancialEventType.OPTION_CASH_SETTLEMENT]):
+        if processor and (ledger or event.event_type in [FinancialEventType.OPTION_EXERCISE, FinancialEventType.OPTION_ASSIGNMENT, FinancialEventType.OPTION_EXPIRATION_WORTHLESS, FinancialEventType.OPTION_CASH_SETTLEMENT, FinancialEventType.INTERNAL_CASH_TRANSFER]):
+            # A cash Umbuchung is dispatched even when this loop found no ledger for the
+            # sending account: it does not use the passed `ledger`, it resolves both account
+            # ledgers itself in `apply_internal_cash_transfer` and raises if either is missing.
+            # Without this, a cash transfer whose sending ledger is absent would satisfy
+            # neither the option branch nor the non-cash raise below (its category IS
+            # CASH_BALANCE) and be silently dropped -- a disposal lost with no warning. This
+            # cannot happen while registration builds every named account's ledger; the exempt
+            # dispatch makes a registration/lookup drift fail fast instead of silently.
             if not ledger and asset_object.asset_category == AssetCategory.OPTION:
                 logger.warning(f"Option event {event.event_id} ({event.event_type.name}) occurred, but no FIFO ledger exists. Processor will handle.")
             elif not ledger and asset_object.asset_category != AssetCategory.CASH_BALANCE:
@@ -1412,7 +1490,8 @@ def run_main_calculations(
                 # (may not exist yet if this FX trade is the first event for a currency)
                 for fx_currency_code in [event.from_currency, event.to_currency]:
                     _ensure_currency_ledger_exists(
-                        fx_currency_code, asset_resolver, currency_fifo_ledgers, fifo_ledgers,
+                        fx_currency_code, account_key(event.account_id), asset_resolver,
+                        currency_fifo_ledgers, fifo_ledgers,
                         currency_converter, exchange_rate_provider,
                         internal_calculation_precision, decimal_rounding_mode,
                         f"FX trade {event.event_id}"
@@ -1565,23 +1644,44 @@ def run_main_calculations(
     else:
         logger.info("EOY Quantity Validation passed or no critical mismatches found against reported EOY positions.")
 
-    # Currency EOY validation: compare FIFO ledger quantities against reported cash balances
-    logger.info("Performing currency EOY quantity validation...")
+    # Currency EOY validation: each account's ledger against THAT ACCOUNT's reported closing
+    # balance. Run per (account, currency) for the same reason the securities check is: a
+    # ledger too high in one account and too low in another agrees with the broker on the
+    # person's total, and every disposal in both has been matched against the wrong lots.
+    #
+    # The pairs checked are every currency ledger there is, plus every pair the cash report
+    # states a closing for (in eoy_positions). The second half now genuinely matters: a
+    # sub-threshold cash-balance row records its closing but does NOT seed an opening (F4),
+    # so a reported-but-tiny balance in a currency the account never otherwise touched has an
+    # eoy_position and no ledger. Unioning it in is what lets that closing be compared
+    # against zero (it reconciles within tolerance) rather than passing unseen. It also
+    # covers a caller that supplies only a closing figure directly. Mirrors the securities
+    # check above, which unions the closing snapshot for the same reason.
+    logger.info("Performing currency EOY quantity validation per account...")
     currency_eoy_mismatches = 0
-    for asset_id, asset_obj in asset_resolver.assets_by_internal_id.items():
-        if asset_obj.asset_category != AssetCategory.CASH_BALANCE:
-            continue
+
+    def _currency_pair_sort_key(pair):
+        # Order the diagnostics by (currency, account) -- stable identifiers the reader
+        # recognises. The asset's internal id is a uuid4 redrawn every run, so ordering by
+        # it reordered the warnings between two runs of the same tree, PDF included.
+        acct, aid = pair
+        asset_obj = asset_resolver.get_asset_by_id(aid)
+        currency = getattr(asset_obj, "currency", None) or ""
+        return (str(currency), str(acct))
+
+    currency_pairs = sorted(
+        {(acct, aid) for (acct, aid) in currency_fifo_ledgers}
+        | {(acct, aid) for (acct, aid) in eoy_positions},
+        key=_currency_pair_sort_key,
+    )
+    for ledger_account, asset_id in currency_pairs:
+        asset_obj = asset_resolver.get_asset_by_id(asset_id)
         if not isinstance(asset_obj, CashBalance):
             continue
         if asset_obj.currency and asset_obj.currency.upper() == "EUR":
             continue
 
-        closing = person_eoy(asset_id)
-        reported_eoy = closing.quantity if closing else None
-        if reported_eoy is None:
-            continue
-
-        ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, asset_id))
+        ledger = currency_fifo_ledgers.get((ledger_account, asset_id))
         if ledger:
             long_qty = sum(lot.quantity for lot in ledger.lots)
             short_qty = sum(lot.quantity_shorted for lot in ledger.short_lots)
@@ -1589,11 +1689,51 @@ def run_main_calculations(
         else:
             calculated_eoy = Decimal("0")
 
+        closing = eoy_positions.get((ledger_account, asset_id))
+        reported_eoy = closing.quantity if closing else None
+
+        # Named only when there is an account to name, so a run over one account reports
+        # exactly what it reported before.
+        subject = str(asset_obj.currency)
+        if ledger_account != DEFAULT_ACCOUNT:
+            subject = f"{subject} (Konto {ledger_account})"
+
         currency_tolerance = Decimal("0.01")
+
+        if reported_eoy is None:
+            # Absent != empty, and this is the genuinely-absent case: no cash-balance row
+            # covers this (account, currency) at all. A ledger that computed a non-zero
+            # balance from this account's own events, with nothing reported to reconcile it
+            # against, is a gap -- not the silent pass it was. The §20 Abs. 2 Satz 1 Nr. 7
+            # gains were computed from this ledger; a report that does not cover it cannot
+            # confirm the balance those gains rest on. A *supplied* balance, even a
+            # sub-threshold one, no longer reaches here: `_process_cash_balance_positions`
+            # records its closing whatever its size, so a filtered observation is compared
+            # against (below) rather than mistaken for an absent one (F4). A zero computed
+            # balance against no report is harmless and stays a silent skip.
+            if abs(calculated_eoy) > currency_tolerance:
+                logger.warning(
+                    f"CURRENCY EOY UNRECONCILED {subject}: "
+                    f"FIFO ledger={calculated_eoy:.2f}, Reported=(none)"
+                )
+                currency_eoy_mismatches += 1
+                if data_gap_collector is not None:
+                    data_gap_collector.record(
+                        code="CURRENCY_EOY_UNRECONCILED",
+                        subject=subject,
+                        detail=(f"Dem FIFO-Bestand {calculated_eoy:.2f} steht kein "
+                                f"gemeldeter Kontostand gegenüber, gegen den er geprüft "
+                                f"werden könnte; die daraus berechneten §20-Abs.-2-Gewinne "
+                                f"sind unbestätigt. Mögliche Ursachen: Zeitraum der "
+                                f"Cash-Balance-Datei, oder das Konto bzw. die Währung fehlt "
+                                f"im Positionsbericht."),
+                    )
+            continue
+
         diff = calculated_eoy - reported_eoy
         if abs(diff) > currency_tolerance:
             logger.warning(
-                f"CURRENCY EOY MISMATCH {asset_obj.currency}: "
+                f"CURRENCY EOY MISMATCH {subject}: "
                 f"FIFO ledger={calculated_eoy:.2f}, Reported={reported_eoy:.2f}, "
                 f"Diff={diff:.2f}"
             )
@@ -1604,18 +1744,18 @@ def run_main_calculations(
             # cash-transactions file) rather than a ledger that disagrees with the
             # broker about a holding. Recorded so it reaches the report instead of
             # living only in the log — an FX ledger that is short still moves the
-            # §20 Abs. 2 Nr. 3 gains computed from it.
+            # §20 Abs. 2 Satz 1 Nr. 7 gains computed from it.
             if data_gap_collector is not None:
                 data_gap_collector.record(
                     code="CURRENCY_EOY_MISMATCH",
-                    subject=str(asset_obj.currency),
+                    subject=subject,
                     detail=(f"FIFO-Bestand {calculated_eoy:.2f} weicht vom gemeldeten "
                             f"Kontostand {reported_eoy:.2f} ab (Differenz {diff:.2f}). "
                             f"Mögliche Ursachen: Zeitraum der Cash-Balance-Datei, oder "
                             f"nicht erfasste Ein-/Auszahlungen, Margin-Zinsen oder Gebühren."),
                 )
         else:
-            logger.debug(f"Currency EOY OK {asset_obj.currency}: FIFO={calculated_eoy:.2f}, Reported={reported_eoy:.2f}")
+            logger.debug(f"Currency EOY OK {subject}: FIFO={calculated_eoy:.2f}, Reported={reported_eoy:.2f}")
 
     if currency_eoy_mismatches > 0:
         logger.warning(f"Currency EOY validation: {currency_eoy_mismatches} mismatches found. "
@@ -2612,6 +2752,7 @@ def _create_excess_dividend_event(original_event, excess_amount, asset_object, c
 
 def _ensure_currency_ledger_exists(
     currency_code: str,
+    ledger_account: str,
     asset_resolver: AssetResolver,
     currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
     fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
@@ -2622,9 +2763,13 @@ def _ensure_currency_ledger_exists(
     context_label: str = "",
 ) -> None:
     """
-    Ensure a CashBalance asset and FIFO ledger exist for the given currency.
-    Creates both on-the-fly if they don't exist yet.
+    Ensure a CashBalance asset and FIFO ledger exist for the given currency, in the
+    account whose balance it is. Creates both on-the-fly if they don't exist yet.
     This makes event processing robust against any CSV/event ordering.
+
+    One ledger per (account, currency), because each account's balance is its own
+    Kapitalforderung ([GT-FX-009]). A caller that names no account passes
+    DEFAULT_ACCOUNT, which is what a one-account run is.
     """
     if currency_code.upper() == "EUR":
         return
@@ -2632,7 +2777,7 @@ def _ensure_currency_ledger_exists(
     existing_asset = asset_resolver.get_cash_balance_asset(currency_code.upper())
     if existing_asset:
         # Asset exists; ensure ledger also exists
-        if (DEFAULT_ACCOUNT, existing_asset.internal_asset_id) not in fifo_ledgers:
+        if (ledger_account, existing_asset.internal_asset_id) not in fifo_ledgers:
             new_ledger = FifoLedger(
                 asset_internal_id=existing_asset.internal_asset_id,
                 asset_category=AssetCategory.CASH_BALANCE,
@@ -2642,8 +2787,8 @@ def _ensure_currency_ledger_exists(
                 internal_working_precision=internal_calculation_precision,
                 decimal_rounding_mode=decimal_rounding_mode,
             )
-            currency_fifo_ledgers[(DEFAULT_ACCOUNT, existing_asset.internal_asset_id)] = new_ledger
-            fifo_ledgers[(DEFAULT_ACCOUNT, existing_asset.internal_asset_id)] = new_ledger
+            currency_fifo_ledgers[(ledger_account, existing_asset.internal_asset_id)] = new_ledger
+            fifo_ledgers[(ledger_account, existing_asset.internal_asset_id)] = new_ledger
             logger.info(f"{context_label}: Created currency ledger for existing {currency_code} asset")
         return
 
@@ -2664,8 +2809,8 @@ def _ensure_currency_ledger_exists(
             internal_working_precision=internal_calculation_precision,
             decimal_rounding_mode=decimal_rounding_mode,
         )
-        currency_fifo_ledgers[(DEFAULT_ACCOUNT, new_asset.internal_asset_id)] = new_ledger
-        fifo_ledgers[(DEFAULT_ACCOUNT, new_asset.internal_asset_id)] = new_ledger
+        currency_fifo_ledgers[(ledger_account, new_asset.internal_asset_id)] = new_ledger
+        fifo_ledgers[(ledger_account, new_asset.internal_asset_id)] = new_ledger
         logger.info(f"{context_label}: Created CashBalance asset and ledger for {currency_code}")
 
 
@@ -2729,7 +2874,10 @@ def _process_cashflow_currency_impact(
             logger.debug(f"Cashflow {event.event_id}: Could not create CashBalance asset for {cash_currency}")
             return results
 
-    currency_ledger = currency_fifo_ledgers.get((DEFAULT_ACCOUNT, currency_asset.internal_asset_id))
+    # The account that made the cash flow: it is that account's balance the dividend lands
+    # in or the fee is taken from ([GT-FX-009]).
+    cashflow_account = account_key(event.account_id)
+    currency_ledger = currency_fifo_ledgers.get((cashflow_account, currency_asset.internal_asset_id))
     if not currency_ledger:
         # Create ledger on-the-fly (no prior balance, first cash flow in this currency)
         ledger_kwargs = dict(
@@ -2742,9 +2890,9 @@ def _process_cashflow_currency_impact(
             decimal_rounding_mode=decimal_rounding_mode,
         )
         currency_ledger = FifoLedger(**ledger_kwargs)
-        currency_fifo_ledgers[(DEFAULT_ACCOUNT, currency_asset.internal_asset_id)] = currency_ledger
+        currency_fifo_ledgers[(cashflow_account, currency_asset.internal_asset_id)] = currency_ledger
         if fifo_ledgers is not None:
-            fifo_ledgers[(DEFAULT_ACCOUNT, currency_asset.internal_asset_id)] = currency_ledger
+            fifo_ledgers[(cashflow_account, currency_asset.internal_asset_id)] = currency_ledger
         logger.info(f"Cashflow {event.event_id}: Created currency ledger for {cash_currency} (first cash flow)")
 
     eur_per_unit = eur_amount / foreign_amount
@@ -2829,6 +2977,64 @@ def _process_cashflow_currency_impact(
     return results
 
 
+# Cash-flow events that move a currency balance: income creates lots, expense consumes
+# them. Named once, because the selection is made in three places -- collecting the
+# historical stream, deciding which accounts need a ledger, and applying the impact.
+_CURRENCY_MOVING_CASHFLOW_TYPES = (
+    FinancialEventType.DIVIDEND_CASH,
+    FinancialEventType.DISTRIBUTION_FUND,
+    FinancialEventType.INTEREST_RECEIVED,
+    FinancialEventType.INTEREST_PAID_STUECKZINSEN,
+    FinancialEventType.WITHHOLDING_TAX,
+    FinancialEventType.FEE_TRANSACTION,
+    FinancialEventType.CAPITAL_REPAYMENT,
+)
+
+
+def _currencies_of_event(event: FinancialEvent) -> List[str]:
+    """The non-EUR currencies whose balance this event moves.
+
+    The same selection `_collect_historical_currency_event` makes, expressed as a question
+    rather than as a side effect, because the tax year's events have to answer it too: they
+    decide which accounts hold which currency, and therefore which currency ledgers exist.
+    Keeping one function per phase let the two drift, which is how an account whose only
+    currency activity is inside the tax year would get no ledger.
+    """
+    if isinstance(event, CurrencyConversionEvent):
+        return [c.upper() for c in (event.from_currency, event.to_currency)
+                if c and c.upper() != "EUR"]
+
+    if isinstance(event, InternalCashTransferEvent):
+        ccy = (event.local_currency or "").upper()
+        return [ccy] if ccy and ccy != "EUR" else []
+
+    if isinstance(event, TradeEvent):
+        ccy = (event.local_currency or "").upper()
+        return [ccy] if ccy and ccy != "EUR" else []
+
+    if isinstance(event, CorpActionMergerCash):
+        ccy = (event.local_currency or "").upper()
+        if ccy and ccy != "EUR" and event.gross_amount_foreign_currency:
+            return [ccy]
+        return []
+
+    ccy = (getattr(event, 'local_currency', None) or "").upper()
+    if ccy and ccy != "EUR" and event.event_type in _CURRENCY_MOVING_CASHFLOW_TYPES:
+        return [ccy]
+    return []
+
+
+def _currency_event_touches_account(event: FinancialEvent, ledger_account: str) -> bool:
+    """Whether this single-account event moves the balance held in `ledger_account`.
+
+    Every such event names the one account that made it. The two-account move -- a cash
+    Umbuchung between the taxpayer's own accounts -- is not filtered through here: it is
+    streamed once as a single two-ledger item (`apply_historical_cash_transfer`), so this
+    helper only ever sees an event with one account ([GT-FX-009]).
+    """
+    return account_key(event.account_id) == ledger_account
+
+
 def _collect_historical_currency_event(
     event: FinancialEvent,
     historical_currency_events: DefaultDict[str, List[FinancialEvent]]
@@ -2841,41 +3047,74 @@ def _collect_historical_currency_event(
     - Currency conversions (explicit FX trades)
     - Cash flows (dividends, interest, distributions)
     - Expenses (WHT, fees, Stueckzinsen)
+    - Moves of a balance between the taxpayer's own accounts
+
+    The selection itself is `_currencies_of_event`, which the tax year's events are put
+    through as well. Restating it here is what let the two drift apart.
     """
-    if isinstance(event, CurrencyConversionEvent):
-        if event.from_currency.upper() != "EUR":
-            historical_currency_events[event.from_currency.upper()].append(event)
-        if event.to_currency.upper() != "EUR":
-            historical_currency_events[event.to_currency.upper()].append(event)
-        return
+    for ccy in _currencies_of_event(event):
+        historical_currency_events[ccy].append(event)
 
-    if isinstance(event, TradeEvent):
-        ccy = (event.local_currency or "").upper()
-        if ccy and ccy != "EUR":
-            historical_currency_events[ccy].append(event)
-        return
 
-    # Cash merger: acquisition proceeds create foreign currency cash
-    if isinstance(event, CorpActionMergerCash):
-        ccy = (event.local_currency or "").upper()
-        if ccy and ccy != "EUR" and event.gross_amount_foreign_currency:
-            historical_currency_events[ccy].append(event)
-        return
+def apply_historical_cash_transfer(
+    event: FinancialEvent,
+    currency_fifo_ledgers: Dict[Tuple[str, uuid.UUID], 'FifoLedger'],
+    asset_resolver,
+    ctx: Context,
+) -> int:
+    """Replay one pre-tax-year cash Umbuchung through the shared account-local boundary.
 
-    # Cash flow events: dividends, interest, WHT, fees, etc.
-    ccy = getattr(event, 'local_currency', None)
-    if ccy:
-        ccy = ccy.upper()
-        if ccy != "EUR" and event.event_type in [
-            FinancialEventType.DIVIDEND_CASH,
-            FinancialEventType.DISTRIBUTION_FUND,
-            FinancialEventType.INTEREST_RECEIVED,
-            FinancialEventType.INTEREST_PAID_STUECKZINSEN,
-            FinancialEventType.WITHHOLDING_TAX,
-            FinancialEventType.FEE_TRANSACTION,
-            FinancialEventType.CAPITAL_REPAYMENT,
-        ]:
-            historical_currency_events[ccy].append(event)
+    The historical counterpart of `apply_internal_cash_transfer`, and the same
+    `_coordinate_cash_umbuchung` boundary the tax-year path uses. It disposes the sending
+    account's Kapitalforderung and acquires the receiving account's ([GT-FX-009],
+    [GT-FX-010]), valued at the amount moved converted on the day of the move -- the SAME
+    figure the tax-year path uses. It rebuilds lot state only and declares nothing (the
+    years it covers are already filed). Both sides are prepared on isolated copies and
+    committed only once both succeed, so a receiving-side rejection leaves the sending
+    balance untouched. The lots carry the historical `HIST_` provenance tag and FIFO order,
+    exactly as `_consume_lots_historical`/`_create_lot_historical` write them.
+    """
+    currency = (event.local_currency or "").upper()
+    currency_asset = asset_resolver.get_cash_balance_asset(currency)
+    if currency_asset is None:
+        raise ProcessingError(
+            f"Historical cash transfer {event.event_id} moves {currency}, for which no "
+            f"cash-balance asset exists. The disposal cannot be measured.")
+    asset_id = currency_asset.internal_asset_id
+    source_ledger = currency_fifo_ledgers.get((account_key(event.account_id), asset_id))
+    target_ledger = currency_fifo_ledgers.get((account_key(event.to_account_id), asset_id))
+    if source_ledger is None or target_ledger is None:
+        # Both accounts are registered from the event before any ledger is built, so a miss
+        # means registration and this lookup have drifted apart; applying half the move
+        # would delete the balance.
+        missing = "sending" if source_ledger is None else "receiving"
+        raise ProcessingError(
+            f"Historical cash transfer of {currency} on {event.event_date}: no currency "
+            f"ledger for the {missing} account. Applying half the move would make the "
+            f"balance disappear.")
+
+    eur_value = event.gross_amount_eur
+    if eur_value is None:
+        # No rate, no figure -- and no skipping. A skipped move leaves the sending account
+        # holding a balance it no longer has and the receiving one short of what it received;
+        # the opening reconciliation would then repair the QUANTITY against the cash report
+        # and synthesise lots with acquisition dates nobody measured.
+        raise ProcessingError(
+            f"Historical cash transfer of {currency} on {event.event_date}: no exchange "
+            f"rate for that day, so the disposal and the acquisition cannot be valued "
+            f"([GT-FX-010]).")
+    if event.quantity <= Decimal("0"):
+        return 0
+    eur_per_unit = ctx.divide(eur_value.copy_abs(), event.quantity)
+
+    _coordinate_cash_umbuchung(
+        source_ledger, target_ledger,
+        dispose_fn=lambda state: (_consume_lots_historical(
+            state, event.quantity, eur_per_unit, event.event_date, ctx) or []),
+        acquire_fn=lambda state: (_create_lot_historical(
+            state, event.quantity, eur_per_unit, event.event_date,
+            event.ibkr_transaction_id, ctx) or []))
+    return 1
 
 
 def _apply_historical_currency_event(
@@ -2889,12 +3128,15 @@ def _apply_historical_currency_event(
     the per-event unit the unified replayer streams (AR5). Mutates lot state
     only (no current-year RGLs). Returns 1 if the event affected the ledger.
 
-    Handles every event type that moves currency:
+    Handles every single-account event type that moves currency:
     - CurrencyConversionEvent: explicit FX trades (only the side matching our currency)
     - TradeEvent: security buys consume currency, sells produce currency, commissions consume
     - CorpActionMergerCash: cash proceeds create a currency lot
     - Income cashflows: dividends, interest, distributions create currency lots
     - Expense cashflows: WHT, fees, Stueckzinsen consume currency lots
+
+    A cash Umbuchung touches two ledgers and is NOT handled here: it goes through
+    `apply_historical_cash_transfer`, the shared account-local coordinator.
     """
     replayed = 0
     # Single-iteration loop: the body is kept VERBATIM from the previous batch
@@ -3034,6 +3276,12 @@ def _apply_historical_currency_event(
                     _consume_lots_historical(ledger, fa_abs, eur_per_unit, event.event_date, ctx)
                     replayed += 1
 
+        except ProcessingError:
+            # Deliberately ahead of the catch-all below. That handler is issue #49 --
+            # every failure in this function is swallowed at DEBUG, so a condition the
+            # engine decided was fatal would be downgraded to a log line nobody reads. A
+            # branch that means to stop the run says so by raising this type.
+            raise
         except Exception as e:
             logger.debug(f"Historical currency replay: skipped event {event.event_id}: {e}")
 

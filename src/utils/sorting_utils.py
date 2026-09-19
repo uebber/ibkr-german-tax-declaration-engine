@@ -6,7 +6,8 @@ from typing import Tuple, Any
 
 from src.domain.events import (
     FinancialEvent, TradeEvent, CashFlowEvent, WithholdingTaxEvent, CorporateActionEvent,
-    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent, InternalTransferEvent
+    OptionLifecycleEvent, CurrencyConversionEvent, FeeEvent, InternalTransferEvent,
+    InternalCashTransferEvent
 )
 from src.identification.asset_resolver import AssetResolver
 from src.domain.assets import Asset
@@ -67,18 +68,22 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             event.creation_sequence
         )
     elif isinstance(event, InternalTransferEvent):
-        # Same intra-day slot as a corporate action, and for the same reason a merger
-        # takes it (see engine/replay.py): the units must be in the RECEIVING account
+        # A SECURITIES move takes the corporate-action slot, and for the same reason a
+        # merger does (see engine/replay.py): the units must be in the RECEIVING account
         # before that day's disposals, or a sale of what just arrived hits an empty
         # ledger. The price is the other end of the day -- a sale out of the SENDING
         # account booked on the move date is applied after the move, so the ledger then
         # holds less than the move claims; that case is loud, not silent, because the
         # closing reconciliation compares the sending account against the broker.
         #
-        # This band puts the move in the lot-DELIVERING partition below, which sorts
-        # ahead of that day's trades BY THE RULE, not by the accident of an empty
-        # transaction id -- the move would sort first even if it carried one. See the
-        # precedence comment at the end of this function.
+        # It carries no transaction id (neither side's names the combined move), so the
+        # lot-DELIVERING partition below is what puts it ahead of the day's trades BY THE
+        # RULE, not by the accident of an empty id -- it would sort first even with one.
+        #
+        # A CASH Umbuchung is deliberately NOT here. It is a valued disposal whose FIFO
+        # gain depends on consuming the currency lots in the broker's true order; forcing
+        # it ahead of an earlier same-day currency purchase consumed the wrong lot and
+        # realised the wrong gain. It sits in the TRADE band, ordered by its own broker id.
         intra_day_order = _INTRA_DAY_SORT_ORDER_CORP_ACTION
         # Four elements, all strings but the last, because that is the shape the
         # corporate-action branch above produces and this event shares its band. Two
@@ -91,6 +96,33 @@ def get_event_sort_key(event: FinancialEvent, asset_resolver: AssetResolver) -> 
             asset.asset_category.name,
             event.account_id or "",
             event.to_account_id,
+            event.creation_sequence,
+        )
+    elif isinstance(event, InternalCashTransferEvent):
+        # A cash Umbuchung is ordered by the broker's own chronology among the day's
+        # currency events -- the same TRADE band as a currency conversion. It is a valued
+        # disposal of one currency balance and an acquisition of another, and the currency
+        # FIFO gain is right only if the lots are consumed in the broker's true order. So
+        # the move must sit where its transaction id places it: after an earlier same-day
+        # currency purchase, before a later spend. The corporate-action band it used to
+        # take forced it ahead of the whole day and consumed the wrong lot.
+        #
+        # The bare `asset.asset_category` Enum, exactly as this band's other members emit it
+        # (`TradeEvent`, `CurrencyConversionEvent`). It MUST match them: with a no-id move
+        # the earlier elements tie and the comparison reaches this one, and a member is a
+        # currency conversion of the SAME category, so Enum-vs-Enum resolves by equality and
+        # never needs `<`. Using `.name` here (a str) would compare str-vs-Enum against those
+        # same-category siblings and raise TypeError. (The securities branch above uses
+        # `.name` for the opposite reason: ITS band-mates are strings.) Two no-id trade-band
+        # events of DIFFERENT categories is a separate, pre-existing limit of this band.
+        intra_day_order = _INTRA_DAY_SORT_ORDER_TRADE
+        if not event.ibkr_transaction_id:
+            logger.warning(f"Internal cash transfer {event.event_id} on {parsed_date} lacks "
+                           f"ibkr_transaction_id; its intra-day order falls to the front of "
+                           f"the trade band.")
+        specific_secondary_elements = (
+            event.ibkr_transaction_id or "",
+            asset.asset_category,
             event.creation_sequence,
         )
     elif isinstance(event, OptionLifecycleEvent): # Option Lifecycles before regular trades
