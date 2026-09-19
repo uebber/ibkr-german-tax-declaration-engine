@@ -24,6 +24,7 @@ lot ([GT-ESTG20-065]), and that reaches a declared figure through the disposal, 
 through this processor.
 """
 import logging
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List
 
 from src.domain.enums import FinancialEventType
@@ -103,7 +104,11 @@ class StockAwardProcessor(EventProcessor):
             return
         gross = None
         if event.unit_cost_basis_eur is not None:
-            gross = event.quantity * event.unit_cost_basis_eur
+            # Rounded to cents: the message exists so the reader can enter this on Anlage SO,
+            # and the full-precision product is a figure nobody can type. The internal cost
+            # basis the ledger carries is unaffected -- this is the display of it.
+            gross = (event.quantity * event.unit_cost_basis_eur).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP)
         collector.record(
             STOCK_AWARD_RECEIPT_NOT_DECLARED,
             f"Anlage SO (Einkuenfte aus Leistungen), {event.event_date}",
