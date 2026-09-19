@@ -29,7 +29,7 @@ CLAUDE.md, "There is no safe direction to be wrong", states the same rule for
 the engine at large.
 
 Scope, stated precisely because the severity words above are easy to over-read.
-The conditions routed through this channel, as of 2026-09-01:
+The conditions routed through this channel, as of 2026-09-19:
 
     ANLAGE_KAP_GERMAN_KEST_NOT_DECLARABLE              WARNING
     CURRENCY_EOY_MISMATCH                              WARNING
@@ -40,6 +40,8 @@ The conditions routed through this channel, as of 2026-09-01:
     KAP_INV_Z53_VORABPAUSCHALE_NOT_DECLARED            WARNING
     MULTI_ACCOUNT_LIMITATIONS                          WARNING
     REPLAY_MARK_UNCONFIRMED_START                      WARNING
+    STOCK_AWARD_RECEIPT_NOT_DECLARED                   WARNING
+    STOCK_AWARD_REVERSAL_ORDER_ASSUMED                 WARNING
     VORABPAUSCHALE_DECLARATION_DIVERGES                WARNING
     VORABPAUSCHALE_PRICE_ISSUER_NAV                    WARNING
     VORABPAUSCHALE_PRICE_MARKET_FALLBACK               WARNING
