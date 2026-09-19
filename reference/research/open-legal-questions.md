@@ -323,6 +323,47 @@ settled:
 day, the Anschaffungskosten to the award price, and the declared gain on a later disposal rises
 correspondingly -- measured at about a third on the maintainer's VZ 2025 position.
 
+## Q18 -- the order of a same-day award reversal and a disposal of the same security
+
+**What is settled.** § 20 Abs. 4 Satz 7 fixes FIFO for a disposal's lot consumption
+([GT-ESTG20-012]): the earliest-acquired lots are treated as sold first, and a taxpayer
+instruction selecting another lot is disregarded. An award reversal removes the specific awarded
+lot ([GT-ESTG20-064]).
+
+**What no located Tier 1 or Tier 2 source settles** is, where a reversal and a disposal of the same
+security fall on the same day, which is applied first. FIFO orders the lots a disposal consumes; it
+does not order a disposal against a same-day event that is not itself a disposal. The award report
+carries no intra-day identifier -- SerialNumber is blank on every grant row -- so the export cannot
+order the two either.
+
+**Reading A (reversal before disposal).** A share the grantor has clawed back was never
+unconditionally the taxpayer's, so the disposal is measured after the awarded lot has left the
+ledger; a same-day sale does not realise a gain on shares returned the same day.
+**Against it:** no located source; it reasons from the resolutive character of the clawback, not
+from a rule about event ordering.
+
+**Reading B (disposal before reversal).** § 20 Abs. 4 Satz 7 governs the disposal's consumption
+unconditionally, so the sale consumes oldest-first regardless, and the reversal then removes what
+remains of the awarded lot.
+**Against it:** it can leave the reversal without enough of its own lot to remove, an outcome the
+clawback's terms do not contemplate; and it too has no source on the event ordering.
+
+**What the choice moves.** Only where the awarded lot is within the disposal's FIFO reach on the
+same day: the two readings measure the disposal against different lots' Anschaffungskosten, so the
+declared gain moves. The direction depends on the awarded lot's basis relative to the others.
+
+**The choice.** Reading A, chosen by the taxpayer (Fsaupe) on 2026-09-19 as a filing position,
+disclosed on the return so the taxpayer and the Finanzamt can revisit it. The grey-area conditions
+hold: the reading is against neither Tier 1 nor Tier 2 (both are silent on the sequence); the BMF
+has not spoken on it; the ambiguity is disputed, not constructed (two events genuinely change the
+same holding on one day and nothing orders them); and no input is invented (the figure is well
+founded under either reading -- what is chosen is a position, not a value). How the choice is
+applied and disclosed is recorded against [GT-ESTG20-066] in the map.
+
+**Incidence.** Zero in the processed data: the one award reversal in the export falls in VZ 2022
+(never a result year) with no same-day disposal of the security. The point is recorded because the
+ordering would otherwise be settled silently by default, not because the data exercise it.
+
 ## Q16 -- Anschaffungskosten from a receipt the Freigrenze left untaxed
 
 **What is settled.** A benefit in kind granted for placing capital is a Leistung under § 22 Nr. 3

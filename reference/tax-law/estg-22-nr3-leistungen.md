@@ -173,3 +173,24 @@ follow from the value that fell to be taxed under § 11 and § 8, not from what 
 **Where the sources run out.** Whether a receipt left untaxed by the Freigrenze of Nr. 3 Satz 2
 nonetheless supplies Anschaffungskosten at its full value is **not settled** by any Tier 1 or
 Tier 2 source located. Recorded in `../research/open-legal-questions.md`.
+
+## [GT-ESTG20-066] The order of a same-day award reversal and a disposal is not fixed by law
+
+An award reversal removes the awarded lot ([GT-ESTG20-064]); a disposal of the same security
+consumes lots in the FIFO order § 20 Abs. 4 Satz 7 fixes ([GT-ESTG20-012]), the earliest-acquired
+first, with lot selection by instruction disregarded. **Satz 7 fixes which lot a disposal consumes;
+it does not fix the sequence of two distinct events -- a reversal and a disposal -- that fall on the
+same day.** Where both touch one security on one day, which is applied first decides whether the
+disposal is measured before or after the awarded lot has been removed, and so which lot's
+Anschaffungskosten the gain is measured against.
+
+**No Tier 1 or Tier 2 source located settles that sequence.** Satz 7 speaks to the consumption
+order within a disposal, not to the ordering of a disposal against a same-day event that is not
+itself a disposal; and § 11's Zufluss/Abfluss concept fixes the year an item falls in, not the
+intra-day order of two events already in the same year. The two readings, and what the choice
+between them moves, are recorded in `../research/open-legal-questions.md` as Q18.
+
+This has to be decided for a figure only where an award reversal and a disposal of the same
+security fall on one day and the awarded lot is within the disposal's FIFO reach. The reading
+chosen, and the evidence that each grey-area condition is met, are recorded against this claim ID
+in `docs/legal-implementation-map.md` -- not here, where only the law belongs.
