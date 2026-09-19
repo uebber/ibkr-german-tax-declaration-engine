@@ -811,3 +811,26 @@ with `8b7e49f`, the known refund currency bug changes two VZ 2024 form lines;
 the currency mismatch disappears and the refund no longer appears as capital
 repayment. Private differences remain in the review captures. Original export
 and cache hashes are unchanged. This is not an all-years byte-parity claim.
+
+## 2026-09-19 — PR #90 grants re-measured on the merged tree (onto merged main)
+
+Re-ran the share-grant real-data check on the merged candidate `01ebea5` (grants re-applied onto
+merged main = per-account currency #89 + corrected #86/#87/#88/#93) against base `origin/main`
+`7d27755`, on the contributor's own exports, VZ 2023–2025. Trades used the pre-`Taxes`-column export
+(PR #91's `Taxes` column is not parsed by main or #90, so both sides are fed the same parseable
+input; the swap isolates the grant). `scripts/parity_check.sh`; same-tree control identical
+(console/log/PDF), so the comparison is reliable.
+
+The grant instrument is the **sole** reconciliation blocker in every supported year. On base each
+year aborts on it alone and produces no declaration — VZ 2023 `EOY_RECONCILIATION_FAILED`, VZ 2024
+and VZ 2025 `REPLAY_MARK_MISMATCH` (the reconstructed opening quantity is short by the awarded
+units). On the merged tree all three years complete and produce a declaration: the awarded shares
+reconcile at every checkpoint mark, no fallback lot is synthesised, and VZ 2023 records exactly one
+`STOCK_AWARD_RECEIPT_NOT_DECLARED` WARNING. The `DE000LEG1110` transfers-completeness abort recorded
+on 2026-09-02 is no longer present, so the grant is now the only blocker.
+
+This confirms the 2026-09-02 measurement on the merged architecture. It is a Band A feature
+movement, not output-neutral — base cannot declare these years and the merged tree can — so it is
+the maintainer's to approve, named to VZ 2023, VZ 2024 and VZ 2025. That no non-grant figure moved
+is not shown by a real-data figure diff (base produces no declaration to diff); it rests on the
+merged tree differing from main by exactly the grant change and on the green clean-clone suite.
