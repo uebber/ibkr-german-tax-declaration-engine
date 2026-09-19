@@ -345,3 +345,76 @@ def test_a_vesting_and_a_reversal_report_no_receipt():
     StockAwardProcessor().process(reversal, ledger, {'data_gap_collector': collector})
 
     assert not [g for g in collector.gaps if g.code == STOCK_AWARD_RECEIPT_NOT_DECLARED]
+
+
+def test_a_same_day_reversal_and_sale_apply_reversal_first_and_warn():
+    """Q18 / [GT-ESTG20-066]: the order of a same-day award reversal and a disposal of the
+    same security is not fixed by law. The reversal takes the lot-delivering band, so it is
+    applied first (Reading A, the taxpayer's grey-area choice of 2026-09-19). Because that
+    can move which lot's basis the sale uses, the collision is surfaced as a WARNING, not
+    left silent.
+
+    Red on the base: the detection did not exist, so a reversal and a sale of one security
+    sharing a day recorded nothing. Asserted on the collector directly, as the receipt gap
+    is -- the harness does not expose WARNING gaps.
+    """
+    from types import SimpleNamespace
+    from datetime import date
+    from src.domain.enums import FinancialEventType as T
+    from src.processing.data_gaps import DataGapCollector, GapSeverity
+    from src.engine.calculation_engine import (
+        _report_reversal_ordering_assumption, STOCK_AWARD_REVERSAL_ORDER_ASSUMED)
+
+    def ev(kind, day, asset="A1"):
+        return SimpleNamespace(event_type=kind, event_date=day, asset_internal_id=asset)
+
+    resolver = SimpleNamespace(get_asset_by_id=lambda _id: None)
+    tax_year_end = date(2023, 12, 31)
+
+    # Collision: a reversal and a sale of the same security on one day -> one WARNING.
+    collector = DataGapCollector()
+    _report_reversal_ordering_assumption(
+        [ev(T.STOCK_AWARD_REVERSED, "2023-06-01"),
+         ev(T.TRADE_SELL_LONG, "2023-06-01")],
+        resolver, collector, tax_year_end)
+    gaps = [g for g in collector.gaps if g.code == STOCK_AWARD_REVERSAL_ORDER_ASSUMED]
+    assert len(gaps) == 1, "the collision must reach the report"
+    assert gaps[0].severity is GapSeverity.WARNING
+    assert "2023-06-01" in gaps[0].subject
+
+    # No collision: a different day, or a reversal of a different security -> no WARNING.
+    quiet = DataGapCollector()
+    _report_reversal_ordering_assumption(
+        [ev(T.STOCK_AWARD_REVERSED, "2023-06-01"),
+         ev(T.TRADE_SELL_LONG, "2023-06-02"),
+         ev(T.STOCK_AWARD_REVERSED, "2023-07-01", asset="A2")],
+        resolver, quiet, tax_year_end)
+    assert not [g for g in quiet.gaps if g.code == STOCK_AWARD_REVERSAL_ORDER_ASSUMED], \
+        "the order matters only when both fall on one day for one security"
+
+    # After the tax year: not processed, so not warned.
+    later = DataGapCollector()
+    _report_reversal_ordering_assumption(
+        [ev(T.STOCK_AWARD_REVERSED, "2024-06-01"),
+         ev(T.TRADE_SELL_LONG, "2024-06-01")],
+        resolver, later, tax_year_end)
+    assert not [g for g in later.gaps if g.code == STOCK_AWARD_REVERSAL_ORDER_ASSUMED]
+
+    # Determinism: two collisions on one day, ordered by the STABLE classification key,
+    # not by asset_internal_id (a per-run uuid4). The asset whose id sorts first is given
+    # the key that sorts LAST, so an id-keyed sort would reverse these two lines.
+    keys = {"z-id": "AAA", "a-id": "ZZZ"}
+    keyed_resolver = SimpleNamespace(
+        get_asset_by_id=lambda _id: SimpleNamespace(
+            get_classification_key=lambda _id=_id: keys[_id]))
+    ordered = DataGapCollector()
+    _report_reversal_ordering_assumption(
+        [ev(T.STOCK_AWARD_REVERSED, "2023-06-01", asset="a-id"),
+         ev(T.TRADE_SELL_LONG, "2023-06-01", asset="a-id"),
+         ev(T.STOCK_AWARD_REVERSED, "2023-06-01", asset="z-id"),
+         ev(T.TRADE_SELL_LONG, "2023-06-01", asset="z-id")],
+        keyed_resolver, ordered, tax_year_end)
+    subjects = [g.subject for g in ordered.gaps
+                if g.code == STOCK_AWARD_REVERSAL_ORDER_ASSUMED]
+    assert subjects == ["AAA am 2023-06-01", "ZZZ am 2023-06-01"], (
+        "warnings must order by the stable classification key, not the per-run asset id")

@@ -220,6 +220,13 @@ run.
   green. The two coincide on every award row of the current export, so no fixture
   distinguishes them, and the scenario written to do so passes either way.
 
+- **A WARNING data gap's emission from a full run.** The test harness (`_run_pipeline`) returns
+  `ProcessingOutput`, which does not carry the data-gap collector, and it returns before the report
+  renders — so a `GapSeverity.WARNING` recorded during a run is invisible to a scenario test.
+  Deleting the call site that records one (the undeclared-receipt gap, the same-day
+  reversal/disposal ordering gap) leaves the suite green; only the recording function itself is
+  unit-tested, by calling it directly. Probe the call site by mutation.
+
 Add to this list whenever a probe finds a site the suite cannot observe.
 
 Test fixtures are YAML specs in `tests/fixtures/` with helpers in `tests/support/`;
